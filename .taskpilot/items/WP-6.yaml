@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-6
+title: 'Rust diarize_file: produce speaker turns'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T09:31:31Z'
+updated_at: '2026-07-21T09:31:31Z'
+parent_id: WP-2
+description: Add diarize.rs and a diarize_file path that runs sherpa-onnx over the normalized 16 kHz mono samples and returns ordered speaker turns { start_ms, end_ms, speaker }. Support provided or auto-detected speaker count. Run on spawn_blocking; cache the models like the whisper context.
+created_by: M2 planning

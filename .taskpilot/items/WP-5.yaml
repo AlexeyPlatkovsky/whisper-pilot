@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-5
+title: Add sherpa-onnx dependency + diarization model assets (download/verify)
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T09:31:31Z'
+updated_at: '2026-07-21T09:31:31Z'
+parent_id: WP-2
+description: Add the sherpa-onnx Rust binding and a model-asset step that downloads and SHA-verifies the speaker segmentation and speaker-embedding models into the app support dir, failing closed on bad metadata. Mirror the whisper artifact-verification pattern.
+created_by: M2 planning

@@ -1,0 +1,38 @@
+[package]
+name = "mfupilot"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+
+[lib]
+name = "mfupilot_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+whisper-rs = { version = "0.16", features = ["metal"] }
+hound = "3"
+rfd = "0.15"
+anyhow = "1"
+thiserror = "2"
+dirs-next = "2"
+log = "0.4"
+env_logger = "0.11"
+
+# brotli 8.x (via tauri-codegen) requires alloc-no-stdlib ^2, but transitive deps
+# allow >=2.0.4,<4 and Cargo otherwise picks 3.0.0, splitting the type identity.
+# Pin both so alloc-no-stdlib stays unified at 2.0.4. (Same issue as voice-pilot.)
+alloc-no-stdlib = "=2.0.4"
+alloc-stdlib = "=0.2.2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.dev]
+incremental = true

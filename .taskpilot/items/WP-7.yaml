@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-7
+title: Turn↔segment merge algorithm (overlap assignment)
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T09:31:32Z'
+updated_at: '2026-07-21T09:31:32Z'
+parent_id: WP-3
+description: 'Assign each Whisper segment the speaker whose diarization turns maximally overlap it in time, with deterministic tie-breaking and a fallback for uncovered spans. Pure function with unit tests (EP/BVA): full overlap, split overlap, gap, and tie.'
+created_by: M2 planning

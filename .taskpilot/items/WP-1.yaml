@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-1
+title: M2 — Speaker-attributed transcription (diarization)
+priority: normal
+type: epic
+status: backlog
+created_at: '2026-07-21T09:31:29Z'
+updated_at: '2026-07-21T09:31:29Z'
+description: 'Attribute each transcript segment to a speaker (''by roles'') and render the transcript as an editable, per-speaker chat. Local sherpa-onnx diarization is merged onto the existing Whisper segments. Scope: diarization engine + model assets, the turn↔segment merge, and the per-speaker chat UI with editable labels. Out of scope: real-name identification (voice enrollment); labels are generic and user-renamed. Acceptance: within a single file, segments are consistently attributed to distinct speakers and the transcript reads as a labelled chat that can be edited and saved.'
+created_by: M2 planning

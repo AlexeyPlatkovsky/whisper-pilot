@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-10
+title: Editable, persisted speaker labels
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T09:31:34Z'
+updated_at: '2026-07-21T09:31:34Z'
+parent_id: WP-4
+description: Let the user rename a speaker; apply the new label to all that speaker's segments and include it in the saved transcript. Store the label mapping in UI state; write labelled text on save.
+created_by: M2 planning
