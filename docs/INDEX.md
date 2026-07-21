@@ -17,6 +17,7 @@ doc/feature change.
 | `testing.md` | Test strategy, levels, running scenarios, coverage, quality gates | You need how quality is verified |
 | `roadmap.md` | Milestones M1–M3, sequencing, non-goals over time | You need the release plan or priorities |
 | `glossary.md` | Domain vocabulary (meeting, library, MFU section, diarization, …) | You hit an unfamiliar term |
+| `development.md` | Developer guide: prerequisites, build/dev/test commands, project layout | You need to build or run WhisperPilot from source |
 | `decisions/` | One ADR per significant decision (rationale) | You need why a choice was made |
 
 ## Feature Registry

@@ -151,7 +151,8 @@ doc/feature change via `.claude/skills/sdd-index-sync/SKILL.md`.
 | `docs/roadmap.md` | Milestones M1–M3, sequencing, non-goals over time |
 | `docs/decisions/` | ADRs — rationale for the key decisions |
 | `docs/features/F*/` | Per-feature requirements, tasks (TaskPilot-linked), scenarios |
-| `README.md` | Developer guide — prerequisites, build/dev/test commands, layout |
+| `README.md` | User-facing overview — description, released features, requirements, how to run |
+| `docs/development.md` | Developer guide — prerequisites, build/dev/test commands, layout |
 | `src-tauri/src/lib.rs` | Tauri core — command registration, app state, module map |
 | `src-tauri/src/main.rs` | Tauri/Rust entry point |
 | `src/App.tsx` | React UI root |

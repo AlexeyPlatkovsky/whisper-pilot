@@ -1,47 +1,54 @@
 # WhisperPilot
 
-Offline macOS app that transcribes local **audio and video files** into
-accurate, speaker-attributed transcripts (Russian first, English later) and
-generates a short summary — fully on-device, no live capture, no cloud.
+WhisperPilot is an offline macOS app for turning local **audio and video
+recordings** — meetings, calls, interviews — into accurate, editable
+transcripts. Drop in a file and get back timestamped text you can correct and
+save, entirely **on-device**: no live capture, no cloud, no network access
+during processing.
 
-See [docs/idea.md](docs/idea.md) for scope and milestones, and
-[docs/architecture.md](docs/architecture.md) for the technical design.
+Built for accuracy over speed: because processing runs offline in batch, it
+uses full-file context and larger models than a real-time transcriber could
+afford. Russian is the primary language today, with English and further
+languages planned.
 
-## Status
+## Features
 
-- **M1 (done):** Add file → extract audio (ffmpeg) → Whisper `large-v3-turbo` on
-  Metal, full-file Russian transcription → editable transcript → save.
-- **M2 (planned):** Speaker separation ("by roles") via sherpa-onnx.
-- **M3 (planned):** Local-LLM summary/MFU via llama.cpp (Qwen2.5).
+- **Local file transcription** — pick any local audio or video file and
+  transcribe it end-to-end on-device.
+- **Accurate Russian transcription** — full-file Whisper decoding (Metal
+  acceleration) tuned for quality over real-time speed.
+- **Editable, timestamped transcript** — every segment shows its start time
+  and can be corrected in place.
+- **Save to a text file** — export the current (edited) transcript whenever
+  you're done.
+- **Clear error handling** — missing dependencies or models surface as
+  readable messages instead of crashes.
 
-## Prerequisites
+WhisperPilot is pre-1.0 and under active development. Planned next: a
+persisted meeting library, speaker-attributed transcripts (colored
+per-speaker chat), Markdown/plain-text export, and local AI-generated meeting
+notes.
 
-- macOS on Apple Silicon (macOS 13+)
-- Rust (stable), Node.js 20+
-- `ffmpeg` on PATH (`brew install ffmpeg`)
-- A Whisper GGML model. M1 reuses an existing `large-v3-turbo` artifact; override
-  the path with `MFUPILOT_MODEL_PATH=/path/to/ggml-large-v3-turbo-q8_0.bin`.
+## Requirements
 
-## Develop
+- macOS on Apple Silicon (macOS 13 or later)
+- [`ffmpeg`](https://ffmpeg.org/) installed and available on your `PATH`
+  (`brew install ffmpeg`)
+
+## Running WhisperPilot
+
+WhisperPilot isn't distributed as a packaged download yet — for now, run it
+from source:
 
 ```sh
 npm install
-npm run tauri:dev      # launches the app (compiles whisper.cpp with Metal on first run)
+npm run tauri:dev
 ```
 
-## Test
+The first run compiles the local Whisper engine (Metal-accelerated), so it
+takes longer than subsequent launches. See
+[`docs/development.md`](docs/development.md) for the full developer guide.
 
-```sh
-npm run test:api       # Rust tests
-# End-to-end pipeline check (needs a model + ffmpeg):
-cargo test --manifest-path src-tauri/Cargo.toml --test pipeline -- --ignored --nocapture
-```
+## License
 
-## Layout
-
-```
-src/                 React UI (App.tsx, ipc.ts, styles.css)
-src-tauri/src/       Rust core (lib.rs, audio.rs, transcribe.rs, error.rs)
-docs/                idea.md, architecture.md
-.claude/             AI instruction system (skills, agents, pipelines, conventions)
-```
+Apache License 2.0 — see [`LICENSE`](LICENSE).
