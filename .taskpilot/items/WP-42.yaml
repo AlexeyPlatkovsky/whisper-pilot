@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-42
+title: 'App language: i18n scaffolding, English default'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T14:05:59Z'
+updated_at: '2026-07-21T14:05:59Z'
+parent_id: WP-36
+description: Introduce i18n scaffolding with English as the default (and only beta) UI language, independent of transcription language; structure ready for release languages. Implements F005-R8 (F005-T6).
+created_by: Settings planning

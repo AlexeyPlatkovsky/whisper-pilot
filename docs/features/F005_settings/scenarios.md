@@ -1,0 +1,130 @@
+# F005 Settings — Scenarios
+
+## Scenarios
+
+### F005-S1: Open Settings and see the sections
+
+Covers: F005-R1
+
+```gherkin
+Scenario: The gear opens Settings with the beta sections
+  Given the app is open
+  When the user clicks the gear entry point in the header
+  Then the Settings screen opens with AI models, Appearance, and App language
+```
+
+### F005-S2: Settings persist across restart
+
+Covers: F005-R2
+
+```gherkin
+Scenario: A changed setting survives a restart
+  Given the user changes the theme and a model selection
+  When the app restarts
+  Then the previously chosen theme and model selection are still in effect
+```
+
+### F005-S3: Download and delete a task's model
+
+Covers: F005-R3
+
+```gherkin
+Scenario: Download verifies, Delete removes
+  Given the AI models section lists the transcription model as not downloaded
+  When the user clicks Download
+  Then progress is shown and the model is marked ready only after SHA verification
+  When the user clicks Delete
+  Then the local model file is removed and it returns to not-downloaded
+```
+
+### F005-S4: Missing model disables the task
+
+Covers: F005-R4
+
+```gherkin
+Scenario: A task with no model is unavailable
+  Given the transcription model is not downloaded
+  Then the AI models section flags it as missing
+    And Transcribe is disabled with the no-model warning (F004-R5)
+  Given the diarization model is not downloaded
+  Then transcription still runs and degrades to plain segments (F002-R7)
+```
+
+### F005-S5: Active model among several (release)
+
+Covers: F005-R5
+
+```gherkin
+Scenario: Choosing the Active model for a task
+  Given a task lists several downloaded models
+  When the user selects one with the Active radio
+  Then that task uses the selected model for its next run
+```
+
+### F005-S6: Light, Dark, and System themes
+
+Covers: F005-R6
+
+```gherkin
+Scenario: Theme applies immediately and follows the OS for System
+  Given the Appearance section
+  When the user selects Dark
+  Then the app switches to dark at once and stays dark after restart
+  When the user selects System and the OS is in light mode
+  Then the app follows the OS scheme
+```
+
+### F005-S7: Extra themes with light/dark variants (release)
+
+Covers: F005-R7
+
+```gherkin
+Scenario: A named release theme in both variants
+  Given the release themes are available
+  When the user picks a named theme
+  Then it renders correctly in both its light and dark variants
+```
+
+### F005-S8: UI language defaults to English and is independent
+
+Covers: F005-R8
+
+```gherkin
+Scenario: UI English by default, independent of transcription language
+  Given a fresh install
+  Then the UI renders in English
+  When the user sets the transcription language to Russian
+  Then the UI language stays English
+```
+
+### F005-S9: Additional UI languages (release)
+
+Covers: F005-R9
+
+```gherkin
+Scenario: Selecting a release UI language
+  Given the release languages are available
+  When the user selects Russian for the app language
+  Then the UI renders in Russian
+```
+
+### F005-S10: Update the app (release)
+
+Covers: F005-R10
+
+```gherkin
+Scenario: Check for and apply an update
+  Given the Update app section
+  When the user checks for updates and one is available
+  Then the user can apply it
+```
+
+## Manual Verification Checklist
+
+- [ ] (F005-R1) The gear sits in a fixed header position and opens Settings.
+- [ ] (F005-R3) Interrupting a download leaves no half-written model marked ready;
+      re-download works; SHA mismatch is reported, not silently accepted.
+- [ ] (F005-R4) With each model removed in turn, the dependent task behaves per its
+      rule (Transcribe disabled; diarization degrades).
+- [ ] (F005-R6) System theme tracks a live OS light↔dark switch.
+- [ ] (F005-R8) No stray non-English UI strings with the default settings.

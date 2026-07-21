@@ -25,4 +25,9 @@ obvious from general software knowledge.
 | **sherpa-onnx** | An on-device speech toolkit; WhisperPilot uses its speaker-segmentation and embedding models for diarization (M2). |
 | **llama.cpp / Qwen2.5** | The local LLM stack for summarization (M3): llama.cpp runtime running a quantized Qwen2.5-Instruct model. |
 | **ffmpeg** | External tool that extracts audio from video and resamples audio to the normalized form. |
+| **Settings** | The app-wide configuration screen (F005), opened from the header gear: AI models, Appearance, App language, and (release) Update app. |
+| **Model catalog** | The fixed, app-defined list of the model(s) each task (transcription, diarization, notes) needs; managed in Settings → AI models (download/delete/verify). Not user-extensible. |
+| **Active model** | (Release) When a task has several downloaded models, the one selected (radio) for that task to use. |
+| **Theme** | The app's visual scheme: Light, Dark, or System (follows the OS) in beta; extra named themes (each light + dark) at release. |
+| **UI language** | The language of the app's interface (English by default; more at release) — distinct from the **transcription language** (Russian by default, ADR-007). |
 | **Full-file (batch)** | Transcribing an entire file at once with no real-time constraint, as opposed to live/streaming. |

@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-39
+title: 'AI models: per-task list + Download (fetch + SHA verify + progress)'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T14:05:58Z'
+updated_at: '2026-07-21T14:05:58Z'
+parent_id: WP-35
+description: List the model each task needs (transcription, diarization) from the fixed catalog; Download fetches from a known URL, verifies SHA, shows progress, marks ready only on success. One model per task in beta. Implements F005-R3 (F005-T3).
+created_by: Settings planning

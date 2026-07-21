@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-34
+title: Settings shell & persistence
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T14:05:40Z'
+updated_at: '2026-07-21T14:05:40Z'
+parent_id: WP-33
+description: Settings screen shell reachable from a fixed header gear, section navigation, and a local key-value settings store (theme, ui_language, active models) applied immediately and across restarts.
+created_by: Settings planning

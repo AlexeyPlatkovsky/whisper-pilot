@@ -41,6 +41,13 @@ speed because processing is offline and batch.
 - A persisted **library** of **meetings** (one meeting = one transcription):
   reopen, rename, delete, with edits **auto-saved** locally.
 - **Export** of a meeting (transcript and/or notes) to Markdown and plain text.
+- A **Settings** screen: **AI models** (download/delete the model each task needs;
+  at release, choose an Active model among several per task), **Appearance**
+  (light / dark / system themes; more themes at release), **App language** (the UI
+  language — English by default, more languages at release), and **Update app**
+  (release only).
+- Two independent language settings: the **app UI language** (English by default)
+  and the **transcription language** (Russian by default, with auto-detect).
 
 ### Out of scope
 
@@ -58,13 +65,17 @@ speed because processing is offline and batch.
 
 - WhisperPilot will not become a real-time transcriber. Accuracy from full-file,
   batch processing is the whole point.
-- It will not depend on any network service for its core function.
+- It will not depend on any network service for its **core processing**:
+  transcription and MFU note generation make no network calls. The only network
+  use is downloading models (and, at release, app updates).
 
 ## Principles
 
 - **Accuracy over speed.** Offline batch means the largest models and full-file
   context are affordable; use them.
-- **Local-first.** No audio, transcript, or summary leaves the device.
+- **Local-first.** No audio, transcript, or summary leaves the device;
+  transcription and MFU generation run with no network access. Model downloads
+  (and release updates) are the only networked step.
 - **Editable truth.** Machine output is a starting point; every surface
   (transcript, labels, summary) is user-editable before it is trusted.
 - **One pipeline, many inputs.** Normalize audio and video through a single

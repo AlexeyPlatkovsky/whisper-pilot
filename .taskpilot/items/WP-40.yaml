@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-40
+title: 'AI models: Delete + missing-model availability wiring'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T14:05:58Z'
+updated_at: '2026-07-21T14:05:58Z'
+parent_id: WP-35
+description: Delete removes the local model file and returns it to not-downloaded; a missing required model is flagged and reflected in the task (Transcribe disabled; diarization degrades per F002-R7). Implements F005-R4 (F005-T4).
+created_by: Settings planning

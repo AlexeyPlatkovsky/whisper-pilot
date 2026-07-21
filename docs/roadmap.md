@@ -20,41 +20,58 @@ being rewritten. No public distribution or notarization in the current horizon.
 - **Exit criteria:** file → ffmpeg → Whisper (Metal, full-file, Russian) →
   editable segments → save, verified end-to-end on a real file.
 
-### M2 — Library, workspace & speaker roles (next)
+### M2 — Library, workspace & speaker roles — **Beta** (next)
 
 - **Goal:** Turn the stateless flow into a persisted two-pane workspace **and**
-  attribute the transcript by speaker. A local library of **meetings** with
-  reopen/rename/delete, **auto-saved** edits, a manual **Transcribe** action with
-  **progress + Stop**, language selection (Russian / auto-detect), and **Markdown
-  / plain-text export**; plus local **diarization** so the transcript renders as a
-  per-speaker chat of **colored bubbles** with renamable labels.
+  attribute the transcript by speaker, to a **beta-ready** app. A local library of
+  **meetings** with reopen/rename/delete, **auto-saved** edits, a manual
+  **Transcribe** action with **progress + Stop**, language selection (Russian /
+  auto-detect), and **Markdown / plain-text export**; local **diarization** so the
+  transcript renders as a per-speaker chat of **colored bubbles**; plus a
+  **Settings** screen (beta scope): **AI models** download/delete (one model per
+  task), **Appearance** (light / dark / system themes), and **App language**
+  (English UI).
 - **Features:**
   [`F004_library-workspace`](features/F004_library-workspace/requirements.md)
-  (TaskPilot epic `WP-11`) and
+  (TaskPilot epic `WP-11`),
   [`F002_speaker-diarization`](features/F002_speaker-diarization/requirements.md)
-  (TaskPilot epic `WP-1`, `WP-5…WP-10`).
+  (TaskPilot epic `WP-1`), and the beta scope of
+  [`F005_settings`](features/F005_settings/requirements.md)
+  (TaskPilot epic `WP-33`).
 - **Exit criteria:** transcriptions persist as meetings; edits auto-save;
   meetings reopen (with a source-missing state); export produces `.md`/`.txt`;
-  segments are consistently attributed to distinct speakers within a file and
-  render as colored per-speaker bubbles with editable, persisted labels.
+  segments render as colored per-speaker bubbles with editable, persisted labels;
+  Settings can download/delete each task's model, switch light/dark/system theme,
+  and the UI is English.
 
-### M3 — Structured meeting notes
+### M3 — Notes, full settings & polish — **Release**
 
-- **Goal:** Generate structured, editable, copyable meeting notes (summary,
-  decisions, action items, open questions, participants) with a local LLM.
-- **Feature:** [`F003_meeting-notes`](features/F003_meeting-notes/requirements.md)
-- **Exit criteria:** llama.cpp (Qwen2.5) notes generated in Russian below the
-  transcript, editable and regenerable, copyable, fully local.
+- **Goal:** Complete the app for a **public release**: structured meeting notes,
+  the full Settings surface, a localized UI, richer themes, and in-app update.
+- **Features:**
+  [`F003_meeting-notes`](features/F003_meeting-notes/requirements.md) (structured,
+  editable, copyable notes via a local LLM) and the release scope of
+  [`F005_settings`](features/F005_settings/requirements.md): **AI models** with an
+  **Active** choice among 3–4 models per task; **Appearance** with 3–4 extra
+  themes (each in light and dark); **App language** adding Russian, Turkish,
+  Spanish, German, French; and **Update app**.
+- **Exit criteria:** notes generate in Russian below the transcript, editable and
+  copyable; each task can hold several models with an Active selection; extra
+  themes and UI languages are selectable; the app can check for and apply updates.
 
 ## Sequencing & Dependencies
 
 - **Within M2:** build the library/meeting model first (the durable place
   speakers and notes are stored), then layer diarization onto M1's `Segment`
-  stream so bubbles render against persisted segments.
+  stream so bubbles render against persisted segments; Settings (beta) supplies
+  the models those pipelines need (download/delete) and the theme/UI-language
+  choices.
 - M3 reads a finalized (M2-persisted) transcript; independent of the notes model
-  but reads better with the M2 speaker labels present.
-- English-language support is a cross-cutting follow-on after M1–M3 are stable in
-  Russian; it mainly touches language/model selection, not the pipeline shape.
+  but reads better with the M2 speaker labels present. The release Settings scope
+  builds directly on the beta Settings shell.
+- **UI language vs transcription language:** the **app UI** defaults to **English**
+  (localized further at release); the **transcription** default stays **Russian**
+  with auto-detect (ADR-007). They are independent settings.
 
 ## Non-Goals (Over Time)
 
@@ -65,4 +82,5 @@ being rewritten. No public distribution or notarization in the current horizon.
   as attributed.
 - In-app audio playback — deferred.
 - Batch/queued multi-file processing — deferred; one file at a time.
-- Own model-management UI/catalog — deferred; reuses an existing model path.
+- Model **catalog authoring** (adding arbitrary third-party models) — out of
+  scope; Settings manages a **fixed, app-defined** model list per task (F005).

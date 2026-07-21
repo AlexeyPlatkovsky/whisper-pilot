@@ -18,13 +18,17 @@ of one source file; see `glossary.md`).
   progress, or a spinner with a live timer when real progress isn't available.
 - **Edit in place, saved automatically.** Transcript segments and MFU text are
   edited where they are read and persist as you go — no save button, no lost work.
-- **Russian-first surface.** UI copy and generated notes are Russian by default.
+- **English UI, Russian transcription.** The app **UI language defaults to
+  English** (more languages at release); the **transcription** default is
+  **Russian** with auto-detect (ADR-007). The two are independent settings.
+- **Configurable, not cluttered.** A single **Settings** screen holds models,
+  appearance, and language; the workspace itself stays focused.
 
 ## Layout — the two-pane shell
 
 ```
 ┌───────────────────────────────────────────────────────────────────────┐
-│ ◎◎◎  [⇤ panel]  [logo]                                    (title bar)   │  ← header row 1 (macOS traffic lights, then fixed controls)
+│ ◎◎◎  [⇤ panel]  [logo]                                  [⚙ settings]   │  ← header row 1 (traffic lights, fixed left controls, gear far right)
 ├───────────────┬───────────────────────────────────────────────────────┤
 │  Meetings      │  ⟨Meeting title⟩  [edit][copy][delete]   [model ▾]     │  ← header row 2 (meeting header)
 │  ───────────   │  [lang ▾]                     [Transcribe][Stop][MFU]  │
@@ -64,6 +68,8 @@ controls (close / minimize / zoom):
   collapsed/expanded choice **persists** across restarts.
 - **App logo** — directly after the toggle (VoicePilot logo for now). Fixed
   position; purely decorative.
+- **Settings gear** — a fixed control at the **far right** of row 1; opens the
+  **Settings** screen (models, appearance, app language; app update at release).
 
 Row 2 — the active meeting's header:
 
@@ -117,7 +123,33 @@ Single line reflecting the meeting's current state:
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
 
+### Settings (F005)
+
+Opened from the header **gear**; a screen with these sections:
+
+- **AI models** — grouped by task (transcription, diarization; notes at release).
+  Each required model shows its state with **Download** and **Delete** buttons;
+  Download shows progress and verifies (SHA). Beta lists **one model per task**;
+  at release each task may list 3–4 models, each with an **Active** radio.
+- **Appearance** — theme choice: **Light / Dark / System** (System follows the
+  OS). At release, 3–4 extra named themes, each in a light and dark variant.
+- **App language** — the **UI** language; **English** by default (only option in
+  beta). At release: Russian, Turkish, Spanish, German, French. Independent of the
+  transcription language.
+- **Update app** — *release only*: check for and apply application updates.
+
+Changes apply immediately and persist. A model that is not downloaded is flagged
+here and disables/degrades its task in the workspace (Transcribe needs the
+Whisper model; diarization degrades without its models).
+
 ## User Flows
+
+### Adjust settings (F005)
+
+1. Click the header **gear** → the Settings screen opens.
+2. **AI models:** Download or Delete each task's model (progress + SHA verify).
+3. **Appearance:** pick Light / Dark / System — applies at once.
+4. **App language:** English (beta). All choices persist across restarts.
 
 ### Create & transcribe a meeting (M2)
 
@@ -182,7 +214,13 @@ Single line reflecting the meeting's current state:
 - **MFU populated** — MFU section at 30% with edit/copy/clear.
 - **Source file missing** — meeting opens; Transcribe disabled with an
   explanatory note; transcript/MFU remain editable.
-- **No model available** — model switcher hidden; status-bar warning.
+- **No model available** — model switcher hidden; status-bar warning; the
+  Settings → AI models section flags the missing model with a Download action.
+- **Settings open** — the Settings screen (models / appearance / app language);
+  changes apply immediately and persist.
+- **Model downloading** — a model shows download progress; on SHA-verified
+  completion it becomes ready and its task is enabled; Delete returns it to
+  not-downloaded.
 
 ## Interaction Patterns
 

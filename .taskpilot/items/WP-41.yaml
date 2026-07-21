@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-41
+title: 'Appearance: light/dark/system theme apply + persist'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T14:05:59Z'
+updated_at: '2026-07-21T14:05:59Z'
+parent_id: WP-36
+description: Theme selection (light/dark/system) applied immediately and persisted; System follows the OS scheme live. Implements F005-R6 (F005-T5).
+created_by: Settings planning

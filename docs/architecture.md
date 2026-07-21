@@ -13,8 +13,10 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meeting workspace                audio.rs      ffmpeg normalize + WAV decode
   transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
   MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
-  ipc.ts / events                  export.rs     meeting → Markdown / plain text
-                                   error.rs      AppError → serialized to JS
+  settings screen                  export.rs     meeting → Markdown / plain text
+  ipc.ts / events                  error.rs      AppError → serialized to JS
+  theming / i18n                   settings.rs   key–value settings store (theme, ui_language, active models)
+                                   models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
 ```
@@ -89,6 +91,23 @@ items (owner + task), open questions, participants. Generation is **manual**
 (the **Create MFU** button, enabled only after transcription finishes) and
 **UI-blocking**; the result is editable (auto-saved), copyable, and clearable.
 
+## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
+
+Settings live in a small **key–value store** in the app support directory
+(theme, `ui_language`, and each task's active model), applied immediately and
+across restarts. The React layer owns **theming** (light / dark / system, plus
+release themes) and **i18n** (English default, release languages); the OS scheme
+drives the *System* theme.
+
+`models.rs` manages a **fixed, app-defined catalog** of the model(s) each task
+needs (transcription = Whisper, diarization = sherpa-onnx, notes = llama/Qwen at
+M3). **Download** fetches from a known URL, streams progress, and marks a model
+ready only after **SHA verification**; **Delete** removes the local file. A task
+whose required model is absent is disabled or degrades (Transcribe needs the
+Whisper model; diarization degrades per F002-R7). Beta manages **one model per
+task**; at release a task may hold several with an **Active** selection. This
+supersedes the earlier "manual model placement / deferred model management" note.
+
 ## Export (`export.rs`)
 
 A meeting renders to **Markdown** or **plain text** (transcript and/or notes),
@@ -109,26 +128,39 @@ rendering (the header's meeting-label **copy** copies the transcript).
 | `rename_meeting(id, title)` / `delete_meeting(id)` | Library management | M2 |
 | `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)` | Auto-saved edits | M2/M3 |
 | `export_meeting(id, format, target)` | Write Markdown / plain text | M2 |
-| `list_models()` | Available Whisper models for the switcher | M2 |
+| `list_models()` | Available (downloaded) Whisper models for the switcher | M2 |
 | `diarize_meeting(id)` | Produce + merge speaker turns | M2 |
+| `get_settings()` / `set_setting(key, value)` | Read/update settings (theme, ui_language, active model) | M2 |
+| `list_task_models()` | Per-task model catalog with download state | M2 |
+| `download_model(id)` / `delete_model(id)` | Fetch (SHA-verified, progress) / remove a model | M2 |
+| `set_active_model(task, id)` | Choose the active model for a task | M3 |
+| `check_update()` / `apply_update()` | App update | M3 |
 | `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
 
 Events: `transcription_progress { id, fraction }`, `transcription_done`,
-`transcription_error`. `Segment` is the shared transcript unit
+`transcription_error`, `model_download_progress { id, fraction }`. `Segment` is
+the shared transcript unit
 (`{ id, start_ms, end_ms, text, speaker_id? }`). Errors are `AppError` serialized
 to a human-readable string.
 
 ## Security And Privacy
 
-Fully local. No network calls, no telemetry. File writes: the temporary ffmpeg
-WAV (deleted after use), the SQLite library under the app support directory, and
-user-chosen export destinations. No `.env` or secret handling.
+**Transcription and MFU note generation make no network calls** — they run
+entirely on-device, and there is **no telemetry**. The **only** networked
+operation is **user-initiated model downloads** (and, at release, the app
+update), fetched from known URLs and **SHA-verified**. Audio, transcripts, and
+notes never leave the device. File writes: the temporary ffmpeg WAV (deleted
+after use), the SQLite library and the settings store under the app support
+directory, downloaded model files, and user-chosen export destinations. No
+`.env` or secret handling.
 
 ## Build Notes
 
 - Tauri v2 + React 19 + TypeScript; Vite dev server on port 1420.
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
 - ffmpeg on PATH. M2 adds sherpa-onnx; M3 adds llama.cpp — both Metal, local.
+- M2 adds an HTTP client for SHA-verified model downloads and a settings store;
+  front-end gains theming (light/dark/system) and i18n (English default).
 - Run: `npm install`, then `npm run tauri:dev`.
 
 ## Ownership

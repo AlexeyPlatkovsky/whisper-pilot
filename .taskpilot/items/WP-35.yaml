@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-35
+title: AI model management (download/delete)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T14:05:41Z'
+updated_at: '2026-07-21T14:05:41Z'
+parent_id: WP-33
+description: Per-task model list (transcription, diarization) with Download (fetch + SHA verify + progress) and Delete; missing-model state wired into task availability. Fixed app-defined catalog, one model per task in beta.
+created_by: Settings planning

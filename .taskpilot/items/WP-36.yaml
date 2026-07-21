@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-36
+title: Appearance & app language (beta)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T14:05:41Z'
+updated_at: '2026-07-21T14:05:41Z'
+parent_id: WP-33
+description: Appearance section with light/dark/system themes applied immediately and persisted, and an App language section defaulting the UI to English with i18n scaffolding for release languages.
+created_by: Settings planning
