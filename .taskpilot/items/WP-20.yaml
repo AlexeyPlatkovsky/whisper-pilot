@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-20
+title: Language selection UI (Russian / auto-detect)
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T10:27:59Z'
+updated_at: '2026-07-21T10:27:59Z'
+parent_id: WP-13
+description: Pre-transcription control to choose Russian (default) or auto-detect; passed to create_transcription.
+created_by: M2 planning

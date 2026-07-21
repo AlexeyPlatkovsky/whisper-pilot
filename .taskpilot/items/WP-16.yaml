@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-16
+title: 'SQLite store: meetings/segments/notes schema + CRUD (store.rs)'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T10:27:57Z'
+updated_at: '2026-07-21T11:04:20Z'
+parent_id: WP-12
+description: Bundled rusqlite store under app support dir; schema for meetings (id,title,source_path,source_name,created_at,duration_ms,language,status), segments (meeting_id,ordinal,start_ms,end_ms,text,speaker_id?), notes (meeting_id, section fields). CRUD + list summaries. Unit-tested.
+created_by: M2 planning

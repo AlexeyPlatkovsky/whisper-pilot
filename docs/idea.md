@@ -22,26 +22,36 @@ summary.
 ## Value Proposition
 
 Drop in an audio or video file and get back an accurate, speaker-labelled,
-editable transcript and a short summary — entirely on-device, no cloud, with
-accuracy prioritized over speed because processing is offline and batch.
+editable transcript plus structured meeting notes — kept in a local library you
+can reopen and edit, entirely on-device, no cloud, with accuracy prioritized over
+speed because processing is offline and batch.
 
 ## Scope
 
 ### In scope
 
-- Transcribing local **audio and video** files (audio extracted from video).
-- **Offline, on-device** transcription, speaker separation, and summarization.
-- **Russian** as the primary language; English added afterward.
-- A **speaker-attributed**, editable transcript that can be saved to a file.
-- A short **summary / MFU** generated locally, editable and copyable.
+- Transcribing local **audio and video** files (audio extracted from video),
+  **one file at a time**.
+- **Offline, on-device** transcription, speaker separation, and note generation.
+- **Russian** as the primary language, with an **auto-detect** option; English
+  added afterward.
+- A **speaker-attributed**, editable transcript.
+- Structured **meeting notes** generated locally — summary, key decisions,
+  action items, open questions, participants — editable and copyable.
+- A persisted **library** of **meetings** (one meeting = one transcription):
+  reopen, rename, delete, with edits **auto-saved** locally.
+- **Export** of a meeting (transcript and/or notes) to Markdown and plain text.
 
 ### Out of scope
 
 - Live / microphone / system-audio capture (that is a different product).
-- Cloud transcription or summarization.
+- Cloud transcription, summarization, or storage.
 - Translation between languages.
 - Real-name speaker identification (voice enrollment); speakers are generic
-  labels the user renames.
+  labels the user renames. Reassigning or merging speakers is deferred, so a
+  misattributed segment cannot yet be corrected.
+- Batch/queued processing of many files at once.
+- In-app audio playback.
 - Multi-user collaboration, public distribution, notarization.
 
 ## Non-Goals

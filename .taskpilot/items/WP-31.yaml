@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-31
+title: Wire diarization into the Transcribe flow (auto-run, one progress/Stop, degrade)
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-21T12:44:01Z'
+updated_at: '2026-07-21T12:44:01Z'
+parent_id: WP-2
+description: Run diarization automatically after transcription within a single Transcribe run; progress and Stop span both phases; the meeting is finished only once transcription + speaker attribution complete. If diarization models are missing or the engine fails, degrade to plain (speaker-less) segments with a note instead of failing the run. Implements F002-R6, F002-R7 (F002-T7).
+created_by: M2 review

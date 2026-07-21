@@ -52,11 +52,39 @@ Scenario: Provided count is honored; otherwise detected
   Then a plausible speaker count is detected automatically
 ```
 
+### F002-S5: Diarization runs automatically within Transcribe
+
+Covers: F002-R6
+
+```gherkin
+Scenario: Bubbles appear at the end of a normal Transcribe run
+  Given a meeting with a multi-speaker file attached
+  When the user presses Transcribe and the run completes
+  Then the transcript is shown as per-speaker colored bubbles
+    And no separate diarize action was needed
+    And Stop during the run cancels transcription and diarization together
+```
+
+### F002-S6: Graceful degradation when diarization is unavailable
+
+Covers: F002-R7
+
+```gherkin
+Scenario: Missing diarization models fall back to a plain transcript
+  Given a meeting with a file attached
+    And the sherpa-onnx diarization models are not installed
+  When the user presses Transcribe and the run completes
+  Then the transcript is shown as plain segments with a note that speakers
+       are unavailable
+    And the meeting is marked finished (the run did not fail)
+```
+
 ## Manual Verification Checklist
 
 - [ ] (F002-R1) On a real 2–3 speaker Russian recording, turns align with who is
       actually speaking on spot checks.
-- [ ] (F002-R3) Chat rendering distinguishes speakers by label (not color alone)
-      and keeps timestamps and inline editing.
+- [ ] (F002-R3) Chat renders per-speaker colored bubbles (10 shades) that
+      distinguish speakers by label too (not color alone), keeping timestamps and
+      inline editing.
 - [ ] (F002-R2) Segments spanning a speaker change are attributed sensibly.
 - [ ] (compat) A file transcribed without diarization still renders as in M1.

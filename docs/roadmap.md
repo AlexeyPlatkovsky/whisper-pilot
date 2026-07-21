@@ -12,45 +12,57 @@ being rewritten. No public distribution or notarization in the current horizon.
 
 ## Phases
 
-### M1 — File transcription (done)
+### M1 — Transcription core (done)
 
 - **Goal:** Add an audio/video file and get an accurate, editable, timestamped
-  Russian transcript that can be saved.
-- **Features:** [`features/F001_file-transcription/`](features/F001_file-transcription/requirements.md)
+  Russian transcript that can be exported. Stateless (no library yet).
+- **Feature:** [`F001_file-transcription`](features/F001_file-transcription/requirements.md)
 - **Exit criteria:** file → ffmpeg → Whisper (Metal, full-file, Russian) →
   editable segments → save, verified end-to-end on a real file.
 
-### M2 — Speaker roles (planned)
+### M2 — Library, workspace & speaker roles (next)
 
-- **Goal:** Attribute each segment to a speaker and render the transcript as an
-  editable, per-speaker chat.
-- **Features:** [`features/F002_speaker-diarization/`](features/F002_speaker-diarization/requirements.md)
-  (TaskPilot epic `WP-1`).
-- **Exit criteria:** sherpa-onnx diarization merged onto segments; consistent
-  per-speaker attribution within a file; editable, persisted speaker labels.
+- **Goal:** Turn the stateless flow into a persisted two-pane workspace **and**
+  attribute the transcript by speaker. A local library of **meetings** with
+  reopen/rename/delete, **auto-saved** edits, a manual **Transcribe** action with
+  **progress + Stop**, language selection (Russian / auto-detect), and **Markdown
+  / plain-text export**; plus local **diarization** so the transcript renders as a
+  per-speaker chat of **colored bubbles** with renamable labels.
+- **Features:**
+  [`F004_library-workspace`](features/F004_library-workspace/requirements.md)
+  (TaskPilot epic `WP-11`) and
+  [`F002_speaker-diarization`](features/F002_speaker-diarization/requirements.md)
+  (TaskPilot epic `WP-1`, `WP-5…WP-10`).
+- **Exit criteria:** transcriptions persist as meetings; edits auto-save;
+  meetings reopen (with a source-missing state); export produces `.md`/`.txt`;
+  segments are consistently attributed to distinct speakers within a file and
+  render as colored per-speaker bubbles with editable, persisted labels.
 
-### M3 — Summary / MFU (planned)
+### M3 — Structured meeting notes
 
-- **Goal:** Generate a short, editable, copyable summary of the transcript with a
-  local LLM.
-- **Features:** [`features/F003_summary-mfu/`](features/F003_summary-mfu/requirements.md)
-- **Exit criteria:** llama.cpp (Qwen2.5) summary section below the transcript,
-  editable and copyable, fully local.
+- **Goal:** Generate structured, editable, copyable meeting notes (summary,
+  decisions, action items, open questions, participants) with a local LLM.
+- **Feature:** [`F003_meeting-notes`](features/F003_meeting-notes/requirements.md)
+- **Exit criteria:** llama.cpp (Qwen2.5) notes generated in Russian below the
+  transcript, editable and regenerable, copyable, fully local.
 
 ## Sequencing & Dependencies
 
-- M2 depends on M1's `Segment` stream (it attaches speakers to existing
-  segments).
-- M3 depends on a finalized transcript; it is independent of M2 and could ship
-  before it, but reads better with speaker labels present.
-- English-language support is a cross-cutting follow-on after M1–M3 are stable
-  in Russian; it mainly touches model/language selection, not the pipeline shape.
+- **Within M2:** build the library/meeting model first (the durable place
+  speakers and notes are stored), then layer diarization onto M1's `Segment`
+  stream so bubbles render against persisted segments.
+- M3 reads a finalized (M2-persisted) transcript; independent of the notes model
+  but reads better with the M2 speaker labels present.
+- English-language support is a cross-cutting follow-on after M1–M3 are stable in
+  Russian; it mainly touches language/model selection, not the pipeline shape.
 
 ## Non-Goals (Over Time)
 
-- Live capture — never; it is a different product (`idea.md` non-goals).
-- Cloud transcription/summarization — never in this product's local-first stance.
-- Real-name speaker identification (voice enrollment) — deferred beyond M2;
-  labels stay generic and user-renamed.
-- Own model-management UI/catalog — deferred; M1 reuses an existing model path
-  via `MFUPILOT_MODEL_PATH`.
+- Live capture — never; a different product (`idea.md` non-goals).
+- Cloud transcription/summarization/storage — never; local-first stance.
+- Real-name speaker identification (voice enrollment) — deferred beyond M2.
+- Speaker reassignment / merge — deferred beyond M2; misattributed segments stay
+  as attributed.
+- In-app audio playback — deferred.
+- Batch/queued multi-file processing — deferred; one file at a time.
+- Own model-management UI/catalog — deferred; reuses an existing model path.

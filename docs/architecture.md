@@ -1,96 +1,144 @@
 # WhisperPilot Architecture
 
-Technical architecture for the offline file-transcription app. Product scope is
-owned by `docs/idea.md`; this document owns the layer map, pipeline, IPC
-contract, models, and build notes.
+Technical architecture for the offline meeting-notes workspace. Product scope is
+owned by `docs/idea.md`; UX by `docs/design.md`. This document owns the layer
+map, pipeline, meeting/data model, IPC contract, models, and build notes. The
+core unit is a **Meeting** (one transcription of one source file).
 
 ## Layer Map
 
 ```
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
-  App.tsx                          lib.rs        command registration + AppState
-  ipc.ts                           audio.rs      ffmpeg normalize + WAV decode
-  styles.css                       transcribe.rs whisper (Metal) full-file decode
+  meetings list                    lib.rs        command + event registration, AppState
+  meeting workspace                audio.rs      ffmpeg normalize + WAV decode
+  transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
+  MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
+  ipc.ts / events                  export.rs     meeting → Markdown / plain text
                                    error.rs      AppError → serialized to JS
-                                   [M2] diarize.rs   sherpa-onnx speaker turns
-                                   [M3] summarize.rs llama.cpp summary / MFU
+                                   [M2] diarize.rs   sherpa-onnx speaker turns + merge
+                                   [M3] notes.rs     llama.cpp structured meeting notes
 ```
 
-The Rust core does all heavy work; the React layer is a thin editor/viewer.
-Blocking, CPU/GPU-heavy work (model load, transcription) runs on
-`tokio::task::spawn_blocking` so IPC and UI stay responsive.
+The Rust core does all heavy work and owns persistence; the React layer is a
+two-pane shell — a meetings list plus the active meeting's workspace. Blocking,
+CPU/GPU-heavy work (model load,
+transcription, diarization, note generation) runs on `tokio::task::spawn_blocking`
+so IPC and the UI stay responsive. Long operations report progress and are
+cancellable via Tauri events.
+
+## Meeting Model & Persistence (`store.rs`)
+
+The library is a local **SQLite** database (via `rusqlite`, reusing VoicePilot's
+patterns). A **meeting** is one transcription of one source file. Meetings
+**reference the original file path** — audio is not copied — so a meeting whose
+source has moved or been deleted is readable but cannot be re-transcribed (a
+defined "source missing" state).
+
+Entities (indicative):
+
+| Entity | Key fields |
+|---|---|
+| `meetings` | id, title, source_path, source_name, created_at, duration_ms, language, status |
+| `segments` | id, meeting_id, ordinal, start_ms, end_ms, text, speaker_id (M2) |
+| `notes` | meeting_id, summary, decisions, action_items, open_questions, participants (M3) |
+
+Edits (segment text, speaker labels, notes) are **auto-saved**: each edit
+persists to the DB immediately; there is no explicit save state. Export is a
+separate, explicit write to an external file.
 
 ## Audio Ingestion (`audio.rs`)
 
-Any input — audio or video — is normalized through **one** path: ffmpeg is
-invoked as a subprocess to produce a temporary 16 kHz mono WAV
-(`-vn -ac 1 -ar 16000`), which is then decoded with `hound` into f32 samples in
-[-1, 1]. ffmpeg extracts audio from video and resamples audio identically, so no
-branch on file type is needed. The temporary WAV is deleted after decoding.
-
-ffmpeg is a required external dependency (system binary on PATH for M1; a bundled
-sidecar is a later hardening step).
+Any input — audio or video — is normalized through **one** path: ffmpeg produces
+a temporary 16 kHz mono WAV (`-vn -ac 1 -ar 16000`), decoded with `hound` into
+f32 samples. ffmpeg extracts audio from video and resamples audio identically, so
+no branch on file type is needed. The temporary WAV is deleted after decoding.
+ffmpeg is a required external dependency (system binary on PATH for now).
 
 ## Transcription (`transcribe.rs`)
 
 whisper-rs with the `metal` feature; the context is created once and cached in
-`AppState` (lazy load on first transcription). Decoding is **full-file** with
-`SamplingStrategy::BeamSearch { beam_size: 5 }`, temperature fallback, and
-`language = "ru"` by default. Output is a list of `Segment { start_ms, end_ms,
-text }` (whisper timestamps are centiseconds → milliseconds). No VAD, no
-streaming, no real-time constraint — accuracy is the only objective.
+`AppState`. Decoding is **full-file** with beam search. **Language** defaults to
+Russian and accepts an explicit language or **auto-detect**. Whisper's progress
+callback drives a progress event; a cancel flag checked in the callback aborts a
+run. Output is timestamped `Segment`s persisted to the meeting.
 
-For M1 the model is the `large-v3-turbo` artifact already managed on disk;
-override with `MFUPILOT_MODEL_PATH`. WhisperPilot will manage its own model
-catalog in a later milestone.
+The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
++ merge** (M2, `diarize.rs`) which runs automatically before the meeting is
+marked finished. Progress and Stop span both phases; if diarization is
+unavailable or fails, the run still finishes with plain (speaker-less) segments.
+Re-running Transcribe on a meeting that already has a transcript replaces it (and
+any notes) after a confirmation.
 
-## Diarization (M2, `diarize.rs`) — planned
+For now the model is the `large-v3-turbo` artifact on disk (override via
+`MFUPILOT_MODEL_PATH`); own model management is deferred.
 
-sherpa-onnx speaker segmentation + embedding models produce speaker turns
-(time ranges labelled by cluster). Turns are merged onto transcription segments
-by time overlap to attribute each segment to a speaker. Labels are generic
-("Спикер 1/2/…") and user-editable. Speaker count may be provided or
-auto-detected.
+## Speaker Diarization (M2, `diarize.rs`) — planned
 
-## Summarization (M3, `summarize.rs`) — planned
+sherpa-onnx segmentation + embedding models produce speaker turns, merged onto
+segments by time overlap to set each segment's `speaker_id`. Speaker count is
+auto-detected with an optional override. Labels are generic ("Спикер N") and
+user-renamed; renames persist on the meeting. The transcript renders as a
+per-speaker chat of colored bubbles (10 shades). Reassigning or merging speakers
+is out of scope for M2.
 
-llama.cpp running a quantized Qwen2.5-Instruct model on Metal produces a short
-summary / MFU from the finalized transcript. Fully local; editable and copyable
-in the UI.
+## Structured Notes (M3, `notes.rs`) — planned
+
+llama.cpp running quantized Qwen2.5-Instruct on Metal generates **structured
+meeting notes** in Russian from the transcript: summary, key decisions, action
+items (owner + task), open questions, participants. Generation is **manual**
+(the **Create MFU** button, enabled only after transcription finishes) and
+**UI-blocking**; the result is editable (auto-saved), copyable, and clearable.
+
+## Export (`export.rs`)
+
+A meeting renders to **Markdown** or **plain text** (transcript and/or notes),
+written to a user-chosen destination. Copy-to-clipboard reuses the same
+rendering (the header's meeting-label **copy** copies the transcript).
 
 ## IPC Contract
 
-| Command | Args | Returns | Milestone |
-|---|---|---|---|
-| `open_file_dialog` | — | `String?` (path) | M1 |
-| `transcribe_file` | `path`, `language?` | `TranscriptResult { file_name, segments }` | M1 |
-| `save_text_dialog` | `content`, `default_name?` | `String?` (written path) | M1 |
-| `diarize_file` | `path` | speaker turns | M2 |
-| `summarize` | `transcript` | summary text | M3 |
+| Command | Purpose | Milestone |
+|---|---|---|
+| `open_file_dialog` | Pick a source audio/video file | M1 |
+| `create_meeting()` | Create an empty meeting; returns its id | M2 |
+| `attach_file(meeting, path)` | Attach the source file to a meeting | M2 |
+| `create_transcription(meeting, model, language)` | Transcribe the attached file into the meeting; emits progress | M2 |
+| `cancel_transcription(meeting)` | Abort a running transcription (Stop) | M2 |
+| `list_meetings()` | Meetings list (summaries) | M2 |
+| `open_meeting(id)` | Full meeting (segments, notes, meta) | M2 |
+| `rename_meeting(id, title)` / `delete_meeting(id)` | Library management | M2 |
+| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)` | Auto-saved edits | M2/M3 |
+| `export_meeting(id, format, target)` | Write Markdown / plain text | M2 |
+| `list_models()` | Available Whisper models for the switcher | M2 |
+| `diarize_meeting(id)` | Produce + merge speaker turns | M2 |
+| `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
 
-`Segment` is the shared transcript unit: `{ start_ms: u64, end_ms: u64, text:
-String }`. Errors are `AppError` serialized to a human-readable string.
+Events: `transcription_progress { id, fraction }`, `transcription_done`,
+`transcription_error`. `Segment` is the shared transcript unit
+(`{ id, start_ms, end_ms, text, speaker_id? }`). Errors are `AppError` serialized
+to a human-readable string.
 
 ## Security And Privacy
 
-Fully local. No network calls, no telemetry. The only file writes are the
-temporary ffmpeg WAV (deleted after use) and the user-chosen save destination.
-No `.env` or secret handling.
+Fully local. No network calls, no telemetry. File writes: the temporary ffmpeg
+WAV (deleted after use), the SQLite library under the app support directory, and
+user-chosen export destinations. No `.env` or secret handling.
 
 ## Build Notes
 
 - Tauri v2 + React 19 + TypeScript; Vite dev server on port 1420.
-- `whisper-rs = { features = ["metal"] }` — compiles whisper.cpp with Metal;
-  the shader library is embedded, so nothing extra ships alongside.
-- ffmpeg must be on PATH (`which ffmpeg`).
+- `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
+- ffmpeg on PATH. M2 adds sherpa-onnx; M3 adds llama.cpp — both Metal, local.
 - Run: `npm install`, then `npm run tauri:dev`.
 
 ## Ownership
 
 | Concern | Owner |
 |---|---|
-| Command registration, app state, model cache | `src-tauri/src/lib.rs` |
+| Command/event registration, app state, model cache | `src-tauri/src/lib.rs` |
 | Audio normalize + decode | `src-tauri/src/audio.rs` |
-| Whisper transcription | `src-tauri/src/transcribe.rs` |
+| Whisper transcription + progress | `src-tauri/src/transcribe.rs` |
+| SQLite meeting library | `src-tauri/src/store.rs` |
+| Export rendering | `src-tauri/src/export.rs` |
 | Error type | `src-tauri/src/error.rs` |
-| UI, editing, save/copy | `src/App.tsx`, `src/ipc.ts` |
+| Two-pane shell: meetings list, meeting workspace, editors | `src/` |

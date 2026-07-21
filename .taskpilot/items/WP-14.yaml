@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-14
+title: Library management UI
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T10:27:56Z'
+updated_at: '2026-07-21T11:04:19Z'
+parent_id: WP-11
+description: List, open, rename (modal, <=120 chars, non-empty), delete (confirmed) meetings; handle the source-file-missing state by disabling re-transcribe with an explanatory note.
+created_by: M2 planning

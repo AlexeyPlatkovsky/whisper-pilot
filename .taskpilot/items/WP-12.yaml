@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-12
+title: Persistence & meeting model (SQLite)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T10:27:55Z'
+updated_at: '2026-07-21T11:04:18Z'
+parent_id: WP-11
+description: SQLite store (rusqlite, bundled) for meetings/segments/notes with CRUD, plus auto-save wiring so transcript/label/notes edits persist immediately. Reference original source path; no audio copy.
+created_by: M2 planning

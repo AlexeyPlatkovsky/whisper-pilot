@@ -10,7 +10,14 @@ obvious from general software knowledge.
 | **Speaker turn** | A contiguous time range attributed to one speaker, produced by diarization: `{ start_ms, end_ms, speaker }`. |
 | **Segment** | A transcript unit produced by Whisper: `{ start_ms, end_ms, text }`. In M2 it also carries a speaker id. |
 | **Merge (turn↔segment)** | Assigning each transcription segment a speaker by time-overlap with diarization turns. |
-| **MFU** | The short meeting summary / follow-up the app generates — decisions and action items distilled from the transcript. |
+| **Meeting notes / MFU** | The structured follow-up the app generates from the transcript: summary, key decisions, action items, open questions, participants (ADR-009). |
+| **Action item** | A follow-up task in the meeting notes, carrying an owner and a task description. |
+| **Meeting** | One transcription of one source file — the core unit stored in the library and shown per row in the left list: metadata + attached file + segments + MFU notes. (UI, data, and IPC all use "meeting".) |
+| **Library** | The persisted local collection of meetings (SQLite), browsable and reopenable (ADR-008). |
+| **MFU section** | The panel below the transcript holding the generated meeting notes; empty by default (15% height) with a Create MFU button, populated at 30% with edit/copy/clear. |
+| **Attached file** | The single source audio/video file bound to a meeting before transcription; shown in the status bar with an × to detach (MVP: one per meeting). |
+| **Auto-save** | Edits (transcript, speaker labels, notes) persist to the library immediately, with no explicit save action. |
+| **Source-missing** | State of a meeting whose original file has moved or been deleted: readable/editable, but re-transcribe is disabled. |
 | **Normalization (audio)** | Converting any input (audio or video) to 16 kHz mono PCM via ffmpeg, the single form the models consume. |
 | **Whisper** | OpenAI's open speech-recognition model family; WhisperPilot runs a quantized `large-v3-turbo` locally via whisper.cpp. |
 | **large-v3-turbo** | A multilingual Whisper model with a reduced decoder — fast, strong on Russian; used for transcription. |

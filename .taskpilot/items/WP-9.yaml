@@ -1,11 +1,11 @@
 schema_version: 1
 id: WP-9
-title: Per-speaker chat rendering
+title: Per-speaker chat rendering — colored bubbles (10 shades)
 priority: normal
 type: task
 status: backlog
 created_at: '2026-07-21T09:31:33Z'
-updated_at: '2026-07-21T09:31:33Z'
+updated_at: '2026-07-21T11:52:36Z'
 parent_id: WP-4
-description: Render segments as chat bubbles grouped and labelled by speaker, preserving edit-in-place of segment text. Distinct visual treatment per speaker; keep timestamps.
+description: Render segments as colored chat bubbles (10 predefined shades) grouped and labelled by speaker, preserving edit-in-place of segment text and timestamps. Never rely on color alone — each bubble carries the speaker name as text.
 created_by: M2 planning

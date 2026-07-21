@@ -14,8 +14,9 @@ product focus and default.
 ## Decision
 
 Make **Russian the primary language and default** (`language = "ru"`, UI copy in
-Russian). Add English as a follow-on after M1–M3 are stable, via
-language/model selection — a small change that does not alter the pipeline shape.
+Russian), with an explicit per-transcription **auto-detect** option that lets
+Whisper choose. Add first-class English as a follow-on after M1–M3 are stable —
+a small change that does not alter the pipeline shape.
 
 ## Consequences
 
@@ -30,5 +31,6 @@ language/model selection — a small change that does not alter the pipeline sha
 
 - **Bilingual from day one** — dilutes validation focus for no near-term benefit;
   the model supports it whenever needed.
-- **Auto-detect language** — convenient later, but an explicit default is more
-  predictable for the primary use case and avoids misdetection on short clips.
+- **Auto-detect as the only mode** — convenient but misdetects on short/quiet
+  clips; offered as an option alongside the Russian default rather than as the
+  default itself.

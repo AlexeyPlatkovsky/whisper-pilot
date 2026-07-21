@@ -1,0 +1,11 @@
+schema_version: 1
+id: WP-15
+title: Export (Markdown / plain text)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-07-21T10:27:57Z'
+updated_at: '2026-07-21T11:04:19Z'
+parent_id: WP-11
+description: Render a meeting (transcript and/or notes) to Markdown or plain text to a chosen destination; the header label copy places the transcript on the clipboard using the same rendering.
+created_by: M2 planning

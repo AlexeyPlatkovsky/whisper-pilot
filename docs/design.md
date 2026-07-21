@@ -1,85 +1,209 @@
 # Design
 
-Owns the product/UX design: flows, screens, and states. Technical structure is
-in `architecture.md`; there is no separate design-system doc yet, so token and
-style detail lives here until it grows enough to warrant `design-book.md`.
+Owns the product/UX design: the workspace shell, screens, flows, and states.
+Technical structure is in `architecture.md`. UI design detail lives here (no
+separate design-book yet). The unit of work is a **Meeting** (one transcription
+of one source file; see `glossary.md`).
 
 ## UX Principles
 
-- **One obvious action.** The empty state has a single primary action: add a
-  file. Nothing else competes for attention until there is a transcript.
-- **Progress is visible.** Transcription takes minutes; the UI always shows that
-  work is happening and on which file.
-- **Edit in place.** The transcript and summary are edited where they are read,
-  not in a separate mode.
-- **Russian-first surface.** UI copy is Russian by default, matching the primary
-  transcription language.
+- **Workspace, not a wizard.** The app is one persistent two-pane shell: a
+  **Meetings** list on the left, the active meeting's workspace on the right.
+  Past work is always in reach; nothing is modal except confirmations and rename.
+- **One meeting in focus.** The right pane always shows exactly one meeting:
+  header, status bar, transcript, then MFU beneath it.
+- **Explicit, honest actions.** Transcription and MFU generation are **manual**
+  (a button each) and long-running. While one runs, the UI is blocked except the
+  control that stops/tracks it, and progress is always shown — a bar with real
+  progress, or a spinner with a live timer when real progress isn't available.
+- **Edit in place, saved automatically.** Transcript segments and MFU text are
+  edited where they are read and persist as you go — no save button, no lost work.
+- **Russian-first surface.** UI copy and generated notes are Russian by default.
+
+## Layout — the two-pane shell
+
+```
+┌───────────────────────────────────────────────────────────────────────┐
+│ ◎◎◎  [⇤ panel]  [logo]                                    (title bar)   │  ← header row 1 (macOS traffic lights, then fixed controls)
+├───────────────┬───────────────────────────────────────────────────────┤
+│  Meetings      │  ⟨Meeting title⟩  [edit][copy][delete]   [model ▾]     │  ← header row 2 (meeting header)
+│  ───────────   │  [lang ▾]                     [Transcribe][Stop][MFU]  │
+│  [+ New]       ├───────────────────────────────────────────────────────┤
+│                │  status bar: waiting / files / transcribing / done …   │  ← status bar
+│  • Meeting A   ├───────────────────────────────────────────────────────┤
+│  • Meeting B   │                                                        │
+│  • Meeting C   │   transcript — one colored bubble per speaker (M2)     │  ← center (≈70–85% height)
+│    …           │                                                        │
+│                │                                                        │
+│                ├───────────────────────────────────────────────────────┤
+│                │   MFU section (15% empty · 30% when populated)         │  ← MFU (bottom of center)
+└───────────────┴───────────────────────────────────────────────────────┘
+```
+
+### Left pane — Meetings list
+
+- Mirrors VoicePilot's Sessions list.
+- **`+ New meeting`** at the top creates an empty meeting and selects it (the
+  entry point for a new transcription — you then attach a file and press
+  Transcribe).
+- Each row shows the meeting title (and secondary meta: source name / date).
+  Click to open in the right pane.
+- Per-row actions: **rename** and **delete**.
+  - **Rename** — a modal with an input, **Save** and **Cancel**. Input max **120
+    characters**; empty values are rejected (Save disabled). Pre-filled with the
+    current title.
+  - **Delete** — with a **confirmation** dialog.
+
+### Header controls (fixed, position never changes)
+
+Row 1 — global, laid out left-to-right immediately after the macOS window
+controls (close / minimize / zoom):
+
+- **Panel toggle** — hide/show the left pane. Sits directly after the traffic
+  lights; its position is fixed and it reflects toggled/untoggled state. The
+  collapsed/expanded choice **persists** across restarts.
+- **App logo** — directly after the toggle (VoicePilot logo for now). Fixed
+  position; purely decorative.
+
+Row 2 — the active meeting's header:
+
+- **Meeting label** with three action buttons: **edit** (opens the rename
+  modal), **copy** (copies the full transcript to the clipboard), **delete**
+  (with confirmation — same as the list action).
+- **Model switcher** — dropdown of available Whisper models; default **large**.
+  If **no model is available**, the switcher shows nothing and the status bar
+  shows a warning.
+- **Language selector** — Russian (default) / auto-detect; applies to the next
+  Transcribe run.
+- **Transcribe** — icon button with hover text. **Disabled** when no file is
+  attached.
+- **Stop transcribe** — icon button with hover text. **Disabled by default**;
+  enabled only while a transcription is running.
+- **Create MFU** — icon button with hover text. **Disabled** until a
+  transcription has **finished** (mirrors the button inside the MFU section).
+
+### Status bar (directly under the header)
+
+Single line reflecting the meeting's current state:
+
+| State | Shows |
+| --- | --- |
+| **Waiting for file** | prompt to attach a file; only relevant controls enabled |
+| **File attached** | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting |
+| **Transcribing** | progress **bar** across the transcribing → **identifying speakers** phases if real progress is available, else a **spinner + live timer** (updates every second). **All UI blocked except Stop** |
+| **Finished** | the final transcription is ready; Create MFU becomes enabled |
+| **Creating MFU** | spinner + live timer; **the whole UI is blocked** (no cancel for MFU) |
+| **No model** | warning that no Whisper model is available |
+
+### Center — transcript
+
+- Fills the upper region of the right pane (≈70–85% height, complementing the
+  MFU section below).
+- **M2 (diarization included):** each speaker's turns render in a **colored
+  bubble** — **10 predefined shades** cycled across speakers for the MVP —
+  grouped and labelled by speaker (Спикер 1, Спикер 2, …).
+- Each segment is an auto-sizing editable field prefixed by its timestamp
+  (`m:ss`); edits auto-save. Bubble grouping/coloring is F002; the editable
+  segment surface is F004.
+
+### MFU section (bottom of the right pane)
+
+- **Empty (default):** occupies **15%** of the center height. Shows a **Create
+  MFU** button plus a small **"Create MFU"** label beneath it (the same action as
+  the header button; disabled until transcription has finished).
+- **Populated:** occupies **30%** of the center height. Shows the MFU **text**
+  only, with three icon actions (hover text) in the **top-right corner**:
+  **edit**, **copy**, **clear**.
+- MFU text is editable in place and auto-saves; **copy** places it on the
+  clipboard; **clear** empties the section (returns to the 15% empty state).
 
 ## User Flows
 
-### Transcribe a file (M1)
+### Create & transcribe a meeting (M2)
 
-1. User clicks **Добавить файл** (Add file).
-2. Native file picker opens, filtered to audio/video formats.
-3. On selection, the app shows a transcribing state naming the file.
-4. When done, the transcript appears as timestamped, editable segments.
-5. User edits any segment text in place.
-6. User clicks **Сохранить** (Save) and chooses a destination `.txt`.
+1. Click **+ New meeting** → an empty meeting is created and selected.
+2. Attach an audio/video file → it appears in the status bar with an **×**. The
+   meeting's title defaults to the file name (renamable any time).
+3. (Optional) pick the **model** and **language**.
+4. Press **Transcribe** → the UI blocks (except **Stop**); the status bar shows a
+   progress bar (or spinner+timer) across two phases: **transcribing**, then
+   **identifying speakers** (diarization runs automatically — there is no separate
+   diarize action).
+5. On completion the transcript appears in the center as **colored per-speaker
+   bubbles**; status bar shows **Finished**; **Create MFU** enables. Everything
+   auto-saves to the library.
+   - **Stop** during a run cancels it (transcription and diarization together); no
+     partial transcript is kept.
+   - If diarization is unavailable, the transcript still appears as plain segments
+     with a note; the run does not fail.
+   - Pressing **Transcribe** again on a meeting that already has a transcript
+     **warns** it will replace the transcript and any MFU, and proceeds only on
+     confirmation.
+
+### Reopen / manage a meeting (M2)
+
+1. The left list holds every meeting; click one to open it.
+2. **Rename** (modal, ≤120 chars, non-empty) or **delete** (confirmation) from
+   the list row or the header.
+3. If the source file is missing, the meeting still opens for reading/editing;
+   **Transcribe** is disabled with a "source file missing" note.
 
 ### Review by speaker (M2)
 
-1. After transcription, segments are grouped and labelled by speaker
-   (Спикер 1, Спикер 2, …) as a chat.
-2. User renames a speaker once; the label updates for all of that speaker's
-   segments.
-3. User edits and saves; the saved file carries the speaker labels.
+1. Segments render grouped into per-speaker colored bubbles (Спикер 1, Спикер 2,
+   …), cycling the 10 shades.
+2. Renaming a speaker updates the label everywhere and auto-saves. (Reassigning a
+   misattributed segment is not yet supported — documented limitation.)
 
-### Summarize (M3)
+### Create MFU (M3)
 
-1. Below the transcript, a **summary / MFU** section generates automatically (or
-   on demand) from the finalized transcript.
-2. User edits the summary in place.
-3. User clicks copy to place the summary on the clipboard.
+1. After **Finished**, press **Create MFU** (header or MFU section).
+2. The whole UI blocks; the status bar shows a spinner + live timer.
+3. On completion the MFU text renders in the section (grows to 30%), editable,
+   copyable, clearable.
 
-## Key Screens / Views
+### Export (M2)
 
-| Screen / View | Purpose | Entry point |
-| --- | --- | --- |
-| Empty state | Prompt to add the first file | App launch with no transcript |
-| Transcribing state | Show that a named file is being processed | After a file is chosen |
-| Transcript view | Read/edit timestamped (M2: per-speaker) segments; save | After transcription completes |
-| Summary section (M3) | Read/edit/copy the generated summary | Below the transcript view |
+1. From a meeting, **export** → Markdown or plain text; pick a destination. The
+   header **copy** action copies the transcript to the clipboard.
 
 ## States
 
-For the transcript view and its actions:
-
-- **Empty** — centered prompt: "Добавьте аудио или видео файл, чтобы получить
-  транскрипцию." Only the Add file action is enabled; Save is disabled.
-- **Loading** — a banner: "Транскрибирую <файл>… это может занять несколько
-  минут." Add file and Save are disabled while busy. (Roadmap: replace the
-  indeterminate banner with real progress via Whisper's progress callback.)
-- **Error** — a red banner carrying the `AppError` message (e.g. ffmpeg missing,
-  model not found). The prior transcript, if any, is preserved; the user can
-  retry with another file.
-- **Populated** — the file name, then the list of segments; Save enabled.
+- **No meeting selected** — right pane empty with a prompt; only **+ New meeting**
+  is meaningful.
+- **Empty meeting, waiting for file** — status bar prompts to attach; Transcribe
+  disabled.
+- **File attached** — status bar lists the file with ×; Transcribe enabled.
+- **Transcribing** — UI blocked except Stop; progress bar or spinner+timer.
+- **Transcription error** — a banner with the `AppError` message (ffmpeg missing,
+  model missing); the meeting is otherwise unchanged.
+- **Finished** — transcript populated; Create MFU enabled.
+- **Creating MFU** — whole UI blocked; spinner+timer; no cancel.
+- **MFU populated** — MFU section at 30% with edit/copy/clear.
+- **Source file missing** — meeting opens; Transcribe disabled with an
+  explanatory note; transcript/MFU remain editable.
+- **No model available** — model switcher hidden; status-bar warning.
 
 ## Interaction Patterns
 
-- **Segment editing** — each segment is an auto-sizing text field prefixed by its
-  timestamp (`m:ss`). Editing mutates in-memory state; Save serializes the
-  current text.
-- **Speaker rename (M2)** — inline rename on a speaker label; a single mapping
-  applies the new name everywhere that speaker appears.
-- **Copy (M3)** — one-click copy of the summary to the clipboard.
-- **Feedback** — long operations always surface a banner; failures are shown, not
-  swallowed.
+- **Segment editing** — each segment is an auto-sizing field prefixed by its
+  timestamp (`m:ss`); edits auto-save.
+- **Speaker bubbles (M2)** — 10 predefined shades cycled across speakers; a
+  speaker's inline rename applies everywhere for that speaker.
+- **MFU section** — edit in place (auto-saved); copy to clipboard; clear resets
+  to empty. Generation is manual and UI-blocking.
+- **Meeting rename** — modal, ≤120 chars, non-empty, Save/Cancel.
+- **Deletes** — both the list-row delete and the header delete confirm first.
+- **Blocking feedback** — a running Transcribe or Create MFU blocks the UI (only
+  Stop stays live during Transcribe); progress/spinner is always visible;
+  failures are shown, not swallowed.
 
 ## Accessibility
 
-- Full keyboard operability: the primary actions are real buttons; editable
-  segments are standard text fields in reading order.
-- Sufficient contrast in both light and dark schemes (the UI follows the OS
-  color scheme).
-- Speaker distinction (M2) must not rely on color alone — labels carry the
+- Full keyboard operability; editable regions are standard fields in reading
+  order; the rename modal traps focus and closes on Escape (= Cancel).
+- Icon buttons carry hover text and accessible labels (panel toggle, transcribe,
+  stop, create MFU, edit/copy/delete/clear).
+- Adequate contrast in light and dark schemes (follows the OS color scheme).
+- Speaker distinction (M2) never relies on color alone — each bubble carries the
   speaker name as text.
