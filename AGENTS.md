@@ -121,11 +121,21 @@ evidence.
 
 ## Instruction System
 
-The ported instruction system is a curated engineering core. Its capabilities
-live under `.claude/skills/`, `.claude/agents/`, `.claude/pipelines/`, and
-`.claude/conventions/`; `.claude/skills/task-routing/SKILL.md` is the authoritative
-router and lists every available route. Material instruction-system changes are
-themselves non-trivial and route through `task-routing`.
+The instruction system is a curated engineering core plus the Spec-Driven
+Development (SDD) tooling. Its capabilities live under `.claude/skills/`,
+`.claude/agents/`, `.claude/pipelines/`, `.claude/conventions/`, and
+`.claude/sdd/` (doc templates); `.claude/skills/task-routing/SKILL.md` is the
+authoritative router and lists every available route. Material
+instruction-system changes are themselves non-trivial and route through
+`task-routing`.
+
+## Spec-Driven Development
+
+The project adopts the **Standard** SDD tier. The authoritative spec lives in
+`docs/` and is mapped by `docs/INDEX.md`. The `.claude/conventions/sdd-doc-set.md`
+convention defines document ownership, tiers, the feature-folder schema, the ID
+scheme, and the traceability spine. Keep `docs/INDEX.md` in sync after any
+doc/feature change via `.claude/skills/sdd-index-sync/SKILL.md`.
 
 ---
 
@@ -133,8 +143,14 @@ themselves non-trivial and route through `task-routing`.
 
 | Source | Purpose |
 |---|---|
-| `docs/idea.md` | Product specification — goal, milestones, engines, boundaries |
+| `docs/INDEX.md` | Live map of the SDD docs tree, feature registry, and decision log |
+| `docs/idea.md` | Problem, users, value, scope, non-goals, principles, success signals |
 | `docs/architecture.md` | Technical architecture — layer map, pipeline, IPC contract, models, build |
+| `docs/design.md` | Product/UX design — flows, screens, states |
+| `docs/testing.md` | Test strategy, levels, quality gates |
+| `docs/roadmap.md` | Milestones M1–M3, sequencing, non-goals over time |
+| `docs/decisions/` | ADRs — rationale for the key decisions |
+| `docs/features/F*/` | Per-feature requirements, tasks (TaskPilot-linked), scenarios |
 | `README.md` | Developer guide — prerequisites, build/dev/test commands, layout |
 | `src-tauri/src/lib.rs` | Tauri core — command registration, app state, module map |
 | `src-tauri/src/main.rs` | Tauri/Rust entry point |

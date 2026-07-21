@@ -1,69 +1,73 @@
-# WhisperPilot Product Specification
+# Idea
 
-## Product Goal
+## Problem
 
-WhisperPilot is a macOS desktop application that transcribes **local audio and
-video files** into accurate, **speaker-attributed** transcripts and generates a
-short summary. It is **offline and local-first**: transcription, speaker
-separation, and summarization all run on-device. There is **no live capture and
-no cloud**.
+People with recordings of meetings, calls, and interviews — often in Russian —
+need an accurate written record they can read, correct, and summarize. Live
+transcribers fight a real-time budget and produce fragmented, low-accuracy text.
+Cloud transcription raises privacy concerns for internal meetings and requires
+connectivity. There is no simple, offline, on-device tool that turns a local
+audio or video file into an accurate, speaker-attributed transcript plus a short
+summary.
 
-The primary transcription language is **Russian**; English is added afterward.
-The purpose is accuracy and precision over speed — because processing is offline
-and batch, the app can use the largest models and full-file context with no
-real-time constraint.
+## Users
 
-Target: Apple Silicon Macs running macOS 13 or later.
+- **Meeting participant / organizer** — has a recording of a call and needs an
+  accurate transcript and a short summary of decisions and action items.
+- **Analyst / researcher** — transcribes interviews or discussions and needs the
+  text attributed by speaker so it can be quoted and reviewed.
+- **Russian-speaking professional** — needs high-quality Russian transcription
+  that cloud English-first tools handle poorly.
 
-## Core Experience
+## Value Proposition
 
-1. Click **Add file** and choose an audio or video file from the system.
-2. If the file is video, its audio is extracted automatically; audio files are
-   used as-is.
-3. The file is transcribed into a timestamped transcript.
-4. The transcript is shown as an **editable, per-speaker chat**; edits can be
-   saved to a file.
-5. A short **summary / MFU** is generated in a separate section below the
-   transcript, editable and copyable to the clipboard.
+Drop in an audio or video file and get back an accurate, speaker-labelled,
+editable transcript and a short summary — entirely on-device, no cloud, with
+accuracy prioritized over speed because processing is offline and batch.
 
-WhisperPilot never streams or captures live audio. It processes only
-user-selected files.
+## Scope
 
-## Delivery Milestones
+### In scope
 
-Delivered as independently runnable milestones. A later milestone may extend or
-replace earlier behavior.
+- Transcribing local **audio and video** files (audio extracted from video).
+- **Offline, on-device** transcription, speaker separation, and summarization.
+- **Russian** as the primary language; English added afterward.
+- A **speaker-attributed**, editable transcript that can be saved to a file.
+- A short **summary / MFU** generated locally, editable and copyable.
 
-| Milestone | Outcome | Status |
-|---|---|---|
-| M1 | Add file → extract audio → accurate Russian transcript → editable → save | **Done** |
-| M2 | Speaker separation ("by roles") — per-speaker chat with editable labels | Planned |
-| M3 | Local-LLM summary / MFU section — editable, copy to clipboard | Planned |
+### Out of scope
 
-## Engines
+- Live / microphone / system-audio capture (that is a different product).
+- Cloud transcription or summarization.
+- Translation between languages.
+- Real-name speaker identification (voice enrollment); speakers are generic
+  labels the user renames.
+- Multi-user collaboration, public distribution, notarization.
 
-- **Transcription:** Whisper `large-v3-turbo` (multilingual, quantized) via
-  whisper-rs on Metal. Full-file, beam search.
-- **Audio ingestion:** ffmpeg (extracts audio from video and resamples audio
-  identically to 16 kHz mono).
-- **Diarization (M2):** sherpa-onnx speaker segmentation + embedding models,
-  fully local.
-- **Summarization (M3):** llama.cpp running Qwen2.5-Instruct on Metal, fully
-  local; strong Russian summarization.
+## Non-Goals
 
-## Boundaries
+- WhisperPilot will not become a real-time transcriber. Accuracy from full-file,
+  batch processing is the whole point.
+- It will not depend on any network service for its core function.
 
-The product excludes: live/microphone/system-audio capture, cloud transcription,
-translation, real-time output, multi-user/collaboration, and public distribution
-or notarization. English transcription follows Russian. Real-name speaker
-identification (voice enrollment) is out of scope; speakers are generic labels
-the user renames.
+## Principles
 
-## Acceptance Intent
+- **Accuracy over speed.** Offline batch means the largest models and full-file
+  context are affordable; use them.
+- **Local-first.** No audio, transcript, or summary leaves the device.
+- **Editable truth.** Machine output is a starting point; every surface
+  (transcript, labels, summary) is user-editable before it is trusted.
+- **One pipeline, many inputs.** Normalize audio and video through a single
+  ingestion path rather than special-casing formats.
+
+## Success Signals
 
 - Russian transcription of clear meeting audio reads accurately and in
-  well-formed sentences, materially better than a live/streaming transcriber.
-- Speaker turns are attributed consistently within a file (M2).
-- The summary captures decisions and action items faithfully and is editable
-  before use (M3).
-- Rust and React automated tests, build, lint, and format pass.
+  well-formed sentences — materially better than a live/streaming transcriber on
+  the same audio.
+- Within a file, speaker turns are attributed consistently to distinct speakers
+  (M2).
+- The generated summary captures the meeting's decisions and action items
+  faithfully enough that a user edits rather than rewrites it (M3).
+- A user can go from "add file" to a saved, corrected transcript without leaving
+  the app or the device.

@@ -1,0 +1,28 @@
+# Roadmap
+
+<!-- Owns: phases, milestones, release stance, sequencing, non-goals over time.
+     Per-feature task breakdown lives in features/F<NNN>/tasks.md; work-item status lives
+     in TaskPilot (WP-<n>). WhisperPilot delivers through milestones (M1, M2, M3)
+     defined in docs/roadmap.md. -->
+
+## Release Stance
+
+<!-- Versioning approach and what a release means for this project. -->
+
+## Phases
+
+### <Phase name / version>
+
+- **Goal:** <what this phase delivers>
+- **Features:** <links to features/F<NNN>_<short-name>/>
+- **Milestone / exit criteria:** <how we know the phase is done>
+
+## Sequencing & Dependencies
+
+<!-- Order constraints between phases or features. -->
+
+## Non-Goals (Over Time)
+
+<!-- Things deliberately deferred or excluded from the current horizon. -->
+
+- <deferred item> — <until when / why>

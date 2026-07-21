@@ -86,6 +86,15 @@ Apply this precedence before using the table:
 | Validate completed work with build, test, or manual checks | `.claude/agents/test-runner.md` |
 | Resolve an open design decision with meaningful trade-offs | `.claude/skills/brainstorm/SKILL.md` |
 | Create or update non-instruction reference documentation | Direct execution |
+| Author or update one SDD main or extension document (`docs/idea.md`, `architecture.md`, `design.md`, `testing.md`, `roadmap.md`, an ADR, or an extension doc) | `.claude/skills/sdd-doc-author/SKILL.md` |
+| Scaffold or update one SDD feature folder | `.claude/skills/sdd-feature-author/SKILL.md` |
+| Rebuild `docs/INDEX.md` after an SDD change | `.claude/skills/sdd-index-sync/SKILL.md` |
+| Adopt or expand an SDD docs tree | `.claude/pipelines/sdd-adopt.md` |
+| Bootstrap an SDD docs tree from an empty root | `.claude/pipelines/sdd-bootstrap.md` |
+| Assess gaps before introducing or expanding SDD | `.claude/agents/sdd-gap-analyzer.md` |
+| Review an SDD docs tree for completeness and traceability | `.claude/agents/sdd-spec-reviewer.md` |
+
+The SDD-document route applies only when `docs/INDEX.md` exists and lists the document, or the user explicitly frames the request as SDD / spec-driven-development work.
 
 If the task does not match any route:
 
