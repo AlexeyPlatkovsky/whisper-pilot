@@ -292,8 +292,16 @@ body {
   gap: var(--wp-space-sm);
 }
 
+.wp-info-left {
+  gap: 8px;
+}
+
 .wp-info-right {
   gap: var(--wp-space-lg);
+}
+
+.wp-info-add:hover:not(:disabled) {
+  color: var(--accent);
 }
 
 .wp-info-label {

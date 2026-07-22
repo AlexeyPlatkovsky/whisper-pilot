@@ -282,6 +282,16 @@ export function App() {
       <div className="wp-info-bar">
         <div className="wp-info-left">
           <span className="wp-info-label">Files:</span>
+          <button
+            type="button"
+            className="wp-icon-btn wp-info-add"
+            aria-label="Choose file"
+            title="Choose an audio or video file"
+            onClick={handleAddFile}
+            disabled={busy || transcriptionModelReady !== true}
+          >
+            <Icon name="folder" size={16} />
+          </button>
           {fileName ? (
             <span className="wp-file-chip">
               {fileName}
