@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
@@ -24,8 +24,10 @@ vi.mock("./ipc", () => ({
     segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
   })),
   createMeeting: vi.fn(),
+  deleteMeeting: vi.fn(),
   listMeetings: vi.fn(),
   openMeeting: vi.fn(),
+  renameMeeting: vi.fn(),
   saveTextDialog: vi.fn(async () => null),
   listTaskModels: vi.fn(),
   downloadModel: vi.fn(),
@@ -57,7 +59,9 @@ beforeEach(() => {
   vi.mocked(ipc.saveTextDialog).mockResolvedValue(null);
   vi.mocked(ipc.listMeetings).mockResolvedValue([]);
   vi.mocked(ipc.createMeeting).mockReset();
+  vi.mocked(ipc.deleteMeeting).mockReset();
   vi.mocked(ipc.openMeeting).mockReset();
+  vi.mocked(ipc.renameMeeting).mockReset();
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -440,7 +444,7 @@ describe("App — persisted meeting workspace", () => {
 
     await screen.findByRole("heading", { name: "Newest meeting" });
     await user.click(
-      screen.getByRole("button", { name: /Unavailable meeting/ }),
+      screen.getByRole("button", { name: /^Unavailable meeting 1\/1\/1970/ }),
     );
 
     expect(
@@ -473,6 +477,155 @@ describe("App — persisted meeting workspace", () => {
       screen.getByRole("heading", { name: "Newest meeting" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("disk full");
+  });
+});
+
+describe("App — persisted meeting controls", () => {
+  const ACTIVE_MEETING = {
+    id: 2,
+    title: "Quarterly planning",
+    created_at_ms: 2_000,
+    language: "ru",
+    status: "finished",
+    segments: [{ start_ms: 0, end_ms: 1_000, text: "Saved transcript" }],
+  };
+
+  function arrangeActiveMeeting() {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: ACTIVE_MEETING.id,
+        title: ACTIVE_MEETING.title,
+        created_at_ms: ACTIVE_MEETING.created_at_ms,
+        status: ACTIVE_MEETING.status,
+      },
+      {
+        id: 1,
+        title: "Older meeting",
+        created_at_ms: 1_000,
+        status: "finished",
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(ACTIVE_MEETING);
+  }
+
+  it("renames the active meeting from the header and updates the sidebar", async () => {
+    arrangeActiveMeeting();
+    vi.mocked(ipc.renameMeeting).mockResolvedValue({
+      ...ACTIVE_MEETING,
+      title: "Roadmap review",
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
+    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    const input = within(dialog).getByRole("textbox", {
+      name: "Meeting label",
+    });
+    await user.clear(input);
+    await user.type(input, "Roadmap review");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(ipc.renameMeeting).toHaveBeenCalledWith(2, "Roadmap review");
+    expect(
+      await screen.findByRole("heading", { name: "Roadmap review" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Roadmap review 1\/1\/1970/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("[EP + BVA] rejects blank and 121-character titles without writing", async () => {
+    arrangeActiveMeeting();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
+    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    const input = within(dialog).getByRole("textbox", {
+      name: "Meeting label",
+    });
+    await user.clear(input);
+    await user.type(input, "   ");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Meeting label is required",
+    );
+
+    await user.clear(input);
+    await user.type(input, "a".repeat(121));
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Meeting label must be 120 characters or fewer",
+    );
+    expect(ipc.renameMeeting).not.toHaveBeenCalled();
+  });
+
+  it("opens the same rename and delete dialogs from a sidebar row", async () => {
+    arrangeActiveMeeting();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(
+      screen.getByRole("button", { name: "Rename Older meeting" }),
+    );
+    expect(
+      within(screen.getByRole("dialog", { name: "Rename meeting" })).getByRole(
+        "textbox",
+        { name: "Meeting label" },
+      ),
+    ).toHaveValue("Older meeting");
+    await user.keyboard("{Escape}");
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete Older meeting" }),
+    );
+    expect(
+      screen.getByRole("alertdialog", { name: "Delete Older meeting" }),
+    ).toBeInTheDocument();
+  });
+
+  it("requires confirmation before deleting the active meeting and opens the next newest one", async () => {
+    arrangeActiveMeeting();
+    const olderMeeting = {
+      ...ACTIVE_MEETING,
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+    };
+    vi.mocked(ipc.openMeeting)
+      .mockResolvedValueOnce(ACTIVE_MEETING)
+      .mockResolvedValueOnce(olderMeeting);
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    const dialog = screen.getByRole("alertdialog", {
+      name: `Delete ${ACTIVE_MEETING.title}`,
+    });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(ipc.deleteMeeting).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(ipc.deleteMeeting).toHaveBeenCalledWith(2);
+    expect(
+      await screen.findByRole("heading", { name: "Older meeting" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Quarterly planning/ }),
+    ).not.toBeInTheDocument();
   });
 });
 

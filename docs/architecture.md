@@ -32,10 +32,10 @@ cancellable via Tauri events.
 
 The library is a local **SQLite** database (`whisperpilot.sqlite3` in the app
 support directory, via bundled `rusqlite`). WP-16 implements the idempotent
-schema and Rust CRUD store. WP-21 exposes create/list/open commands and hydrates
-the workspace from persisted meetings; attaching files, transcription, and UI
-auto-save wiring remain follow-on work. A **meeting** is one transcription of
-one source file. Meetings
+schema and Rust CRUD store. WP-21/WP-22 expose create/list/open/rename/delete
+commands and hydrate the workspace from persisted meetings; attaching files,
+transcription, and UI auto-save wiring remain follow-on work. A **meeting** is
+one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
 defined "source missing" state).

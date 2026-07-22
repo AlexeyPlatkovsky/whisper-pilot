@@ -81,6 +81,36 @@ pub fn open_meeting(app_support_dir: &Path, id: MeetingId) -> Result<MeetingDto>
     to_dto(meeting, segments, notes)
 }
 
+pub fn rename_meeting(app_support_dir: &Path, id: MeetingId, title: String) -> Result<MeetingDto> {
+    let title = validate_title(title)?;
+    let store = Store::open(app_support_dir)?;
+    let mut meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+    meeting.title = title;
+    store.update_meeting(&meeting)?;
+    let segments = store.list_segments(id)?;
+    let notes = store.get_notes(id)?;
+    to_dto(meeting, segments, notes)
+}
+
+pub fn delete_meeting(app_support_dir: &Path, id: MeetingId) -> Result<()> {
+    Store::open(app_support_dir)?.delete_meeting(id)
+}
+
+fn validate_title(title: String) -> Result<String> {
+    let title = title.trim().to_string();
+    if title.is_empty() {
+        return Err(AppError::Store("meeting title is required".into()));
+    }
+    if title.chars().count() > 120 {
+        return Err(AppError::Store(
+            "meeting title must be 120 characters or fewer".into(),
+        ));
+    }
+    Ok(title)
+}
+
 fn to_dto(
     meeting: Meeting,
     segments: Vec<crate::store::StoredSegment>,
@@ -210,5 +240,71 @@ mod tests {
             serde_json::from_value(json).expect("deserialize meeting DTO");
 
         assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn given_saved_meeting_when_renamed_then_trimmed_title_is_persisted() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = Store::open(temp.path()).expect("open store");
+        let saved = store
+            .create_meeting(meeting("Original", 1))
+            .expect("create meeting");
+
+        let renamed = rename_meeting(temp.path(), saved.id, "  Roadmap review  ".to_string())
+            .expect("rename meeting");
+
+        assert_eq!(renamed.title, "Roadmap review");
+        assert_eq!(
+            open_meeting(temp.path(), saved.id)
+                .expect("open renamed meeting")
+                .title,
+            "Roadmap review"
+        );
+    }
+
+    #[test]
+    fn ep_bva_rename_rejects_blank_overlong_and_unknown_meetings() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = Store::open(temp.path()).expect("open store");
+        let saved = store
+            .create_meeting(meeting("Original", 1))
+            .expect("create meeting");
+
+        for title in ["   ".to_string(), "a".repeat(121)] {
+            assert!(matches!(
+                rename_meeting(temp.path(), saved.id, title),
+                Err(AppError::Store(_))
+            ));
+        }
+        assert!(matches!(
+            rename_meeting(temp.path(), 999, "Valid title".to_string()),
+            Err(AppError::Store(_))
+        ));
+        assert_eq!(
+            open_meeting(temp.path(), saved.id)
+                .expect("open unchanged meeting")
+                .title,
+            "Original"
+        );
+    }
+
+    #[test]
+    fn given_saved_meeting_when_deleted_then_it_cannot_be_opened_or_deleted_again() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = Store::open(temp.path()).expect("open store");
+        let saved = store
+            .create_meeting(meeting("Disposable", 1))
+            .expect("create meeting");
+
+        delete_meeting(temp.path(), saved.id).expect("delete meeting");
+
+        assert!(matches!(
+            open_meeting(temp.path(), saved.id),
+            Err(AppError::Store(_))
+        ));
+        assert!(matches!(
+            delete_meeting(temp.path(), saved.id),
+            Err(AppError::Store(_))
+        ));
     }
 }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   createMeeting,
+  deleteMeeting,
   getSettings,
   listMeetings,
   listTaskModels,
@@ -8,6 +9,7 @@ import {
   openFileDialog,
   transcribeFile,
   saveTextDialog,
+  renameMeeting,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
   type Segment,
@@ -64,6 +66,13 @@ export function App() {
   const [activeMeeting, setActiveMeeting] = useState<PersistedMeeting | null>(
     null,
   );
+  const [renameTarget, setRenameTarget] = useState<Pick<
+    PersistedMeeting,
+    "id" | "title"
+  > | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
@@ -179,7 +188,7 @@ export function App() {
         },
         ...previous.filter((summary) => summary.id !== meeting.id),
       ]);
-      applyActiveMeeting(meeting);
+      if (activeMeeting?.id === meeting.id) applyActiveMeeting(meeting);
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
     }
@@ -188,6 +197,73 @@ export function App() {
   async function handleOpenMeeting(id: number) {
     try {
       applyActiveMeeting(await openMeeting(id));
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  function openRename(meeting: Pick<PersistedMeeting, "id" | "title">) {
+    setRenameTarget(meeting);
+    setRenameDraft(meeting.title);
+    setRenameError(null);
+  }
+
+  function closeRename() {
+    setRenameTarget(null);
+    setRenameError(null);
+  }
+
+  async function handleRename(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!renameTarget) return;
+    const title = renameDraft.trim();
+    if (!title) {
+      setRenameError("Meeting label is required");
+      return;
+    }
+    if (Array.from(title).length > 120) {
+      setRenameError("Meeting label must be 120 characters or fewer");
+      return;
+    }
+    try {
+      const meeting = await renameMeeting(renameTarget.id, title);
+      setMeetingSummaries((previous) =>
+        previous.map((summary) =>
+          summary.id === meeting.id
+            ? { ...summary, title: meeting.title }
+            : summary,
+        ),
+      );
+      applyActiveMeeting(meeting);
+      closeRename();
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    const remaining = meetingSummaries.filter(
+      (meeting) => meeting.id !== target.id,
+    );
+    try {
+      await deleteMeeting(target.id);
+      if (activeMeeting?.id === target.id && remaining[0]) {
+        const next = await openMeeting(remaining[0].id);
+        setMeetingSummaries(remaining);
+        applyActiveMeeting(next);
+      } else {
+        setMeetingSummaries(remaining);
+        if (activeMeeting?.id === target.id) {
+          setActiveMeeting(null);
+          setFileName(null);
+          setSegments([]);
+          setSpeakerLabels({});
+          setStatus({ kind: "idle" });
+        }
+      }
+      setDeleteTarget(null);
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
     }
@@ -275,7 +351,8 @@ export function App() {
               type="button"
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
-              disabled
+              onClick={() => activeMeeting && openRename(activeMeeting)}
+              disabled={!activeMeeting || busy}
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -283,7 +360,17 @@ export function App() {
               type="button"
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Delete meeting"
-              disabled
+              onClick={() =>
+                activeMeeting &&
+                setDeleteTarget({
+                  id: activeMeeting.id,
+                  title: activeMeeting.title,
+                  created_at_ms: activeMeeting.created_at_ms,
+                  duration_ms: activeMeeting.duration_ms,
+                  status: activeMeeting.status,
+                })
+              }
+              disabled={!activeMeeting || busy}
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -417,6 +504,8 @@ export function App() {
                     }
                     selected={activeMeeting?.id === meeting.id}
                     onSelect={() => void handleOpenMeeting(meeting.id)}
+                    onRename={() => openRename(meeting)}
+                    onDelete={() => setDeleteTarget(meeting)}
                   />
                 ))
               )}
@@ -516,6 +605,74 @@ export function App() {
           </aside>
         </section>
       </div>
+
+      {renameTarget && (
+        <div className="modal-overlay">
+          <form
+            className="modal-panel confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Rename meeting"
+            onSubmit={handleRename}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeRename();
+            }}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Rename meeting</span>
+            </div>
+            <label htmlFor="meeting-label">Meeting label</label>
+            <input
+              id="meeting-label"
+              type="text"
+              value={renameDraft}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => {
+                setRenameDraft(event.target.value);
+                setRenameError(null);
+              }}
+              aria-invalid={renameError ? true : undefined}
+            />
+            {renameError && <p role="alert">{renameError}</p>}
+            <div className="confirm-actions">
+              <button type="button" onClick={closeRename}>
+                Cancel
+              </button>
+              <button type="submit">Save</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div
+            className="modal-panel confirm-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete ${deleteTarget.title}`}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setDeleteTarget(null);
+            }}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Delete {deleteTarget.title}?</span>
+            </div>
+            <p className="confirm-warning">
+              This permanently removes the meeting and its transcript.
+            </p>
+            <div className="confirm-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => void handleDelete()}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -552,6 +709,8 @@ function MeetingRow({
   status,
   selected,
   onSelect,
+  onRename,
+  onDelete,
 }: {
   title: string;
   when: string;
@@ -560,27 +719,37 @@ function MeetingRow({
   status?: string;
   selected?: boolean;
   onSelect: () => void;
+  onRename: () => void;
+  onDelete: () => void;
 }) {
   return (
-    <button
-      type="button"
-      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
-      aria-current={selected ? "page" : undefined}
-      onClick={onSelect}
-    >
+    <div className={`wp-meeting-row${selected ? " is-selected" : ""}`}>
       <span className={`wp-meeting-dot wp-meeting-dot--${dot}`} />
-      <div className="wp-meeting-text">
-        <span className="wp-meeting-title">{title}</span>
-        <div className="wp-meeting-meta">
-          <span>{when}</span>
-          <span>{dur}</span>
-          {status && (
-            <span className={`wp-meeting-status wp-meeting-status--${dot}`}>
-              {status}
-            </span>
-          )}
+      <button
+        type="button"
+        className="wp-meeting-open"
+        aria-current={selected ? "page" : undefined}
+        onClick={onSelect}
+      >
+        <div className="wp-meeting-text">
+          <span className="wp-meeting-title">{title}</span>
+          <div className="wp-meeting-meta">
+            <span>{when}</span>
+            <span>{dur}</span>
+            {status && (
+              <span className={`wp-meeting-status wp-meeting-status--${dot}`}>
+                {status}
+              </span>
+            )}
+          </div>
         </div>
-      </div>
-    </button>
+      </button>
+      <button type="button" aria-label={`Rename ${title}`} onClick={onRename}>
+        <Icon name="pencil" size={13} />
+      </button>
+      <button type="button" aria-label={`Delete ${title}`} onClick={onDelete}>
+        <Icon name="trash-2" size={13} />
+      </button>
+    </div>
   );
 }

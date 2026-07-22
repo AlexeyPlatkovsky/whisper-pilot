@@ -45,6 +45,14 @@ export function openMeeting(id: number): Promise<Meeting> {
   return invoke<Meeting>("open_meeting", { id });
 }
 
+export function renameMeeting(id: number, title: string): Promise<Meeting> {
+  return invoke<Meeting>("rename_meeting", { id, title });
+}
+
+export function deleteMeeting(id: number): Promise<void> {
+  return invoke<void>("delete_meeting", { id });
+}
+
 export function openFileDialog(): Promise<string | null> {
   return invoke<string | null>("open_file_dialog");
 }

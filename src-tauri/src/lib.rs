@@ -171,6 +171,16 @@ fn open_meeting(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
     meetings::open_meeting(&app_data_dir(&app)?, id)
 }
 
+#[tauri::command]
+fn rename_meeting(app: tauri::AppHandle, id: i64, title: String) -> Result<MeetingDto> {
+    meetings::rename_meeting(&app_data_dir(&app)?, id, title)
+}
+
+#[tauri::command]
+fn delete_meeting(app: tauri::AppHandle, id: i64) -> Result<()> {
+    meetings::delete_meeting(&app_data_dir(&app)?, id)
+}
+
 /// Read all settings (theme, ui_language, active model), applying beta
 /// defaults for any key never set.
 #[tauri::command]
@@ -230,6 +240,8 @@ pub fn run() {
             create_meeting,
             list_meetings,
             open_meeting,
+            rename_meeting,
+            delete_meeting,
             transcribe_file,
             save_text_dialog,
             get_settings,

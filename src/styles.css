@@ -436,12 +436,27 @@ body {
   align-items: center;
   gap: var(--wp-space-sm);
   padding: 10px;
-  border: 0;
   border-radius: var(--wp-radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.wp-meeting-open {
+  flex: 1;
+  min-width: 0;
+  border: 0;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
+  cursor: pointer;
+}
+
+.wp-meeting-row > button:not(.wp-meeting-open) {
+  border: 0;
+  background: transparent;
+  color: inherit;
   cursor: pointer;
 }
 
