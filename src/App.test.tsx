@@ -43,6 +43,12 @@ async function waitForAddFileEnabled() {
 // leftover "once" queue from one test can never leak into the next.
 beforeEach(() => {
   vi.mocked(ipc.listTaskModels).mockReset();
+  vi.mocked(ipc.openFileDialog).mockResolvedValue("/path/to/meeting.mp3");
+  vi.mocked(ipc.transcribeFile).mockResolvedValue({
+    file_name: "meeting.mp3",
+    segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
+  });
+  vi.mocked(ipc.saveTextDialog).mockResolvedValue(null);
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -232,5 +238,104 @@ describe("App — theme application", () => {
     await waitFor(() =>
       expect(document.documentElement.dataset.theme).toBe("dark"),
     );
+  });
+});
+
+describe("App — file handling", () => {
+  it("does nothing when the file dialog is cancelled", async () => {
+    vi.mocked(ipc.openFileDialog).mockResolvedValue(null);
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+
+    expect(screen.getByText("No file loaded")).toBeInTheDocument();
+  });
+
+  it("shows a model-missing warning when the transcription model is not downloaded", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
+    render(<App />);
+
+    expect(
+      await screen.findByText(/The Whisper model isn't downloaded/i),
+    ).toBeInTheDocument();
+  });
+
+  it("displays the transcription error when transcribeFile rejects", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeFile).mockRejectedValue(new Error("whisper failed"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+
+    expect(await screen.findByText(/whisper failed/i)).toBeInTheDocument();
+  });
+
+  it("removes the attached file chip and clears the transcript", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hello");
+
+    await user.click(screen.getByRole("button", { name: "Remove file" }));
+
+    expect(screen.getByText("No file loaded")).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
+  });
+
+  it("saves the transcript when Save is clicked", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hello");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith("Hello", "meeting.txt");
+  });
+});
+
+describe("App — sidebar", () => {
+  it("toggles the sidebar when the toggle button is clicked", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Search meetings")).toBeInTheDocument(),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Toggle sidebar" }));
+
+    expect(screen.queryByLabelText("Search meetings")).not.toBeInTheDocument();
+  });
+});
+
+describe("App — transcript editing", () => {
+  it("updates a segment when the user types in its textarea", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    const textarea = await screen.findByDisplayValue("Hello");
+
+    await user.clear(textarea);
+    await user.type(textarea, "Hi there");
+
+    expect(screen.getByDisplayValue("Hi there")).toBeInTheDocument();
   });
 });

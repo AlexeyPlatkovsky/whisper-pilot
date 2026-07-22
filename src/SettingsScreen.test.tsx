@@ -78,4 +78,19 @@ describe("SettingsScreen", () => {
       expect(document.activeElement).toBe(tab);
     }
   });
+
+  it("switches to the App language section", async () => {
+    const user = userEvent.setup();
+    render(<SettingsScreen onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: "App language" }));
+
+    expect(screen.getByRole("tab", { name: "App language" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(
+      screen.getByRole("radio", { name: "English" }),
+    ).toBeInTheDocument();
+  });
 });

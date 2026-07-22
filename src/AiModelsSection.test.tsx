@@ -186,4 +186,37 @@ describe("AiModelsSection", () => {
       /connection reset/i,
     );
   });
+
+  it("shows a load error when listTaskModels rejects", async () => {
+    vi.mocked(ipc.listTaskModels).mockRejectedValue(
+      new Error("models unavailable"),
+    );
+
+    render(<AiModelsSection />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /models unavailable/i,
+    );
+  });
+
+  it("closes the download modal when the Close button is clicked", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
+    vi.mocked(ipc.downloadModel).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+
+    render(<AiModelsSection />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
+    );
+
+    expect(await screen.findByRole("dialog")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
 });

@@ -122,9 +122,9 @@ jobs:
             const overall = allSuccess ? '✅ Passed' : '❌ Failed';
             const body = `## CI Quality Gates — ${overall}
 
-| Check | Result |
-|-------|--------|
-${rows.join('\n')}`;
+            | Check | Result |
+            |-------|--------|
+            ${rows.join('\n')}`;
 
             await github.rest.issues.createComment({
               owner: context.repo.owner,

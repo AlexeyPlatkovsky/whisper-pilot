@@ -1,0 +1,109 @@
+name: OpenCode Review
+
+# Public repo: this workflow is restricted to the repository owner only.
+# - On PR open: runs once (no re-run on pushes/synchronize).
+# - On a PR comment containing /oc or /opencode: runs on demand.
+on:
+  workflow_dispatch:
+  pull_request:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+# Least privilege needed to read the code and post review comments.
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  id-token: write
+
+jobs:
+  review:
+    # Gate every entry point to the owner. On a public repo this stops anyone
+    # else from triggering OpenCode (and burning the API key) via a comment.
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'pull_request' &&
+        github.event.pull_request.user.login == 'AlexeyPlatkovsky'
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        github.event.comment.user.login == 'AlexeyPlatkovsky' &&
+        (contains(github.event.comment.body, '/oc') || contains(github.event.comment.body, '/opencode'))
+      )
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: OpenCode review
+        uses: sst/opencode/github@latest
+        with:
+          model: opencode-go/deepseek-v4-flash
+          # Use the built-in GITHUB_TOKEN so the OpenCode GitHub App is not required.
+          use_github_token: true
+          # Do not publish a shareable session link for this public repo.
+          share: false
+          # This prompt is the default for pull_request/workflow_dispatch runs only.
+          # On an issue_comment (/oc, /opencode), the comment text takes precedence
+          # over this prompt, so on-demand instructions still work as before.
+          prompt: |
+            Review this pull request against WhisperPilot's own conventions in
+            AGENTS.md and docs/. You cannot run tests, lint, build, or the app
+            itself in this environment — base every finding only on reading the
+            diff and the repository files, never on assumed runtime behavior.
+
+            WhisperPilot is a macOS desktop app for offline transcription of local
+            audio/video files: a Tauri v2 + React/TypeScript front-end in src/,
+            and a Rust core in src-tauri/src/. There is no live capture and no
+            cloud calls.
+
+            Review only the files changed in this PR, across these dimensions:
+
+            1. Code quality
+               - Best practices for the language/framework actually used (React/TS
+                 idioms in src/, idiomatic Rust/Tauri command patterns in
+                 src-tauri/src/).
+               - Duplication: logic repeated across components/modules that should
+                 be extracted or shared instead.
+               - Bloat: unnecessary abstraction, dead code, unused exports/props,
+                 speculative generality the current change does not need.
+               - KISS/DRY: flag over-engineered solutions where a simpler one
+                 would do, and repeated constants/logic that should be factored
+                 out.
+
+            2. Test case quality (do not attempt to run any test)
+               - Rust: unit tests colocated in src-tauri/src/, integration tests
+                 in src-tauri/tests/.
+               - Front-end: Vitest tests colocated as *.test.tsx / *.test.ts next
+                 to the module under test.
+               - Check new or changed logic has corresponding coverage, that
+                 assertions are meaningful (not tautological, not over-mocked),
+                 and that edge cases and error paths are exercised, not just the
+                 happy path.
+               - Per docs/testing.md: pure logic should be unit-tested by
+                 construction; model-dependent behavior (real Whisper/diarization
+                 output) belongs only in the ignored end-to-end pipeline test, not
+                 faked inside unit tests.
+
+            3. Documentation synchronization
+               - If the change affects behavior, IPC commands, screens/flows, or
+                 architecture, check whether the matching doc was updated in this
+                 same PR: docs/architecture.md, docs/design.md, docs/testing.md,
+                 docs/development.md, docs/features/F*/ (requirements/tasks/
+                 scenarios), README.md, or docs/INDEX.md.
+               - Flag docs that now contradict the code, or new behavior/commands
+                 left undocumented. Do not flag pre-existing doc gaps unrelated to
+                 this diff.
+
+            Do not flag formatting/lint issues a formatter would already catch,
+            and do not suggest running any command, build, or test — you have no
+            way to execute anything in this environment. Keep every comment
+            specific to a file and line in the diff.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
