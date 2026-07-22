@@ -84,11 +84,23 @@ user-renamed; renames persist on the meeting. The transcript renders as a
 per-speaker chat of colored bubbles (10 shades). Reassigning or merging speakers
 is out of scope for M2.
 
-`diarize.rs` currently (WP-5) only prepares the sherpa-onnx model files: it
-resolves the embedding model's path as-is and extracts the segmentation
-model's `model.onnx` from its downloaded tar.bz2 archive into a stable,
-idempotent path. Turn production, the turn↔segment merge, and wiring into the
-Transcribe run are separate, not-yet-built work (WP-6, WP-3/WP-7, WP-31).
+`diarize.rs` currently (WP-5/WP-6) prepares the sherpa-onnx model files and
+runs the engine: `diarize_samples` resolves the models, then produces ordered
+`SpeakerTurn`s from raw samples via the real sherpa-onnx engine (`sherpa-rs`),
+auto-detecting the speaker count or honoring an explicit override. Verified
+end-to-end against real downloaded models and real audio via a manual,
+ignored-by-default integration test (`tests/diarize_integration.rs`) — that
+run also confirmed in practice what ADR-005 already documents: auto-detect's
+threshold-based clustering quality is input-dependent (it did not reliably
+separate two short, acoustically-similar synthesized voices in one such run),
+so the explicit speaker-count override matters in practice, not just as a
+nice-to-have.
+
+Diarization is not yet wired into anything: no `Segment` carries a
+`speaker_id`, no IPC command calls `diarize_samples`, and there is no UI for
+it. The turn↔segment merge and the `speaker_id` type change are separate,
+not-yet-built work (WP-7/WP-3, WP-8), as is wiring into the Transcribe run
+(WP-31) and the bubble UI (WP-9/WP-10/WP-4).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

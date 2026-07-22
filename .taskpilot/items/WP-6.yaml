@@ -3,9 +3,54 @@ id: WP-6
 title: 'Rust diarize_file: produce speaker turns'
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T09:31:31Z'
-updated_at: '2026-07-21T09:31:31Z'
+updated_at: '2026-07-22T12:23:46Z'
 parent_id: WP-2
-description: Add diarize.rs and a diarize_file path that runs sherpa-onnx over the normalized 16 kHz mono samples and returns ordered speaker turns { start_ms, end_ms, speaker }. Support provided or auto-detected speaker count. Run on spawn_blocking; cache the models like the whisper context.
+description: 'Run sherpa-onnx speaker diarization over normalized 16kHz mono samples and return ordered speaker turns. Implements the concrete engine-integration work for feature WP-2 (Diarization engine integration), epic WP-1 (F002). Depends on WP-5 (done) for the sherpa-rs dependency and resolved model paths (diarize.rs::resolve_diarization_models).
+
+
+  Scope: a pure function diarize_samples(app_support_dir, samples: Vec<f32>, speaker_count: Option<i32>) -> Result<Vec<SpeakerTurn>> in src-tauri/src/diarize.rs. SpeakerTurn { start_ms: u32, end_ms: u32, speaker: i32 }. Speaker count: if Some(n) with n > 0, request exactly n clusters; otherwise (None, or a non-positive value) auto-detect via sherpa-onnx''s threshold-based clustering. Verified directly from sherpa-onnx''s C++ source (fast-clustering-config.cc): num_clusters < 1 means ''use the threshold instead'' (auto), so auto-detect must pass num_clusters = Some(0) explicitly - sherpa-rs''s own DiarizeConfig::default() sets num_clusters: Some(4), which is NOT auto-detect, so the default must be overridden. The sherpa-onnx engine call itself is isolated behind a small SpeakerDiarizer trait (mirroring this project''s existing Downloader-trait pattern in models.rs) so the ms-conversion/config-translation/ordering logic is unit-testable without real ONNX inference; the real sherpa-rs-backed implementation is exercised by a manual, #[ignore]''d integration test (mirroring the existing src-tauri/tests/pipeline.rs convention) using the real downloaded/verified diarization models plus a real audio fixture, run manually via cargo test -- --ignored --nocapture, skipping gracefully when the models or fixture audio aren''t present. Run on spawn_blocking when called from async code (that wiring happens in WP-31, not here).
+
+
+  Verified via the WP-5 spike: sherpa_rs::diarize::Diarize::new(...).compute(samples, None) against two synthesized voices with a silence gap correctly returned two ordered, non-overlapping Segment{start,end,speaker} entries - confirms the underlying engine call already sorts by start time (SherpaOnnxOfflineSpeakerDiarizationResultSortByStartTime), though diarize_samples adds its own defensive sort_by_key on start_ms so the ordering guarantee does not depend on an undocumented library behavior.
+
+
+  Happy path: given resolved model paths and real 16kHz mono f32 samples containing 2+ distinct speakers, diarize_samples returns turns ordered by start_ms, each with a speaker id, covering the spoken regions.
+
+
+  Failure / edge cases: if the diarization models are not downloaded/resolvable, the existing AppError::DiarizationAsset from resolve_diarization_models propagates (no panic); if the sherpa-onnx engine itself fails to initialize or compute (a new AppError::Diarization(String) variant), that propagates without panicking; a caller-provided speaker_count of 0 or negative is treated as auto-detect, not passed through literally (which would either error or misbehave in the underlying engine).
+
+
+  Scope boundary: this task does not merge turns onto Whisper segments (WP-7/WP-3), does not thread speaker_id through the public Segment/TranscriptResult/IPC types (WP-8), and does not wire this into the Transcribe command flow or spawn_blocking (WP-31). It also does not implement WP-2''s grouping/feature-level bookkeeping beyond what this task itself delivers - WP-2 is closed as a thin wrapper referencing this task''s work, per this project''s existing feature/task grouping convention (e.g. WP-34 closed alongside WP-37/38).
+
+
+  Target surfaces: src-tauri/src/diarize.rs (+SpeakerTurn, +SpeakerDiarizer trait, +diarize_samples, +build_config, +diarize_with helper), src-tauri/src/error.rs (+AppError::Diarization(String) variant for engine-level failures, distinct from the existing DiarizationAsset for file/model-prep failures), new src-tauri/tests/diarize_integration.rs (ignored-by-default real-engine integration test, mirroring tests/pipeline.rs). No IPC, no lib.rs command registration, no UI.
+
+
+  Constraints: macOS only; no network calls; the engine call must never panic on invalid/edge-case input (empty samples, single speaker) - errors propagate as typed AppError; num_clusters auto-detect semantics must match the verified sherpa-onnx source behavior above, not an assumption.
+
+
+  Scenarios (BDD):
+
+
+  Given no speaker count is provided When diarize_samples runs Then the engine is configured for auto-detection (num_clusters explicitly 0, not the crate''s own default of 4).
+
+
+  Given a speaker count of 3 is provided When diarize_samples runs Then the engine is configured for exactly 3 clusters.
+
+
+  Given a mocked diarizer returns turns out of start-time order When diarize_with processes them Then the returned turns are sorted by start_ms.
+
+
+  Given the diarization models are not downloaded When diarize_samples is called Then it returns the existing AppError::DiarizationAsset without panicking (propagated from resolve_diarization_models, not re-tested here beyond confirming propagation).
+
+
+  Given real audio with 2+ distinct speakers and the real downloaded models are present (manual/ignored integration test only) When diarize_samples runs Then it returns 2+ ordered, non-overlapping-per-speaker turns.'
+dod:
+- diarize_samples configures num_clusters explicitly (Some(0) for auto-detect when no count given or a non-positive count is given; Some(n) for a provided positive n) - unit-tested, not relying on the crate's own default.
+- The sherpa-onnx engine call is isolated behind a SpeakerDiarizer trait; a mocked implementation proves the ms-conversion and defensive start_ms sort logic without real ONNX inference.
+- diarize_samples propagates AppError::DiarizationAsset when models are unresolvable, and a new AppError::Diarization for engine init/compute failures, with no panic on any error path.
+- A manual, ignored-by-default integration test (src-tauri/tests/diarize_integration.rs) exercises the real sherpa-rs-backed path against real downloaded models and a real multi-speaker audio fixture, skipping gracefully when either is absent, mirroring tests/pipeline.rs's existing convention.
+- Rust unit tests (cargo-nextest) cover auto-detect config, explicit-count config, non-positive-count-treated-as-auto, out-of-order-turns get sorted, and asset-resolution-failure propagation.
 created_by: M2 planning

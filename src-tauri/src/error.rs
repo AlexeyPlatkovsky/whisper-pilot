@@ -37,6 +37,9 @@ pub enum AppError {
     #[error("diarization model asset problem: {0}")]
     DiarizationAsset(String),
 
+    #[error("speaker diarization failed: {0}")]
+    Diarization(String),
+
     #[error("{0}")]
     Io(String),
 }

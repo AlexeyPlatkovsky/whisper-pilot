@@ -117,6 +117,85 @@ fn extract_segmentation_model(archive_path: &Path) -> Result<PathBuf> {
     Ok(target_path)
 }
 
+/// One speaker's contiguous span of speech, in milliseconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SpeakerTurn {
+    pub start_ms: u32,
+    pub end_ms: u32,
+    pub speaker: i32,
+}
+
+/// Isolates the real sherpa-onnx engine call so the surrounding logic
+/// (config translation, ordering) is unit-testable without real ONNX
+/// inference.
+trait SpeakerDiarizer {
+    fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>>;
+}
+
+/// Translate a caller-provided speaker count into sherpa-onnx's clustering
+/// config. `num_clusters < 1` means "auto-detect via the threshold instead"
+/// (verified against sherpa-onnx's own `fast-clustering-config.cc`) — the
+/// crate's own `DiarizeConfig::default()` sets `num_clusters: Some(4)`, which
+/// is a fixed count, not auto-detect, so this must be set explicitly.
+fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig {
+    let num_clusters = speaker_count.filter(|&n| n > 0).unwrap_or(0);
+    sherpa_rs::diarize::DiarizeConfig {
+        num_clusters: Some(num_clusters),
+        ..Default::default()
+    }
+}
+
+/// Run `diarizer` over `samples` and return its turns ordered by start time.
+/// Defensive: sherpa-onnx already returns turns start-time-sorted, but this
+/// does not depend on that undocumented behavior.
+fn diarize_with(diarizer: &mut impl SpeakerDiarizer, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
+    let mut turns = diarizer.compute(samples)?;
+    turns.sort_by_key(|t| t.start_ms);
+    Ok(turns)
+}
+
+/// Adapts the real `sherpa_rs::diarize::Diarize` engine to `SpeakerDiarizer`,
+/// converting its seconds-based `f32` output to our milliseconds-based `u32`
+/// `SpeakerTurn`.
+struct SherpaDiarizer(sherpa_rs::diarize::Diarize);
+
+impl SpeakerDiarizer for SherpaDiarizer {
+    fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
+        let segments = self
+            .0
+            .compute(samples, None)
+            .map_err(|e| AppError::Diarization(e.to_string()))?;
+        Ok(segments
+            .into_iter()
+            .map(|s| SpeakerTurn {
+                start_ms: (s.start * 1000.0).round() as u32,
+                end_ms: (s.end * 1000.0).round() as u32,
+                speaker: s.speaker,
+            })
+            .collect())
+    }
+}
+
+/// Run speaker diarization over `samples` (16kHz mono f32), using the models
+/// WP-5's `resolve_diarization_models` prepares. `speaker_count`: `Some(n)`
+/// with `n > 0` requests exactly `n` speakers; anything else auto-detects.
+pub fn diarize_samples(
+    app_support_dir: &Path,
+    samples: Vec<f32>,
+    speaker_count: Option<i32>,
+) -> Result<Vec<SpeakerTurn>> {
+    let models = resolve_diarization_models(app_support_dir)?;
+    let config = build_config(speaker_count);
+    let engine = sherpa_rs::diarize::Diarize::new(
+        models.segmentation_model,
+        models.embedding_model,
+        config,
+    )
+    .map_err(|e| AppError::Diarization(format!("failed to initialize diarizer: {e}")))?;
+    let mut adapter = SherpaDiarizer(engine);
+    diarize_with(&mut adapter, samples)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -257,6 +336,79 @@ mod tests {
         builder.into_inner().unwrap().finish().unwrap();
 
         let err = extract_segmentation_model(&archive_path).unwrap_err();
+
+        assert!(matches!(err, AppError::DiarizationAsset(_)));
+    }
+
+    struct FakeDiarizer {
+        result: Option<Result<Vec<SpeakerTurn>>>,
+    }
+
+    impl SpeakerDiarizer for FakeDiarizer {
+        fn compute(&mut self, _samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
+            self.result.take().expect("compute called more than once")
+        }
+    }
+
+    fn turn(start_ms: u32, end_ms: u32, speaker: i32) -> SpeakerTurn {
+        SpeakerTurn {
+            start_ms,
+            end_ms,
+            speaker,
+        }
+    }
+
+    // EP: two classes — "auto-detect" (None, and non-positive counts) vs.
+    // "explicit count" (positive n). BVA: the boundary sits between 0 and 1.
+    #[test]
+    fn build_config_auto_detects_when_no_count_given() {
+        assert_eq!(build_config(None).num_clusters, Some(0));
+    }
+
+    #[test]
+    fn build_config_uses_a_provided_positive_count() {
+        assert_eq!(build_config(Some(3)).num_clusters, Some(3));
+    }
+
+    #[test]
+    fn build_config_uses_the_smallest_positive_count_at_the_auto_detect_boundary() {
+        assert_eq!(build_config(Some(1)).num_clusters, Some(1));
+    }
+
+    #[test]
+    fn build_config_treats_non_positive_counts_as_auto_detect() {
+        assert_eq!(build_config(Some(0)).num_clusters, Some(0));
+        assert_eq!(build_config(Some(-1)).num_clusters, Some(0));
+    }
+
+    #[test]
+    fn diarize_with_sorts_turns_by_start_time() {
+        let mut fake = FakeDiarizer {
+            result: Some(Ok(vec![turn(5_000, 6_000, 2), turn(0, 4_000, 1)])),
+        };
+
+        let turns = diarize_with(&mut fake, vec![]).unwrap();
+
+        assert_eq!(turns, vec![turn(0, 4_000, 1), turn(5_000, 6_000, 2)]);
+    }
+
+    #[test]
+    fn diarize_with_propagates_engine_error_without_panicking() {
+        let mut fake = FakeDiarizer {
+            result: Some(Err(AppError::Diarization("engine exploded".to_string()))),
+        };
+
+        let err = diarize_with(&mut fake, vec![]).unwrap_err();
+
+        assert!(matches!(err, AppError::Diarization(_)));
+    }
+
+    #[test]
+    fn diarize_samples_propagates_asset_error_when_models_not_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        // No diarization assets written under `dir` at all.
+
+        let err = diarize_samples(dir.path(), vec![0.0; 16_000], None).unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
