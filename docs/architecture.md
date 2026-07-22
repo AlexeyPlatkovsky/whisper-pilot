@@ -103,12 +103,14 @@ falling back to the nearest turn for a segment in an uncovered gap. It is a
 standalone pure function over `(u32, u32)` spans and `SpeakerTurn` — not yet
 connected to the real `transcribe::Segment` type.
 
-Diarization is not yet wired into anything: no `Segment` carries a
-`speaker_id`, no IPC command calls `diarize_samples` or
-`merge_segments_with_turns`, and there is no UI for it. The `speaker_id` type
-change through `Segment`/`TranscriptResult`/IPC is separate, not-yet-built
-work (WP-8), as is wiring into the Transcribe run (WP-31) and the bubble UI
-(WP-9/WP-10/WP-4).
+`Segment` now carries `speaker_id: Option<i32>` (WP-8, omitted from the JSON
+when `None` so existing consumers see no shape change), and the type flows
+through `TranscriptResult`/IPC and `ipc.ts`'s `Segment` interface. But
+diarization is not yet wired into anything that populates it: no IPC command
+calls `diarize_samples` or `merge_segments_with_turns`, the real
+`transcribe_file` path always sets `speaker_id: None`, and there is no UI for
+it. Wiring into the Transcribe run (WP-31) and the bubble UI (WP-9/WP-10/WP-4)
+are separate, not-yet-built work.
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

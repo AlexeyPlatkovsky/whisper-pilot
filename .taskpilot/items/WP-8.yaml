@@ -3,9 +3,48 @@ id: WP-8
 title: Thread speaker id through Segment/TranscriptResult and IPC
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T09:31:32Z'
-updated_at: '2026-07-21T09:31:32Z'
+updated_at: '2026-07-22T12:48:31Z'
 parent_id: WP-3
-description: Extend Segment with an optional speaker id and surface it in TranscriptResult and the transcribe/diarize IPC results, keeping M1 (no diarization) behavior valid when speaker id is absent.
+description: 'Extend Segment with an optional speaker id and surface it through TranscriptResult and the transcribe_file IPC result, keeping existing (no-diarization) behavior valid when speaker id is absent. Implements the second half of feature WP-3 (Speaker <-> transcript merge)''''s acceptance criterion ("each emitted segment has a stable speaker id") - the first half (overlap assignment) was delivered by WP-7 (done). Once this task lands, WP-3 closes alongside it, per this project''''s feature/task grouping convention (mirrors WP-2/WP-6).
+
+
+  Scope: add speaker_id: Option<i32> to src-tauri/src/transcribe.rs''''s Segment struct (currently start_ms: u64, end_ms: u64, text: String), defaulting to None at its one construction site (transcribe.rs''''s transcribe_file, which does not call diarization - this task does not wire diarization in, that is WP-31''''s job). serde already derives Serialize on Segment; speaker_id must serialize as null/omitted when None so existing (pre-WP-8) frontend expectations are not broken by a required field appearing - use #[serde(skip_serializing_if = "Option::is_none")] to match this project''''s existing optional-field IPC convention (mirrors how other optional fields serialize elsewhere in this codebase, and keeps payloads unchanged for the common no-diarization case). Update src/ipc.ts''''s Segment interface to add speaker_id?: number (optional, matching serde''''s skip-when-None behavior). TranscriptResult (both the Rust struct in lib.rs and the TS interface in ipc.ts) needs no field changes itself - it already just wraps Vec<Segment>/Segment[], so the new field flows through automatically once Segment carries it.
+
+
+  Bridging note (explicit, not silently assumed): WP-7''''s merge_segments_with_turns operates on (u32, u32) segment spans (matching WP-6''''s SpeakerTurn''''s u32 start_ms/end_ms), but transcribe::Segment uses u64 for start_ms/end_ms (whisper''''s native precision). This task does not call merge_segments_with_turns itself (that''''s WP-31''''s wiring job) and therefore does not need to resolve this width difference yet - it only adds the speaker_id field to Segment. Whoever wires WP-7''''s merge into the real pipeline (WP-31) will cast u64 to u32 at that call site (safe for any realistic meeting duration, u32 ms covers ~49 days) - noting this here so it is not a silent gap when WP-31 is scoped.
+
+
+  Happy path: transcribing a file today (no diarization wired in yet) still returns TranscriptResult with every segment''''s speaker_id omitted/null in the JSON payload and undefined on the TS side - byte-for-byte compatible with pre-WP-8 consumers that don''''t reference the new field.
+
+
+  Failure / edge cases: none beyond what already exists - this task adds no new fallible path, no new IPC command, and does not change transcribe_file''''s behavior or error handling.
+
+
+  Scope boundary: does not call diarize_samples or merge_segments_with_turns (WP-31), does not add any new IPC command, does not touch the UI/rendering (WP-9/WP-10/WP-4), does not resolve the u32/u64 span-width bridging (deferred to WP-31 as noted above).
+
+
+  Target surfaces: src-tauri/src/transcribe.rs (Segment struct + its one construction site), src/ipc.ts (Segment interface). No lib.rs changes needed (TranscriptResult''''s shape is unchanged, just carries richer Segments transitively).
+
+
+  Constraints: backward-compatible JSON shape when speaker_id is None/absent (no schema break for existing consumers); no new IPC surface; no behavior change to transcription itself.
+
+
+  Scenarios (BDD):
+
+
+  Given the app transcribes a file today (M1 path, no diarization wired in) When the result is serialized to JSON Then every segment''''s speaker_id key is omitted (not present as null), preserving the exact pre-existing JSON shape for consumers that don''''t know about speaker_id.
+
+
+  Given a Segment is constructed with an explicit speaker_id (e.g. Some(2), as WP-31 will eventually do) When it is serialized Then speaker_id appears as the integer 2 in the JSON payload.
+
+
+  Given the updated Segment/TranscriptResult round-trips through serde (serialize then deserialize, or serialize and inspect the JSON Value directly) When speaker_id is None vs Some(n) Then both cases produce the expected JSON shape (contract test, per this project''''s Rust testing convention for IPC-adjacent structs).'
+dod:
+- 'Segment gains speaker_id: Option<i32>, defaulting to None at its one construction site (transcribe.rs); no behavior change to transcription itself.'
+- 'A Segment with speaker_id: None serializes with the key omitted (not null), preserving the exact pre-existing JSON shape - contract-tested.'
+- 'A Segment with speaker_id: Some(n) serializes with the key present as the integer n - contract-tested.'
+- 'src/ipc.ts''s Segment interface gains speaker_id?: number, matching the serde skip-when-None behavior.'
+- Full Rust and frontend test suites pass with no regressions to existing transcribe_file / Segment consumers.
 created_by: M2 planning

@@ -5,6 +5,7 @@ export interface Segment {
   start_ms: number;
   end_ms: number;
   text: string;
+  speaker_id?: number;
 }
 
 export interface TranscriptResult {

@@ -10,11 +10,16 @@ use std::path::{Path, PathBuf};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// One transcript segment with its time span, in milliseconds from file start.
+/// `speaker_id` is absent until diarization is wired in (WP-31); omitted from
+/// the serialized JSON (not `null`) when `None`, so existing consumers see no
+/// shape change.
 #[derive(Debug, Clone, Serialize)]
 pub struct Segment {
     pub start_ms: u64,
     pub end_ms: u64,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speaker_id: Option<i32>,
 }
 
 /// Load the whisper model from the WP-39 download location under
@@ -98,6 +103,7 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32], language: &str) -> Resu
             start_ms: seg.start_timestamp().max(0) as u64 * 10,
             end_ms: seg.end_timestamp().max(0) as u64 * 10,
             text,
+            speaker_id: None,
         });
     }
 
@@ -113,6 +119,37 @@ pub fn transcribe_file(ctx: &WhisperContext, input: &Path, language: &str) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segment_omits_speaker_id_key_when_none() {
+        let segment = Segment {
+            start_ms: 0,
+            end_ms: 1_000,
+            text: "hello".to_string(),
+            speaker_id: None,
+        };
+
+        let value = serde_json::to_value(&segment).unwrap();
+
+        assert!(
+            value.get("speaker_id").is_none(),
+            "speaker_id must be omitted, not present as null, when None: {value:?}"
+        );
+    }
+
+    #[test]
+    fn segment_includes_speaker_id_when_some() {
+        let segment = Segment {
+            start_ms: 0,
+            end_ms: 1_000,
+            text: "hello".to_string(),
+            speaker_id: Some(2),
+        };
+
+        let value = serde_json::to_value(&segment).unwrap();
+
+        assert_eq!(value.get("speaker_id"), Some(&serde_json::json!(2)));
+    }
 
     #[test]
     fn resolve_model_path_uses_the_explicit_override_when_set() {
