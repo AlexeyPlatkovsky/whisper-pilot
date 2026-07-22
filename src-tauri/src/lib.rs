@@ -5,6 +5,7 @@ pub mod diarize;
 pub mod error;
 pub mod models;
 pub mod settings;
+pub mod store;
 pub mod transcribe;
 
 use error::{AppError, Result};

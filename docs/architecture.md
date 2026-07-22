@@ -30,8 +30,10 @@ cancellable via Tauri events.
 
 ## Meeting Model & Persistence (`store.rs`)
 
-The library is a local **SQLite** database (via `rusqlite`, reusing VoicePilot's
-patterns). A **meeting** is one transcription of one source file. Meetings
+The library is a local **SQLite** database (`whisperpilot.sqlite3` in the app
+support directory, via bundled `rusqlite`). WP-16 implements the idempotent
+schema and the Rust CRUD store; Tauri commands and UI auto-save wiring remain
+follow-on work. A **meeting** is one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
 defined "source missing" state).
@@ -40,13 +42,15 @@ Entities (indicative):
 
 | Entity | Key fields |
 |---|---|
-| `meetings` | id, title, source_path, source_name, created_at, duration_ms, language, status |
-| `segments` | id, meeting_id, ordinal, start_ms, end_ms, text, speaker_id (M2) |
+| `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
+| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2) |
 | `notes` | meeting_id, summary, decisions, action_items, open_questions, participants (M3) |
 
-Edits (segment text, speaker labels, notes) are **auto-saved**: each edit
-persists to the DB immediately; there is no explicit save state. Export is a
-separate, explicit write to an external file.
+The store replaces/reads segments in ordinal order, upserts a single notes
+record per meeting, and cascades meeting deletion to dependent rows. Follow-on
+UI edits (segment text, speaker labels, notes) are **auto-saved**: each edit
+will persist to the DB immediately; there is no explicit save state. Export is
+a separate, explicit write to an external file.
 
 ## Audio Ingestion (`audio.rs`)
 

@@ -18,7 +18,9 @@ serde_json = "1"
 tokio = { version = "1", features = ["full"] }
 whisper-rs = { version = "0.16", features = ["metal"] }
 hound = "3"
-rfd = "0.15"
+# WhisperPilot currently targets macOS; opt out of rfd's default Linux portal
+# stack, which is unused here and carries a vulnerable quick-xml transitively.
+rfd = { version = "0.15", default-features = false }
 anyhow = "1"
 thiserror = "2"
 dirs-next = "2"
@@ -30,6 +32,7 @@ futures-util = "0.3"
 sherpa-rs = { version = "0.6.8", features = ["download-binaries"] }
 tar = "0.4"
 bzip2 = "0.4"
+rusqlite = { version = "0.32", features = ["bundled"] }
 
 # brotli 8.x (via tauri-codegen) requires alloc-no-stdlib ^2, but transitive deps
 # allow >=2.0.4,<4 and Cargo otherwise picks 3.0.0, splitting the type identity.
