@@ -3,30 +3,41 @@ id: WP-46
 title: Raise test coverage to 95% statements and lines
 priority: normal
 type: task
-status: in_progress
+status: done
 created_at: '2026-07-22T10:23:19Z'
-updated_at: '2026-07-22T10:23:19Z'
-description: |
-  Raise the project's test coverage thresholds to at least 95% statements and
+updated_at: '2026-07-22T12:55:34Z'
+description: 'Raise the project''s test coverage thresholds to at least 95% statements and
+
   95% lines. Add focused unit tests for the currently uncovered branches and
+
   paths in both the React/TypeScript front-end (src/) and the Rust core
+
   (src-tauri/src/). Update the Vitest coverage configuration to enforce the
+
   95% thresholds for statements and lines so CI fails if coverage regresses.
 
+
   The current baseline is 91.05% statements / 93.8% lines from the front-end
+
   coverage run. The Rust test suite uses cargo-nextest without an enforced
+
   coverage threshold; this task also configures/enforces Rust coverage where
+
   practical, or at minimum documents the Rust coverage approach and adds tests
+
   for the uncovered Rust paths.
 
+
   Target surfaces: new or updated *.test.ts / *.test.tsx files in src/; new or
+
   updated Rust unit tests in src-tauri/src/; vite.config.ts or package.json for
+
   coverage thresholds; docs/testing.md if the test strategy changes.
-dor: null
+
+  '
 dod:
-  - 'Front-end coverage reaches >= 95% statements and >= 95% lines, verified by npm run test:coverage.'
-  - 'Rust coverage is improved by adding tests for the uncovered paths in models.rs, transcribe.rs, settings.rs, etc., verified by cargo nextest run.'
-  - 'Vitest coverage configuration enforces 95% thresholds for statements and lines so CI fails on regression.'
-  - 'All existing checks (typecheck, lint, format:check, clippy, fmt, nextest) continue to pass.'
-  - 'Commit message is prefixed with the TaskPilot ID WP-46.'
-links: null
+- Front-end coverage reaches >= 95% statements and >= 95% lines, verified by npm run test:coverage.
+- Rust coverage is improved by adding tests for the uncovered paths in models.rs, transcribe.rs, settings.rs, etc., verified by cargo nextest run.
+- Vitest coverage configuration enforces 95% thresholds for statements and lines so CI fails on regression.
+- All existing checks (typecheck, lint, format:check, clippy, fmt, nextest) continue to pass.
+- Commit message is prefixed with the TaskPilot ID WP-46.
