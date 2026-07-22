@@ -3,9 +3,35 @@ id: WP-38
 title: Settings screen shell + header gear entry + section nav
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:57Z'
-updated_at: '2026-07-21T14:05:57Z'
+updated_at: '2026-07-21T18:07:56Z'
 parent_id: WP-34
-description: Fixed header gear opens the Settings screen; section navigation for AI models / Appearance / App language (Update app at release). Implements F005-R1 (F005-T2).
+description: 'Add a fixed gear control to the app header that opens a full-screen Settings view with left-side section navigation for AI models, Appearance, and App language (Update app is M3/release, not built here). Implements F005-R1 (F005-T2), parent WP-34. Depends on WP-37 (done) for the settings store, though this task itself renders navigation only — no section reads/writes settings yet (that lands in WP-39/40/41/42).
+
+  Happy path: user clicks the gear in the header; the Settings view replaces the main workspace view; "AI models" is selected by default; clicking "Appearance" or "App language" switches the visible section without navigating away from Settings; a close control returns to the main workspace view, preserving in-progress transcription/segment state untouched underneath.
+
+  Failure / edge cases: opening Settings while a transcription is in progress does not cancel or interrupt it (the workspace state is untouched, just hidden); each section shows a lightweight placeholder body for now (its real content is out of scope here — WP-39 AI models, WP-41 Appearance, WP-42 App language) but the nav itself must be fully keyboard- and screen-reader-accessible today, not deferred.
+
+  Scope boundary: this task owns the gear control, the Settings container view, and section navigation only. It does not implement AI model download/delete, theme switching, or language switching — those are separate tasks that will fill in each section''s content. Update app (F005-R10) is M3/out of scope entirely.
+
+  Target surfaces: src/App.tsx (add gear control to the existing header, hold isSettingsOpen view state), new src/SettingsScreen.tsx (section nav + content-slot component), src/styles.css (settings layout styles). No Rust change (pure front-end; WP-37''s IPC is not called by this task).
+
+  Constraints: no network calls; matches the existing light/dark CSS custom property pattern in src/styles.css; the gear''s position must not shift when other header content changes (per docs/design.md "Header controls, fixed, position never changes"); accessible via keyboard (Tab to reach the gear and each nav item, Enter/Space to activate) and via ARIA roles/labels for the section nav.
+
+  Scenarios (BDD):
+
+  Given the app is open and Settings is closed When the user clicks the header gear Then the Settings view opens showing the AI models section by default (F005-S1).
+
+  Given the Settings view is open on AI models When the user clicks the Appearance nav item Then the visible section switches to Appearance without closing Settings.
+
+  Given the Settings view is open When the user activates the close control (click or Escape) Then the view returns to the main workspace and any prior workspace state (e.g. loaded transcript) is unchanged.
+
+  Given the Settings view is open When the user navigates via keyboard only (Tab/Shift+Tab, Enter/Space) Then the gear, each section nav item, and the close control are all reachable and operable without a mouse.'
+dod:
+- Clicking the header gear opens the Settings view with the AI models section selected by default (F005-R1, F005-S1).
+- Clicking each of Appearance / App language switches the visible section in place; the gear's screen position does not move when the header's other content changes.
+- A close control (button and Escape key) returns to the main workspace view without altering existing workspace state.
+- The gear, section nav items, and close control are reachable and operable via keyboard alone, with appropriate ARIA roles/labels (accessibility convention compliance).
+- Front-end unit tests (Vitest + React Testing Library) cover opening Settings via the gear, default section selection, switching sections, and closing via both the close button and Escape.
 created_by: Settings planning

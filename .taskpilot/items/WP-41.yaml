@@ -3,9 +3,35 @@ id: WP-41
 title: 'Appearance: light/dark/system theme apply + persist'
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:59Z'
-updated_at: '2026-07-21T14:05:59Z'
+updated_at: '2026-07-22T01:28:21Z'
 parent_id: WP-36
-description: Theme selection (light/dark/system) applied immediately and persisted; System follows the OS scheme live. Implements F005-R6 (F005-T5).
+description: 'Add the real content of the Settings "Appearance" section (replacing WP-38''s placeholder): a Light/Dark/System theme choice that applies immediately and persists via WP-37''s existing settings store (theme key, already supports exactly these three values - set_setting already validates this). Implements F005-R6 (F005-T5), parent WP-36. Depends on WP-37 (done, provides get_settings/set_setting) and WP-38 (done, provides the Settings shell). No Rust changes - this task is pure front-end, reusing existing IPC entirely.
+
+  Happy path: opening the app applies the previously-chosen theme immediately (before the user does anything); in the Appearance section, selecting Light, Dark, or System changes the app''s colors at once and persists; picking System while the OS is in dark mode shows dark colors and continues to track a live OS light<->dark switch without restarting the app (F005-R6, F005-S6).
+
+  Failure / edge cases: on first run (no settings file yet), the app defaults to System (matches WP-37''s existing default); if persisting the new theme choice fails, the UI reports the error and reverts to the previously-applied theme rather than silently leaving the applied theme and the persisted theme out of sync.
+
+  Scope boundary: only Light/Dark/System (beta). No extra named themes (F005-R7, M3/release). No per-meeting theme override.
+
+  Target surfaces: src/theme.ts (new - a small pure module: applyTheme(theme) sets or clears a data-theme attribute on the document root; a system choice clears the attribute so the existing prefers-color-scheme media query keeps driving it live), src/AppearanceSection.tsx (new - reads the current theme via getSettings(), renders Light/Dark/System as labelled radio inputs, calls setSetting(''theme'', value) + applyTheme(value) on change), src/SettingsScreen.tsx (wire AppearanceSection into the "appearance" tab, replacing the placeholder), src/App.tsx (apply the persisted theme once on mount, before the user opens Settings), src/styles.css (data-theme="light"/"dark" CSS custom-property overrides with higher specificity than the existing prefers-color-scheme media query, so an explicit choice always wins over the OS scheme; radio-group layout for the new section).
+
+  Constraints: no new IPC commands (reuses get_settings/set_setting from WP-37); the existing light/dark CSS custom-property values in src/styles.css are preserved exactly, only reorganized so they can be triggered by an explicit attribute as well as the media query; inputs have associated labels (accessibility convention).
+
+  Scenarios (BDD):
+
+  Given the settings store has theme: ''dark'' from a previous session When the app launches Then it renders in dark colors immediately, before Settings is ever opened.
+
+  Given the Appearance section is open When the user selects Dark Then the app switches to dark colors at once and the choice persists across a restart (F005-S6).
+
+  Given the user selects System and the OS is in light mode When the OS scheme changes to dark while the app is still open Then the app''s colors follow, live, without a restart (F005-S6).
+
+  Given persisting a new theme choice fails When the error occurs Then the UI shows the error and reverts to the previously-applied theme rather than leaving applied and persisted state inconsistent.'
+dod:
+- Selecting Light, Dark, or System in the Appearance section changes the app's rendered colors immediately and persists the choice via set_setting (F005-R6).
+- Reopening the app (simulated by reading settings fresh) applies the persisted theme before the user interacts with Settings.
+- Choosing System tracks the OS's prefers-color-scheme live, verified by the CSS mechanism - no data-theme attribute set, so the existing media query drives it, no JS polling needed.
+- A failed persist reverts the applied theme and reports the error, verified by a frontend test.
+- Frontend unit tests cover the three theme selections, the default (System/no-prior-setting) case, and the failed-persist revert; a pure unit test covers theme.ts's attribute set/clear logic directly.
 created_by: Settings planning

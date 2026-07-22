@@ -12,9 +12,19 @@ fn sample_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("MFUPILOT_TEST_AUDIO") {
         return Some(PathBuf::from(p));
     }
-    let p = dirs_next::home_dir()?
-        .join("Documents/IdeaProjects/voice-pilot/src-tauri/tests/fixtures/audio/1_minute/sample.wav");
+    let p = dirs_next::home_dir()?.join(
+        "Documents/IdeaProjects/voice-pilot/src-tauri/tests/fixtures/audio/1_minute/sample.wav",
+    );
     p.exists().then_some(p)
+}
+
+/// The real macOS app support dir Tauri resolves at runtime for this app's
+/// bundle identifier (com.mfupilot.dev); matches where WP-39 downloads land.
+fn app_support_dir() -> PathBuf {
+    dirs_next::data_local_dir()
+        .or_else(|| dirs_next::home_dir().map(|h| h.join("Library/Application Support")))
+        .unwrap_or_default()
+        .join("com.mfupilot.dev")
 }
 
 #[test]
@@ -25,7 +35,7 @@ fn transcribes_a_real_file_into_segments() {
         return;
     };
 
-    let ctx = match mfupilot_lib::transcribe::load_model() {
+    let ctx = match mfupilot_lib::transcribe::load_model(&app_support_dir()) {
         Ok(ctx) => ctx,
         Err(e) => {
             eprintln!("SKIP: model unavailable: {e}");

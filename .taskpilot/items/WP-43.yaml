@@ -1,0 +1,34 @@
+schema_version: 1
+id: WP-43
+title: Rebuild main view to match pencil design; introduce design-tokens source of truth
+priority: normal
+type: task
+status: done
+created_at: '2026-07-22T06:24:31Z'
+updated_at: '2026-07-22T06:55:10Z'
+description: 'Rebuild the WhisperPilot main view (the non-Settings screen) so its visual layout matches the approved pencil design at pencil/main_view.pen, and introduce a local design-tokens CSS file as the single source of truth for the design''s colors, spacing, radii, and typography. Visual-only work (Lite tier): no new IPC, no Rust, no change to transcription behavior. Reuses existing IPC (transcribe_file, open_file_dialog, save_text_dialog, get_settings, list_task_models) and the existing theme/i18n modules unchanged.
+
+  Fidelity decision (user-approved): build the FULL pencil layout ("full shell, static placeholders"). Surfaces with real backing are wired to live data/actions - the meeting title from the current file, the file chip, the Add-file (New Meeting) action, Start transcription (play), Export (Save/download), Settings gear, the transcript segment list, the model-missing/error/transcribing states, and the applied theme. Surfaces whose backend does not exist yet in M1 - the meeting-library sidebar list, per-speaker attribution blocks, the status timer widget, and the MFU (summary) panel - are rendered as static, clearly presentational scaffolding styled from the tokens, not claimed as working features.
+
+  Design tokens: extract the pencil `variables` block (canvas-bg, panel, text-primary/secondary/label, border, accent, accent-hover, success, error, warning, radii, spacing scale, font sizes, header-height, sidebar-width, font-body) into a dedicated CSS custom-properties file (src/tokens.css) imported ahead of styles.css. This file is declared the source of truth for design tokens; styles.css and components consume var(--token) and must not hardcode design values that a token exists for. The existing light/dark theme override mechanism in styles.css (prefers-color-scheme + [data-theme]) is preserved; tokens provide the base (light) palette values.
+
+  Docs: update docs/designbook.md to link src/tokens.css and instruct that it is the authoritative source of truth for design tokens, and that the pencil file (pencil/main_view.pen) is the upstream design reference the tokens are derived from.
+
+  Scope boundary: does not implement diarization/speaker attribution, a meeting library/persistence, MFU summarization, or the stop/re-run/craft/delete/export-beyond-save actions as real behavior - those regions are visual scaffolding only. Does not touch Rust, IPC, or the Settings screen internals (only the entry into Settings via the gear stays wired).
+
+  Scenarios (BDD):
+
+  Given the app launches with no file loaded When the main view renders Then it shows the pencil layout - top header (logo, sidebar/new/settings controls, action group), meeting info bar, sidebar, transcript panel, and MFU panel - using colors and spacing from src/tokens.css.
+
+  Given a file has been transcribed When the transcript renders Then segments appear as speaker-block-styled rows matching the pencil Speaker Block, with the real filename shown in the file chip and meeting title, and segment text remains editable as before.
+
+  Given the transcription model is missing or a transcription errors When that state occurs Then the existing error/empty/transcribing messaging still appears within the new layout (no regression of M1 states).
+
+  Given a developer needs a design color or spacing value When they implement UI Then src/tokens.css is the documented source of truth (per docs/designbook.md) and is imported before styles.css.'
+dod:
+- src/tokens.css exists, defines CSS custom properties for every pencil `variables` design token (colors, radii, spacing, font sizes, layout dimensions), and is imported before styles.css so tokens are globally available.
+- The main view renders the pencil layout structure (top header, meeting info bar, sidebar with meeting list, transcript panel with speaker-block-styled segments, MFU panel) with styling driven by tokens rather than hardcoded design values.
+- Real M1 behavior is preserved and wired into the new layout - Add file, Start/transcribe, Save/Export, open Settings, editable transcript segments, and the model-missing / error / transcribing / empty states all still work.
+- The applied theme (light/dark/system) still applies on load and the existing [data-theme] override mechanism continues to win over the OS scheme; tokens supply the base palette.
+- docs/designbook.md links src/tokens.css and states it is the source of truth for design tokens, referencing pencil/main_view.pen as the upstream design.
+- Existing frontend tests are updated to the new structure/accessible names and the full frontend suite passes via the validate skill with no regressions; no Rust/IPC changes introduced.

@@ -3,9 +3,34 @@ id: WP-37
 title: Settings key-value store + get/set IPC (theme, ui_language, active models)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:57Z'
-updated_at: '2026-07-21T14:05:57Z'
+updated_at: '2026-07-21T15:49:23Z'
 parent_id: WP-34
-description: Persist settings in the app support dir (key-value), applied immediately and across restarts; get_settings/set_setting IPC. Implements F005-R2 (F005-T1).
+description: 'Persist app settings (theme, ui_language, and each task''s active model id) in a small key-value store in the app support directory, applied immediately and surviving app restart. Expose Tauri IPC commands get_settings() (read all settings) and set_setting(key, value) (update one setting). Implements F005-R2 (F005-T1), parent WP-34.
+
+  Happy path: caller invokes set_setting(''theme'', ''dark''); the store persists the value to disk; a later get_settings() call, including after an app restart, returns theme: ''dark'' (F005-S2).
+
+  Failure / edge cases: get_settings() on first run, with no store file yet, returns built-in defaults (theme: ''system'', ui_language: ''en'') without erroring; set_setting with an unsupported key or invalid value is rejected with an AppError rather than silently written, and the store is left unchanged; a corrupt/unreadable store file falls back to defaults rather than crashing the app.
+
+  Scope boundary: beta persists exactly three keys - theme, ui_language, and the active model id per task (transcription only in beta, one model) - not an arbitrary key-value API. No UI in this task (that is WP-38+).
+
+  Target surfaces: src-tauri/src/settings.rs (new module), command registration + AppState wiring in src-tauri/src/lib.rs, IPC commands get_settings() / set_setting(key, value) per docs/architecture.md''s IPC Contract, typed frontend wrapper in src/ipc.ts. No UI component.
+
+  Constraints: no network calls (local file only); store lives in the app support directory alongside the existing SQLite library per docs/architecture.md; no secrets; concurrency is bounded by serialized IPC calls, no additional locking contract required.
+
+  Scenarios (BDD):
+
+  Given no settings store file exists yet When get_settings() is called Then it returns the defaults (theme: ''system'', ui_language: ''en'') without erroring (F005-S2 setup case).
+
+  Given a setting was previously written via set_setting(''theme'', ''dark'') When the app restarts and get_settings() is called Then it returns theme: ''dark'' (F005-S2).
+
+  Given the store currently has theme: ''dark'' When set_setting(''theme'', ''not_a_real_theme'') is called Then it returns an AppError and a subsequent get_settings() still returns theme: ''dark'' (unchanged).
+
+  Given the store currently has theme: ''dark'' When set_setting(''not_a_real_key'', ''x'') is called Then it returns an AppError and the store is left unchanged.'
+dod:
+- get_settings() returns defaults (theme=system, ui_language=en) when no store file exists yet, and returns previously persisted values after set_setting + an app restart (F005-R2, F005-S2).
+- set_setting rejects unsupported keys / invalid values with AppError and does not persist them; the store file is unchanged after a rejected write.
+- Settings persist to a file in the app support directory as key-value data, verified by a second get_settings() call (or direct file read) after set_setting.
+- Rust unit tests (cargo-nextest) cover default-read, round-trip persistence, and invalid-key rejection.
 created_by: Settings planning

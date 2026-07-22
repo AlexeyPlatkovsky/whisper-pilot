@@ -1,9 +1,12 @@
 # Design
 
 Owns the product/UX design: the workspace shell, screens, flows, and states.
-Technical structure is in `architecture.md`. UI design detail lives here (no
-separate design-book yet). The unit of work is a **Meeting** (one transcription
-of one source file; see `glossary.md`).
+Technical structure is in `architecture.md`. UX flows and view states live here;
+the **visual language and design tokens** (colours, spacing, radii, typography)
+live in the design book `designbook.md`, whose source of truth is
+[`../src/tokens.css`](../src/tokens.css) (derived from `pencil/main_view.pen`).
+The unit of work is a **Meeting** (one transcription of one source file; see
+`glossary.md`).
 
 ## UX Principles
 

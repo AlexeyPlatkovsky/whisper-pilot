@@ -24,6 +24,9 @@ thiserror = "2"
 dirs-next = "2"
 log = "0.4"
 env_logger = "0.11"
+reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
+sha2 = "0.10"
+futures-util = "0.3"
 
 # brotli 8.x (via tauri-codegen) requires alloc-no-stdlib ^2, but transitive deps
 # allow >=2.0.4,<4 and Cargo otherwise picks 3.0.0, splitting the type identity.

@@ -3,8 +3,8 @@ id: WP-33
 title: M2 — Settings (beta)
 priority: normal
 type: epic
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:40Z'
-updated_at: '2026-07-21T14:05:40Z'
+updated_at: '2026-07-22T01:47:09Z'
 description: 'Beta scope of the Settings screen (F005): a Settings surface reached from a header gear, with AI models (download/delete one model per task, SHA-verified), Appearance (light/dark/system themes), and App language (English UI). Settings persist locally and apply immediately. Release scope (Active model choice, extra themes, more UI languages, Update app) is F005 M3, unscheduled here. Serves roadmap M2 and feature F005.'
 created_by: Settings planning

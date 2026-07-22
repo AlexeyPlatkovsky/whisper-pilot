@@ -102,10 +102,17 @@ These apply to all non-trivial work and may not be skipped:
 
 ## Commit And Push Boundary
 
-Never commit and never push **changes** (new commits) unless the user explicitly
-requests it — this applies unconditionally, including during pipeline execution,
-code review cycles, and validation runs. See
-`.claude/skills/work-with-git/SKILL.md` for implementation details.
+Never push changes unless the user explicitly requests it — this applies
+unconditionally, including during pipeline execution, code review cycles, and
+validation runs.
+
+Commits follow the same default: never commit unless the user explicitly
+requests it. One standing exception — when the user asks to implement multiple
+tasks on one branch (a whole feature or epic), that request itself authorizes
+committing each task separately at its own closure, one commit per task; this
+does not need to be re-requested per task. Push still requires an explicit
+prompt every time regardless. See `.claude/skills/work-with-git/SKILL.md` for
+implementation details.
 
 ---
 

@@ -36,7 +36,8 @@ The commit/push boundary is owned by `AGENTS.md`; this skill only formats task-s
 
 - When a task has an ID, every commit message must begin `<TASKPILOT-ID>: `, for example `VP-17: `.
 - Every non-trivial change uses its existing TaskPilot ID in the commit-message prefix.
-- After completing work that changed files, suggest one short imperative commit message, ID-prefixed only when an ID exists.
+- **Multi-task branch runs** (the user asked to implement multiple tasks on one branch — a whole feature or epic): commit each task separately at its own closure (`task-complete`), one commit per task, ID-prefixed with that task's own ID. This is authorized by the original request; do not ask again per task. Push still requires an explicit prompt every time, unchanged.
+- **Single-task runs**: after completing work that changed files, suggest one short imperative commit message, ID-prefixed when an ID exists, and wait for explicit approval before committing.
 
 ## Recommended Checks
 

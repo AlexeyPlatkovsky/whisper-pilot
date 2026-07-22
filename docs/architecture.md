@@ -71,8 +71,9 @@ unavailable or fails, the run still finishes with plain (speaker-less) segments.
 Re-running Transcribe on a meeting that already has a transcript replaces it (and
 any notes) after a confirmation.
 
-For now the model is the `large-v3-turbo` artifact on disk (override via
-`MFUPILOT_MODEL_PATH`); own model management is deferred.
+The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
+Settings AI models section (F005, `models.rs`) into the app support directory;
+override the path for development with `MFUPILOT_MODEL_PATH`.
 
 ## Speaker Diarization (M2, `diarize.rs`) — planned
 
