@@ -1,6 +1,7 @@
 //! WhisperPilot core: offline file transcription (Russian) with a summary to come.
 
 pub mod audio;
+pub mod diarize;
 pub mod error;
 pub mod models;
 pub mod settings;

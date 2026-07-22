@@ -10,6 +10,12 @@ working on this repo is [`../AGENTS.md`](../AGENTS.md).
 - macOS on Apple Silicon (macOS 13+)
 - Rust (stable), Node.js 20+
 - `ffmpeg` on PATH (`brew install ffmpeg`)
+- libclang (bundled with Xcode Command Line Tools; already required for other
+  native deps) — `sherpa-rs`'s build script always runs `bindgen`, download or
+  not
+- Network access at `cargo build` time: `sherpa-rs`'s `download-binaries`
+  feature fetches prebuilt sherpa-onnx shared libraries for the host platform
+  during the build, not just at first run
 
 ## Setup
 

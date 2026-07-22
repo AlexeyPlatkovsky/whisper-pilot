@@ -137,6 +137,21 @@ pub fn primary_asset_path(app_support_dir: &Path, id: &str) -> Option<PathBuf> {
     entry.assets.first().map(|a| asset_path(app_support_dir, a))
 }
 
+/// Raw downloaded asset paths for catalog entry `id`, in catalog order.
+/// Used by diarize.rs to locate the diarization entry's two assets (the
+/// segmentation archive and the embedding model) without duplicating
+/// `models_dir`/`asset_path`'s path construction.
+pub fn asset_paths(app_support_dir: &Path, id: &str) -> Option<Vec<PathBuf>> {
+    let entry = CATALOG.iter().find(|e| e.id == id)?;
+    Some(
+        entry
+            .assets
+            .iter()
+            .map(|a| asset_path(app_support_dir, a))
+            .collect(),
+    )
+}
+
 async fn hash_file(path: &Path) -> Result<String> {
     let path = path.to_path_buf();
     tokio::task::spawn_blocking(move || -> Result<String> {

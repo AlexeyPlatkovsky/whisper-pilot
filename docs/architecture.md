@@ -75,7 +75,7 @@ The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models.rs`) into the app support directory;
 override the path for development with `WHISPERPILOT_MODEL_PATH`.
 
-## Speaker Diarization (M2, `diarize.rs`) — planned
+## Speaker Diarization (M2, `diarize.rs`)
 
 sherpa-onnx segmentation + embedding models produce speaker turns, merged onto
 segments by time overlap to set each segment's `speaker_id`. Speaker count is
@@ -83,6 +83,12 @@ auto-detected with an optional override. Labels are generic ("Спикер N") a
 user-renamed; renames persist on the meeting. The transcript renders as a
 per-speaker chat of colored bubbles (10 shades). Reassigning or merging speakers
 is out of scope for M2.
+
+`diarize.rs` currently (WP-5) only prepares the sherpa-onnx model files: it
+resolves the embedding model's path as-is and extracts the segmentation
+model's `model.onnx` from its downloaded tar.bz2 archive into a stable,
+idempotent path. Turn production, the turn↔segment merge, and wiring into the
+Transcribe run are separate, not-yet-built work (WP-6, WP-3/WP-7, WP-31).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 
@@ -159,7 +165,8 @@ directory, downloaded model files, and user-chosen export destinations. No
 
 - Tauri v2 + React 19 + TypeScript; Vite dev server on port 1420.
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
-- ffmpeg on PATH. M2 adds sherpa-onnx; M3 adds llama.cpp — both Metal, local.
+- ffmpeg on PATH. M2 adds sherpa-onnx (via the `sherpa-rs` crate, prebuilt
+  binaries fetched at build time); M3 adds llama.cpp — both Metal, local.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
 - Run: `npm install`, then `npm run tauri:dev`.

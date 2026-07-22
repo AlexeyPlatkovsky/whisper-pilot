@@ -3,9 +3,47 @@ id: WP-5
 title: Add sherpa-onnx dependency + diarization model assets (download/verify)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T09:31:31Z'
-updated_at: '2026-07-21T09:31:31Z'
+updated_at: '2026-07-22T12:07:05Z'
 parent_id: WP-2
-description: Add the sherpa-onnx Rust binding and a model-asset step that downloads and SHA-verifies the speaker segmentation and speaker-embedding models into the app support dir, failing closed on bad metadata. Mirror the whisper artifact-verification pattern.
+description: 'Add the sherpa-onnx Rust dependency and a pure Rust helper that turns WP-39/WP-40''s already-downloaded diarization model bytes into usable on-disk model files. Implements the dependency/model-preparation half of epic WP-1 (F002), parent WP-2. Depends on WP-39/WP-40 (done) for the download/verify/delete plumbing and the diarization catalog task; does not duplicate that logic.
+
+
+  Scope: (1) add crate `sherpa-rs` v0.6.8 with feature `download-binaries` to src-tauri/Cargo.toml - this feature fetches prebuilt sherpa-onnx shared libraries for the host platform at build time, avoiding a cmake/C++ toolchain requirement. (2) a pure Rust path-resolution/extraction helper that, given the app support directory, returns two usable on-disk paths: the embedding model (3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx, used as-is, no extraction) and the segmentation model (extracted on first use from sherpa-onnx-pyannote-segmentation-3-0.tar.bz2''s model.onnx entry - NOT model.int8.onnx - into a stable, idempotent extraction path; a second call does not re-extract).
+
+
+  Verified via a throwaway build/runtime spike (not committed): sherpa-rs 0.6.8 + download-binaries builds and links on this machine (macOS arm64) with no cmake/C++ toolchain step - prebuilt libsherpa-onnx-c-api.dylib/libsherpa-onnx-cxx-api.dylib download and link automatically. A spike example called sherpa_rs::diarize::Diarize::new(segmentation_model_path, embedding_model_path, DiarizeConfig::default()).compute(samples, None) against two macOS `say`-synthesized voices (16kHz mono f32, concatenated with a silence gap) and correctly returned two distinct Segment { start, end, speaker } entries (speaker 1, speaker 2) - confirming the dependency, the real archive layout (verified by downloading and inspecting the actual release archive: top-level dir sherpa-onnx-pyannote-segmentation-3-0/ containing model.onnx, model.int8.onnx, LICENSE, README.md, and python scripts), and the runtime API all work end-to-end on this platform.
+
+
+  Happy path: given the diarization models were downloaded via Settings (WP-39/40), the helper returns the embedding model''s path directly and extracts+returns the segmentation model''s model.onnx path from the archive on first call.
+
+
+  Failure / edge cases: if the segmentation archive was already extracted, a subsequent call does not re-extract and returns the same path (idempotent); if the archive file is missing or corrupt, the helper returns a typed error rather than panicking, and leaves no partial/half-extracted files on disk.
+
+
+  Scope boundary: this task does NOT run diarization itself (WP-2/WP-6''s job), does not add any IPC command or UI, and does not change models.rs''s existing download/verify/delete logic - it only adds the crate dependency and the helper that makes the already-downloaded bytes usable.
+
+
+  Target surfaces: src-tauri/Cargo.toml (+sherpa-rs dependency), a new pure-function helper (implementer''s choice of module - likely src-tauri/src/diarize.rs, since WP-6 will also live there - or a small addition alongside models.rs; name it clearly). No changes to src-tauri/src/models.rs''s existing logic, no IPC, no UI, no lib.rs command registration changes.
+
+
+  Constraints: macOS only (matches the rest of the app); no network calls in this task (reuses WP-39''s already-downloaded files); extraction must fail closed (typed error, not a panic) on a missing/corrupt archive; the extraction target path must be deterministic and idempotent; no secrets.
+
+
+  Scenarios (BDD):
+
+
+  Given the diarization models were downloaded via Settings (WP-39/40) When the path-resolution helper is called Then it returns the embedding model''s path directly and extracts+returns the segmentation model''s model.onnx path from the archive.
+
+
+  Given the segmentation archive was already extracted once When the helper is called again Then it does not re-extract and returns the same path.
+
+
+  Given the segmentation archive file is missing or corrupt When the helper is called Then it returns a typed error rather than panicking, and no partial extraction is left on disk.'
+dod:
+- sherpa-rs (0.6.8, download-binaries feature) is added to src-tauri/Cargo.toml and the workspace builds (cargo build) on macOS arm64, downloading and linking the prebuilt sherpa-onnx shared libraries with no cmake/C++ toolchain step required.
+- A pure Rust function resolves the segmentation model's usable on-disk path (extracting model.onnx from the tar.bz2 archive on first use, idempotent on subsequent calls) and the embedding model's on-disk path (the plain .onnx file, no extraction needed), given the app support directory - unit-tested against a real or fixture archive.
+- Extraction fails closed with a typed error (not a panic) on a missing or corrupt archive, verified by a unit test, and leaves no partial file at the final path.
+- Rust unit tests (cargo-nextest) cover idempotent extraction, the corrupt/missing-archive failure case, and correct path resolution for both models.
 created_by: M2 planning

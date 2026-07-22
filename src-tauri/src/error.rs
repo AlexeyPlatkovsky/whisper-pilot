@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("downloaded model failed SHA-256 verification (expected {expected}, got {actual})")]
     ModelShaMismatch { expected: String, actual: String },
 
+    #[error("diarization model asset problem: {0}")]
+    DiarizationAsset(String),
+
     #[error("{0}")]
     Io(String),
 }
