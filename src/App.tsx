@@ -1,10 +1,15 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
+  createMeeting,
   getSettings,
+  listMeetings,
   listTaskModels,
+  openMeeting,
   openFileDialog,
   transcribeFile,
   saveTextDialog,
+  type Meeting as PersistedMeeting,
+  type MeetingSummary,
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
@@ -40,29 +45,6 @@ function formatDuration(ms: number): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
-// Presentational sidebar sample — the meeting library (persistence) is not built
-// in M1. Rendered as static scaffolding to match the pencil design; the selected
-// row reflects the currently loaded file when one is present.
-const SAMPLE_MEETINGS = [
-  { title: "Product Standup", when: "Yesterday", dur: "18m", dot: "ok" },
-  { title: "Design Review", when: "Jul 19", dur: "55m", dot: "ok" },
-  {
-    title: "Client Call - Acme",
-    when: "Jul 18",
-    dur: "1h 12m",
-    dot: "progress",
-    status: "Transcribing",
-  },
-  { title: "Sprint Retrospective", when: "Jul 17", dur: "37m", dot: "ok" },
-  {
-    title: "Architecture Sync",
-    when: "Jul 16",
-    dur: "1h 05m",
-    dot: "error",
-    status: "MFU Failed",
-  },
-] as const;
-
 export function App() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
   const [fileName, setFileName] = useState<string | null>(null);
@@ -76,6 +58,12 @@ export function App() {
   const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
     {},
   );
+  const [meetingSummaries, setMeetingSummaries] = useState<MeetingSummary[]>(
+    [],
+  );
+  const [activeMeeting, setActiveMeeting] = useState<PersistedMeeting | null>(
+    null,
+  );
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
@@ -85,7 +73,7 @@ export function App() {
     return () => clearInterval(id);
   }, [status.kind]);
 
-  async function refreshModelAvailability() {
+  const refreshModelAvailability = useCallback(async () => {
     try {
       const models = await listTaskModels();
       const transcription = models.find((m) => m.id === "transcription");
@@ -93,17 +81,47 @@ export function App() {
     } catch {
       setTranscriptionModelReady(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void refreshModelAvailability();
-  }, []);
+  }, [refreshModelAvailability]);
 
   useEffect(() => {
     getSettings()
       .then((s) => applyTheme(s.theme as Theme))
       .catch(() => {});
   }, []);
+
+  const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
+    setActiveMeeting(meeting);
+    setFileName(meeting.source_name ?? null);
+    setSegments(meeting.segments);
+    setSpeakerLabels({});
+    setStatus({ kind: "idle" });
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMeetingLibrary() {
+      try {
+        const summaries = await listMeetings();
+        if (cancelled) return;
+        setMeetingSummaries(summaries);
+        if (summaries.length === 0) return;
+        const meeting = await openMeeting(summaries[0].id);
+        if (!cancelled) applyActiveMeeting(meeting);
+      } catch (error) {
+        if (!cancelled) setStatus({ kind: "error", message: String(error) });
+      }
+    }
+
+    void loadMeetingLibrary();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyActiveMeeting]);
 
   function resolveSpeakerLabel(speakerId: number): string {
     return speakerLabels[speakerId] ?? speakerLabel(speakerId);
@@ -148,6 +166,33 @@ export function App() {
     }
   }
 
+  async function handleCreateMeeting() {
+    try {
+      const meeting = await createMeeting();
+      setMeetingSummaries((previous) => [
+        {
+          id: meeting.id,
+          title: meeting.title,
+          created_at_ms: meeting.created_at_ms,
+          duration_ms: meeting.duration_ms,
+          status: meeting.status,
+        },
+        ...previous.filter((summary) => summary.id !== meeting.id),
+      ]);
+      applyActiveMeeting(meeting);
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  async function handleOpenMeeting(id: number) {
+    try {
+      applyActiveMeeting(await openMeeting(id));
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
   function editSegment(index: number, text: string) {
     setSegments((prev) =>
       prev.map((s, i) => (i === index ? { ...s, text } : s)),
@@ -161,9 +206,7 @@ export function App() {
 
   const busy = status.kind === "transcribing";
   const hasTranscript = segments.length > 0;
-  const meetingTitle = fileName
-    ? fileName.replace(/\.[^.]+$/, "")
-    : "New Meeting";
+  const meetingTitle = activeMeeting?.title ?? "New Meeting";
 
   if (isSettingsOpen) {
     return (
@@ -207,10 +250,10 @@ export function App() {
               <button
                 type="button"
                 className="wp-icon-btn"
-                aria-label={t("addFile")}
-                title={t("addFile")}
-                onClick={handleAddFile}
-                disabled={busy || transcriptionModelReady !== true}
+                aria-label="New meeting"
+                title="New meeting"
+                onClick={handleCreateMeeting}
+                disabled={busy}
               >
                 <Icon name="plus" size={18} />
               </button>
@@ -261,7 +304,11 @@ export function App() {
               <span className="wp-status-error">Error</span>
             ) : (
               <span className="wp-status-idle">
-                {hasTranscript ? "Ready" : "Idle"}
+                {activeMeeting?.status === "no_files"
+                  ? "No files"
+                  : hasTranscript
+                    ? "Ready"
+                    : "Idle"}
               </span>
             )}
           </div>
@@ -349,23 +396,30 @@ export function App() {
               />
             </div>
             <div className="wp-meeting-list">
-              <MeetingRow
-                title={fileName ? meetingTitle : "Quarterly Planning Sync"}
-                when="Today"
-                dur={hasTranscript ? durationLabel : "42m"}
-                dot="ok"
-                selected
-              />
-              {SAMPLE_MEETINGS.map((m) => (
-                <MeetingRow
-                  key={m.title}
-                  title={m.title}
-                  when={m.when}
-                  dur={m.dur}
-                  dot={m.dot}
-                  status={"status" in m ? m.status : undefined}
-                />
-              ))}
+              {meetingSummaries.length === 0 ? (
+                <p className="wp-info-muted">No meetings yet</p>
+              ) : (
+                meetingSummaries.map((meeting) => (
+                  <MeetingRow
+                    key={meeting.id}
+                    title={meeting.title}
+                    when={new Date(meeting.created_at_ms).toLocaleDateString()}
+                    dur={
+                      meeting.duration_ms
+                        ? formatDuration(meeting.duration_ms)
+                        : "—"
+                    }
+                    dot={meeting.status === "error" ? "error" : "ok"}
+                    status={
+                      meeting.status === "no_files"
+                        ? "No files"
+                        : meeting.status
+                    }
+                    selected={activeMeeting?.id === meeting.id}
+                    onSelect={() => void handleOpenMeeting(meeting.id)}
+                  />
+                ))
+              )}
             </div>
           </aside>
         )}
@@ -396,7 +450,7 @@ export function App() {
               )}
 
               {status.kind === "error" && (
-                <div className="wp-notice wp-notice--error">
+                <div className="wp-notice wp-notice--error" role="alert">
                   {status.message}
                 </div>
               )}
@@ -497,6 +551,7 @@ function MeetingRow({
   dot,
   status,
   selected,
+  onSelect,
 }: {
   title: string;
   when: string;
@@ -504,9 +559,15 @@ function MeetingRow({
   dot: string;
   status?: string;
   selected?: boolean;
+  onSelect: () => void;
 }) {
   return (
-    <div className={`wp-meeting-row${selected ? " is-selected" : ""}`}>
+    <button
+      type="button"
+      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
+      aria-current={selected ? "page" : undefined}
+      onClick={onSelect}
+    >
       <span className={`wp-meeting-dot wp-meeting-dot--${dot}`} />
       <div className="wp-meeting-text">
         <span className="wp-meeting-title">{title}</span>
@@ -520,6 +581,6 @@ function MeetingRow({
           )}
         </div>
       </div>
-    </div>
+    </button>
   );
 }

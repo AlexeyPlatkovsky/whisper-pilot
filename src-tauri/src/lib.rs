@@ -3,16 +3,19 @@
 pub mod audio;
 pub mod diarize;
 pub mod error;
+pub mod meetings;
 pub mod models;
 pub mod settings;
 pub mod store;
 pub mod transcribe;
 
 use error::{AppError, Result};
+use meetings::{MeetingDto, MeetingSummaryDto};
 use models::TaskModel;
 use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 use transcribe::Segment;
@@ -22,6 +25,16 @@ fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
     app.path()
         .app_data_dir()
         .map_err(|e| AppError::Io(e.to_string()))
+}
+
+fn now_ms() -> Result<i64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| AppError::Store(error.to_string()))
+        .and_then(|duration| {
+            i64::try_from(duration.as_millis())
+                .map_err(|_| AppError::Store("current time exceeds i64 milliseconds".into()))
+        })
 }
 
 /// The whisper model is loaded lazily on first use and cached for the session —
@@ -139,6 +152,25 @@ async fn save_text_dialog(content: String, default_name: Option<String>) -> Resu
     Ok(Some(dest.to_string_lossy().to_string()))
 }
 
+/// Create and return an empty persisted meeting. Attaching a file and starting
+/// transcription are separate, explicit actions.
+#[tauri::command]
+fn create_meeting(app: tauri::AppHandle) -> Result<MeetingDto> {
+    meetings::create_empty_meeting(&app_data_dir(&app)?, now_ms()?)
+}
+
+/// List persisted meetings newest first for the library sidebar.
+#[tauri::command]
+fn list_meetings(app: tauri::AppHandle) -> Result<Vec<MeetingSummaryDto>> {
+    meetings::list_meetings(&app_data_dir(&app)?)
+}
+
+/// Open a complete persisted meeting for the active workspace.
+#[tauri::command]
+fn open_meeting(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    meetings::open_meeting(&app_data_dir(&app)?, id)
+}
+
 /// Read all settings (theme, ui_language, active model), applying beta
 /// defaults for any key never set.
 #[tauri::command]
@@ -195,6 +227,9 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             open_file_dialog,
+            create_meeting,
+            list_meetings,
+            open_meeting,
             transcribe_file,
             save_text_dialog,
             get_settings,

@@ -432,11 +432,17 @@ body {
 
 .wp-meeting-row {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: var(--wp-space-sm);
   padding: 10px;
+  border: 0;
   border-radius: var(--wp-radius-sm);
-  cursor: default;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .wp-meeting-row.is-selected {

@@ -3,9 +3,15 @@ id: WP-21
 title: list_meetings/open_meeting + meetings list UI + New meeting
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T10:28:00Z'
-updated_at: '2026-07-21T11:04:22Z'
+updated_at: '2026-07-22T15:22:18Z'
 parent_id: WP-14
-description: IPC list_meetings/open_meeting; left Meetings list mirroring VoicePilot Sessions, with + New meeting creating and selecting an empty meeting.
+description: "Replace the presentational sidebar fixtures with the persisted meeting library\nfrom WP-16. Add Tauri commands to create an empty meeting, list meeting\nsummaries, and open a complete meeting; add matching TypeScript IPC bindings\nand make the React workspace load the most recently created meeting on start.\n\nOn first launch with an empty database, show an empty workspace rather than\ninventing a sample meeting. Once one or more meetings exist, app startup must\nselect and show the newest meeting, including its title, source metadata,\ntranscript segments, and persisted status. The header + action creates and\nselects a new empty meeting with title `New Meeting`, status `no_files`, and\nno attached file or transcript. It must not open the file dialog or start\ntranscription. The left pane renders only real persisted meetings; no static\nmock rows remain. Selecting a row opens that meeting.\n\nFailure behavior: a failed list/open/create IPC call leaves the currently\ndisplayed meeting intact and renders an accessible error. An unknown meeting\nid returns a typed not-found error rather than a fabricated empty meeting.\nScope boundary: rename/delete, attaching a file, manual Transcribe, progress,\nstop, and auto-save UI edits belong to WP-22, WP-28, WP-18, WP-19, and WP-17.\n\nScenarios:\n- Given a database with saved meetings, when the app starts, then it opens the\n  newest meeting and renders its persisted metadata and transcript.\n- Given an empty database, when the app starts, then it renders an empty\n  workspace and no sample sidebar entries.\n- Given the user clicks the header + button, when creation succeeds, then a\n  selected `New Meeting` with status `No files` appears and no file dialog or\n  transcription call occurs.\n- Given the user selects a persisted list row, when open succeeds, then that\n  meeting replaces the active workspace.\n\nTarget surfaces: `src-tauri/src/lib.rs` (commands and serializable meeting\nDTOs), `src-tauri/src/store.rs` (read models only if needed), `src/ipc.ts`,\n`src/App.tsx`, and `src/App.test.tsx`. Constraints: local SQLite only; no\nnetwork, no mock/seed data, no UI blocking during initial list/open load;\nmacOS desktop app; keep Tauri commands thin and business logic testable with a\ntemporary database.\n"
+dod:
+- The backend exposes `create_meeting`, `list_meetings`, and `open_meeting` over Tauri IPC using WP-16 storage; tests cover newest-first listing, complete open data, and unknown-id failure.
+- On launch the React app loads and displays the newest persisted meeting when one exists, or an empty workspace when the library is empty; no static mock meeting rows remain.
+- The header + button creates and selects an empty `New Meeting` with `no_files`/`No files`, and does not open a file dialog or start transcription; covered by an accessible component test.
+- Selecting a real sidebar meeting opens it; create/list/open failures are visible and retain the current workspace.
+- Typecheck, lint, frontend tests, Rust nextest, clippy, and the production build pass; manual Tauri UI smoke covers startup, creation, and selection.
 created_by: M2 planning

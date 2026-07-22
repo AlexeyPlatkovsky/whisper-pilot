@@ -13,6 +13,38 @@ export interface TranscriptResult {
   segments: Segment[];
 }
 
+export interface MeetingSummary {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  duration_ms?: number;
+  status: string;
+}
+
+export interface Meeting {
+  id: number;
+  title: string;
+  source_path?: string;
+  source_name?: string;
+  created_at_ms: number;
+  duration_ms?: number;
+  language: string;
+  status: string;
+  segments: Segment[];
+}
+
+export function createMeeting(): Promise<Meeting> {
+  return invoke<Meeting>("create_meeting");
+}
+
+export function listMeetings(): Promise<MeetingSummary[]> {
+  return invoke<MeetingSummary[]>("list_meetings");
+}
+
+export function openMeeting(id: number): Promise<Meeting> {
+  return invoke<Meeting>("open_meeting", { id });
+}
+
 export function openFileDialog(): Promise<string | null> {
   return invoke<string | null>("open_file_dialog");
 }

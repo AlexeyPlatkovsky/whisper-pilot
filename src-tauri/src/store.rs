@@ -60,7 +60,7 @@ pub struct StoredSegment {
     pub speaker_id: Option<i64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MeetingNotes {
     pub meeting_id: MeetingId,
     pub summary: String,
