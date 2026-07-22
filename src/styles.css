@@ -705,22 +705,46 @@ body {
   flex: 0 0 200px;
   display: flex;
   flex-direction: column;
+  gap: 4px;
   border-right: 1px solid var(--border);
-  padding: 14px 0;
+  padding: var(--wp-space-md) 12px;
   background: var(--panel);
 }
 
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  margin-bottom: var(--wp-space-xs);
+}
+
+.settings-brand-name {
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
 .settings-nav button {
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
   text-align: left;
   border: none;
-  border-radius: 0;
-  padding: 10px var(--wp-space-lg);
+  border-radius: var(--wp-radius-xs);
+  padding: 8px 10px;
   background: transparent;
-  color: var(--text);
-  font-size: var(--wp-font-size-md);
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+  font-weight: 500;
   cursor: pointer;
+}
+
+.settings-nav button svg {
+  color: var(--text-secondary);
+  flex: 0 0 auto;
 }
 
 .settings-nav button:hover:not(:disabled) {
@@ -728,15 +752,56 @@ body {
 }
 
 .settings-nav button.active {
-  background: var(--bg);
+  background: var(--selected);
+  color: var(--text);
+}
+
+.settings-nav button.active svg {
   color: var(--accent);
-  font-weight: 600;
 }
 
 .settings-content {
   flex: 1;
   overflow-y: auto;
-  padding: var(--wp-space-lg);
+  padding: var(--wp-space-xl) 40px;
+  color: var(--muted);
+}
+
+.settings-tab-title {
+  margin: 0 0 var(--wp-space-xl);
+  font-size: var(--wp-font-size-h2);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.model-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xl);
+}
+
+.model-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+}
+
+.section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--wp-font-size-xl);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.section-subtitle {
+  margin: 0;
+  font-size: var(--wp-font-size-body);
   color: var(--muted);
 }
 
@@ -744,14 +809,17 @@ body {
   list-style: none;
   margin: 0;
   padding: 0;
+  background: var(--panel);
+  border-radius: var(--wp-radius-sm);
+  overflow: hidden;
 }
 
 .model-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: var(--wp-space-md);
-  padding: var(--wp-space-sm) 0;
+  gap: var(--wp-space-sm);
+  padding: 0 var(--wp-space-md);
+  height: 44px;
   border-bottom: 1px solid var(--border);
 }
 
@@ -759,19 +827,71 @@ body {
   border-bottom: none;
 }
 
+.model-radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+}
+
+.model-radio.is-selected {
+  border-color: var(--accent);
+}
+
 .model-label {
   color: var(--text);
+  font-size: var(--wp-font-size-md);
+  font-weight: 500;
+}
+
+.model-row-spacer {
+  flex: 1;
+}
+
+.model-size {
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
 }
 
 .model-status {
-  color: var(--muted);
-  font-size: var(--wp-font-size-body);
+  display: inline-flex;
+  align-items: center;
+}
+
+.model-status--ready {
+  color: var(--success);
 }
 
 .model-actions {
   display: flex;
   align-items: center;
-  gap: var(--wp-space-sm);
+  gap: 8px;
+}
+
+.model-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.model-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.model-icon-btn--accent {
+  color: var(--accent);
+}
+
+.model-icon-btn--disabled {
+  color: var(--border);
 }
 
 .model-row progress {

@@ -19,7 +19,11 @@ export type IconName =
   | "x"
   | "search"
   | "chevron-down"
-  | "folder";
+  | "folder"
+  | "cpu"
+  | "palette"
+  | "info"
+  | "check";
 
 const PATHS: Record<IconName, ReactElement> = {
   "panel-left": (
@@ -103,6 +107,29 @@ const PATHS: Record<IconName, ReactElement> = {
   folder: (
     <path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" />
   ),
+  cpu: (
+    <>
+      <rect width="16" height="16" x="4" y="4" rx="2" />
+      <rect width="6" height="6" x="9" y="9" rx="1" />
+      <path d="M15 2v2M9 2v2M15 20v2M9 20v2M20 15h2M20 9h2M2 15h2M2 9h2" />
+    </>
+  ),
+  palette: (
+    <>
+      <path d="M12 22a1 1 0 0 1 0-20 10 9 0 0 1 10 9 5 5 0 0 1-5 5h-2.25a1.75 1.75 0 0 0-1.4 2.8l.3.4a1.75 1.75 0 0 1-1.4 2.8z" />
+      <circle cx="6.5" cy="11.5" r="1.5" />
+      <circle cx="9.5" cy="7.5" r="1.5" />
+      <circle cx="14.5" cy="7.5" r="1.5" />
+      <circle cx="17.5" cy="11.5" r="1.5" />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 16v-4M12 8h.01" />
+    </>
+  ),
+  check: <path d="M20 6 9 17l-5-5" />,
 };
 
 export function Icon({

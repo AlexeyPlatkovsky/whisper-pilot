@@ -6,10 +6,28 @@ import {
   onModelDownloadProgress,
   type TaskModel,
 } from "./ipc";
+import { Icon } from "./Icon";
 
 type RowState =
   | { kind: "downloading"; fraction: number }
   | { kind: "error"; message: string };
+
+const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
+  transcription: {
+    title: "Transcription Models",
+    subtitle: "Choose the Whisper model used to transcribe your meetings.",
+  },
+  diarization: {
+    title: "Speaker Diarization",
+    subtitle: "Identify individual speakers in your recordings.",
+  },
+};
+
+function formatSize(bytes: number): string {
+  const gb = bytes / 1024 ** 3;
+  if (gb >= 1) return `${gb.toFixed(1)} GB`;
+  return `${Math.round(bytes / 1024 ** 2)} MB`;
+}
 
 export function AiModelsSection() {
   const [models, setModels] = useState<TaskModel[] | null>(null);
@@ -66,37 +84,91 @@ export function AiModelsSection() {
   if (loadError) return <p role="alert">{loadError}</p>;
   if (!models) return <p>Loading…</p>;
 
+  const groups = new Map<string, TaskModel[]>();
+  for (const m of models) {
+    const list = groups.get(m.task) ?? [];
+    list.push(m);
+    groups.set(m.task, list);
+  }
+
   return (
-    <ul className="model-list">
-      {models.map((m) => {
-        const state = rowState[m.id];
+    <div className="model-sections">
+      {[...groups.entries()].map(([task, rows]) => {
+        const heading = SECTION_TITLES[task];
         return (
-          <li key={m.id} className="model-row">
-            <span className="model-label">{m.label}</span>
-            {state?.kind === "downloading" && (
-              <progress
-                value={state.fraction}
-                max={1}
-                aria-label={`Downloading ${m.label}`}
-              />
+          <section className="model-section" key={task}>
+            {heading && (
+              <div className="section-header">
+                <h4 className="section-title">{heading.title}</h4>
+                <p className="section-subtitle">{heading.subtitle}</p>
+              </div>
             )}
-            {state?.kind === "error" && <span role="alert">{state.message}</span>}
-            {!state && m.downloaded && (
-              <span className="model-actions">
-                <span className="model-status">Ready</span>
-                <button onClick={() => handleDelete(m.id)}>
-                  {`Delete ${m.label}`}
-                </button>
-              </span>
-            )}
-            {!state && !m.downloaded && (
-              <button onClick={() => handleDownload(m.id)}>
-                {`Download ${m.label}`}
-              </button>
-            )}
-          </li>
+            <ul className="model-list">
+              {rows.map((m) => {
+                const state = rowState[m.id];
+                return (
+                  <li key={m.id} className="model-row">
+                    <span
+                      className={`model-radio${m.downloaded ? " is-selected" : ""}`}
+                      aria-hidden="true"
+                    />
+                    <span className="model-label">{m.label}</span>
+                    <span className="model-row-spacer" />
+                    {state?.kind === "downloading" && (
+                      <progress
+                        value={state.fraction}
+                        max={1}
+                        aria-label={`Downloading ${m.label}`}
+                      />
+                    )}
+                    {state?.kind === "error" && (
+                      <span role="alert">{state.message}</span>
+                    )}
+                    {!state && (
+                      <span className="model-size">
+                        {formatSize(m.size_bytes)}
+                      </span>
+                    )}
+                    {!state && m.downloaded && (
+                      <span className="model-actions">
+                        <span
+                          className="model-status model-status--ready"
+                          aria-label="Ready"
+                        >
+                          <Icon name="check" size={16} />
+                        </span>
+                        <button
+                          className="model-icon-btn"
+                          aria-label={`Delete ${m.label}`}
+                          title={`Delete ${m.label}`}
+                          onClick={() => handleDelete(m.id)}
+                        >
+                          <Icon name="trash-2" size={16} />
+                        </button>
+                      </span>
+                    )}
+                    {!state && !m.downloaded && (
+                      <span className="model-actions">
+                        <button
+                          className="model-icon-btn model-icon-btn--accent"
+                          aria-label={`Download ${m.label}`}
+                          title={`Download ${m.label}`}
+                          onClick={() => handleDownload(m.id)}
+                        >
+                          <Icon name="download" size={16} />
+                        </button>
+                        <span className="model-icon-btn model-icon-btn--disabled">
+                          <Icon name="trash-2" size={16} />
+                        </span>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
         );
       })}
-    </ul>
+    </div>
   );
 }
