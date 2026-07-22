@@ -30,7 +30,7 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
   task (or the explicitly declared two-task delivery cohort) before edits.
 - If the current branch or uncommitted changes appear unrelated to the requested task, stop and ask the user whether to create a new branch or stay on the current branch.
 - If an ID-bearing task needs a new branch, name it `<kind>/vp-<number>-short-task-slug`, with no tool prefix. Use a lowercase TaskPilot ID and a kebab-case slug of 3-6 meaningful words. Map TaskPilot types to `<kind>` as follows: `bug` → `bug`, `feature` → `feat`, and `task` or `epic` → `task`. For example: `feat/vp-01-introduce-local-ai`.
-- Immediately publish every newly created, user-approved branch with `git push -u origin <branch>` before making any subsequent edits. The branch-creation approval authorizes this initial push only; all later pushes still require an explicit user request.
+- Never publish a branch unless the user explicitly requests that push in the current instruction. Branch-creation approval does not authorize an initial `git push -u`, and no pipeline or task lifecycle step may infer push authority.
 - Apply `AGENTS.md` §Git Operation Authority for branch publication and every Git mutation.
 - Preserve user changes and follow the destructive-action rules in `AGENTS.md`.
 
@@ -39,8 +39,11 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 The commit/push boundary is owned by `AGENTS.md`; this skill formats and verifies
 the required task-scoped local commits.
 
-- A tracked implementation item cannot transition to `done` until its completed
-  work is in a local commit. Push remains separately and explicitly authorized.
+- A tracked implementation task's local commit must include both its code and
+  every related TaskPilot item/comment/lifecycle file. Prepare and verify the
+  `done` lifecycle record first, stage it with the code, then make the single
+  task-scoped local commit. Report that hash in closure evidence without a
+  post-commit TaskPilot write.
 - In a normal delivery, one task has one local commit and every commit message
   begins `<TASKPILOT-ID>: `, for example `WP-17: `.
 - A two-task delivery cohort is the only multi-task commit exception. Its commit

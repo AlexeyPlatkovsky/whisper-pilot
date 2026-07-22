@@ -76,11 +76,13 @@ a verified transition to `ready` (waiting work) or `in_progress` (active work).
 
 #### Complete implementation
 
-After DoD passes, create the required local task-scoped commit; do not push.
-Add a completion comment containing its hash plus validation, smoke, review,
-and documentation evidence. Then transition the item to `done`, validate,
-reload, and prove `done`. `task-complete` must not run before this operation
-succeeds.
+After DoD passes, add the completion comment with validation, smoke, review,
+and documentation evidence, then transition the item to `done`, validate,
+reload, and prove `done`. Stage those TaskPilot records with the completed code
+and create one local task-scoped commit; do not push. Report the resulting hash
+in the closure record rather than writing it back to TaskPilot after the commit.
+`task-complete` must not run before both lifecycle verification and the atomic
+commit succeed.
 
 ## Batch And Hierarchy Rules
 

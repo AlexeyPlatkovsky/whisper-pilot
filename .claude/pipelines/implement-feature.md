@@ -182,11 +182,13 @@ If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 10 unti
 
 ### Step 10 — Local Commit And TaskPilot Completion
 
-After the DoD gate passes, create the local task-scoped commit required by
-`AGENTS.md` and `.claude/skills/work-with-git/SKILL.md`; do not push. Then invoke
-`.claude/skills/taskpilot-work/SKILL.md` to add the completion evidence and
-perform the verified `in_progress → done` transition. The output must include
-the commit hash and prove that reloading the item returns `done`.
+After the DoD gate passes, invoke `.claude/skills/taskpilot-work/SKILL.md` to
+add completion evidence and perform the verified `in_progress → done`
+transition. Then stage the finalized TaskPilot records with the task code and
+create the one local task-scoped commit required by `AGENTS.md` and
+`.claude/skills/work-with-git/SKILL.md`; do not push. The output must include
+the commit hash and prove that reloading the item returned `done` before the
+atomic commit.
 
 For a declared delivery cohort, perform its one shared local commit and complete
 both task records atomically only after both DoD gates pass. If either cannot

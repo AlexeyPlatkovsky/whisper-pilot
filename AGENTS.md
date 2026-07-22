@@ -113,19 +113,25 @@ These apply to all non-trivial work and may not be skipped:
 
 ## Commit And Push Boundary
 
-Never push changes unless the user explicitly requests it — this applies
-unconditionally, including during pipeline execution, code review cycles, and
-validation runs.
+Never push changes unless the user explicitly requests a push in the current
+instruction. This applies unconditionally, including after branch creation,
+during pipeline execution, code review cycles, validation runs, and task
+completion. Approval to create a branch, commit a task, or mark an item done
+never authorizes a push.
 
-For tracked implementation work, a local task-scoped commit is required before
-the TaskPilot item may transition to `done`. The user's approval to implement a
-tracked task authorizes that local completion commit; it does not authorize a
-push. A normal delivery uses one commit per task. The sole exception is an
-explicitly declared two-task delivery cohort, whose one shared commit must name
-both TaskPilot IDs and is evidence for both items. AI-governance maintenance
-remains subject to the normal explicit commit request unless the user directs
-otherwise. Push still requires an explicit prompt every time regardless. See
-`.claude/skills/work-with-git/SKILL.md` for implementation details.
+For tracked implementation work, the task-scoped local commit must include the
+related TaskPilot records: item specification changes, lifecycle state, and
+TaskPilot comments created during the task. Prepare the completion comment and
+perform the verified `in_progress → done` transition before staging; then stage
+the code and every related `.taskpilot/` change and create the one local task
+commit. This keeps the committed code and its TaskPilot evidence atomic. Report
+the resulting commit hash in the closure record; do not write it back to
+TaskPilot afterward, because that would leave lifecycle metadata uncommitted.
+A normal delivery uses one commit per task. The sole exception is an explicitly
+declared two-task delivery cohort, whose one shared commit must name both
+TaskPilot IDs and include both records. AI-governance maintenance remains
+subject to the normal explicit commit request unless the user directs otherwise.
+See `.claude/skills/work-with-git/SKILL.md` for implementation details.
 
 ---
 
