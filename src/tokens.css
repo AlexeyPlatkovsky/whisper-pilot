@@ -39,6 +39,18 @@
   --wp-error: #b82b2f;
   --wp-warning: #c65d2e;
   --wp-in-progress: #176c8f; /* transcribing / in-progress status */
+
+  /* --- Colour: speaker identity (10-slot categorical, fixed order) -------- */
+  --wp-speaker-0: #2a78d6; /* blue */
+  --wp-speaker-1: #eb6834; /* orange */
+  --wp-speaker-2: #1baf7a; /* aqua/teal-green */
+  --wp-speaker-3: #eda100; /* amber */
+  --wp-speaker-4: #e87ba4; /* magenta/pink */
+  --wp-speaker-5: #008300; /* green */
+  --wp-speaker-6: #4a3aa7; /* violet */
+  --wp-speaker-7: #e34948; /* red */
+  --wp-speaker-8: #0f7a86; /* teal */
+  --wp-speaker-9: #8a5a2e; /* brown */
   /* Note: the macOS window traffic lights are drawn by the OS (Overlay
      titleBarStyle), so no app tokens are needed for them. */
 

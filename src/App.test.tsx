@@ -267,7 +267,9 @@ describe("App — file handling", () => {
 
   it("displays the transcription error when transcribeFile rejects", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeFile).mockRejectedValue(new Error("whisper failed"));
+    vi.mocked(ipc.transcribeFile).mockRejectedValue(
+      new Error("whisper failed"),
+    );
     const user = userEvent.setup();
     render(<App />);
 
@@ -337,5 +339,68 @@ describe("App — transcript editing", () => {
     await user.type(textarea, "Hi there");
 
     expect(screen.getByDisplayValue("Hi there")).toBeInTheDocument();
+  });
+});
+
+describe("App — speaker rendering", () => {
+  it("labels segments by their real speaker_id, not by array position", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    // Indices 0 and 1 share speaker_id 5 (must render the SAME label,
+    // "Speaker 6"); index 2 is speaker_id 2 ("Speaker 3"). An index-based
+    // fake (e.g. i % N) would instead print three different labels here,
+    // so this fails against position-driven labeling, not just no labeling.
+    vi.mocked(ipc.transcribeFile).mockResolvedValue({
+      file_name: "meeting.mp3",
+      segments: [
+        { start_ms: 0, end_ms: 1000, text: "A", speaker_id: 5 },
+        { start_ms: 1000, end_ms: 2000, text: "B", speaker_id: 5 },
+        { start_ms: 2000, end_ms: 3000, text: "C", speaker_id: 2 },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+
+    await screen.findByDisplayValue("A");
+    const [firstSpeaker6, secondSpeaker6] = screen.getAllByText("Speaker 6");
+    expect(firstSpeaker6).toBeInTheDocument();
+    expect(
+      firstSpeaker6
+        .closest(".wp-speaker-block")
+        ?.querySelector(".wp-speaker-bar"),
+    ).toHaveClass("wp-speaker-color-5");
+    expect(
+      secondSpeaker6
+        .closest(".wp-speaker-block")
+        ?.querySelector(".wp-speaker-bar"),
+    ).toHaveClass("wp-speaker-color-5");
+
+    const speaker3Label = screen.getByText("Speaker 3");
+    expect(
+      speaker3Label
+        .closest(".wp-speaker-block")
+        ?.querySelector(".wp-speaker-bar"),
+    ).toHaveClass("wp-speaker-color-2");
+  });
+
+  it("renders no speaker label when segments carry no speaker_id, and stays editable", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeFile).mockResolvedValue({
+      file_name: "meeting.mp3",
+      segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+
+    const textarea = await screen.findByDisplayValue("Hello");
+    expect(screen.queryByText(/^Speaker \d+$/)).not.toBeInTheDocument();
+    expect(
+      textarea.closest(".wp-speaker-block")?.querySelector(".wp-speaker-bar"),
+    ).toHaveClass("wp-speaker-bar--none");
   });
 });

@@ -114,8 +114,14 @@ engine error, or the blocking task itself panicking — is fail-open: it is
 logged and the transcription still returns its (speaker-less) segments,
 never failing `transcribe_file`. There is still no Stop control, no progress
 event spanning both phases, and no persisted meeting entity (those remain
-the not-yet-built M2 library epic, F004/WP-11) and no bubble UI yet
-(WP-9/WP-10/WP-4).
+the not-yet-built M2 library epic, F004/WP-11).
+
+The transcript now renders segments with real per-speaker coloring (WP-9):
+`src/speakerColors.ts` maps a `speaker_id` to one of 10 categorical colors
+(`--wp-speaker-0`..`9` in `tokens.css`, dark-mode-aware) and a generic
+"Speaker N" label; a segment without `speaker_id` renders a neutral bar and
+no label rather than a fabricated one. Labels are not yet user-renamable
+(WP-10) and there is no persistence (F004/WP-11).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

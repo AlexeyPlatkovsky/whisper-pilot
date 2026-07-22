@@ -3,9 +3,48 @@ id: WP-9
 title: Per-speaker chat rendering — colored bubbles (10 shades)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T09:31:33Z'
-updated_at: '2026-07-21T11:52:36Z'
+updated_at: '2026-07-22T13:22:10Z'
 parent_id: WP-4
-description: Render segments as colored chat bubbles (10 predefined shades) grouped and labelled by speaker, preserving edit-in-place of segment text and timestamps. Never rely on color alone — each bubble carries the speaker name as text.
+description: 'Render each transcript segment''s speaker attribution using real speaker_id data (from WP-31, already flowing through Segment/TranscriptResult/IPC) instead of the fake index-cycled placeholder currently in src/App.tsx, using a fixed 10-shade categorical color palette, while preserving in-place editing of segment text and timestamps exactly as it works today. Implements F002-R3 (F002-T5), parent WP-4.
+
+
+  Scope reality check: src/App.tsx already renders each segment as a ''.wp-speaker-block'' bubble (colored bar + ''Speaker N'' label + editable textarea) - this is WP-43''s presentational scaffolding, built before diarization existed, that fakes the speaker via ''SPEAKER_ACCENT[i % 3]'' (only 3 colors, cycling by array index, NOT by any real speaker data). This task replaces that fake cycling with real speaker_id-driven coloring/labeling (10 shades, not 3), and makes the no-speaker-data case an honest, distinct visual state instead of a fabricated label.
+
+
+  Scope: (1) new src/speakerColors.ts - a pure module exporting a 10-slot categorical color palette (adapted from a colorblind-safe categorical reference set, extended from 8 validated slots to 10 for this app''s realistic small-N speaker count) and two pure functions: speakerColorClass(speakerId: number) -> string (returns ''wp-speaker-color-N'', N = speakerId mod 10, wrapping correctly for any non-negative integer) and speakerLabel(speakerId: number) -> string (returns the 1-indexed default generic label ''Speaker N'' - English, matching this project''s English-UI-default policy from ADR-011/WP-42; WP-10 will add user-renaming on top of this default, not replace it). (2) 10 new CSS custom properties (--wp-speaker-0 through --wp-speaker-9) in src/tokens.css (light values) with dark-mode overrides in src/styles.css''s existing [data-theme]/prefers-color-scheme blocks, plus 10 ''.wp-speaker-color-N'' utility classes setting the bar''s background, and a ''.wp-speaker-bar--none'' neutral fallback class. (3) src/App.tsx: replace the SPEAKER_ACCENT array and its index-based cycling with speaker_id-driven classing/labeling; when a segment''s speaker_id is present, show its color bar + ''Speaker N'' label; when absent (M1/no-diarization case, or diarization degraded per WP-31), show a neutral (uncolored) bar and NO fabricated speaker label - the segment remains fully editable (text + implicit timestamp) exactly as before, just without a speaker identity claim that isn''t backed by real data.
+
+
+  Happy path: a transcribed file with diarization data shows each segment''s bar colored by its actual speaker_id (cycling through the 10 shades for more than 10 speakers) and labelled ''Speaker N'', grouped visually per speaker without merging or losing per-segment editability.
+
+
+  Failure / edge cases: a segment with no speaker_id (diarization unavailable/degraded, or M1-only behavior) renders as a plain neutral-bar segment with no speaker label, not a fabricated one; a speaker_id at or beyond 10 wraps around the palette (speaker_id 10 reuses slot 0''s color, etc.) rather than erroring or running out of colors; color is never the only signal - the speaker name is always rendered as visible text alongside the color, never color-only.
+
+
+  Scope boundary: does not implement renaming/persisting custom speaker labels (WP-10 - this task only supplies the default ''Speaker N'' generic label), does not implement WP-4''s feature-level bookkeeping beyond what this task delivers (WP-4 closes once WP-9 AND WP-10 are both done, mirroring this epic''s established feature/task grouping precedent - WP-2/WP-6, WP-3/WP-7+WP-8), does not touch merging/reassigning speakers (explicitly out of scope for M2 per roadmap.md), does not change the underlying speaker_id data itself (WP-7/WP-8/WP-31''s job, already done).
+
+
+  Target surfaces: new src/speakerColors.ts (+tests), src/tokens.css (+10 color custom properties), src/styles.css (+10 dark-mode overrides, +10 utility classes, +neutral fallback class, replacing the old wp-speaker-bar--accent/success/warning classes), src/App.tsx (segment rendering only - remove SPEAKER_ACCENT, wire speaker_id-driven classing/labeling).
+
+
+  Constraints: color is never the sole identity signal (a visible text label always accompanies it, or no label at all for the no-speaker-data case - never color-only); the 10-shade palette must remain visually distinguishable for adjacent segments in the common (small speaker-count) case; no new IPC calls; existing edit-in-place behavior (textarea onChange -> editSegment) must be unchanged; light and dark theme both supported, matching the existing [data-theme] override mechanism.
+
+
+  Scenarios (BDD):
+
+
+  Given a transcript where segments carry speaker_id 0 and 1 When it renders Then segment(s) with speaker_id 0 show one color+"Speaker 1" label and segment(s) with speaker_id 1 show a distinctly different color+"Speaker 2" label.
+
+
+  Given a transcript where no segment carries a speaker_id (M1/no-diarization case) When it renders Then every segment shows a neutral bar and no speaker name, and remains editable exactly as before.
+
+
+  Given a speaker_id of 10 or greater When it renders Then the color wraps around the 10-shade palette (e.g. speaker_id 10 uses the same color as speaker_id 0) rather than erroring.'
+dod:
+- speakerColorClass and speakerLabel are pure functions with unit tests covering wraparound (speaker_id 10 -> same class as 0) and 1-indexed label formatting.
+- A transcript with distinct speaker_ids renders visibly different colors and distinct 'Speaker N' labels per speaker, verified by a frontend test.
+- A transcript with no speaker_id data renders a neutral bar and no speaker label on every segment, matching pre-existing M1 editability - verified by a frontend test.
+- Existing edit-in-place behavior (segment text editing) is unchanged - no regression to existing App.test.tsx coverage.
+- Full frontend test suite, tsc, lint, and format all pass with no regressions.
 created_by: M2 planning

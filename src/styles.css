@@ -35,6 +35,16 @@
     --error: #e06a6e;
     --selected: #1c2e36;
     --status-progress: #4bb3d8;
+    --wp-speaker-0: #3987e5;
+    --wp-speaker-1: #d95926;
+    --wp-speaker-2: #199e70;
+    --wp-speaker-3: #c98500;
+    --wp-speaker-4: #d55181;
+    --wp-speaker-5: #008300;
+    --wp-speaker-6: #9085e9;
+    --wp-speaker-7: #e66767;
+    --wp-speaker-8: #1a9aa6;
+    --wp-speaker-9: #b07a4e;
     color-scheme: dark;
   }
 }
@@ -65,6 +75,16 @@
     --error: #e06a6e;
     --selected: #1c2e36;
     --status-progress: #4bb3d8;
+    --wp-speaker-0: #3987e5;
+    --wp-speaker-1: #d95926;
+    --wp-speaker-2: #199e70;
+    --wp-speaker-3: #c98500;
+    --wp-speaker-4: #d55181;
+    --wp-speaker-5: #008300;
+    --wp-speaker-6: #9085e9;
+    --wp-speaker-7: #e66767;
+    --wp-speaker-8: #1a9aa6;
+    --wp-speaker-9: #b07a4e;
     color-scheme: dark;
   }
 }
@@ -82,6 +102,16 @@
   --error: #e06a6e;
   --selected: #1c2e36;
   --status-progress: #4bb3d8;
+  --wp-speaker-0: #3987e5;
+  --wp-speaker-1: #d95926;
+  --wp-speaker-2: #199e70;
+  --wp-speaker-3: #c98500;
+  --wp-speaker-4: #d55181;
+  --wp-speaker-5: #008300;
+  --wp-speaker-6: #9085e9;
+  --wp-speaker-7: #e66767;
+  --wp-speaker-8: #1a9aa6;
+  --wp-speaker-9: #b07a4e;
   color-scheme: dark;
 }
 
@@ -569,16 +599,39 @@ body {
 .wp-speaker-bar {
   flex: 0 0 3px;
   border-radius: 2px;
-  background: var(--accent);
 }
-.wp-speaker-bar--accent {
-  background: var(--accent);
+.wp-speaker-bar--none {
+  background: var(--border);
 }
-.wp-speaker-bar--success {
-  background: var(--success);
+.wp-speaker-color-0 {
+  background: var(--wp-speaker-0);
 }
-.wp-speaker-bar--warning {
-  background: var(--accent);
+.wp-speaker-color-1 {
+  background: var(--wp-speaker-1);
+}
+.wp-speaker-color-2 {
+  background: var(--wp-speaker-2);
+}
+.wp-speaker-color-3 {
+  background: var(--wp-speaker-3);
+}
+.wp-speaker-color-4 {
+  background: var(--wp-speaker-4);
+}
+.wp-speaker-color-5 {
+  background: var(--wp-speaker-5);
+}
+.wp-speaker-color-6 {
+  background: var(--wp-speaker-6);
+}
+.wp-speaker-color-7 {
+  background: var(--wp-speaker-7);
+}
+.wp-speaker-color-8 {
+  background: var(--wp-speaker-8);
+}
+.wp-speaker-color-9 {
+  background: var(--wp-speaker-9);
 }
 
 .wp-speaker-body {

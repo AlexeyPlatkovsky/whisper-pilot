@@ -12,6 +12,7 @@ import { applyTheme, type Theme } from "./theme";
 import { t } from "./i18n";
 import { formatClock } from "./format";
 import { AppLogo, Icon, type IconName } from "./Icon";
+import { speakerColorClass, speakerLabel } from "./speakerColors";
 
 type Status =
   | { kind: "idle" }
@@ -60,8 +61,6 @@ const SAMPLE_MEETINGS = [
     status: "MFU Failed",
   },
 ] as const;
-
-const SPEAKER_ACCENT = ["accent", "success", "warning"] as const;
 
 export function App() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -394,29 +393,34 @@ export function App() {
               )}
 
               {hasTranscript &&
-                segments.map((seg, i) => (
-                  <div className="wp-speaker-block" key={i}>
-                    <span
-                      className={`wp-speaker-bar wp-speaker-bar--${SPEAKER_ACCENT[i % SPEAKER_ACCENT.length]}`}
-                    />
-                    <div className="wp-speaker-body">
-                      <div className="wp-speaker-head">
-                        <span className="wp-speaker-name">
-                          Speaker {(i % SPEAKER_ACCENT.length) + 1}
-                        </span>
-                        <span className="wp-speaker-time">
-                          {formatRange(seg.start_ms, seg.end_ms)}
-                        </span>
-                      </div>
-                      <textarea
-                        className="wp-speaker-text"
-                        value={seg.text}
-                        rows={1}
-                        onChange={(e) => editSegment(i, e.target.value)}
+                segments.map((seg, i) => {
+                  const hasSpeaker = seg.speaker_id !== undefined;
+                  return (
+                    <div className="wp-speaker-block" key={i}>
+                      <span
+                        className={`wp-speaker-bar ${hasSpeaker ? speakerColorClass(seg.speaker_id!) : "wp-speaker-bar--none"}`}
                       />
+                      <div className="wp-speaker-body">
+                        <div className="wp-speaker-head">
+                          {hasSpeaker && (
+                            <span className="wp-speaker-name">
+                              {speakerLabel(seg.speaker_id!)}
+                            </span>
+                          )}
+                          <span className="wp-speaker-time">
+                            {formatRange(seg.start_ms, seg.end_ms)}
+                          </span>
+                        </div>
+                        <textarea
+                          className="wp-speaker-text"
+                          value={seg.text}
+                          rows={1}
+                          onChange={(e) => editSegment(i, e.target.value)}
+                        />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
             </div>
           </div>
 
