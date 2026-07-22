@@ -31,12 +31,16 @@ beforeEach(() => {
 
 describe("AiModelsSection", () => {
   it("shows a Download button for a not-downloaded model", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_NOT_DOWNLOADED]);
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
 
     render(<AiModelsSection />);
 
     expect(
-      await screen.findByRole("button", { name: /download whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
     ).toBeInTheDocument();
   });
 
@@ -47,7 +51,9 @@ describe("AiModelsSection", () => {
 
     expect(await screen.findByText("Ready")).toBeInTheDocument();
     expect(
-      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /download whisper/i }),
@@ -63,7 +69,9 @@ describe("AiModelsSection", () => {
 
     render(<AiModelsSection />);
     await user.click(
-      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
     );
 
     expect(ipc.deleteModel).not.toHaveBeenCalled();
@@ -71,7 +79,9 @@ describe("AiModelsSection", () => {
 
     expect(ipc.deleteModel).toHaveBeenCalledWith("transcription");
     expect(
-      await screen.findByRole("button", { name: /download whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /delete whisper/i }),
@@ -84,39 +94,54 @@ describe("AiModelsSection", () => {
 
     render(<AiModelsSection />);
     await user.click(
-      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
     );
     await user.click(await screen.findByRole("button", { name: "Cancel" }));
 
     expect(ipc.deleteModel).not.toHaveBeenCalled();
     expect(
-      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
     ).toBeInTheDocument();
   });
 
   it("shows an error message when delete fails", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.deleteModel).mockRejectedValue(new Error("permission denied"));
+    vi.mocked(ipc.deleteModel).mockRejectedValue(
+      new Error("permission denied"),
+    );
     const user = userEvent.setup();
 
     render(<AiModelsSection />);
     await user.click(
-      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
     );
     await user.click(await screen.findByRole("button", { name: "Delete" }));
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/permission denied/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /permission denied/i,
+    );
   });
 
   it("shows a progress bar while downloading and Ready after success", async () => {
     vi.mocked(ipc.listTaskModels)
       .mockResolvedValueOnce([TRANSCRIPTION_NOT_DOWNLOADED])
       .mockResolvedValueOnce([TRANSCRIPTION_DOWNLOADED]);
-    let progressHandler: (p: { id: string; fraction: number }) => void = () => {};
-    vi.mocked(ipc.onModelDownloadProgress).mockImplementation(async (handler) => {
-      progressHandler = handler;
-      return () => {};
-    });
+    let progressHandler: (p: {
+      id: string;
+      fraction: number;
+    }) => void = () => {};
+    vi.mocked(ipc.onModelDownloadProgress).mockImplementation(
+      async (handler) => {
+        progressHandler = handler;
+        return () => {};
+      },
+    );
     let resolveDownload: () => void = () => {};
     vi.mocked(ipc.downloadModel).mockReturnValue(
       new Promise<void>((resolve) => {
@@ -127,7 +152,9 @@ describe("AiModelsSection", () => {
 
     render(<AiModelsSection />);
     await user.click(
-      await screen.findByRole("button", { name: /download whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
     );
 
     progressHandler({ id: "transcription", fraction: 0.5 });
@@ -140,7 +167,9 @@ describe("AiModelsSection", () => {
   });
 
   it("shows an error message when the download fails", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_NOT_DOWNLOADED]);
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
     vi.mocked(ipc.downloadModel).mockRejectedValue(
       new Error("model download failed: connection reset"),
     );
@@ -148,9 +177,13 @@ describe("AiModelsSection", () => {
 
     render(<AiModelsSection />);
     await user.click(
-      await screen.findByRole("button", { name: /download whisper large-v3-turbo/i }),
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/connection reset/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /connection reset/i,
+    );
   });
 });

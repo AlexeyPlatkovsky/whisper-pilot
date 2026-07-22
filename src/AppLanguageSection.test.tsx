@@ -9,7 +9,10 @@ vi.mock("./ipc", () => ({
 
 describe("AppLanguageSection", () => {
   it("shows English checked as the current UI language", async () => {
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "system", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+    });
 
     render(<AppLanguageSection />);
 
@@ -23,6 +26,8 @@ describe("AppLanguageSection", () => {
 
     render(<AppLanguageSection />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/IPC unavailable/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /IPC unavailable/i,
+    );
   });
 });

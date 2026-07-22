@@ -1,0 +1,134 @@
+name: CI
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  quality-gates:
+    name: ${{ matrix.check }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        check:
+          - typecheck
+          - lint
+          - format-check
+          - frontend-test-coverage
+          - rust-fmt
+          - rust-clippy
+          - rust-test
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Node.js
+        if: matrix.check != 'rust-fmt' && matrix.check != 'rust-clippy' && matrix.check != 'rust-test'
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install npm dependencies
+        if: matrix.check != 'rust-fmt' && matrix.check != 'rust-clippy' && matrix.check != 'rust-test'
+        run: npm ci
+
+      - name: Install Rust toolchain
+        if: matrix.check == 'rust-fmt' || matrix.check == 'rust-clippy' || matrix.check == 'rust-test'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust build artifacts
+        if: matrix.check == 'rust-clippy' || matrix.check == 'rust-test'
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install cargo-nextest
+        if: matrix.check == 'rust-test'
+        uses: taiki-e/install-action@nextest
+
+      - name: Run ${{ matrix.check }}
+        run: |
+          case "${{ matrix.check }}" in
+            typecheck)
+              npm run typecheck
+              ;;
+            lint)
+              npm run lint
+              ;;
+            format-check)
+              npm run format:check
+              ;;
+            frontend-test-coverage)
+              npm run test:coverage
+              ;;
+            rust-fmt)
+              cargo fmt --manifest-path src-tauri/Cargo.toml --check
+              ;;
+            rust-clippy)
+              cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+              ;;
+            rust-test)
+              cargo nextest run --manifest-path src-tauri/Cargo.toml
+              ;;
+          esac
+
+  report:
+    name: Post PR comment
+    runs-on: ubuntu-latest
+    needs: quality-gates
+    if: always()
+    steps:
+      - name: Report results
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const checkNames = [
+              'typecheck',
+              'lint',
+              'format-check',
+              'frontend-test-coverage',
+              'rust-fmt',
+              'rust-clippy',
+              'rust-test',
+            ];
+
+            const { data } = await github.rest.actions.listJobsForWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: context.runId,
+              per_page: 100,
+            });
+
+            const checkJobs = data.jobs.filter((job) => checkNames.includes(job.name));
+            const rows = checkJobs.map((job) => {
+              const icon =
+                job.conclusion === 'success'
+                  ? '✅'
+                  : job.conclusion === 'failure'
+                    ? '❌'
+                    : '⏭️';
+              return `| ${job.name} | ${icon} ${job.conclusion || job.status} |`;
+            });
+
+            const allSuccess = checkJobs.every((job) => job.conclusion === 'success');
+            const overall = allSuccess ? '✅ Passed' : '❌ Failed';
+            const body = `## CI Quality Gates — ${overall}
+
+| Check | Result |
+|-------|--------|
+${rows.join('\n')}`;
+
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body,
+            });

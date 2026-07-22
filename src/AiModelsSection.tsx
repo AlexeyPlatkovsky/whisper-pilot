@@ -271,10 +271,7 @@ export function AiModelsSection() {
               again later.
             </p>
             <div className="confirm-actions">
-              <button
-                type="button"
-                onClick={() => setConfirmDeleteId(null)}
-              >
+              <button type="button" onClick={() => setConfirmDeleteId(null)}>
                 Cancel
               </button>
               <button

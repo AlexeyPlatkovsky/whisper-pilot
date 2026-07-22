@@ -19,11 +19,16 @@ describe("AppearanceSection", () => {
 
     render(<AppearanceSection />);
 
-    expect(await screen.findByRole("alert")).toHaveTextContent(/IPC unavailable/i);
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      /IPC unavailable/i,
+    );
   });
 
   it("selects the currently persisted theme (System) by default", async () => {
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "system", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+    });
 
     render(<AppearanceSection />);
 
@@ -33,7 +38,10 @@ describe("AppearanceSection", () => {
   });
 
   it("selects Dark by default when that is the persisted theme", async () => {
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "dark", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "dark",
+      ui_language: "en",
+    });
 
     render(<AppearanceSection />);
 
@@ -41,8 +49,14 @@ describe("AppearanceSection", () => {
   });
 
   it("clicking Dark applies it immediately and persists it", async () => {
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "system", ui_language: "en" });
-    vi.mocked(ipc.setSetting).mockResolvedValue({ theme: "dark", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+    });
+    vi.mocked(ipc.setSetting).mockResolvedValue({
+      theme: "dark",
+      ui_language: "en",
+    });
     const user = userEvent.setup();
 
     render(<AppearanceSection />);
@@ -58,8 +72,14 @@ describe("AppearanceSection", () => {
     // test can actually prove the attribute gets cleared, not just that
     // it was never set.
     document.documentElement.dataset.theme = "dark";
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "dark", ui_language: "en" });
-    vi.mocked(ipc.setSetting).mockResolvedValue({ theme: "system", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "dark",
+      ui_language: "en",
+    });
+    vi.mocked(ipc.setSetting).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+    });
     const user = userEvent.setup();
 
     render(<AppearanceSection />);
@@ -69,7 +89,10 @@ describe("AppearanceSection", () => {
   });
 
   it("reverts to the previous theme and shows an error when persisting fails", async () => {
-    vi.mocked(ipc.getSettings).mockResolvedValue({ theme: "light", ui_language: "en" });
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "light",
+      ui_language: "en",
+    });
     vi.mocked(ipc.setSetting).mockRejectedValue(new Error("disk full"));
     const user = userEvent.setup();
 

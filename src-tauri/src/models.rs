@@ -444,7 +444,8 @@ mod tests {
             })
         };
 
-        let fractions: Arc<std::sync::Mutex<Vec<f64>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let fractions: Arc<std::sync::Mutex<Vec<f64>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
         let fractions_cl = Arc::clone(&fractions);
 
         download_entry(fetch, dir.path(), &entry, move |f| {
@@ -500,7 +501,9 @@ mod tests {
 
         assert_eq!(
             path,
-            dir.path().join("models").join("ggml-large-v3-turbo-q8_0.bin")
+            dir.path()
+                .join("models")
+                .join("ggml-large-v3-turbo-q8_0.bin")
         );
     }
 

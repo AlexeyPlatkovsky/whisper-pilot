@@ -34,7 +34,10 @@ pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
 }
 
 fn model_path(app_support_dir: &Path) -> PathBuf {
-    resolve_model_path(app_support_dir, std::env::var("WHISPERPILOT_MODEL_PATH").ok())
+    resolve_model_path(
+        app_support_dir,
+        std::env::var("WHISPERPILOT_MODEL_PATH").ok(),
+    )
 }
 
 /// Pure decision: an explicit override always wins; otherwise the model
@@ -128,7 +131,9 @@ mod tests {
 
         assert_eq!(
             path,
-            dir.path().join("models").join("ggml-large-v3-turbo-q8_0.bin")
+            dir.path()
+                .join("models")
+                .join("ggml-large-v3-turbo-q8_0.bin")
         );
     }
 }
