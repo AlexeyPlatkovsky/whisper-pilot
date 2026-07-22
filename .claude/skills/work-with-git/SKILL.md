@@ -30,6 +30,7 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
   task (or the explicitly declared two-task delivery cohort) before edits.
 - If the current branch or uncommitted changes appear unrelated to the requested task, stop and ask the user whether to create a new branch or stay on the current branch.
 - If an ID-bearing task needs a new branch, name it `<kind>/vp-<number>-short-task-slug`, with no tool prefix. Use a lowercase TaskPilot ID and a kebab-case slug of 3-6 meaningful words. Map TaskPilot types to `<kind>` as follows: `bug` → `bug`, `feature` → `feat`, and `task` or `epic` → `task`. For example: `feat/vp-01-introduce-local-ai`.
+- Immediately publish every newly created, user-approved branch with `git push -u origin <branch>` before making any subsequent edits. The branch-creation approval authorizes this initial push only; all later pushes still require an explicit user request.
 - Apply `AGENTS.md` §Git Operation Authority for branch publication and every Git mutation.
 - Preserve user changes and follow the destructive-action rules in `AGENTS.md`.
 
