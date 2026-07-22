@@ -2,7 +2,7 @@
 // fetches nothing at runtime — it is an offline desktop app. Icons inherit the
 // current text colour via `stroke="currentColor"`; set colour on the parent.
 
-import type { ReactElement } from "react";
+import { useId, type ReactElement } from "react";
 
 export type IconName =
   | "panel-left"
@@ -160,42 +160,42 @@ export function Icon({
   );
 }
 
-// The WhisperPilot mark from the pencil design: a navy disc with a white
-// headset and a burnt-orange waveform/clipboard motif.
+// The WhisperPilot mark, matching the app icon at src-tauri/icons/whisper-pilot.svg
+// exactly: a navy rounded square with three vertical bars (waveform motif).
 export function AppLogo({ size = 28 }: { size?: number }) {
+  const clipId = useId();
   return (
     <svg
       width={size}
       height={size}
-      viewBox="0 0 28 28"
+      viewBox="0 0 64 64"
       fill="none"
       aria-hidden="true"
       focusable="false"
     >
-      <circle cx="14" cy="14" r="14" fill="#0a2e3d" />
-      <path
-        d="M7 14c0-6 3-9 7-9 4 0 7 3 7 9"
-        stroke="#ffffff"
-        strokeWidth="2.5"
-        fill="none"
-      />
-      <rect x="5" y="12" width="5" height="8" rx="2" fill="#ffffff" />
-      <rect x="18" y="12" width="5" height="8" rx="2" fill="#ffffff" />
-      <path
-        d="M21 18c0 4-4 6-7 6"
-        stroke="#ffffff"
-        strokeWidth="2"
-        strokeLinecap="round"
-        fill="none"
-      />
-      <path
-        d="M11 16l1 0 1-3 1 5 1-4 1 2 1 0"
-        stroke="#c65d2e"
-        strokeWidth="1.2"
-        strokeLinejoin="round"
-        strokeLinecap="round"
-        fill="none"
-      />
+      <g clipPath={`url(#${clipId})`}>
+        <path
+          d="M48 0L16 0C7.16344 0 0 7.16344 0 16L0 48C0 56.8366 7.16344 64 16 64H48C56.8366 64 64 56.8366 64 48L64 16C64 7.16344 56.8366 0 48 0Z"
+          fill="#0A2E3D"
+        />
+        <path
+          d="M22 28.8C22 26.149 20.2091 24 18 24C15.7909 24 14 26.149 14 28.8V43.2C14 45.851 15.7909 48 18 48C20.2091 48 22 45.851 22 43.2V28.8Z"
+          fill="#C65D2E"
+        />
+        <path
+          d="M36 14C36 10.6863 34.2091 8 32 8C29.7909 8 28 10.6863 28 14V50C28 53.3137 29.7909 56 32 56C34.2091 56 36 53.3137 36 50V14Z"
+          fill="#F2EFE9"
+        />
+        <path
+          d="M50 20.8C50 18.149 48.2091 16 46 16C43.7909 16 42 18.149 42 20.8V35.2C42 37.851 43.7909 40 46 40C48.2091 40 50 37.851 50 35.2V20.8Z"
+          fill="#C65D2E"
+        />
+      </g>
+      <defs>
+        <clipPath id={clipId}>
+          <rect width="64" height="64" rx="32" fill="white" />
+        </clipPath>
+      </defs>
     </svg>
   );
 }

@@ -131,9 +131,14 @@ Single line reflecting the meeting's current state:
 Opened from the header **gear**; a screen with these sections:
 
 - **AI models** — grouped by task (transcription, diarization; notes at release).
-  Each required model shows its state with **Download** and **Delete** buttons;
-  Download shows progress and verifies (SHA). Beta lists **one model per task**;
-  at release each task may list 3–4 models, each with an **Active** radio.
+  Each required model shows its state with **Download** and **Delete** buttons.
+  **Download** opens a blocking dialog (progress bar, spinner, elapsed time),
+  the same "blocked with progress shown" pattern as transcription/MFU; it closes
+  itself once the model is verified (SHA) and ready, or on error, or if the user
+  dismisses it early with **✕** (the download itself keeps running and the model
+  still updates to ready in the background). **Delete** asks for confirmation
+  before removing the file. Beta lists **one model per task**; at release each
+  task may list 3–4 models, each with an **Active** radio.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
   OS). At release, 3–4 extra named themes, each in a light and dark variant.
 - **App language** — the **UI** language; **English** by default (only option in
@@ -150,7 +155,8 @@ Whisper model; diarization degrades without its models).
 ### Adjust settings (F005)
 
 1. Click the header **gear** → the Settings screen opens.
-2. **AI models:** Download or Delete each task's model (progress + SHA verify).
+2. **AI models:** Download (blocking progress dialog + SHA verify) or Delete
+   (confirm first) each task's model.
 3. **Appearance:** pick Light / Dark / System — applies at once.
 4. **App language:** English (beta). All choices persist across restarts.
 

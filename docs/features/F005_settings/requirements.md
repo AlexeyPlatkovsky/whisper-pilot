@@ -39,8 +39,10 @@ per requirement below.
   entry point's position is fixed.
 - **F005-R2:** a changed theme/language/model selection survives an app restart.
 - **F005-R3:** each task shows its required model with Download/Delete; Download
-  shows progress and only marks the model ready after SHA verification; Delete
-  removes the file and returns the model to the not-downloaded state.
+  opens a blocking progress dialog and only marks the model ready after SHA
+  verification (dismissing the dialog early does not cancel the download); Delete
+  asks for confirmation, then removes the file and returns the model to the
+  not-downloaded state.
 - **F005-R4:** with a task's model absent, the section flags it and the task's
   action is disabled/degraded (e.g. Transcribe disabled without the Whisper
   model; diarization degrades per F002-R7).

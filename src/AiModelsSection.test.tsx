@@ -25,6 +25,7 @@ const TRANSCRIPTION_DOWNLOADED = {
 };
 
 beforeEach(() => {
+  vi.clearAllMocks();
   vi.mocked(ipc.onModelDownloadProgress).mockResolvedValue(() => {});
 });
 
@@ -53,7 +54,7 @@ describe("AiModelsSection", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("clicking Delete removes the model and shows the Download button again", async () => {
+  it("clicking Delete opens a confirmation dialog before removing the model", async () => {
     vi.mocked(ipc.listTaskModels)
       .mockResolvedValueOnce([TRANSCRIPTION_DOWNLOADED])
       .mockResolvedValueOnce([TRANSCRIPTION_NOT_DOWNLOADED]);
@@ -65,12 +66,32 @@ describe("AiModelsSection", () => {
       await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
     );
 
+    expect(ipc.deleteModel).not.toHaveBeenCalled();
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+    expect(ipc.deleteModel).toHaveBeenCalledWith("transcription");
     expect(
       await screen.findByRole("button", { name: /download whisper large-v3-turbo/i }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /delete whisper/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /delete whisper/i }),
+    ).toBeDisabled();
+  });
+
+  it("clicking Cancel in the confirmation dialog leaves the model untouched", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+
+    render(<AiModelsSection />);
+    await user.click(
+      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Cancel" }));
+
+    expect(ipc.deleteModel).not.toHaveBeenCalled();
+    expect(
+      await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
+    ).toBeInTheDocument();
   });
 
   it("shows an error message when delete fails", async () => {
@@ -82,6 +103,7 @@ describe("AiModelsSection", () => {
     await user.click(
       await screen.findByRole("button", { name: /delete whisper large-v3-turbo/i }),
     );
+    await user.click(await screen.findByRole("button", { name: "Delete" }));
 
     expect(await screen.findByRole("alert")).toHaveTextContent(/permission denied/i);
   });

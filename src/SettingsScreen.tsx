@@ -12,7 +12,7 @@ const SECTIONS: {
   title: string;
   icon: IconName;
 }[] = [
-  { id: "ai-models", label: "AI Models", title: "AI Models", icon: "cpu" },
+  { id: "ai-models", label: "AI models", title: "AI Models", icon: "cpu" },
   {
     id: "appearance",
     label: "Appearance",

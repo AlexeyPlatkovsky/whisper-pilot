@@ -49,4 +49,3 @@ Palette (see `tokens.css` for exact values):
 - max 2 accent colours (burnt orange + one status colour in context)
 - no giant cards
 - no unnecessary whitespace
-- settings always searchable

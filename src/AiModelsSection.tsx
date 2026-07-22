@@ -29,10 +29,19 @@ function formatSize(bytes: number): string {
   return `${Math.round(bytes / 1024 ** 2)} MB`;
 }
 
+function formatElapsed(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
 export function AiModelsSection() {
   const [models, setModels] = useState<TaskModel[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [rowState, setRowState] = useState<Record<string, RowState>>({});
+  const [downloadModalId, setDownloadModalId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -50,15 +59,37 @@ export function AiModelsSection() {
 
   useEffect(() => {
     const unlisten = onModelDownloadProgress(({ id, fraction }) => {
-      setRowState((prev) => ({ ...prev, [id]: { kind: "downloading", fraction } }));
+      setRowState((prev) => ({
+        ...prev,
+        [id]: { kind: "downloading", fraction },
+      }));
     });
     return () => {
       void unlisten.then((f) => f()).catch(() => {});
     };
   }, []);
 
+  // Modal auto-closes once the download it tracks is no longer in progress
+  // (finished or failed) — the row status updates the same way either way.
+  useEffect(() => {
+    if (downloadModalId && rowState[downloadModalId]?.kind !== "downloading") {
+      setDownloadModalId(null);
+    }
+  }, [downloadModalId, rowState]);
+
+  useEffect(() => {
+    if (!downloadModalId) return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [downloadModalId]);
+
   async function handleDownload(id: string) {
-    setRowState((prev) => ({ ...prev, [id]: { kind: "downloading", fraction: 0 } }));
+    setDownloadModalId(id);
+    setRowState((prev) => ({
+      ...prev,
+      [id]: { kind: "downloading", fraction: 0 },
+    }));
     try {
       await downloadModel(id);
       setRowState((prev) => {
@@ -68,16 +99,23 @@ export function AiModelsSection() {
       });
       setModels(await listTaskModels());
     } catch (e) {
-      setRowState((prev) => ({ ...prev, [id]: { kind: "error", message: String(e) } }));
+      setRowState((prev) => ({
+        ...prev,
+        [id]: { kind: "error", message: String(e) },
+      }));
     }
   }
 
   async function handleDelete(id: string) {
+    setConfirmDeleteId(null);
     try {
       await deleteModel(id);
       setModels(await listTaskModels());
     } catch (e) {
-      setRowState((prev) => ({ ...prev, [id]: { kind: "error", message: String(e) } }));
+      setRowState((prev) => ({
+        ...prev,
+        [id]: { kind: "error", message: String(e) },
+      }));
     }
   }
 
@@ -90,6 +128,18 @@ export function AiModelsSection() {
     list.push(m);
     groups.set(m.task, list);
   }
+
+  const downloadTarget = downloadModalId
+    ? models.find((m) => m.id === downloadModalId)
+    : undefined;
+  const downloadState =
+    downloadModalId && rowState[downloadModalId]?.kind === "downloading"
+      ? rowState[downloadModalId]
+      : undefined;
+
+  const deleteTarget = confirmDeleteId
+    ? models.find((m) => m.id === confirmDeleteId)
+    : undefined;
 
   return (
     <div className="model-sections">
@@ -106,6 +156,7 @@ export function AiModelsSection() {
             <ul className="model-list">
               {rows.map((m) => {
                 const state = rowState[m.id];
+                const isDownloading = state?.kind === "downloading";
                 return (
                   <li key={m.id} className="model-row">
                     <span
@@ -114,54 +165,49 @@ export function AiModelsSection() {
                     />
                     <span className="model-label">{m.label}</span>
                     <span className="model-row-spacer" />
-                    {state?.kind === "downloading" && (
-                      <progress
-                        value={state.fraction}
-                        max={1}
-                        aria-label={`Downloading ${m.label}`}
-                      />
-                    )}
                     {state?.kind === "error" && (
-                      <span role="alert">{state.message}</span>
-                    )}
-                    {!state && (
-                      <span className="model-size">
-                        {formatSize(m.size_bytes)}
+                      <span className="model-row-error" role="alert">
+                        {state.message}
                       </span>
                     )}
-                    {!state && m.downloaded && (
-                      <span className="model-actions">
-                        <span
-                          className="model-status model-status--ready"
-                          aria-label="Ready"
-                        >
-                          <Icon name="check" size={16} />
-                        </span>
-                        <button
-                          className="model-icon-btn"
-                          aria-label={`Delete ${m.label}`}
-                          title={`Delete ${m.label}`}
-                          onClick={() => handleDelete(m.id)}
-                        >
-                          <Icon name="trash-2" size={16} />
-                        </button>
+                    <span className="model-size">
+                      {formatSize(m.size_bytes)}
+                    </span>
+                    <span className="model-actions">
+                      <span className="model-icon-slot">
+                        {m.downloaded ? (
+                          <span className="model-status model-status--ready">
+                            <Icon name="check" size={16} />
+                            <span className="sr-only">Ready</span>
+                          </span>
+                        ) : (
+                          <button
+                            type="button"
+                            className="model-icon-btn model-icon-btn--accent"
+                            aria-label={`Download ${m.label}`}
+                            title={`Download ${m.label}`}
+                            disabled={isDownloading}
+                            onClick={() => handleDownload(m.id)}
+                          >
+                            <Icon
+                              name={isDownloading ? "refresh-cw" : "download"}
+                              size={16}
+                              className={isDownloading ? "wp-spin" : undefined}
+                            />
+                          </button>
+                        )}
                       </span>
-                    )}
-                    {!state && !m.downloaded && (
-                      <span className="model-actions">
-                        <button
-                          className="model-icon-btn model-icon-btn--accent"
-                          aria-label={`Download ${m.label}`}
-                          title={`Download ${m.label}`}
-                          onClick={() => handleDownload(m.id)}
-                        >
-                          <Icon name="download" size={16} />
-                        </button>
-                        <span className="model-icon-btn model-icon-btn--disabled">
-                          <Icon name="trash-2" size={16} />
-                        </span>
-                      </span>
-                    )}
+                      <button
+                        type="button"
+                        className="model-icon-btn"
+                        aria-label={`Delete ${m.label}`}
+                        title={`Delete ${m.label}`}
+                        disabled={!m.downloaded}
+                        onClick={() => setConfirmDeleteId(m.id)}
+                      >
+                        <Icon name="trash-2" size={16} />
+                      </button>
+                    </span>
                   </li>
                 );
               })}
@@ -169,6 +215,79 @@ export function AiModelsSection() {
           </section>
         );
       })}
+
+      {downloadTarget && downloadState && (
+        <div className="modal-overlay">
+          <div
+            className="modal-panel download-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Download ${downloadTarget.label}`}
+          >
+            <div className="modal-header">
+              <span className="modal-title">
+                Download {downloadTarget.label}
+              </span>
+              <button
+                type="button"
+                className="model-icon-btn"
+                aria-label="Close"
+                title="Close"
+                onClick={() => setDownloadModalId(null)}
+              >
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+            <progress
+              className="modal-progress"
+              value={downloadState.fraction}
+              max={1}
+              aria-label={`Downloading ${downloadTarget.label}`}
+            />
+            <div className="modal-bottom">
+              <span className="modal-status">
+                <Icon name="refresh-cw" size={14} className="wp-spin" />
+                Downloading...
+              </span>
+              <span className="modal-timer">{formatElapsed(elapsed)}</span>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div
+            className="modal-panel confirm-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete ${deleteTarget.label}`}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Delete {deleteTarget.label}?</span>
+            </div>
+            <p className="confirm-warning">
+              This removes the downloaded model from disk. You can download it
+              again later.
+            </p>
+            <div className="confirm-actions">
+              <button
+                type="button"
+                onClick={() => setConfirmDeleteId(null)}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => handleDelete(deleteTarget.id)}
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
