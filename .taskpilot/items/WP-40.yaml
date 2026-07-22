@@ -3,9 +3,39 @@ id: WP-40
 title: 'AI models: Delete + missing-model availability wiring'
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:58Z'
-updated_at: '2026-07-21T14:05:58Z'
+updated_at: '2026-07-21T20:06:53Z'
 parent_id: WP-35
-description: Delete removes the local model file and returns it to not-downloaded; a missing required model is flagged and reflected in the task (Transcribe disabled; diarization degrades per F002-R7). Implements F005-R4 (F005-T4).
+description: 'Add Delete to the AI models section (removes a downloaded model''s file(s), returns it to not-downloaded), and wire the transcription model''s missing/present state into the app''s real transcribe entry point. Implements F005-R4 (F005-T4), parent WP-35. Depends on WP-39 (done).
+
+  Scope reality check (explicit, not silently assumed): F004 (the two-pane meetings workspace with a separate model switcher / Transcribe / Stop) and F002 (speaker diarization) are NOT implemented in this codebase - both are separate, still-backlog epics (WP-11/F004, WP-1/F002). The current app (src/App.tsx) is the M1 single-action UI: clicking "Add file" both picks a file and immediately transcribes it. So "Transcribe disabled" (F004-R5) and "diarization degrades" (F002-R7) cannot be wired against controls that do not exist yet. This task wires availability into the ONE real entry point that exists today (App.tsx''s Add-file/transcribe action) and explicitly defers diarization wiring - there is no diarization code or UI anywhere in this repo to wire it into; that is WP-1''s job once it exists, not a gap in this task.
+
+  Second, related fix (explicit user decision): src-tauri/src/transcribe.rs''s load_model() currently defaults to a path shared with a sibling project ("VoicePilot"), NOT WP-39''s download location (app support dir/models/). This task repoints the default to the WP-39 download location so "downloaded via Settings" and "what transcribe.rs actually loads" are the same fact - otherwise the missing-model UI could lie (show ready but fail, or disable Transcribe when it would have worked). MFUPILOT_MODEL_PATH remains a supported explicit override for developers.
+
+  Happy path: Delete on a downloaded model removes its file(s) and the row returns to not-downloaded/Download-button state; with the transcription model downloaded, the Add-file button is enabled and transcription uses the exact file WP-39 downloaded and verified.
+
+  Failure / edge cases: with the transcription model NOT downloaded, the Add-file button is disabled and a visible message explains why (points to Settings); after downloading the model via Settings and returning to the workspace, the button re-enables without an app restart; Delete on a model that is mid-download is out of scope (no concurrent download+delete handling required - Download already disables its own button while in flight, so Delete''s button for that row is naturally the Download button''s replacement, not shown mid-download either).
+
+  Scope boundary: diarization availability wiring is explicitly deferred (no diarization feature exists to wire into - see reality check above). No Active-model radio (M3). No change to the Settings screen''s nav/shell.
+
+  Target surfaces: src-tauri/src/models.rs (+delete_model(app_support_dir, id), reusing the existing asset_path helper), src-tauri/src/lib.rs (+delete_model(id) IPC command; thread app_support_dir through AppState::model()/transcribe_file so it resolves the real download location), src-tauri/src/transcribe.rs (load_model/model_path take app_support_dir; internal MFUPILOT_MODEL_PATH override logic extracted into a pure, testable resolve_model_path() helper), src-tauri/tests/pipeline.rs (update the one call site to load_model''s new signature), src/ipc.ts (+deleteModel(id)), src/AiModelsSection.tsx (+Delete button per ready row), src/App.tsx (+availability check via the existing listTaskModels(), disable Add-file + warning message when the transcription model is missing, refresh on Settings close).
+
+  Constraints: Delete only ever removes files under the app''s own models directory (never an arbitrary path); no new network calls; the availability check reuses WP-39''s existing list_task_models() IPC command, no new Rust command needed for that read.
+
+  Scenarios (BDD):
+
+  Given the transcription model is downloaded and the workspace is open When the app checks availability Then Add-file is enabled and transcription succeeds using the WP-39 download path.
+
+  Given the transcription model is NOT downloaded When the workspace opens Then Add-file is disabled and a message tells the user to download it in Settings.
+
+  Given the transcription model was missing and the user just downloaded it via Settings When the user closes Settings and returns to the workspace Then Add-file becomes enabled without restarting the app.
+
+  Given a downloaded model When the user clicks Delete Then its file(s) are removed and the row returns to not-downloaded (F005-R4, F005-S3 Delete half).'
+dod:
+- delete_model(id) removes every asset file of that catalog entry; list_task_models() afterward reports it as not-downloaded (F005-R4).
+- The transcription entry point (App.tsx's Add-file action) is disabled with a visible explanation when the transcription model is not downloaded, and enabled when it is - verified by a frontend test for both states.
+- Closing Settings after downloading the previously-missing model re-enables the Add-file button without an app restart.
+- transcribe.rs's default model path now resolves under the app support directory (WP-39's download location) rather than the old VoicePilot-shared default; MFUPILOT_MODEL_PATH still overrides it. Covered by a Rust unit test on the pure path-resolution function (no env-var mutation in tests, to stay nextest-safe).
+- Diarization wiring is explicitly recorded as deferred/out of scope in this item, not silently dropped.
 created_by: Settings planning

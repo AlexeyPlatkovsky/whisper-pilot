@@ -40,7 +40,7 @@ foundation on which speaker roles (F002) and summarization (F003) build.
 - Full-file batch decoding only — no VAD, streaming, or real-time path
   (ADR-002).
 - Whisper `large-v3-turbo` via `whisper-rs` `metal`; model path overridable via
-  `MFUPILOT_MODEL_PATH` (ADR-003).
+  `WHISPERPILOT_MODEL_PATH` (ADR-003).
 - ffmpeg is a required external dependency on PATH (ADR-004).
 - Heavy work runs off the async reactor (`spawn_blocking`) to keep IPC/UI
   responsive.

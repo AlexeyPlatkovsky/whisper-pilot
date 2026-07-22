@@ -1,22 +1,88 @@
+/* Design tokens (colours, spacing, radii, type) live in tokens.css and are the
+   source of truth — imported before this file. Here we map those raw tokens to
+   *semantic* theme variables so the app can switch light/dark while the tokens
+   describe the design's base (light) palette. See docs/designbook.md. */
+
 :root {
-  --bg: #f6f7f9;
-  --panel: #ffffff;
-  --border: #e3e6ea;
-  --text: #1c1f23;
-  --muted: #6b7280;
-  --accent: #2563eb;
+  --bg: var(--wp-canvas-bg);
+  --panel: var(--wp-panel);
+  --border: var(--wp-border);
+  --text: var(--wp-text-primary);
+  --text-secondary: var(--wp-text-secondary);
+  --muted: var(--wp-text-label);
+  --accent: var(--wp-accent);
+  --accent-hover: var(--wp-accent-hover);
+  --success: var(--wp-success);
+  --error: var(--wp-error);
+  --selected: var(--wp-selected);
+  --status-progress: var(--wp-in-progress);
   color-scheme: light dark;
 }
 
+/* Dark variant of the warm pencil palette (the pencil source is light-only, so
+   these dark values are derived here, not tokens). */
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #16181d;
-    --panel: #1e2228;
-    --border: #2c313a;
-    --text: #e8eaed;
-    --muted: #9aa1ac;
-    --accent: #4b8bff;
+    --bg: #0e1b21;
+    --panel: #14262e;
+    --border: #24373f;
+    --text: #eaf0f1;
+    --text-secondary: #b9cad0;
+    --muted: #7e97a0;
+    --accent: #e0764a;
+    --accent-hover: #c65d2e;
+    --success: #6fa877;
+    --error: #e06a6e;
+    --selected: #1c2e36;
+    --status-progress: #4bb3d8;
+    color-scheme: dark;
   }
+}
+
+/* An explicit Light/Dark choice (Settings > Appearance) always wins over the OS
+   scheme above. [data-theme="dark"] selectors have higher specificity than the
+   plain :root used inside the media query. [data-theme="light"] works by
+   excluding the dark media query via :not() so it inherits the light :root
+   values without duplicating them. No attribute (System) falls through to the
+   media query, which stays live off the OS. */
+/* The light block exists only for color-scheme; the variables below inherit
+   from the bare :root block above. */
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1b21;
+    --panel: #14262e;
+    --border: #24373f;
+    --text: #eaf0f1;
+    --text-secondary: #b9cad0;
+    --muted: #7e97a0;
+    --accent: #e0764a;
+    --accent-hover: #c65d2e;
+    --success: #6fa877;
+    --error: #e06a6e;
+    --selected: #1c2e36;
+    --status-progress: #4bb3d8;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0e1b21;
+  --panel: #14262e;
+  --border: #24373f;
+  --text: #eaf0f1;
+  --text-secondary: #b9cad0;
+  --muted: #7e97a0;
+  --accent: #e0764a;
+  --accent-hover: #c65d2e;
+  --success: #6fa877;
+  --error: #e06a6e;
+  --selected: #1c2e36;
+  --status-progress: #4bb3d8;
+  color-scheme: dark;
 }
 
 * {
@@ -25,76 +91,467 @@
 
 body {
   margin: 0;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-family: var(--wp-font-body);
   background: var(--bg);
   color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  overflow: hidden;
 }
 
-.topbar {
+/* ==========================================================================
+   Top header
+   ========================================================================== */
+.wp-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
+  height: var(--wp-header-height);
+  /* No left padding: the left group must start at x=0 so its 300px width and
+     right-aligned action group line up with the sidebar column below. */
+  padding: 0 var(--wp-space-sm) 0 0;
+  background: var(--panel);
   border-bottom: 1px solid var(--border);
-  background: var(--panel);
+  flex: 0 0 auto;
 }
 
-.topbar h1 {
-  margin: 0;
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.actions {
+/* Left cluster: the sidebar-width left group + the left-aligned meeting title */
+.wp-header-lead {
   display: flex;
-  gap: 10px;
+  align-items: center;
+  /* Gap matches the transcript header's left padding so the meeting title sits
+     at the same x as the "Transcript" label below it. */
+  gap: var(--wp-space-md);
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-button {
-  padding: 8px 16px;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: var(--panel);
-  color: var(--text);
-  font-size: 14px;
+.wp-header-left {
+  flex: 0 0 var(--wp-sidebar-width);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wp-space-md);
+  height: 100%;
+}
+
+.wp-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  flex: 0 0 auto;
+}
+
+/* Reserved space for the macOS traffic lights the OS overlays on our header. */
+.wp-traffic-space {
+  flex: 0 0 auto;
+  width: 60px;
+  height: var(--wp-header-height);
+}
+
+.wp-action-group {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-2xs);
+  height: 32px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+}
+
+.wp-sep {
+  width: 1px;
+  height: 16px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
+
+.wp-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  border-radius: var(--wp-radius-xs);
   cursor: pointer;
+  line-height: 0;
 }
 
-button:hover:not(:disabled) {
-  border-color: var(--accent);
+.wp-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--panel);
 }
 
-button.primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
-}
-
-button:disabled {
-  opacity: 0.5;
+.wp-icon-btn:disabled {
+  opacity: 0.45;
   cursor: default;
 }
 
-.banner {
-  padding: 12px 20px;
-  background: var(--panel);
-  border-bottom: 1px solid var(--border);
+.wp-icon-btn--accent {
+  color: var(--accent);
+}
+
+.wp-icon-btn--ghost {
+  color: var(--muted);
+  padding: 2px;
+}
+
+.wp-icon-btn--tiny {
+  padding: 0;
   color: var(--muted);
 }
 
-.banner.error {
-  color: #b91c1c;
-  background: #fef2f2;
+/* Left-aligned meeting title, sitting just after the 300px left group so it
+   lines up with the "Transcript" label in the workspace below. */
+.wp-title-group {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
-.empty {
+.wp-title {
+  margin: 0;
+  font-size: var(--wp-font-size-lg);
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Status widget */
+.wp-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end; /* content right-aligned within the pill */
+  gap: 8px;
+  min-width: 132px;
+  height: 32px;
+  padding: 0 var(--wp-space-sm);
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.wp-status-label {
+  color: var(--text-secondary);
+}
+
+.wp-status-timer {
+  color: var(--muted);
+  font-weight: normal;
+  font-size: var(--wp-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.wp-status-idle {
+  color: var(--muted);
+}
+
+.wp-status-error {
+  color: var(--error);
+}
+
+.wp-spin {
+  color: var(--accent);
+  animation: wp-spin 0.8s linear infinite;
+}
+
+@keyframes wp-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .wp-spin {
+    animation: none;
+  }
+}
+
+/* ==========================================================================
+   Meeting info bar
+   ========================================================================== */
+.wp-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--wp-info-bar-height);
+  padding: 0 var(--wp-space-lg);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.wp-info-left,
+.wp-info-right {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+}
+
+.wp-info-left {
+  gap: 8px;
+}
+
+.wp-info-right {
+  gap: var(--wp-space-lg);
+}
+
+.wp-info-add:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.wp-info-label {
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-info-muted {
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-xs);
+  font-size: var(--wp-font-size-sm);
+  color: var(--text-secondary);
+}
+
+.wp-info-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  font-size: var(--wp-font-size-sm);
+  color: var(--text-secondary);
+}
+
+.wp-info-meta svg {
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Main content: sidebar + workspace
+   ========================================================================== */
+.wp-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.wp-sidebar {
+  flex: 0 0 var(--wp-sidebar-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-sm);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.wp-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+  color: var(--muted);
+}
+
+.wp-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--wp-font-size-body);
+  outline: none;
+}
+
+.wp-search-input::placeholder {
+  color: var(--muted);
+}
+
+.wp-meeting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.wp-meeting-row {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  padding: 10px;
+  border-radius: var(--wp-radius-sm);
+  cursor: default;
+}
+
+.wp-meeting-row.is-selected {
+  background: var(--selected);
+}
+
+.wp-meeting-row:not(.is-selected):hover {
+  background: var(--bg);
+}
+
+.wp-meeting-dot {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+}
+.wp-meeting-dot--ok {
+  background: var(--success);
+}
+.wp-meeting-dot--progress {
+  background: var(--status-progress);
+}
+.wp-meeting-dot--error {
+  background: var(--error);
+}
+
+.wp-meeting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wp-meeting-title {
+  font-size: var(--wp-font-size-body);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wp-meeting-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  font-size: var(--wp-font-size-xs);
+  color: var(--muted);
+}
+
+.wp-meeting-status {
+  margin-left: auto;
+  font-weight: 500;
+}
+.wp-meeting-status--progress {
+  color: var(--status-progress);
+}
+.wp-meeting-status--error {
+  color: var(--error);
+}
+
+/* Workspace: transcript panel + MFU panel */
+.wp-workspace {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.wp-transcript-panel {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--panel);
+}
+
+.wp-transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 42px;
+  padding: 0 var(--wp-space-md);
+  flex: 0 0 auto;
+}
+
+.wp-transcript-title-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wp-transcript-title {
+  margin: 0;
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wp-transcript-meta {
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-transcript-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-separator {
+  height: 1px;
+  background: var(--border);
+  flex: 0 0 auto;
+}
+
+.wp-transcript-content {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  min-height: 0;
+  padding: var(--wp-space-sm) 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wp-notice {
+  margin: var(--wp-space-xs) var(--wp-space-md);
+  padding: 10px var(--wp-space-sm);
+  border-radius: var(--wp-radius-sm);
+  background: var(--bg);
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+}
+
+.wp-notice--error {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+}
+
+.wp-empty {
   flex: 1;
   display: flex;
   align-items: center;
@@ -102,49 +559,533 @@ button:disabled {
   color: var(--muted);
 }
 
-.transcript {
-  flex: 1;
-  overflow-y: auto;
-  padding: 20px;
-}
-
-.filename {
-  font-size: 13px;
-  color: var(--muted);
-  margin-bottom: 14px;
-}
-
-.segment {
+/* Speaker block (transcript segment) */
+.wp-speaker-block {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  margin-bottom: 8px;
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-sm) var(--wp-space-md);
 }
 
-.segment .time {
-  flex: 0 0 44px;
-  font-variant-numeric: tabular-nums;
-  font-size: 12px;
-  color: var(--muted);
-  padding-top: 9px;
+.wp-speaker-bar {
+  flex: 0 0 3px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.wp-speaker-bar--accent {
+  background: var(--accent);
+}
+.wp-speaker-bar--success {
+  background: var(--success);
+}
+.wp-speaker-bar--warning {
+  background: var(--accent);
 }
 
-.segment .text {
+.wp-speaker-body {
   flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xs);
+}
+
+.wp-speaker-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.wp-speaker-name {
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wp-speaker-time {
+  font-size: var(--wp-font-size-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.wp-speaker-text {
+  width: 100%;
   resize: none;
   overflow: hidden;
-  min-height: 38px;
-  padding: 8px 12px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
-  line-height: 1.5;
+  border: 1px solid transparent;
+  border-radius: var(--wp-radius-sm);
+  margin: -4px -8px;
+  padding: 4px 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-family: inherit;
+  font-size: var(--wp-font-size-md);
+  line-height: 1.6;
   field-sizing: content;
 }
 
-.segment .text:focus {
+.wp-speaker-text:hover {
+  border-color: var(--border);
+}
+
+.wp-speaker-text:focus {
   outline: none;
   border-color: var(--accent);
+  background: var(--panel);
+}
+
+/* MFU (summary) panel */
+.wp-mfu {
+  flex: 0 0 var(--wp-mfu-width);
+  display: flex;
+  flex-direction: column;
+  padding: var(--wp-space-md);
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  min-height: 0;
+}
+
+.wp-mfu-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--wp-space-sm);
+  text-align: center;
+}
+
+.wp-mfu-icon-frame {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: var(--wp-radius-xl);
+  background: var(--panel);
+  color: var(--accent);
+}
+
+.wp-mfu-title {
+  margin: 0;
+  font-size: var(--wp-font-size-xl);
+  font-weight: 500;
+  color: var(--text);
+}
+
+.wp-mfu-subtitle {
+  margin: 0;
+  max-width: 260px;
+  font-size: var(--wp-font-size-body);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ==========================================================================
+   Settings screen (unchanged structure; consumes the same semantic vars)
+   ========================================================================== */
+.settings-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--wp-space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: var(--wp-font-size-lg);
+  font-weight: 600;
+}
+
+.settings-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.settings-nav {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--border);
+  padding: var(--wp-space-md) 12px;
+  background: var(--panel);
+}
+
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  margin-bottom: var(--wp-space-xs);
+}
+
+.settings-brand-name {
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: var(--wp-radius-xs);
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-nav button svg {
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.settings-nav button:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.settings-nav button.active {
+  background: var(--selected);
+  color: var(--text);
+}
+
+.settings-nav button.active svg {
+  color: var(--accent);
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--wp-space-xl) 40px;
+  color: var(--muted);
+}
+
+.settings-tab-title {
+  margin: 0 0 var(--wp-space-xl);
+  font-size: var(--wp-font-size-h2);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.model-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xl);
+}
+
+.model-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+}
+
+.section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--wp-font-size-xl);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.section-subtitle {
+  margin: 0;
+  font-size: var(--wp-font-size-body);
+  color: var(--muted);
+}
+
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--panel);
+  border-radius: var(--wp-radius-sm);
+  overflow: hidden;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  padding: 0 var(--wp-space-md);
+  height: 44px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-row:last-child {
+  border-bottom: none;
+}
+
+.model-radio {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  background: transparent;
+}
+
+.model-radio.is-selected {
+  border-color: var(--accent);
+}
+
+.model-label {
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  font-weight: 500;
+}
+
+.model-row-spacer {
+  flex: 1;
+}
+
+.model-size {
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.model-icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.model-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.model-status--ready {
+  color: var(--success);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.model-row-error {
+  color: var(--error);
+  font-size: var(--wp-font-size-sm);
+}
+
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Higher specificity than the generic ".settings-content button" rule below,
+   so these row icon buttons keep a borderless, fixed-size footprint that
+   never shifts as a row toggles between download/checkmark/disabled-delete. */
+.settings-content .model-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.settings-content .model-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-content .model-icon-btn--accent {
+  color: var(--accent);
+}
+
+.settings-content .model-icon-btn:disabled {
+  color: var(--border);
+  cursor: default;
+}
+
+.settings-radio-group {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-radio-group legend {
+  font-weight: 600;
+  margin-bottom: var(--wp-space-xs);
+  padding: 0;
+}
+
+.settings-radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+/* Buttons inside the settings screen keep a conventional bordered look. */
+.settings-content button,
+.settings-header button {
+  padding: 8px var(--wp-space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  cursor: pointer;
+}
+
+.settings-content button:hover:not(:disabled),
+.settings-header button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.settings-content button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-content button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.settings-content button.danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: #fff;
+}
+
+/* ==========================================================================
+   Settings modals (download progress, delete confirmation) — a fixed scrim
+   blocks interaction with the whole settings screen until dismissed.
+   ========================================================================== */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, #0a2e3d 25%, transparent);
+}
+
+.modal-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-lg);
+  width: 420px;
+  padding: var(--wp-space-lg) var(--wp-space-xl);
+  background: var(--panel);
+  border-radius: var(--wp-radius-md);
+  box-shadow: 0 12px 32px color-mix(in srgb, #0a2e3d 12%, transparent);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-title {
+  font-size: var(--wp-font-size-lg);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.modal-progress {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 8px;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+.modal-progress::-webkit-progress-bar {
+  background: var(--bg);
+  border-radius: 999px;
+}
+
+.modal-progress::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+.modal-progress::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: 999px;
+}
+
+.modal-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.modal-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--wp-font-size-body);
+  color: var(--text-secondary);
+}
+
+.modal-timer {
+  font-size: var(--wp-font-size-body);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-warning {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+  line-height: 1.5;
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--wp-space-sm);
 }

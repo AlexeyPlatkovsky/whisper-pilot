@@ -17,10 +17,10 @@ pub struct Segment {
     pub text: String,
 }
 
-/// Load the whisper model. For M1 this reuses the multilingual large-v3-turbo
-/// artifact already on disk; override with `MFUPILOT_MODEL_PATH`.
-pub fn load_model() -> Result<WhisperContext> {
-    let path = model_path();
+/// Load the whisper model from the WP-39 download location under
+/// `app_support_dir`; override with `WHISPERPILOT_MODEL_PATH`.
+pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
+    let path = model_path(app_support_dir);
     if !path.exists() {
         return Err(AppError::ModelNotFound(path.display().to_string()));
     }
@@ -33,17 +33,22 @@ pub fn load_model() -> Result<WhisperContext> {
         .map_err(|e| AppError::ModelLoad(e.to_string()))
 }
 
-fn model_path() -> PathBuf {
-    if let Ok(p) = std::env::var("MFUPILOT_MODEL_PATH") {
+fn model_path(app_support_dir: &Path) -> PathBuf {
+    resolve_model_path(
+        app_support_dir,
+        std::env::var("WHISPERPILOT_MODEL_PATH").ok(),
+    )
+}
+
+/// Pure decision: an explicit override always wins; otherwise the model
+/// lives where WP-39's downloader put it. No env access here, so this is
+/// unit-testable without mutating global state.
+fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> PathBuf {
+    if let Some(p) = override_path {
         return PathBuf::from(p);
     }
-    // Default: reuse the model VoicePilot already manages.
-    let base = dirs_next::data_local_dir()
-        .or_else(|| dirs_next::home_dir().map(|h| h.join("Library/Application Support")))
-        .unwrap_or_default();
-    base.join("VoicePilot")
-        .join("models")
-        .join("ggml-large-v3-turbo-q8_0.bin")
+    crate::models::primary_asset_path(app_support_dir, "transcription")
+        .expect("\"transcription\" is a static CATALOG entry with at least one asset")
 }
 
 /// Transcribe an entire file of 16 kHz mono samples into timestamped segments.
@@ -103,4 +108,32 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32], language: &str) -> Resu
 pub fn transcribe_file(ctx: &WhisperContext, input: &Path, language: &str) -> Result<Vec<Segment>> {
     let samples = crate::audio::load_samples(input)?;
     transcribe(ctx, &samples, language)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_model_path_uses_the_explicit_override_when_set() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let path = resolve_model_path(dir.path(), Some("/custom/path/model.bin".to_string()));
+
+        assert_eq!(path, PathBuf::from("/custom/path/model.bin"));
+    }
+
+    #[test]
+    fn resolve_model_path_defaults_to_the_wp39_download_location() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let path = resolve_model_path(dir.path(), None);
+
+        assert_eq!(
+            path,
+            dir.path()
+                .join("models")
+                .join("ggml-large-v3-turbo-q8_0.bin")
+        );
+    }
 }

@@ -32,8 +32,14 @@ Covers: F005-R3
 Scenario: Download verifies, Delete removes
   Given the AI models section lists the transcription model as not downloaded
   When the user clicks Download
-  Then progress is shown and the model is marked ready only after SHA verification
+  Then a blocking dialog shows progress, and the model is marked ready only
+    after SHA verification
+  When the user dismisses the dialog with ✕ before it finishes
+  Then the dialog closes but the download keeps running and the model still
+    becomes ready in the background
   When the user clicks Delete
+  Then a confirmation dialog asks before removing anything
+  When the user confirms
   Then the local model file is removed and it returns to not-downloaded
 ```
 
@@ -124,6 +130,8 @@ Scenario: Check for and apply an update
 - [ ] (F005-R1) The gear sits in a fixed header position and opens Settings.
 - [ ] (F005-R3) Interrupting a download leaves no half-written model marked ready;
       re-download works; SHA mismatch is reported, not silently accepted.
+- [ ] (F005-R3) Dismissing the download dialog with ✕ does not cancel the
+      download; Delete never removes a model without an explicit confirm.
 - [ ] (F005-R4) With each model removed in turn, the dependent task behaves per its
       rule (Transcribe disabled; diarization degrades).
 - [ ] (F005-R6) System theme tracks a live OS light↔dark switch.

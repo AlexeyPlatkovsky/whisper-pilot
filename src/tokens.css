@@ -1,0 +1,79 @@
+/* ============================================================================
+ * WhisperPilot Design Tokens — SOURCE OF TRUTH
+ * ----------------------------------------------------------------------------
+ * These custom properties are the authoritative design tokens for the app.
+ * They are extracted directly from the approved pencil design at
+ *   pencil/main_view.pen  (the `variables` block)
+ * and documented in docs/designbook.md.
+ *
+ * RULES
+ *  - This file is imported before styles.css so the tokens are globally
+ *    available to every stylesheet and component.
+ *  - Do NOT hardcode a colour, radius, spacing, font size, or layout dimension
+ *    anywhere else when a `--wp-*` token exists for it. Consume `var(--wp-*)`.
+ *  - These values describe the design's LIGHT palette (the pencil source is a
+ *    light theme). Theme-dependent semantic colours (light/dark switching) are
+ *    layered on top of these raw tokens in styles.css via the semantic vars
+ *    (--bg, --panel, --text, …); those keep the [data-theme] override working.
+ *  - When the pencil design changes, update this file first, then the consumers.
+ * ==========================================================================*/
+
+:root {
+  /* --- Colour: surfaces --------------------------------------------------- */
+  --wp-canvas-bg: #faf9f6; /* app canvas / inset controls */
+  --wp-panel: #ffffff; /* raised panels: header, sidebar, transcript */
+  --wp-selected: #f2efe9; /* selected list row */
+
+  /* --- Colour: text ------------------------------------------------------- */
+  --wp-text-primary: #0a2e3d; /* titles, primary copy */
+  --wp-text-secondary: #2c4a5a; /* body copy */
+  --wp-text-label: #5a7684; /* meta, labels, placeholders */
+
+  /* --- Colour: lines ------------------------------------------------------ */
+  --wp-border: #e3dfd5;
+
+  /* --- Colour: accent & status ------------------------------------------- */
+  --wp-accent: #c65d2e; /* burnt orange — primary accent */
+  --wp-accent-hover: #a94a22;
+  --wp-success: #5b8d62;
+  --wp-error: #b82b2f;
+  --wp-warning: #c65d2e;
+  --wp-in-progress: #176c8f; /* transcribing / in-progress status */
+  /* Note: the macOS window traffic lights are drawn by the OS (Overlay
+     titleBarStyle), so no app tokens are needed for them. */
+
+  /* --- Radii -------------------------------------------------------------- */
+  --wp-radius-xs: 6px; /* chips, small controls */
+  --wp-radius-sm: 8px; /* buttons, inputs, action groups */
+  --wp-radius-md: 10px;
+  --wp-radius-lg: 14px;
+  --wp-radius-xl: 16px; /* large icon frames */
+  --wp-radius-window: 12px; /* app window corner */
+
+  /* --- Spacing scale ------------------------------------------------------ */
+  --wp-space-2xs: 4px;
+  --wp-space-xs: 6px;
+  --wp-space-sm: 12px;
+  --wp-space-md: 16px;
+  --wp-space-lg: 20px;
+  --wp-space-xl: 24px;
+
+  /* --- Typography --------------------------------------------------------- */
+  /* Inter is the design font; fall back to the system stack when it is not
+     installed (this is an offline desktop app — no web fonts are fetched). */
+  --wp-font-body:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --wp-font-size-xs: 11px;
+  --wp-font-size-sm: 12px;
+  --wp-font-size-body: 13px;
+  --wp-font-size-md: 14px;
+  --wp-font-size-lg: 16px;
+  --wp-font-size-xl: 18px;
+  --wp-font-size-h2: 24px;
+
+  /* --- Layout dimensions -------------------------------------------------- */
+  --wp-header-height: 52px;
+  --wp-info-bar-height: 44px;
+  --wp-sidebar-width: 300px;
+  --wp-mfu-width: 320px;
+}

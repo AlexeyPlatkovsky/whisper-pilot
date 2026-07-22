@@ -18,7 +18,7 @@ pub fn normalize_to_wav(input: &Path) -> Result<PathBuf> {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_nanos())
         .unwrap_or(0);
-    let out = std::env::temp_dir().join(format!("mfupilot-{nanos}.wav"));
+    let out = std::env::temp_dir().join(format!("whisperpilot-{nanos}.wav"));
 
     let output = Command::new("ffmpeg")
         .args(["-y", "-i"])

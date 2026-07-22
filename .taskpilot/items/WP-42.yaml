@@ -3,9 +3,35 @@ id: WP-42
 title: 'App language: i18n scaffolding, English default'
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T14:05:59Z'
-updated_at: '2026-07-21T14:05:59Z'
+updated_at: '2026-07-22T01:47:08Z'
 parent_id: WP-36
-description: Introduce i18n scaffolding with English as the default (and only beta) UI language, independent of transcription language; structure ready for release languages. Implements F005-R8 (F005-T6).
+description: 'Introduce i18n scaffolding (a translation dictionary + lookup function) and use it to fix a real, pre-existing spec violation: src/App.tsx (the M1 UI, built before ADR-011 decided English-default) currently has 5 hardcoded Russian strings, which directly fails F005-R8''s acceptance criterion ("the UI renders in English by default"). Also add the real content of the Settings "App language" section (replacing WP-38''s placeholder). Implements F005-R8 (F005-T6), parent WP-36. Depends on WP-37 (done, provides get_settings/set_setting - ui_language already exists and is validated to "en" only in beta) and WP-38 (done, shell). No Rust changes.
+
+  Scope reality check: every OTHER component built in this epic (SettingsScreen, AiModelsSection, AppearanceSection) already renders in English - only App.tsx has Russian text left over from before this epic. This task fixes exactly those 5 strings via the new i18n lookup (establishing the pattern) and does not migrate the already-English components to the same lookup (no functional change needed there; that is a reasonable, non-blocking follow-up, not a gap in this task).
+
+  Happy path: the UI renders in English by default (fresh install, no settings file); the App language section shows English as the current (and only) UI language; the transcription language selector (unaffected by this task) can be set to Russian without changing the UI language (F005-S8) - already true today since these are separate settings keys, this task does not need to add new independence logic, only avoid breaking it.
+
+  Failure / edge cases: none beyond what get_settings/set_setting already handle (WP-37) - this task adds no new IPC surface or persistence logic, only a translation lookup and one new read-only-in-beta settings section.
+
+  Scope boundary: only English (beta). No Russian/Turkish/Spanish/German/ French UI strings (F005-R9, M3/release) - the dictionary structure exists so adding a locale later is additive, not a restructure, but no second locale ships now. Does not touch the transcription-language selector or ADR-007''s Russian-default transcription behavior.
+
+  Target surfaces: src/i18n.ts (new - a Locale type currently just "en", a STRINGS dictionary keyed by locale then by string key, and a t(key) lookup function), src/App.tsx (replace its 5 hardcoded Russian strings with t() calls), src/AppLanguageSection.tsx (new - mirrors AppearanceSection''s pattern: reads ui_language via getSettings(), renders "English" as a single checked radio option, matching "the only option in Beta"), src/SettingsScreen.tsx (wire AppLanguageSection into the "app-language" tab, replacing the placeholder), src/App.test.tsx (update existing assertions that reference the old Russian button/text names to the new English ones - this is a rename, not new test logic).
+
+  Constraints: no new IPC (reuses get_settings/set_setting from WP-37); no new network calls; inputs have associated labels (accessibility convention, matching AppearanceSection''s pattern).
+
+  Scenarios (BDD):
+
+  Given a fresh install with no settings file When the app renders Then the UI shows English text (the "Add file"/"Save" buttons, the empty-state message) - not Russian (F005-S8).
+
+  Given the App language section is open When the user views it Then it shows English as the current and only selectable UI language.
+
+  Given the user changes the transcription language selector (unrelated, pre-existing control) When the change happens Then the UI language is unaffected - still English (F005-S8, independence already guaranteed by WP-37''s separate settings keys, this task must not break it).'
+dod:
+- src/App.tsx's 5 previously-hardcoded Russian strings now render in English via the new i18n lookup, verified by updated frontend tests asserting the English text/accessible names.
+- src/i18n.ts has a direct unit test covering the t() lookup function.
+- The App language section shows English as the current UI language (reading get_settings), verified by a frontend test.
+- Full existing test suite (all prior WP-37..41 tests) still passes after the App.tsx string/test-name changes - no regressions from the rename.
+- No Russian (or any non-English) string remains anywhere in src/*.tsx.
 created_by: Settings planning

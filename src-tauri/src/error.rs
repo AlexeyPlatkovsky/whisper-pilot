@@ -13,7 +13,7 @@ pub enum AppError {
     #[error("could not read audio: {0}")]
     Audio(String),
 
-    #[error("transcription model not found at {0} — set MFUPILOT_MODEL_PATH")]
+    #[error("transcription model not found at {0} — set WHISPERPILOT_MODEL_PATH")]
     ModelNotFound(String),
 
     #[error("failed to load transcription model: {0}")]
@@ -21,6 +21,18 @@ pub enum AppError {
 
     #[error("transcription failed: {0}")]
     Transcribe(String),
+
+    #[error("invalid setting: {0}")]
+    InvalidSetting(String),
+
+    #[error("unknown model id: {0}")]
+    ModelCatalogNotFound(String),
+
+    #[error("model download failed: {0}")]
+    ModelDownload(String),
+
+    #[error("downloaded model failed SHA-256 verification (expected {expected}, got {actual})")]
+    ModelShaMismatch { expected: String, actual: String },
 
     #[error("{0}")]
     Io(String),

@@ -1,16 +1,26 @@
-//! MFUPilot core: offline file transcription (Russian) with a summary to come.
+//! WhisperPilot core: offline file transcription (Russian) with a summary to come.
 
 pub mod audio;
 pub mod error;
+pub mod models;
+pub mod settings;
 pub mod transcribe;
 
 use error::{AppError, Result};
+use models::TaskModel;
+use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tauri::State;
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 use transcribe::Segment;
 use whisper_rs::WhisperContext;
+
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))
+}
 
 /// The whisper model is loaded lazily on first use and cached for the session —
 /// loading ~800 MB should not block app launch or fail startup when the model
@@ -21,13 +31,13 @@ struct AppState {
 }
 
 impl AppState {
-    async fn model(&self) -> Result<Arc<WhisperContext>> {
+    async fn model(&self, app_support_dir: PathBuf) -> Result<Arc<WhisperContext>> {
         let mut guard = self.model.lock().await;
         if let Some(ctx) = guard.as_ref() {
             return Ok(Arc::clone(ctx));
         }
         // Loading is blocking and CPU-heavy; keep it off the async reactor.
-        let ctx = tokio::task::spawn_blocking(transcribe::load_model)
+        let ctx = tokio::task::spawn_blocking(move || transcribe::load_model(&app_support_dir))
             .await
             .map_err(|e| AppError::ModelLoad(e.to_string()))??;
         let ctx = Arc::new(ctx);
@@ -67,6 +77,7 @@ async fn open_file_dialog() -> Option<String> {
 /// Transcribe the file at `path` into Russian (default) timestamped segments.
 #[tauri::command]
 async fn transcribe_file(
+    app: tauri::AppHandle,
     path: String,
     language: Option<String>,
     state: State<'_, AppState>,
@@ -78,12 +89,12 @@ async fn transcribe_file(
         .unwrap_or_else(|| path.clone());
     let language = language.unwrap_or_else(|| "ru".to_string());
 
-    let ctx = state.model().await?;
-    let segments = tokio::task::spawn_blocking(move || {
-        transcribe::transcribe_file(&ctx, &input, &language)
-    })
-    .await
-    .map_err(|e| AppError::Transcribe(e.to_string()))??;
+    let app_support_dir = app_data_dir(&app)?;
+    let ctx = state.model(app_support_dir).await?;
+    let segments =
+        tokio::task::spawn_blocking(move || transcribe::transcribe_file(&ctx, &input, &language))
+            .await
+            .map_err(|e| AppError::Transcribe(e.to_string()))??;
 
     Ok(TranscriptResult {
         file_name,
@@ -111,6 +122,54 @@ async fn save_text_dialog(content: String, default_name: Option<String>) -> Resu
     Ok(Some(dest.to_string_lossy().to_string()))
 }
 
+/// Read all settings (theme, ui_language, active model), applying beta
+/// defaults for any key never set.
+#[tauri::command]
+fn get_settings(app: tauri::AppHandle) -> Result<Settings> {
+    let dir = app_data_dir(&app)?;
+    Ok(settings::get_settings(&dir))
+}
+
+/// Update one known setting (theme, ui_language, or active_model.transcription)
+/// and persist it immediately; rejects an unknown key or an invalid value.
+#[tauri::command]
+fn set_setting(app: tauri::AppHandle, key: String, value: String) -> Result<Settings> {
+    let dir = app_data_dir(&app)?;
+    settings::set_setting(&dir, &key, &value)
+}
+
+/// List the AI models catalog (transcription, diarization) with each
+/// entry's current downloaded state.
+#[tauri::command]
+fn list_task_models(app: tauri::AppHandle) -> Result<Vec<TaskModel>> {
+    let dir = app_data_dir(&app)?;
+    Ok(models::list_task_models(&dir))
+}
+
+/// Download the catalog entry `id`, verifying SHA-256 before marking it
+/// ready. Emits `model_download_progress { id, fraction }` as bytes arrive.
+#[tauri::command]
+async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
+    let dir = app_data_dir(&app)?;
+    let progress_app = app.clone();
+    let progress_id = id.clone();
+    models::download_model(&dir, &id, move |fraction| {
+        let _ = progress_app.emit(
+            "model_download_progress",
+            serde_json::json!({ "id": progress_id, "fraction": fraction }),
+        );
+    })
+    .await
+}
+
+/// Delete catalog entry `id`'s downloaded file(s), returning it to
+/// not-downloaded.
+#[tauri::command]
+fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
+    let dir = app_data_dir(&app)?;
+    models::delete_model(&dir, &id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
@@ -120,8 +179,13 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             open_file_dialog,
             transcribe_file,
-            save_text_dialog
+            save_text_dialog,
+            get_settings,
+            set_setting,
+            list_task_models,
+            download_model,
+            delete_model
         ])
         .run(tauri::generate_context!())
-        .expect("error while running MFUPilot");
+        .expect("error while running WhisperPilot");
 }

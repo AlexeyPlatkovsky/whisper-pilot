@@ -14,7 +14,7 @@ managed on disk from VoicePilot, and whisper.cpp supports Metal GPU acceleration
 
 Use Whisper **`large-v3-turbo` (q8_0)** via `whisper-rs` with the **`metal`**
 feature and flash attention. For M1, reuse the existing on-disk artifact, with
-the path overridable via `MFUPILOT_MODEL_PATH`.
+the path overridable via `WHISPERPILOT_MODEL_PATH`.
 
 ## Consequences
 
