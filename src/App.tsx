@@ -13,6 +13,7 @@ import { t } from "./i18n";
 import { formatClock } from "./format";
 import { AppLogo, Icon, type IconName } from "./Icon";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
+import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
 
 type Status =
   | { kind: "idle" }
@@ -72,6 +73,9 @@ export function App() {
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
     boolean | null
   >(null);
+  const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
+    {},
+  );
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
@@ -101,9 +105,24 @@ export function App() {
       .catch(() => {});
   }, []);
 
+  function resolveSpeakerLabel(speakerId: number): string {
+    return speakerLabels[speakerId] ?? speakerLabel(speakerId);
+  }
+
+  function renameSpeaker(speakerId: number, newLabel: string) {
+    setSpeakerLabels((prev) => ({ ...prev, [speakerId]: newLabel }));
+  }
+
   const transcriptText = useMemo(
-    () => segments.map((s) => s.text).join("\n"),
-    [segments],
+    () =>
+      segments
+        .map((s) =>
+          s.speaker_id !== undefined
+            ? `${resolveSpeakerLabel(s.speaker_id)}: ${s.text}`
+            : s.text,
+        )
+        .join("\n"),
+    [segments, speakerLabels],
   );
 
   const durationLabel = useMemo(() => {
@@ -118,6 +137,7 @@ export function App() {
       const shortName = path.split("/").pop() ?? path;
       setStatus({ kind: "transcribing", file: shortName });
       setSegments([]);
+      setSpeakerLabels({});
       setFileName(shortName);
       const result = await transcribeFile(path, "ru");
       setSegments(result.segments);
@@ -295,6 +315,7 @@ export function App() {
                 onClick={() => {
                   setFileName(null);
                   setSegments([]);
+                  setSpeakerLabels({});
                   setStatus({ kind: "idle" });
                 }}
               >
@@ -403,9 +424,11 @@ export function App() {
                       <div className="wp-speaker-body">
                         <div className="wp-speaker-head">
                           {hasSpeaker && (
-                            <span className="wp-speaker-name">
-                              {speakerLabel(seg.speaker_id!)}
-                            </span>
+                            <SpeakerLabelEditor
+                              speakerId={seg.speaker_id!}
+                              label={resolveSpeakerLabel(seg.speaker_id!)}
+                              onRename={renameSpeaker}
+                            />
                           )}
                           <span className="wp-speaker-time">
                             {formatRange(seg.start_ms, seg.end_ms)}

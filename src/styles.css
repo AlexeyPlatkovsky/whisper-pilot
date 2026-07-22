@@ -654,6 +654,39 @@ body {
   color: var(--text);
 }
 
+.wp-speaker-name-button {
+  border: 1px solid transparent;
+  border-radius: var(--wp-radius-sm);
+  background: transparent;
+  padding: 1px 4px;
+  margin: -1px -4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.wp-speaker-name-button:hover {
+  border-color: var(--border);
+}
+
+.wp-speaker-name-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.wp-speaker-name-input {
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+  color: var(--text);
+  font-family: inherit;
+  border: 1px solid var(--accent);
+  border-radius: var(--wp-radius-sm);
+  background: var(--panel);
+  padding: 1px 4px;
+  margin: -1px -4px;
+  min-width: 10ch;
+  field-sizing: content;
+}
+
 .wp-speaker-time {
   font-size: var(--wp-font-size-xs);
   color: var(--muted);

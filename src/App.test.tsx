@@ -404,3 +404,167 @@ describe("App — speaker rendering", () => {
     ).toHaveClass("wp-speaker-bar--none");
   });
 });
+
+describe("App — speaker rename", () => {
+  function mockThreeSpeakerSegments() {
+    vi.mocked(ipc.transcribeFile).mockResolvedValue({
+      file_name: "meeting.mp3",
+      segments: [
+        { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
+        { start_ms: 1000, end_ms: 2000, text: "There", speaker_id: 3 },
+        { start_ms: 2000, end_ms: 3000, text: "Yo", speaker_id: 1 },
+      ],
+    });
+  }
+
+  it("renames every segment sharing a speaker_id, leaving other speakers unchanged", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    mockThreeSpeakerSegments();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    const [firstLabel] = screen.getAllByRole("button", {
+      name: "Rename Speaker 4",
+    });
+    await user.click(firstLabel);
+    const input = screen.getByRole("textbox", { name: "Rename Speaker 4" });
+    await user.clear(input);
+    await user.type(input, "Alice{Enter}");
+
+    expect(screen.getAllByText("Alice")).toHaveLength(2);
+    expect(screen.getByText("Speaker 2")).toBeInTheDocument();
+  });
+
+  it("includes the renamed label in the saved transcript, and leaves speaker-less segments bare", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeFile).mockResolvedValue({
+      file_name: "meeting.mp3",
+      segments: [
+        { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
+        { start_ms: 1000, end_ms: 2000, text: "No speaker here" },
+      ],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    await user.click(screen.getByRole("button", { name: "Rename Speaker 4" }));
+    const renameInput = screen.getByRole("textbox", {
+      name: "Rename Speaker 4",
+    });
+    await user.clear(renameInput);
+    await user.type(renameInput, "Alice{Enter}");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
+      "Alice: Hi\nNo speaker here",
+      "meeting.txt",
+    );
+  });
+
+  it("rejects an empty rename, keeping the previous label", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    mockThreeSpeakerSegments();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    const [firstLabel] = screen.getAllByRole("button", {
+      name: "Rename Speaker 4",
+    });
+    await user.click(firstLabel);
+    const input = screen.getByRole("textbox", { name: "Rename Speaker 4" });
+    await user.clear(input);
+    await user.keyboard("{Enter}");
+
+    expect(screen.getAllByText("Speaker 4")).toHaveLength(2);
+  });
+
+  it("cancels an in-progress edit on Escape without renaming", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    mockThreeSpeakerSegments();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    const [firstLabel] = screen.getAllByRole("button", {
+      name: "Rename Speaker 4",
+    });
+    await user.click(firstLabel);
+    const input = screen.getByRole("textbox", { name: "Rename Speaker 4" });
+    await user.type(input, "Bob");
+    await user.keyboard("{Escape}");
+
+    expect(screen.getAllByText("Speaker 4")).toHaveLength(2);
+    expect(screen.queryByText("Bob")).not.toBeInTheDocument();
+  });
+
+  it("rejects a whitespace-only rename, keeping the previous label", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    mockThreeSpeakerSegments();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    const [firstLabel] = screen.getAllByRole("button", {
+      name: "Rename Speaker 4",
+    });
+    await user.click(firstLabel);
+    const input = screen.getByRole("textbox", { name: "Rename Speaker 4" });
+    await user.clear(input);
+    await user.type(input, "   {Enter}");
+
+    expect(screen.getAllByText("Speaker 4")).toHaveLength(2);
+  });
+
+  it("does not leak a rename into a later, unrelated transcript with a colliding speaker_id", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    mockThreeSpeakerSegments();
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Hi");
+
+    const [firstLabel] = screen.getAllByRole("button", {
+      name: "Rename Speaker 4",
+    });
+    await user.click(firstLabel);
+    const input = screen.getByRole("textbox", { name: "Rename Speaker 4" });
+    await user.clear(input);
+    await user.type(input, "Alice{Enter}");
+    expect(screen.getAllByText("Alice")).toHaveLength(2);
+
+    // Remove the file, then load a new, unrelated transcript whose first
+    // segment happens to reuse speaker_id 3 - it must show the default
+    // label, not the previous transcript's "Alice" rename.
+    await user.click(screen.getByRole("button", { name: "Remove file" }));
+    vi.mocked(ipc.transcribeFile).mockResolvedValue({
+      file_name: "other.mp3",
+      segments: [{ start_ms: 0, end_ms: 1000, text: "Fresh", speaker_id: 3 }],
+    });
+    await user.click(screen.getByRole("button", { name: "Add file" }));
+    await screen.findByDisplayValue("Fresh");
+
+    expect(screen.queryByText("Alice")).not.toBeInTheDocument();
+    expect(screen.getByText("Speaker 4")).toBeInTheDocument();
+  });
+});

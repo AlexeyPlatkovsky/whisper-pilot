@@ -79,10 +79,10 @@ override the path for development with `WHISPERPILOT_MODEL_PATH`.
 
 sherpa-onnx segmentation + embedding models produce speaker turns, merged onto
 segments by time overlap to set each segment's `speaker_id`. Speaker count is
-auto-detected with an optional override. Labels are generic ("Спикер N") and
-user-renamed; renames persist on the meeting. The transcript renders as a
-per-speaker chat of colored bubbles (10 shades). Reassigning or merging speakers
-is out of scope for M2.
+auto-detected with an optional override. Labels are generic ("Speaker N",
+English per ADR-011) and user-renamed within the current session. The
+transcript renders as a per-speaker chat of colored bubbles (10 shades).
+Reassigning or merging speakers is out of scope for M2.
 
 `diarize.rs` currently (WP-5/WP-6) prepares the sherpa-onnx model files and
 runs the engine: `diarize_samples` resolves the models, then produces ordered
@@ -116,12 +116,18 @@ never failing `transcribe_file`. There is still no Stop control, no progress
 event spanning both phases, and no persisted meeting entity (those remain
 the not-yet-built M2 library epic, F004/WP-11).
 
-The transcript now renders segments with real per-speaker coloring (WP-9):
+The transcript renders segments with real per-speaker coloring (WP-9):
 `src/speakerColors.ts` maps a `speaker_id` to one of 10 categorical colors
-(`--wp-speaker-0`..`9` in `tokens.css`, dark-mode-aware) and a generic
+(`--wp-speaker-0`..`9` in `tokens.css`, dark-mode-aware) and a default
 "Speaker N" label; a segment without `speaker_id` renders a neutral bar and
-no label rather than a fabricated one. Labels are not yet user-renamable
-(WP-10) and there is no persistence (F004/WP-11).
+no label rather than a fabricated one. The user can rename any speaker's
+label (WP-10, `src/SpeakerLabelEditor.tsx`): the rename applies to every
+segment sharing that `speaker_id` and is written into the saved transcript
+text ("Label: text" per line). Renames are session-scoped state — reset
+whenever a new file is loaded or the current one is removed, so a rename
+never leaks into an unrelated transcript — with no persistence across app
+restarts (that requires the meeting entity, F004/WP-11, not yet built). This
+completes epic WP-1 (M2 speaker-attributed transcription).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 
