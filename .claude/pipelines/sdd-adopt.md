@@ -23,7 +23,8 @@ implement step logic and does not emit its own output artifact.
 
 ## Preconditions
 
-- `Manager: manager - output below` with an existing TaskPilot ID.
+- `Manager: manager - output below` with an existing TaskPilot ID in `ready`
+  status (or an explicitly approved resumed `blocked` item).
 - `Skill: work-with-git - output below` reporting the completed branch decision.
 
 If either artifact is absent, report `Blocked` and stop before Stage 1.
@@ -39,6 +40,7 @@ If either artifact is absent, report `Blocked` and stop before Stage 1.
 
 | Stage | Capability | Required Visible Artifact |
 | --- | --- | --- |
+| 0. Activate TaskPilot item | `Skill: taskpilot-work` — verified `ready → in_progress` before artifact edits | `Skill: taskpilot-work - output below` with reloaded `in_progress` evidence |
 | 1. Intake | direct — confirm repo root, existing docs, scope | none |
 | 2. Gap analysis | `Agent: sdd-gap-analyzer` | `Agent: sdd-gap-analyzer - output below` with `Verdict: Pass` |
 | 3. Confirm plan | direct — accept the plan; when it has ambiguous choices, confirm with the user | none |
@@ -48,7 +50,8 @@ If either artifact is absent, report `Blocked` and stop before Stage 1.
 | 7. Review | `Agent: sdd-spec-reviewer` | `Agent: sdd-spec-reviewer - output below` |
 | 8. Suggest companions | direct — present the bundle's `RECOMMENDS.md` companions if that file exists under `.claude/sdd/`; otherwise record that none ship with this adoption | a note of companions offered and which were adopted, or `none offered` |
 | 9. Definition of Done | `Skill: task-quality` | `Skill: task-quality - output below` with `Quality gate: pass` |
-| 10. Task Complete | `Skill: task-complete` | `Skill: task-complete - output below` |
+| 10. Local commit and TaskPilot completion | `Skill: work-with-git`, then `Skill: taskpilot-work` — required local commit and verified `in_progress → done` | commit hash and `Skill: taskpilot-work - output below` with reloaded `done` evidence |
+| 11. Task Complete | `Skill: task-complete` | `Skill: task-complete - output below` |
 
 Author docs in the order the gap-analysis plan specifies (foundational docs first). Stage 8
 is opt-in and may be declined. Do not advance past a stage whose expected visible artifact is

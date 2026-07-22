@@ -7,18 +7,22 @@ description: Quality gate that validates TaskPilot item completeness — DoD, BD
 
 ## Purpose
 
-Ensure every WhisperPilot TaskPilot item carries the artifacts needed for correct implementation and verification. This gate runs before an item transitions into **done**; the separate DoR gate owns transitions into **ready**.
+Ensure every WhisperPilot TaskPilot item carries the artifacts needed for correct implementation and verification. This gate runs before an item transitions into **done**. It validates readiness or completion evidence; `.claude/skills/taskpilot-work/SKILL.md` owns every lifecycle mutation.
 
 This skill inspects existing task content. It does not author artifacts — it reports gaps and blocks the transition until resolved.
 
 ## When This Skill Applies
 
 Use when:
-- A TaskPilot item is being moved to `done` status — validate DoD completeness
+- A TaskPilot item is proposed for `done` status — validate DoD completeness
 
 Do not use for:
 - Trivial work
-- Validating an item at creation time. An item is born in `backlog`; its description and DoD must be completed before it enters `ready`. Running a DoR check at creation would falsely block newly scoped work.
+- TaskPilot-exempt AI-governance maintenance. Its manager-declared direct route
+  must instead state an objective instruction-system DoD and record its
+  structural validation in `task-complete`; do not invent a TaskPilot item just
+  to invoke this skill.
+- Validating an item at creation time. An item is born in `backlog`; its description and DoD must be completed before its discovery run can transition it to `ready`. Running a DoR check at creation would falsely block newly scoped work.
 
 ## Required Input
 
@@ -45,7 +49,7 @@ Evaluate the supplied item's description, DoD, evidence, and completion comment.
 4. **Edge cases covered** — negative scenarios from the description have been tested
 5. **Local validation passes** — the touched layers build and tests pass (see validate/SKILL.md)
 
-Pass: all criteria pass and the item has a TaskPilot completion comment referencing test and verification results.
+Pass: all criteria pass and the item has a TaskPilot completion comment referencing test and verification results. The invoking pipeline must then use `taskpilot-work` to make and reload-verify the `in_progress → done` transition; this gate alone never closes an item.
 Block: report each gap.
 
 An external verification limitation does not block DoD when it does not identify

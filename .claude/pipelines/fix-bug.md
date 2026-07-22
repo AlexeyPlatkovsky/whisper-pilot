@@ -14,7 +14,8 @@ Sequence the steps for fixing a confirmed, root-caused bug: author the required 
 Before this pipeline begins, all of the following must be present in the conversation:
 - The manager has classified the task as non-trivial and selected this pipeline.
 - `Manager: manager - output below` is present. If it is absent, stop and report: "Manager routing artifact is missing. Complete the AGENTS.md classification gate before entering this pipeline."
-- An existing TaskPilot ID is present in the manager artifact.
+- An existing TaskPilot ID in `ready` status (or an explicitly approved resumed
+  `blocked` item) is present in the manager artifact.
 - `Skill: work-with-git - output below` reports the completed branch decision.
 - A triage report (`Skill: triage-bug - output below`) containing all required output-contract fields, including `Log evidence`, OR the user has explicitly provided:
   - reproduction steps
@@ -22,9 +23,20 @@ Before this pipeline begins, all of the following must be present in the convers
   - severity and affected layer(s)
 - If the manager assigned **Lite** tier, the reduced-readiness confirmation line — `(reproduction or target identified) and DoD present` — must be present in the manager artifact (per `AGENTS.md` §Quality Tiers / `.claude/skills/task-routing/SKILL.md` §Output Contract). If it is absent, stop and report it.
 
-If any precondition is missing, stop and report which item is absent. Do not proceed to Step 1.
+If any precondition is missing, stop and report which item is absent. Do not proceed to Step 0.
 
 ## Steps
+
+### Step 0 — Activate TaskPilot Item
+
+Skill: `.claude/skills/taskpilot-work/SKILL.md`
+
+Before test or production edits, perform the verified `ready → in_progress`
+operation. The artifact must identify the active branch and, for batch work,
+confirm this is the only active child unless a predeclared two-task delivery
+cohort applies. Do not advance without the reloaded `in_progress` evidence.
+
+---
 
 ### Step 1 — Test Authoring And Red Evidence
 
@@ -109,7 +121,18 @@ If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 7 until
 
 ---
 
-### Step 7 — Task Complete
+### Step 7 — Local Commit And TaskPilot Completion
+
+After DoD passes, create the required local task-scoped commit; do not push.
+Invoke `taskpilot-work` to add completion evidence, including the commit hash,
+and perform the verified `in_progress → done` transition. For a declared
+two-task delivery cohort, both DoD gates must pass before its one shared commit
+and both completion transitions occur. Do not advance without reloaded `done`
+evidence.
+
+---
+
+### Step 8 — Task Complete
 
 Skill: `.claude/skills/task-complete/SKILL.md`
 Required output: `Skill: task-complete - output below`

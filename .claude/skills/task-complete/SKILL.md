@@ -18,6 +18,13 @@ Do not use for:
 
 The selected pipeline appends this skill as its final step for non-trivial routed work. For a manager-declared ad-hoc route with no pipeline, the route declaration sequences it after the direct capability. Execution skills do not invoke it directly.
 
+For TaskPilot-tracked work, this skill is a **post-mutation** closure record:
+it does not close the item itself. An implementation/fix closure requires the
+final `Skill: taskpilot-work - output below` artifact proving a reloaded `done`
+item. A discovery closure requires the corresponding artifact proving a reloaded
+`ready` item. For the `AGENTS.md` AI-governance exemption, state that lifecycle
+verification is not applicable and do not require a TaskPilot artifact.
+
 ## Rules
 
 ### 1. Report Actual Execution
@@ -42,6 +49,11 @@ For planned routed handoffs, `Comment` must reference the step's visible output 
 ### 5. Refuse Incomplete Closure
 
 If a required planned output artifact is missing from the conversation, do not declare completion. Set `Closure: blocked` and name the missing artifact so the manager can return to the missing step.
+
+For tracked work, a passing DoD gate, a commit, or a completion comment is not
+enough. If the required lifecycle artifact does not show the expected reloaded
+TaskPilot state (`done` for implementation/fixes; `ready` for discovery), set
+`Closure: blocked` and name the missing or mismatched state.
 
 If `AGENTS.md` §Final Response Gate prevents completion because a required artifact
 reports a failure or implementation blocker, set `Closure: blocked` and name that

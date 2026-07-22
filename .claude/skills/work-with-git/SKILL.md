@@ -25,6 +25,9 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 - For ID-bearing work, keep working on an existing task branch only when its name contains the task ID and its uncommitted changes match the task.
 - For instruction-system changes, apply the same existing-task-branch rule as other ID-bearing work.
 - It is acceptable to perform a child task on a branch named for its parent feature or epic when the branch clearly covers the requested work.
+- On a feature/epic batch branch, the branch name does not make the parent the
+  active work item. The routed batch manifest must identify the one active child
+  task (or the explicitly declared two-task delivery cohort) before edits.
 - If the current branch or uncommitted changes appear unrelated to the requested task, stop and ask the user whether to create a new branch or stay on the current branch.
 - If an ID-bearing task needs a new branch, name it `<kind>/vp-<number>-short-task-slug`, with no tool prefix. Use a lowercase TaskPilot ID and a kebab-case slug of 3-6 meaningful words. Map TaskPilot types to `<kind>` as follows: `bug` → `bug`, `feature` → `feat`, and `task` or `epic` → `task`. For example: `feat/vp-01-introduce-local-ai`.
 - Apply `AGENTS.md` §Git Operation Authority for branch publication and every Git mutation.
@@ -32,12 +35,22 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 
 ## Commit And Push Rules
 
-The commit/push boundary is owned by `AGENTS.md`; this skill only formats task-scoped commit messages and reports the boundary.
+The commit/push boundary is owned by `AGENTS.md`; this skill formats and verifies
+the required task-scoped local commits.
 
-- When a task has an ID, every commit message must begin `<TASKPILOT-ID>: `, for example `VP-17: `.
-- Every non-trivial change uses its existing TaskPilot ID in the commit-message prefix.
-- **Multi-task branch runs** (the user asked to implement multiple tasks on one branch — a whole feature or epic): commit each task separately at its own closure (`task-complete`), one commit per task, ID-prefixed with that task's own ID. This is authorized by the original request; do not ask again per task. Push still requires an explicit prompt every time, unchanged.
-- **Single-task runs**: after completing work that changed files, suggest one short imperative commit message, ID-prefixed when an ID exists, and wait for explicit approval before committing.
+- A tracked implementation item cannot transition to `done` until its completed
+  work is in a local commit. Push remains separately and explicitly authorized.
+- In a normal delivery, one task has one local commit and every commit message
+  begins `<TASKPILOT-ID>: `, for example `WP-17: `.
+- A two-task delivery cohort is the only multi-task commit exception. Its commit
+  message begins `<TASKPILOT-ID>, <TASKPILOT-ID>: `, for example
+  `WP-17, WP-18: complete transcription persistence flow`; both IDs must also
+  appear in both items' completion evidence.
+- Do not start a next sibling task until the prior task has its required local
+  commit and verified `done` lifecycle artifact. A declared delivery cohort may
+  start its two members together, but no third task may start.
+- AI-governance maintenance has no TaskPilot completion-commit requirement and
+  follows the explicit commit authority in `AGENTS.md`.
 
 ## Recommended Checks
 
@@ -56,7 +69,9 @@ After edits:
 1. Inspect `git status --short`.
 2. For ID-bearing work, before each commit and immediately before merge into `main`, compare the provisional ID with the registry and current local/fetched-remote task branches. The first task merged into `main` keeps a colliding ID; block each later merge into `main` until that task takes the next unused ID and updates its branch and artifacts. Intermediate branch merges do not finalize IDs. Prior provisional commit messages remain a documented collision exception.
 3. Report changed files and whether anything remains unstaged or uncommitted.
-4. Suggest a commit message when files changed.
+4. For tracked implementation work, create and report the required local commit
+   before its TaskPilot completion transition. For AI-governance work, report
+   whether a commit was requested or remains uncommitted.
 
 ## Output Contract
 

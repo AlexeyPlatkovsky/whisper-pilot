@@ -63,11 +63,22 @@ decision.
 
 ## Task Identity And Tracking
 
-TaskPilot (project key **WP**) is the source of truth for non-trivial WhisperPilot
-work. An existing TaskPilot item is required before implementation, including for
-instruction-system and documentation changes.
+TaskPilot (project key **WP**) is the source of truth for non-trivial product
+work and product/documentation maintenance. An existing TaskPilot item is
+required before implementation for that work.
+
+**AI-governance maintenance is TaskPilot-exempt.** This exemption covers this
+root `AGENTS.md` contract and the operational materials under `.claude/`
+(skills, agents, pipelines, conventions, SDD tooling, and templates) when the
+change governs AI execution rather than product behavior or product
+documentation. It does not exempt `docs/`, feature specifications, or any
+product/runtime artifact. Exempt work still requires classification, the
+appropriate routed quality gates, the Git-operation decision, and final
+closure evidence. **TaskPilot-exempt is not the Quality Tier `Exempt`:**
+non-trivial AI-governance work remains Full tier.
+
 `.claude/skills/taskpilot-work/SKILL.md` owns item lookup, approval, record
-structure, commands, and lifecycle procedure.
+structure, commands, and lifecycle procedure for tracked work.
 
 ### Git Operation Authority
 
@@ -106,13 +117,15 @@ Never push changes unless the user explicitly requests it — this applies
 unconditionally, including during pipeline execution, code review cycles, and
 validation runs.
 
-Commits follow the same default: never commit unless the user explicitly
-requests it. One standing exception — when the user asks to implement multiple
-tasks on one branch (a whole feature or epic), that request itself authorizes
-committing each task separately at its own closure, one commit per task; this
-does not need to be re-requested per task. Push still requires an explicit
-prompt every time regardless. See `.claude/skills/work-with-git/SKILL.md` for
-implementation details.
+For tracked implementation work, a local task-scoped commit is required before
+the TaskPilot item may transition to `done`. The user's approval to implement a
+tracked task authorizes that local completion commit; it does not authorize a
+push. A normal delivery uses one commit per task. The sole exception is an
+explicitly declared two-task delivery cohort, whose one shared commit must name
+both TaskPilot IDs and is evidence for both items. AI-governance maintenance
+remains subject to the normal explicit commit request unless the user directs
+otherwise. Push still requires an explicit prompt every time regardless. See
+`.claude/skills/work-with-git/SKILL.md` for implementation details.
 
 ---
 

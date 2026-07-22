@@ -14,7 +14,8 @@ Sequence the steps for implementing a non-trivial Tauri/React/Rust feature: read
 Before this pipeline begins:
 - The manager has classified the task as non-trivial and selected this pipeline.
 - `Manager: manager - output below` artifact is present in the conversation.
-- An existing TaskPilot ID is present in the manager artifact.
+- An existing TaskPilot ID in `ready` status (or an explicitly approved resumed
+  `blocked` item) is present in the manager artifact.
 - `Skill: work-with-git - output below` reports the completed branch decision.
 
 ## Execution Contract
@@ -25,7 +26,7 @@ unless (a) the applicable step requires a stop or return for its gate verdict,
 user confirmation before advancing (Step 0 DoR gap dispositions, Step 1
 brainstorm decision summary).
 
-A git commit, a validate PASS, or any intermediate output artifact does not mark this pipeline complete. Only `Skill: task-complete - output below` from the task-complete step (Step 10) closes the pipeline.
+A git commit, a validate PASS, or any intermediate output artifact does not mark this pipeline complete. Only `Skill: task-complete - output below` from the task-complete step (Step 11) closes the pipeline.
 
 ---
 
@@ -40,7 +41,25 @@ Skill: `.claude/skills/verify-readiness/SKILL.md`
 Required input: existing TaskPilot ID from `Manager: manager - output below`
 Required output: `Skill: verify-readiness - output below`
 
-If the verdict is `Ready`, advance to Step 1. If it is `Blocked`, do not implement: resolve each gap per the disposition the skill recorded — for a **create** disposition on a requirements/scope gap, return to the manager to re-route `discover-feature`; for **ignore**, record the non-required omission and re-evaluate; for **skip**, update the item's narrowed scope and DoD — then re-run this gate. Do not advance to Step 1 until the verdict is `Ready`.
+If the verdict is `Ready`, advance to Step 0a. If it is `Blocked`, do not implement: resolve each gap per the disposition the skill recorded — for a **create** disposition on a requirements/scope gap, return to the manager to re-route `discover-feature`; for **ignore**, record the non-required omission and re-evaluate; for **skip**, update the item's narrowed scope and DoD — then re-run this gate. Do not advance to Step 0a until the verdict is `Ready`.
+
+If the run cannot immediately resolve a DoR blocker, invoke
+`taskpilot-work` to record the cause and transition the item to `blocked`.
+
+---
+
+### Step 0a — Activate TaskPilot Item
+
+Skill: `.claude/skills/taskpilot-work/SKILL.md`
+
+After DoR is `Ready` and before test or production edits, perform the verified
+`ready → in_progress` start operation. The required artifact must name the
+active branch and show the reloaded `in_progress` item. In a batch, it must also
+name the visible batch manifest and confirm that this is the only active child
+unless a two-task delivery cohort was declared before edits.
+
+Do not advance to Step 1 without `Skill: taskpilot-work - output below` showing
+the verified lifecycle transition.
 
 ---
 
@@ -161,7 +180,23 @@ If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 10 unti
 
 ---
 
-### Step 10 — Task Complete
+### Step 10 — Local Commit And TaskPilot Completion
+
+After the DoD gate passes, create the local task-scoped commit required by
+`AGENTS.md` and `.claude/skills/work-with-git/SKILL.md`; do not push. Then invoke
+`.claude/skills/taskpilot-work/SKILL.md` to add the completion evidence and
+perform the verified `in_progress → done` transition. The output must include
+the commit hash and prove that reloading the item returns `done`.
+
+For a declared delivery cohort, perform its one shared local commit and complete
+both task records atomically only after both DoD gates pass. If either cannot
+complete, split the cohort or leave both items unfinished.
+
+Do not advance to Task Complete without this lifecycle artifact.
+
+---
+
+### Step 11 — Task Complete
 
 Skill: `.claude/skills/task-complete/SKILL.md`
 Required output: `Skill: task-complete - output below`

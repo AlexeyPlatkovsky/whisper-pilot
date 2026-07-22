@@ -20,14 +20,25 @@ For a post-approval scope addendum, begin a new `discover-feature` run so the ad
 Before this pipeline begins:
 - The manager has classified the task as non-trivial and selected this pipeline.
 - `Manager: manager - output below` artifact is present in the conversation.
-- An existing TaskPilot ID is present in the manager artifact.
+- An existing TaskPilot ID in `backlog` status (or a user-approved resumed
+  discovery item) is present in the manager artifact.
 - `Skill: work-with-git - output below` reports the completed branch decision.
 
 **If the `Manager: manager - output below` artifact is absent, stop immediately and return `Blocked` — do not begin Step 1.**
 
-**If the TaskPilot ID or completed branch artifact is absent, stop immediately and return `Blocked` — do not begin Step 1.**
+**If the TaskPilot ID or completed branch artifact is absent, stop immediately and return `Blocked` — do not begin Step 0.**
 
 ## Steps
+
+---
+
+### Step 0 — Start Discovery Lifecycle
+
+Skill: `.claude/skills/taskpilot-work/SKILL.md`
+
+Before Q&A, perform the verified `backlog → in_progress` discovery operation
+and add the run/parent-context comment. Do not advance without the reloaded
+`in_progress` evidence.
 
 ---
 
@@ -111,11 +122,25 @@ Pass the prepared record update from Step 4. The skill snapshots protected
 metadata, updates the approved fields, runs TaskPilot validation, reloads the
 item, and reports preservation evidence.
 
-Required output: `Skill: taskpilot-work - output below` with `Status` = `completed`.
+Required output: `Skill: taskpilot-work - output below` with `Operation result` = `completed`.
 
 ---
 
-### Step 6 — Task Complete
+### Step 6 — Definition of Ready And Mark Ready
+
+Skill: `.claude/skills/verify-readiness/SKILL.md`
+
+Pass the persisted TaskPilot item and its parent context. Do not advance until
+the result is `DoR gate: Ready`. If it cannot be resolved in the current run,
+use `taskpilot-work` to record the blocker and transition the item to `blocked`.
+
+After a Ready verdict, invoke `taskpilot-work` to perform the verified
+`in_progress → ready` transition. Its output must prove the reloaded `ready`
+item. A successful discovery run does not make the product item `done`.
+
+---
+
+### Step 7 — Task Complete
 
 Run the route's final closure step after the discovery and persistence artifacts are present.
 
@@ -130,4 +155,5 @@ The final response must include compact versions of:
 - `Agent: scope-verifier - output below`
 - `Skill: record-discovered-spec - output below`
 - `Skill: taskpilot-work - output below`
+- `Skill: verify-readiness - output below`
 - `Skill: task-complete - output below`

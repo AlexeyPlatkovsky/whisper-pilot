@@ -27,7 +27,7 @@ Before selecting any pipeline or capability, classify out loud:
 |---|---|
 | Complexity | trivial / non-trivial |
 | Risk | low / medium / high / system-level |
-| Domain | Tauri/React/Rust feature / UI design variant / CLI adapter / documentation / AI staff work / instruction system / bug triage / bug fix / other |
+| Domain | Tauri/React/Rust feature / UI design variant / CLI adapter / product documentation / AI-governance instruction system / bug triage / bug fix / other |
 | Quality Tier | Project quality-tier decision |
 
 When unsure of complexity: treat as non-trivial.
@@ -44,13 +44,26 @@ phase, then route each unfinished child independently. Do not create a phase
 wrapper item. If no child is registered, ask the user how to proceed; if all are
 done, report that result without re-routing them.
 
-## Task Identity And Git Branch Gate
+## Task Identity, Lifecycle, And Git Branch Gate
 
 Apply `AGENTS.md` §Task Identity And Tracking before routing any branch decision.
 
+For tracked work, inspect the existing TaskPilot item and its parent context
+before routing. The manager must declare the item status and the lifecycle
+operation that will be required before implementation starts. A tracked item is
+not eligible for implementation from `backlog`; it must be `ready`, or be an
+explicitly resumed `blocked` item. For an already-approved legacy/backlog item,
+first run DoR and route the verified `backlog → ready` promotion through
+`taskpilot-work`; otherwise route `discover-feature`.
+
+For AI-governance instruction-system work exempted by `AGENTS.md`, declare
+`TaskPilot: exempt — AI-governance maintenance` and do not create or mutate a
+TaskPilot item unless the user explicitly requests TaskPilot administration.
+
 For every non-trivial task, route `.claude/skills/work-with-git/SKILL.md` after
-the task-identity decision and before implementation or artifact changes begin,
-subject to the branch-approval rule in `AGENTS.md` §Git Operation Authority.
+the task-identity/lifecycle decision and before implementation or artifact
+changes begin, subject to the branch-approval rule in `AGENTS.md` §Git Operation
+Authority.
 
 The manager only routes the git branch gate. The skill decides whether to create a branch, stay on the current branch, or ask the user when branch ownership is ambiguous.
 
@@ -127,7 +140,8 @@ Use this table with no omitted rows:
 | Field | Decision | Evidence / required artifact |
 |---|---|---|
 | Classification | `<complexity>; <risk>; <domain>; <quality tier>` | tier justification and readiness confirmation |
-| Task identity | `<TaskPilot ID and status>` | `AGENTS.md` task-identity decision |
+| Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` | `AGENTS.md` task-identity decision |
+| Lifecycle | `required` / `not applicable` | tracked work: required start, block/resume, completion, and reload-verification artifacts; exempt work: reason |
 | Git gate | `required` / `completed` / `blocked` | `Skill: work-with-git - output below` when complete |
 | Route | `<pipeline or capability path>` | selected route |
 | Validation | `<required checks and reviewers>` | expected validation artifacts |
