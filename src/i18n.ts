@@ -6,7 +6,6 @@ const en = {
   addFile: "Add file",
   save: "Save",
   transcribingPrefix: "Transcribing",
-  transcribingSuffix: "… this may take a few minutes.",
   emptyState: "Add an audio or video file to get a transcript.",
   modelMissing:
     "The Whisper model isn't downloaded. Open Settings → AI models to download it.",

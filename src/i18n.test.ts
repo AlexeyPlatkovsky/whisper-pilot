@@ -19,8 +19,7 @@ describe("t", () => {
     );
   });
 
-  it("returns the exact transcribing prefix/suffix used by the transcribing banner", () => {
+  it("returns the transcribing status label", () => {
     expect(t("transcribingPrefix")).toBe("Transcribing");
-    expect(t("transcribingSuffix")).toBe("… this may take a few minutes.");
   });
 });

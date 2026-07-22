@@ -98,44 +98,50 @@ body {
    Top header
    ========================================================================== */
 .wp-header {
-  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   height: var(--wp-header-height);
-  padding: 0 var(--wp-space-sm);
+  /* No left padding: the left group must start at x=0 so its 300px width and
+     right-aligned action group line up with the sidebar column below. */
+  padding: 0 var(--wp-space-sm) 0 0;
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex: 0 0 auto;
 }
 
-.wp-header-left,
+/* Left cluster: the sidebar-width left group + the left-aligned meeting title */
+.wp-header-lead {
+  display: flex;
+  align-items: center;
+  /* Gap matches the transcript header's left padding so the meeting title sits
+     at the same x as the "Transcript" label below it. */
+  gap: var(--wp-space-md);
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.wp-header-left {
+  flex: 0 0 var(--wp-sidebar-width);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wp-space-md);
+  height: 100%;
+}
+
 .wp-header-right {
   display: flex;
   align-items: center;
   gap: var(--wp-space-sm);
+  flex: 0 0 auto;
 }
 
-.wp-traffic {
-  display: flex;
-  gap: 8px;
-  padding-left: var(--wp-space-2xs);
-}
-
-.wp-traffic-dot {
-  width: 12px;
-  height: 12px;
-  border-radius: 50%;
-  display: inline-block;
-}
-.wp-traffic-close {
-  background: var(--wp-traffic-close);
-}
-.wp-traffic-min {
-  background: var(--wp-traffic-min);
-}
-.wp-traffic-max {
-  background: var(--wp-traffic-max);
+/* Reserved space for the macOS traffic lights the OS overlays on our header. */
+.wp-traffic-space {
+  flex: 0 0 auto;
+  width: 60px;
+  height: var(--wp-header-height);
 }
 
 .wp-action-group {
@@ -192,19 +198,14 @@ body {
   color: var(--muted);
 }
 
-/* Centered meeting title (absolute so the flex groups stay balanced) */
+/* Left-aligned meeting title, sitting just after the 300px left group so it
+   lines up with the "Transcript" label in the workspace below. */
 .wp-title-group {
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
   display: flex;
   align-items: center;
   gap: var(--wp-space-xs);
-  pointer-events: none;
-}
-
-.wp-title-group .wp-icon-btn {
-  pointer-events: auto;
+  min-width: 0;
+  flex: 0 1 auto;
 }
 
 .wp-title {
@@ -212,7 +213,6 @@ body {
   font-size: var(--wp-font-size-lg);
   font-weight: 600;
   color: var(--text);
-  max-width: 420px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -222,8 +222,9 @@ body {
 .wp-status {
   display: inline-flex;
   align-items: center;
+  justify-content: flex-end; /* content right-aligned within the pill */
   gap: 8px;
-  min-width: 88px;
+  min-width: 132px;
   height: 32px;
   padding: 0 var(--wp-space-sm);
   background: var(--bg);
@@ -234,9 +235,15 @@ body {
   white-space: nowrap;
 }
 
-.wp-status b {
-  font-weight: 600;
-  color: var(--text);
+.wp-status-label {
+  color: var(--text-secondary);
+}
+
+.wp-status-timer {
+  color: var(--muted);
+  font-weight: normal;
+  font-size: var(--wp-font-size-xs);
+  font-variant-numeric: tabular-nums;
 }
 
 .wp-status-idle {

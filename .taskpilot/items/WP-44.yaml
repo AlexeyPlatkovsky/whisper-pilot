@@ -1,0 +1,22 @@
+schema_version: 1
+id: WP-44
+title: Rename app identity MFUPilot/mfupilot to WhisperPilot/whisper-pilot
+priority: normal
+type: task
+status: done
+created_at: '2026-07-22T08:06:36Z'
+updated_at: '2026-07-22T08:13:23Z'
+description: 'Rename the application identity from the legacy MFUPilot/mfupilot to WhisperPilot/whisper-pilot consistently across config, Rust code, package identity, and docs. The standalone product term "MFU" (the meeting-follow-up feature: MFU panel, Run MFU Craft, MFU notes) is NOT the app name and must be left untouched. User-approved decisions: (1) change the macOS bundle identifier com.mfupilot.dev -> com.whisperpilot.dev (relocates the app data directory; on a pre-1.0 dev app this resets settings to defaults and requires re-downloading the Whisper model, accepted); (2) implement on the existing branch task/wp-33-settings-beta.
+
+  Naming standard: display name "WhisperPilot"; npm/Cargo package "whisper-pilot"; Rust lib crate "whisperpilot_lib"; bundle id "com.whisperpilot.dev"; env-var prefix WHISPERPILOT_* (MODEL_PATH, TEST_AUDIO, TEST_LANG); temp-file prefix "whisperpilot-".
+
+  Target surfaces: package.json (name), src-tauri/Cargo.toml (package + lib name), src-tauri/tauri.conf.json (productName, window title, identifier), src-tauri/capabilities/default.json (description), src-tauri/src/main.rs + lib.rs (crate ref, doc comment, panic message), src-tauri/src/error.rs + transcribe.rs (MFUPILOT_MODEL_PATH env var), src-tauri/src/audio.rs (temp file prefix), src-tauri/tests/pipeline.rs (crate refs, com.mfupilot.dev path, test env vars), and docs referencing the env var (architecture.md, ADR-003, development.md, F001 requirements). Regenerate src-tauri/Cargo.lock and package-lock.json name and the Tauri gen/schemas via build.
+
+  Scope boundary: does NOT rename the "MFU" feature term; does NOT rewrite historical TaskPilot item YAML records (audit trail of completed work) even though some reference the old identifier/env var. The React header already shows the active meeting title, not the app name; the redundant native window title "MFUPilot" is renamed as part of this task.'
+dod:
+- No occurrence of "mfupilot" (any case) remains in source, config, or docs except historical .taskpilot/ item records and regenerated dependency lock entries for unrelated crates; verified by a case-insensitive repo grep.
+- The standalone "MFU" feature term is unchanged (MFU panel/Craft/notes copy and identifiers intact).
+- Rust crate builds and links under the new package/lib names (whisper-pilot / whisperpilot_lib); main.rs and tests reference whisperpilot_lib.
+- Bundle identifier is com.whisperpilot.dev in tauri.conf.json and the matching hardcoded path in tests/pipeline.rs.
+- Env var is WHISPERPILOT_MODEL_PATH in error.rs and transcribe.rs, and every doc that referenced MFUPILOT_MODEL_PATH now uses the new name.
+- Validation passes via the validate skill (tsc, vitest, clippy, nextest, and build) all green; no regressions.

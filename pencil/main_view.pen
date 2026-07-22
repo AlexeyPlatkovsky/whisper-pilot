@@ -1050,7 +1050,7 @@
       "children": [
         {
           "type": "ellipse",
-          "id": "oLCDe",
+          "id": "C2iFKv",
           "x": 0,
           "y": 0,
           "name": "Logo Circle",
@@ -1059,154 +1059,61 @@
           "height": 28
         },
         {
-          "type": "path",
-          "id": "R0h03",
-          "x": 0,
-          "y": 0,
-          "name": "Headband",
-          "geometry": "M7 14c0-6 3-9 7-9 4 0 7 3 7 9",
-          "viewBox": [
-            0,
-            0,
-            28,
-            28
-          ],
+          "type": "ellipse",
+          "id": "TmI99",
+          "x": 3,
+          "y": 3,
+          "name": "Logo Ring",
+          "opacity": 0.12,
           "fill": "#00000000",
-          "width": 28,
-          "height": 28,
+          "width": 22,
+          "height": 22,
           "stroke": "#FFFFFF",
-          "strokeWidth": 2.5
+          "strokeWidth": 0.8
         },
         {
           "type": "rectangle",
-          "cornerRadius": 2,
-          "id": "aggpG",
-          "x": 5,
-          "y": 12,
-          "name": "Left Ear Cup",
-          "fill": "#FFFFFF",
-          "width": 5,
-          "height": 8
-        },
-        {
-          "type": "rectangle",
-          "cornerRadius": 2,
-          "id": "ZGfWJ",
-          "x": 18,
-          "y": 12,
-          "name": "Right Ear Cup",
-          "fill": "#FFFFFF",
-          "width": 5,
-          "height": 8
-        },
-        {
-          "type": "path",
-          "id": "drgGF",
-          "x": 0,
-          "y": 0,
-          "name": "Mic Boom",
-          "geometry": "M21 18c0 4-4 6-7 6",
-          "viewBox": [
-            0,
-            0,
-            28,
-            28
-          ],
-          "fill": "#00000000",
-          "width": 28,
-          "height": 28,
-          "stroke": "#FFFFFF",
-          "strokeWidth": 2,
-          "strokeLinecap": "round"
-        },
-        {
-          "type": "rectangle",
-          "cornerRadius": 1.5,
-          "id": "UV3Yf",
-          "x": 10,
-          "y": 7,
-          "name": "Clipboard Body",
-          "fill": "#00000000",
-          "width": 8,
-          "height": 12,
-          "stroke": "#FFFFFF",
-          "strokeWidth": 1.5
-        },
-        {
-          "type": "rectangle",
-          "cornerRadius": 1,
-          "id": "YJViY",
-          "x": 12,
-          "y": 5.5,
-          "name": "Clipboard Clip",
-          "fill": "#FFFFFF",
-          "width": 4,
-          "height": 2
-        },
-        {
-          "type": "rectangle",
-          "cornerRadius": 0.5,
-          "id": "d5Lsr",
-          "x": 11,
-          "y": 9,
-          "name": "Bar 1",
+          "cornerRadius": 999,
+          "id": "Kt2Og",
+          "x": 7,
+          "y": 10.5,
+          "name": "Wave Bar 1",
           "fill": "#C65D2E",
-          "width": 1.2,
-          "height": 3
+          "width": 2.5,
+          "height": 7
         },
         {
           "type": "rectangle",
-          "cornerRadius": 0.5,
-          "id": "xPdnf",
-          "x": 12.8,
-          "y": 9,
-          "name": "Bar 2",
+          "cornerRadius": 999,
+          "id": "hn1hE",
+          "x": 10.5,
+          "y": 7.5,
+          "name": "Wave Bar 2",
           "fill": "#C65D2E",
-          "width": 1.2,
-          "height": 4
+          "width": 2.5,
+          "height": 13
         },
         {
           "type": "rectangle",
-          "cornerRadius": 0.5,
-          "id": "VfKdm",
-          "x": 14.6,
+          "cornerRadius": 999,
+          "id": "V9YZM",
+          "x": 14,
           "y": 9,
-          "name": "Bar 3",
+          "name": "Wave Bar 3",
           "fill": "#C65D2E",
-          "width": 1.2,
-          "height": 2.5
+          "width": 2.5,
+          "height": 10
         },
         {
           "type": "rectangle",
-          "cornerRadius": 0.5,
-          "id": "F0mqZI",
-          "x": 16.4,
-          "y": 9,
-          "name": "Bar 4",
+          "cornerRadius": 999,
+          "id": "LDJLP",
+          "x": 17.5,
+          "y": 11,
+          "name": "Wave Bar 4",
           "fill": "#C65D2E",
-          "width": 1.2,
-          "height": 3.5
-        },
-        {
-          "type": "path",
-          "id": "tHONe",
-          "x": 0,
-          "y": 0,
-          "name": "Waveform",
-          "geometry": "M11 16l1 0 1-3 1 5 1-4 1 2 1 0",
-          "viewBox": [
-            0,
-            0,
-            28,
-            28
-          ],
-          "fill": "#00000000",
-          "width": 28,
-          "height": 28,
-          "stroke": "#C65D2E",
-          "strokeWidth": 1.2,
-          "strokeLinejoin": "round",
-          "strokeLinecap": "round"
+          "width": 2.5,
+          "height": 6
         }
       ]
     },
@@ -1377,220 +1284,6 @@
               "fontWeight": "normal"
             }
           ]
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "HK2Hu",
-      "x": 0,
-      "y": -760,
-      "name": "Meeting Item V2",
-      "reusable": true,
-      "width": 260,
-      "height": 56,
-      "gap": 10,
-      "padding": [
-        8,
-        12
-      ],
-      "alignItems": "center",
-      "children": [
-        {
-          "type": "rectangle",
-          "cornerRadius": 2,
-          "id": "g8qq3",
-          "name": "Accent Bar",
-          "fill": "$accent",
-          "width": 3,
-          "height": 32
-        },
-        {
-          "type": "frame",
-          "id": "U6tUH",
-          "name": "Item V2 Text",
-          "width": "fill_container",
-          "layout": "vertical",
-          "gap": 2,
-          "children": [
-            {
-              "type": "text",
-              "id": "uGibG",
-              "name": "Item V2 Title",
-              "fill": "$text-primary",
-              "content": "Meeting Title",
-              "fontFamily": "$font-body",
-              "fontSize": 13,
-              "fontWeight": "500"
-            },
-            {
-              "type": "frame",
-              "id": "FqvAS",
-              "name": "Item V2 Meta",
-              "gap": 6,
-              "alignItems": "center",
-              "children": [
-                {
-                  "type": "text",
-                  "id": "V550Bt",
-                  "name": "Item V2 Date",
-                  "fill": "$text-label",
-                  "content": "Today",
-                  "fontFamily": "$font-body",
-                  "fontSize": 11,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "oRSrU",
-                  "name": "Item V2 Dot",
-                  "fill": "$border",
-                  "content": "•",
-                  "fontFamily": "$font-body",
-                  "fontSize": 11,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "qslng",
-                  "name": "Item V2 Duration",
-                  "fill": "$text-label",
-                  "content": "42m",
-                  "fontFamily": "$font-body",
-                  "fontSize": 11,
-                  "fontWeight": "normal"
-                }
-              ]
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "id": "k3Aj7W",
-          "name": "Item V2 Status",
-          "fill": "$success",
-          "content": "Ready",
-          "fontFamily": "$font-body",
-          "fontSize": 10,
-          "fontWeight": "500"
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "Y195Qe",
-      "x": 0,
-      "y": -960,
-      "name": "Speaker Block V2",
-      "reusable": true,
-      "width": 700,
-      "height": 90,
-      "layout": "vertical",
-      "gap": 8,
-      "padding": [
-        12,
-        16
-      ],
-      "children": [
-        {
-          "type": "frame",
-          "id": "ZHRlS",
-          "name": "Speaker Header V2",
-          "width": "fill_container",
-          "gap": 8,
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "text",
-              "id": "naVjH",
-              "name": "Speaker Tag",
-              "fill": "$accent",
-              "content": "SPEAKER 1",
-              "fontFamily": "$font-body",
-              "fontSize": 11,
-              "fontWeight": "600",
-              "letterSpacing": 0.5
-            },
-            {
-              "type": "text",
-              "id": "V2kfn",
-              "name": "Speaker Time",
-              "fill": "$text-label",
-              "content": "00:12 - 00:35",
-              "fontFamily": "$font-body",
-              "fontSize": 11,
-              "fontWeight": "normal"
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "id": "JBbA7",
-          "name": "Speaker Text",
-          "fill": "$text-secondary",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Lorem ipsum dolor sit amet, consectetur adipiscing elit.",
-          "lineHeight": 1.6,
-          "fontFamily": "$font-body",
-          "fontSize": 14,
-          "fontWeight": "normal"
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "TNWno",
-      "x": 0,
-      "y": -1160,
-      "name": "MFU Section",
-      "reusable": true,
-      "width": 320,
-      "layout": "vertical",
-      "gap": 8,
-      "children": [
-        {
-          "type": "frame",
-          "id": "sBLps",
-          "name": "MFU Section Header",
-          "width": "fill_container",
-          "gap": 8,
-          "alignItems": "center",
-          "children": [
-            {
-              "type": "icon",
-              "id": "rSZfO",
-              "name": "Section Icon",
-              "width": 14,
-              "height": 14,
-              "icon": "chevron-down",
-              "library": "lucide",
-              "fill": "$text-label"
-            },
-            {
-              "type": "text",
-              "id": "Gs7PR",
-              "name": "Section Title",
-              "fill": "$text-primary",
-              "content": "Section",
-              "fontFamily": "$font-body",
-              "fontSize": 12,
-              "fontWeight": "600"
-            }
-          ]
-        },
-        {
-          "type": "text",
-          "id": "w9FIgB",
-          "name": "Section Content",
-          "fill": "$text-secondary",
-          "textGrowth": "fixed-width",
-          "width": "fill_container",
-          "content": "Generated notes content goes here.",
-          "lineHeight": 1.6,
-          "fontFamily": "$font-body",
-          "fontSize": 13,
-          "fontWeight": "normal"
         }
       ]
     }

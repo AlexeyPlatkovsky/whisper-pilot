@@ -2302,31 +2302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mfupilot"
-version = "0.1.0"
-dependencies = [
- "alloc-no-stdlib",
- "alloc-stdlib",
- "anyhow",
- "dirs-next",
- "env_logger",
- "futures-util",
- "hound",
- "log",
- "reqwest 0.12.28",
- "rfd",
- "serde",
- "serde_json",
- "sha2",
- "tauri",
- "tauri-build",
- "tempfile",
- "thiserror 2.0.19",
- "tokio",
- "whisper-rs",
-]
-
-[[package]]
 name = "mime"
 version = "0.3.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5045,6 +5020,31 @@ dependencies = [
  "thiserror 2.0.19",
  "windows",
  "windows-core 0.61.2",
+]
+
+[[package]]
+name = "whisper-pilot"
+version = "0.1.0"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "anyhow",
+ "dirs-next",
+ "env_logger",
+ "futures-util",
+ "hound",
+ "log",
+ "reqwest 0.12.28",
+ "rfd",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tauri",
+ "tauri-build",
+ "tempfile",
+ "thiserror 2.0.19",
+ "tokio",
+ "whisper-rs",
 ]
 
 [[package]]

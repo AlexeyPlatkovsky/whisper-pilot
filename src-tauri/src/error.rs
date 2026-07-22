@@ -13,7 +13,7 @@ pub enum AppError {
     #[error("could not read audio: {0}")]
     Audio(String),
 
-    #[error("transcription model not found at {0} — set MFUPILOT_MODEL_PATH")]
+    #[error("transcription model not found at {0} — set WHISPERPILOT_MODEL_PATH")]
     ModelNotFound(String),
 
     #[error("failed to load transcription model: {0}")]

@@ -1,4 +1,4 @@
-//! MFUPilot core: offline file transcription (Russian) with a summary to come.
+//! WhisperPilot core: offline file transcription (Russian) with a summary to come.
 
 pub mod audio;
 pub mod error;
@@ -199,5 +199,5 @@ pub fn run() {
             delete_model
         ])
         .run(tauri::generate_context!())
-        .expect("error while running MFUPilot");
+        .expect("error while running WhisperPilot");
 }

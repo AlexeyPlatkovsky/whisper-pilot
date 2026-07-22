@@ -39,11 +39,8 @@
   --wp-error: #b82b2f;
   --wp-warning: #c65d2e;
   --wp-in-progress: #176c8f; /* transcribing / in-progress status */
-
-  /* macOS window traffic lights (chrome literals, not themable) */
-  --wp-traffic-close: #ff5f57;
-  --wp-traffic-min: #febc2e;
-  --wp-traffic-max: #28c840;
+  /* Note: the macOS window traffic lights are drawn by the OS (Overlay
+     titleBarStyle), so no app tokens are needed for them. */
 
   /* --- Radii -------------------------------------------------------------- */
   --wp-radius-xs: 6px; /* chips, small controls */

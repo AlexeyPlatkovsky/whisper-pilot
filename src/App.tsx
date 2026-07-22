@@ -28,6 +28,13 @@ function formatRange(start: number, end: number): string {
   return `${formatTime(start)} - ${formatTime(end)}`;
 }
 
+// Elapsed-time clock for the status widget (mm:ss, zero-padded).
+function formatClock(totalSeconds: number): string {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+}
+
 function formatDuration(ms: number): string {
   const total = Math.floor(ms / 1000);
   const h = Math.floor(total / 3600);
@@ -68,9 +75,18 @@ export function App() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [elapsed, setElapsed] = useState(0);
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
     boolean | null
   >(null);
+
+  // Tick a once-per-second elapsed clock while a transcription is running.
+  useEffect(() => {
+    if (status.kind !== "transcribing") return;
+    setElapsed(0);
+    const id = setInterval(() => setElapsed((e) => e + 1), 1000);
+    return () => clearInterval(id);
+  }, [status.kind]);
 
   async function refreshModelAvailability() {
     try {
@@ -151,66 +167,71 @@ export function App() {
 
   return (
     <div className="app">
-      {/* ---- Top header ---------------------------------------------------- */}
-      <header className="wp-header">
-        <div className="wp-header-left">
-          <div className="wp-traffic" aria-hidden="true">
-            <span className="wp-traffic-dot wp-traffic-close" />
-            <span className="wp-traffic-dot wp-traffic-min" />
-            <span className="wp-traffic-dot wp-traffic-max" />
+      {/* ---- Top header (shares the row with the macOS traffic lights, which
+          the OS draws via the Overlay titleBarStyle — we reserve space for
+          them on the left rather than drawing our own) ------------------------ */}
+      <header className="wp-header" data-tauri-drag-region>
+        <div className="wp-header-lead">
+          <div className="wp-header-left">
+            {/* Reserved gap for the OS traffic lights (close/min/max) */}
+            <span
+              className="wp-traffic-space"
+              aria-hidden="true"
+              data-tauri-drag-region
+            />
+            <AppLogo size={28} />
+            <div className="wp-action-group">
+              <button
+                type="button"
+                className="wp-icon-btn"
+                aria-label="Toggle sidebar"
+                aria-pressed={sidebarOpen}
+                onClick={() => setSidebarOpen((v) => !v)}
+              >
+                <Icon name="panel-left" size={18} />
+              </button>
+              <span className="wp-sep" />
+              <button
+                type="button"
+                className="wp-icon-btn"
+                aria-label={t("addFile")}
+                title={t("addFile")}
+                onClick={handleAddFile}
+                disabled={busy || transcriptionModelReady !== true}
+              >
+                <Icon name="plus" size={18} />
+              </button>
+              <span className="wp-sep" />
+              <button
+                type="button"
+                className="wp-icon-btn"
+                aria-label="Settings"
+                onClick={() => setIsSettingsOpen(true)}
+              >
+                <Icon name="settings" size={18} />
+              </button>
+            </div>
           </div>
-          <AppLogo size={28} />
-          <div className="wp-action-group">
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label="Toggle sidebar"
-              aria-pressed={sidebarOpen}
-              onClick={() => setSidebarOpen((v) => !v)}
-            >
-              <Icon name="panel-left" size={18} />
-            </button>
-            <span className="wp-sep" />
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label={t("addFile")}
-              title={t("addFile")}
-              onClick={handleAddFile}
-              disabled={busy || transcriptionModelReady !== true}
-            >
-              <Icon name="plus" size={18} />
-            </button>
-            <span className="wp-sep" />
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label="Settings"
-              onClick={() => setIsSettingsOpen(true)}
-            >
-              <Icon name="settings" size={18} />
-            </button>
-          </div>
-        </div>
 
-        <div className="wp-title-group">
-          <h1 className="wp-title">{meetingTitle}</h1>
-          <button
-            type="button"
-            className="wp-icon-btn wp-icon-btn--ghost"
-            aria-label="Rename meeting"
-            disabled
-          >
-            <Icon name="pencil" size={14} />
-          </button>
-          <button
-            type="button"
-            className="wp-icon-btn wp-icon-btn--ghost"
-            aria-label="Delete meeting"
-            disabled
-          >
-            <Icon name="trash-2" size={14} />
-          </button>
+          <div className="wp-title-group">
+            <h1 className="wp-title">{meetingTitle}</h1>
+            <button
+              type="button"
+              className="wp-icon-btn wp-icon-btn--ghost"
+              aria-label="Rename meeting"
+              disabled
+            >
+              <Icon name="pencil" size={14} />
+            </button>
+            <button
+              type="button"
+              className="wp-icon-btn wp-icon-btn--ghost"
+              aria-label="Delete meeting"
+              disabled
+            >
+              <Icon name="trash-2" size={14} />
+            </button>
+          </div>
         </div>
 
         <div className="wp-header-right">
@@ -218,8 +239,10 @@ export function App() {
             {busy ? (
               <>
                 <Icon name="refresh-cw" size={14} className="wp-spin" />
-                {t("transcribingPrefix")} <b>{status.file}</b>
-                {t("transcribingSuffix")}
+                <span className="wp-status-label">
+                  {t("transcribingPrefix")}
+                </span>
+                <span className="wp-status-timer">{formatClock(elapsed)}</span>
               </>
             ) : status.kind === "error" ? (
               <span className="wp-status-error">Error</span>

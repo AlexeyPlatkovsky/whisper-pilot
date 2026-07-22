@@ -5,7 +5,7 @@ priority: normal
 type: task
 status: done
 created_at: '2026-07-22T06:24:31Z'
-updated_at: '2026-07-22T06:55:10Z'
+updated_at: '2026-07-22T07:50:57Z'
 description: 'Rebuild the WhisperPilot main view (the non-Settings screen) so its visual layout matches the approved pencil design at pencil/main_view.pen, and introduce a local design-tokens CSS file as the single source of truth for the design''s colors, spacing, radii, and typography. Visual-only work (Lite tier): no new IPC, no Rust, no change to transcription behavior. Reuses existing IPC (transcribe_file, open_file_dialog, save_text_dialog, get_settings, list_task_models) and the existing theme/i18n modules unchanged.
 
   Fidelity decision (user-approved): build the FULL pencil layout ("full shell, static placeholders"). Surfaces with real backing are wired to live data/actions - the meeting title from the current file, the file chip, the Add-file (New Meeting) action, Start transcription (play), Export (Save/download), Settings gear, the transcript segment list, the model-missing/error/transcribing states, and the applied theme. Surfaces whose backend does not exist yet in M1 - the meeting-library sidebar list, per-speaker attribution blocks, the status timer widget, and the MFU (summary) panel - are rendered as static, clearly presentational scaffolding styled from the tokens, not claimed as working features.

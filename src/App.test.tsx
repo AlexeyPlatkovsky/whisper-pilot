@@ -169,7 +169,7 @@ describe("App — English strings", () => {
     ).toBeInTheDocument();
   });
 
-  it("composes the transcribing banner as one readable English sentence around the bold filename", async () => {
+  it("shows a compact transcribing status — label plus a ticking timer, no filename or blurb", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     let resolveTranscribe: (v: {
       file_name: string;
@@ -180,29 +180,42 @@ describe("App — English strings", () => {
         resolveTranscribe = resolve;
       }),
     );
-    const user = userEvent.setup();
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
 
-    render(<App />);
-    await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Add file" }));
+      render(<App />);
+      await waitForAddFileEnabled();
+      await user.click(screen.getByRole("button", { name: "Add file" }));
 
-    // The transcribing state lives in the header status region (role="status").
-    const status = await screen.findByRole("status");
-    await waitFor(() =>
-      expect(status).toHaveTextContent(
-        "Transcribing meeting.mp3… this may take a few minutes.",
-      ),
-    );
-    expect(status.textContent).toBe(
-      "Transcribing meeting.mp3… this may take a few minutes.",
-    );
-    expect(status.querySelector("b")).toHaveTextContent("meeting.mp3");
+      // The transcribing state lives in the header status region (role="status").
+      const status = await screen.findByRole("status");
+      await waitFor(() => expect(status).toHaveTextContent("Transcribing"));
 
-    resolveTranscribe({
-      file_name: "meeting.mp3",
-      segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
-    });
-    await screen.findByDisplayValue("Hello");
+      // No filename, no "minutes" blurb — just the label and a mm:ss timer.
+      expect(status.textContent).not.toContain("meeting.mp3");
+      expect(status.textContent).not.toContain("minutes");
+      expect(status.querySelector("b")).toBeNull();
+      expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
+        "00:00",
+      );
+
+      // The timer ticks once per second.
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
+        "00:02",
+      );
+
+      resolveTranscribe({
+        file_name: "meeting.mp3",
+        segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
+      });
+      await screen.findByDisplayValue("Hello");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

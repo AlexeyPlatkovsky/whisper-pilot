@@ -2,5 +2,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    mfupilot_lib::run()
+    whisperpilot_lib::run()
 }

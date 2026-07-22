@@ -73,7 +73,7 @@ any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models.rs`) into the app support directory;
-override the path for development with `MFUPILOT_MODEL_PATH`.
+override the path for development with `WHISPERPILOT_MODEL_PATH`.
 
 ## Speaker Diarization (M2, `diarize.rs`) — planned
 

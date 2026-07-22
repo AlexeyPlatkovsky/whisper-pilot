@@ -54,7 +54,7 @@ data model, and build notes.
 
 ## Environment Variables
 
-- `MFUPILOT_MODEL_PATH` — override the Whisper model path.
+- `WHISPERPILOT_MODEL_PATH` — override the Whisper model path.
 
 ## Testing Strategy
 

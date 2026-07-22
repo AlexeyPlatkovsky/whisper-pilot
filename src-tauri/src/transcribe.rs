@@ -18,7 +18,7 @@ pub struct Segment {
 }
 
 /// Load the whisper model from the WP-39 download location under
-/// `app_support_dir`; override with `MFUPILOT_MODEL_PATH`.
+/// `app_support_dir`; override with `WHISPERPILOT_MODEL_PATH`.
 pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
     let path = model_path(app_support_dir);
     if !path.exists() {
@@ -34,7 +34,7 @@ pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
 }
 
 fn model_path(app_support_dir: &Path) -> PathBuf {
-    resolve_model_path(app_support_dir, std::env::var("MFUPILOT_MODEL_PATH").ok())
+    resolve_model_path(app_support_dir, std::env::var("WHISPERPILOT_MODEL_PATH").ok())
 }
 
 /// Pure decision: an explicit override always wins; otherwise the model
