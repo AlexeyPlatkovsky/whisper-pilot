@@ -3,31 +3,42 @@ id: WP-45
 title: Add fast CI quality gates with parallel checks and PR comment
 priority: normal
 type: task
-status: in_progress
+status: done
 created_at: '2026-07-22T10:13:28Z'
-updated_at: '2026-07-22T10:13:28Z'
-description: |
-  Add a GitHub Actions CI workflow that runs fast quality gates on every pull
+updated_at: '2026-07-22T10:20:32Z'
+description: 'Add a GitHub Actions CI workflow that runs fast quality gates on every pull
+
   request (open/update). All checks run in parallel with no inter-job
+
   dependencies; the workflow fails if any check fails, but every check still
+
   executes. The final job posts a single markdown summary as a new comment on
+
   the PR.
 
+
   Checks must cover the front-end (TypeScript typecheck, ESLint, Prettier format
+
   check, Vitest with coverage) and the Rust core (cargo fmt, cargo clippy, cargo
+
   nextest). If the project is missing the tooling/scripts required for any of
+
   those checks, install/add the minimal dependencies and npm scripts as part of
+
   this task.
 
+
   Target surfaces: .github/workflows/ci.yml; package.json (+devDependencies and
+
   scripts); .eslintrc.cjs or equivalent if ESLint has no configuration yet.
+
   No production Rust/React code changes.
-dor: null
+
+  '
 dod:
-  - '.github/workflows/ci.yml exists and triggers only on pull_request types opened, synchronize, reopened.'
-  - 'All quality-gate checks run in parallel (fail-fast: false matrix or equivalent) with no needs edges between checks; the workflow reports failure if any check fails and still runs the remaining checks.'
-  - 'Checks include front-end typecheck, lint, format check, and test coverage, plus Rust format, clippy, and nextest test.'
-  - 'A reporting job posts a new PR comment with a markdown table of every check result (success/failure/skipped) and an overall pass/fail summary.'
-  - 'Local validation (npm install + the CI commands) passes for lint, format check, typecheck, and test coverage where applicable; Rust fmt/clippy/nextest pass.'
-  - 'Commit message is prefixed with the TaskPilot ID WP-45.'
-links: null
+- .github/workflows/ci.yml exists and triggers only on pull_request types opened, synchronize, reopened.
+- 'All quality-gate checks run in parallel (fail-fast: false matrix or equivalent) with no needs edges between checks; the workflow reports failure if any check fails and still runs the remaining checks.'
+- Checks include front-end typecheck, lint, format check, and test coverage, plus Rust format, clippy, and nextest test.
+- A reporting job posts a new PR comment with a markdown table of every check result (success/failure/skipped) and an overall pass/fail summary.
+- Local validation (npm install + the CI commands) passes for lint, format check, typecheck, and test coverage where applicable; Rust fmt/clippy/nextest pass.
+- Commit message is prefixed with the TaskPilot ID WP-45.
