@@ -7,6 +7,7 @@ import {
   type TaskModel,
 } from "./ipc";
 import { Icon } from "./Icon";
+import { formatClock } from "./format";
 
 type RowState =
   | { kind: "downloading"; fraction: number }
@@ -27,12 +28,6 @@ function formatSize(bytes: number): string {
   const gb = bytes / 1024 ** 3;
   if (gb >= 1) return `${gb.toFixed(1)} GB`;
   return `${Math.round(bytes / 1024 ** 2)} MB`;
-}
-
-function formatElapsed(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
 export function AiModelsSection() {
@@ -249,7 +244,7 @@ export function AiModelsSection() {
                 <Icon name="refresh-cw" size={14} className="wp-spin" />
                 Downloading...
               </span>
-              <span className="modal-timer">{formatElapsed(elapsed)}</span>
+              <span className="modal-timer">{formatClock(elapsed)}</span>
             </div>
           </div>
         </div>

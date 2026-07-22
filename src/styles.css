@@ -40,23 +40,33 @@
 }
 
 /* An explicit Light/Dark choice (Settings > Appearance) always wins over the OS
-   scheme above: [data-theme] selectors have higher specificity than the plain
-   :root used inside the media query. No attribute (System) falls through to the
+   scheme above. [data-theme="dark"] selectors have higher specificity than the
+   plain :root used inside the media query. [data-theme="light"] works by
+   excluding the dark media query via :not() so it inherits the light :root
+   values without duplicating them. No attribute (System) falls through to the
    media query, which stays live off the OS. */
+/* The light block exists only for color-scheme; the variables below inherit
+   from the bare :root block above. */
 :root[data-theme="light"] {
-  --bg: var(--wp-canvas-bg);
-  --panel: var(--wp-panel);
-  --border: var(--wp-border);
-  --text: var(--wp-text-primary);
-  --text-secondary: var(--wp-text-secondary);
-  --muted: var(--wp-text-label);
-  --accent: var(--wp-accent);
-  --accent-hover: var(--wp-accent-hover);
-  --success: var(--wp-success);
-  --error: var(--wp-error);
-  --selected: var(--wp-selected);
-  --status-progress: var(--wp-in-progress);
   color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1b21;
+    --panel: #14262e;
+    --border: #24373f;
+    --text: #eaf0f1;
+    --text-secondary: #b9cad0;
+    --muted: #7e97a0;
+    --accent: #e0764a;
+    --accent-hover: #c65d2e;
+    --success: #6fa877;
+    --error: #e06a6e;
+    --selected: #1c2e36;
+    --status-progress: #4bb3d8;
+    color-scheme: dark;
+  }
 }
 
 :root[data-theme="dark"] {

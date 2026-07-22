@@ -3,6 +3,7 @@
 //! applied immediately and across restarts (F005-R2, F005-T1).
 
 use crate::error::{AppError, Result};
+use crate::models::CATALOG;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -76,6 +77,11 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                     "active_model.transcription must not be empty".to_string(),
                 ));
             }
+            if !CATALOG.iter().any(|e| e.id == value) {
+                return Err(AppError::InvalidSetting(format!(
+                    "unknown model id: {value}",
+                )));
+            }
             settings.active_model_transcription = Some(value.to_string());
         }
         other => {
@@ -138,11 +144,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         let settings =
-            set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "whisper-base").unwrap();
+            set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "transcription").unwrap();
 
         assert_eq!(
             settings.active_model_transcription,
-            Some("whisper-base".to_string())
+            Some("transcription".to_string())
         );
     }
 
@@ -183,7 +189,7 @@ mod tests {
     #[test]
     fn set_setting_rejects_empty_active_model_transcription_and_leaves_store_unchanged() {
         let dir = tempfile::tempdir().unwrap();
-        set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "whisper-base").unwrap();
+        set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "transcription").unwrap();
 
         let empty = set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "").unwrap_err();
         let whitespace =
@@ -193,7 +199,22 @@ mod tests {
         assert!(matches!(whitespace, AppError::InvalidSetting(_)));
         assert_eq!(
             get_settings(dir.path()).active_model_transcription,
-            Some("whisper-base".to_string())
+            Some("transcription".to_string())
+        );
+    }
+
+    #[test]
+    fn set_setting_rejects_model_id_not_in_catalog_and_leaves_store_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "transcription").unwrap();
+
+        let err =
+            set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, "whisper-base").unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidSetting(_)));
+        assert_eq!(
+            get_settings(dir.path()).active_model_transcription,
+            Some("transcription".to_string())
         );
     }
 }

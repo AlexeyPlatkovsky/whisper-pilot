@@ -16,6 +16,12 @@ use tokio::sync::Mutex;
 use transcribe::Segment;
 use whisper_rs::WhisperContext;
 
+fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
+    app.path()
+        .app_data_dir()
+        .map_err(|e| AppError::Io(e.to_string()))
+}
+
 /// The whisper model is loaded lazily on first use and cached for the session —
 /// loading ~800 MB should not block app launch or fail startup when the model
 /// is missing.
@@ -83,10 +89,7 @@ async fn transcribe_file(
         .unwrap_or_else(|| path.clone());
     let language = language.unwrap_or_else(|| "ru".to_string());
 
-    let app_support_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let app_support_dir = app_data_dir(&app)?;
     let ctx = state.model(app_support_dir).await?;
     let segments =
         tokio::task::spawn_blocking(move || transcribe::transcribe_file(&ctx, &input, &language))
@@ -123,10 +126,7 @@ async fn save_text_dialog(content: String, default_name: Option<String>) -> Resu
 /// defaults for any key never set.
 #[tauri::command]
 fn get_settings(app: tauri::AppHandle) -> Result<Settings> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = app_data_dir(&app)?;
     Ok(settings::get_settings(&dir))
 }
 
@@ -134,10 +134,7 @@ fn get_settings(app: tauri::AppHandle) -> Result<Settings> {
 /// and persist it immediately; rejects an unknown key or an invalid value.
 #[tauri::command]
 fn set_setting(app: tauri::AppHandle, key: String, value: String) -> Result<Settings> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = app_data_dir(&app)?;
     settings::set_setting(&dir, &key, &value)
 }
 
@@ -145,10 +142,7 @@ fn set_setting(app: tauri::AppHandle, key: String, value: String) -> Result<Sett
 /// entry's current downloaded state.
 #[tauri::command]
 fn list_task_models(app: tauri::AppHandle) -> Result<Vec<TaskModel>> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = app_data_dir(&app)?;
     Ok(models::list_task_models(&dir))
 }
 
@@ -156,10 +150,7 @@ fn list_task_models(app: tauri::AppHandle) -> Result<Vec<TaskModel>> {
 /// ready. Emits `model_download_progress { id, fraction }` as bytes arrive.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = app_data_dir(&app)?;
     let progress_app = app.clone();
     let progress_id = id.clone();
     models::download_model(&dir, &id, move |fraction| {
@@ -175,10 +166,7 @@ async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
 /// not-downloaded.
 #[tauri::command]
 fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
-    let dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(e.to_string()))?;
+    let dir = app_data_dir(&app)?;
     models::delete_model(&dir, &id)
 }
 

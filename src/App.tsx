@@ -10,6 +10,7 @@ import {
 import { SettingsScreen } from "./SettingsScreen";
 import { applyTheme, type Theme } from "./theme";
 import { t } from "./i18n";
+import { formatClock } from "./format";
 import { AppLogo, Icon, type IconName } from "./Icon";
 
 type Status =
@@ -26,13 +27,6 @@ function formatTime(ms: number): string {
 
 function formatRange(start: number, end: number): string {
   return `${formatTime(start)} - ${formatTime(end)}`;
-}
-
-// Elapsed-time clock for the status widget (mm:ss, zero-padded).
-function formatClock(totalSeconds: number): string {
-  const m = Math.floor(totalSeconds / 60);
-  const s = totalSeconds % 60;
-  return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
 }
 
 function formatDuration(ms: number): string {

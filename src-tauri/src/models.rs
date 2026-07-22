@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-/// Reports (bytes downloaded so far, total bytes) for one asset.
-type ProgressCb = Box<dyn Fn(u64, u64) + Send + Sync>;
+/// Reports bytes downloaded so far for one asset.
+type ProgressCb = Box<dyn Fn(u64) + Send + Sync>;
 
 /// One downloadable file belonging to a catalog entry.
 pub struct ModelAsset {
@@ -182,7 +182,7 @@ where
         let done_before_cl = Arc::clone(&done_before);
         let on_progress_cl = Arc::clone(&on_progress);
         let asset_size = asset.size_bytes;
-        let progress_cb: ProgressCb = Box::new(move |downloaded, _total| {
+        let progress_cb: ProgressCb = Box::new(move |downloaded| {
             let base = done_before_cl.load(Ordering::Relaxed);
             let fraction = (base + downloaded.min(asset_size)) as f64 / total as f64;
             on_progress_cl(fraction.min(1.0));
@@ -219,7 +219,6 @@ async fn http_fetch(url: &'static str, dest: PathBuf, on_progress: ProgressCb) -
     if !resp.status().is_success() {
         return Err(AppError::ModelDownload(format!("HTTP {}", resp.status())));
     }
-    let total = resp.content_length().unwrap_or(0);
     let mut file = tokio::fs::File::create(&dest).await?;
     let mut stream = resp.bytes_stream();
     let mut downloaded: u64 = 0;
@@ -227,7 +226,7 @@ async fn http_fetch(url: &'static str, dest: PathBuf, on_progress: ProgressCb) -
         let chunk = chunk.map_err(|e| AppError::ModelDownload(e.to_string()))?;
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
-        on_progress(downloaded, total);
+        on_progress(downloaded);
     }
     Ok(())
 }
@@ -273,7 +272,7 @@ mod tests {
             let content = content.clone();
             Box::pin(async move {
                 tokio::fs::write(&dest, &content).await?;
-                on_progress(content.len() as u64, content.len() as u64);
+                on_progress(content.len() as u64);
                 Ok(())
             })
         }
@@ -439,7 +438,7 @@ mod tests {
             };
             Box::pin(async move {
                 tokio::fs::write(&dest, &content).await?;
-                on_progress(content.len() as u64, content.len() as u64);
+                on_progress(content.len() as u64);
                 Ok(())
             })
         };
