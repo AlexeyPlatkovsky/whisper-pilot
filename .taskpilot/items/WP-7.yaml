@@ -3,9 +3,51 @@ id: WP-7
 title: Turn↔segment merge algorithm (overlap assignment)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T09:31:32Z'
-updated_at: '2026-07-21T09:31:32Z'
+updated_at: '2026-07-22T12:39:01Z'
 parent_id: WP-3
-description: 'Assign each Whisper segment the speaker whose diarization turns maximally overlap it in time, with deterministic tie-breaking and a fallback for uncovered spans. Pure function with unit tests (EP/BVA): full overlap, split overlap, gap, and tie.'
+description: 'Assign each Whisper transcript segment the speaker whose diarization turns maximally overlap it in time, with deterministic tie-breaking and a fallback for spans no turn covers. Implements the correctness-critical piece of feature WP-3 (Speaker <-> transcript merge), epic WP-1 (F002). Depends on WP-6 (done) for the SpeakerTurn shape (start_ms, end_ms, speaker: i32) it consumes; does not depend on WP-8 (Segment/IPC type threading happens after this, on top of this function).
+
+
+  Scope: a pure function merge_segments_with_turns(segments: &[(u32, u32)], turns: &[SpeakerTurn]) -> Vec<Option<i32>> in src-tauri/src/diarize.rs, returning one assignment per input segment span (start_ms, end_ms), in order. Deliberately decoupled from transcribe::Segment (that type doesn''t have a speaker_id field yet - WP-8''s job) so this stays a pure, narrowly-testable function per its own description.
+
+
+  Algorithm: for each segment span, compute each turn''s overlap duration with it (max(0, min(seg.end, turn.end) - max(seg.start, turn.start))); sum overlap duration per speaker id across all turns for that speaker; the segment''s assigned speaker is the one with the greatest total overlap. Deterministic tie-break: when two or more speakers have equal (including zero) total overlap, the lowest speaker id wins. Fallback for a segment with zero overlap against every turn (a gap): assign the speaker of the temporally nearest turn (by distance from the segment''s span to the turn''s span - 0 if adjacent/touching, else the gap between them), tying broken the same way (lowest speaker id). If turns is empty entirely (no diarization data at all - e.g. diarization degraded/failed upstream, WP-31''s concern), every segment gets None, not a panic or an arbitrary default.
+
+
+  Happy path: a segment whose span is fully or mostly covered by exactly one speaker''s turn(s) is assigned that speaker.
+
+
+  Failure / edge cases: a segment split across two speakers'' turns (roughly 50/50 overlap, or any tie in summed overlap) is assigned by the deterministic lowest-speaker-id rule, not arbitrarily; a segment in a gap between turns (no direct overlap) is assigned the nearest turn''s speaker, not None, as long as at least one turn exists anywhere; an empty turns list yields None for every segment.
+
+
+  Scope boundary: this task does not thread the result into transcribe::Segment or TranscriptResult or IPC (WP-8), does not call diarize_samples itself, and does not implement WP-3''s own feature-level bookkeeping beyond what this task delivers - WP-3''s acceptance criterion also requires "each emitted segment has a stable speaker id," which needs WP-8''s type/IPC threading, so WP-3 stays open (not closed) until WP-8 lands, then closes as a thin wrapper referencing WP-7 and WP-8 together, mirroring the WP-2/WP-6 precedent (closed only once its sole child was done) rather than closing on partial completion.
+
+
+  Target surfaces: src-tauri/src/diarize.rs (+merge_segments_with_turns, a pure function only - no IPC, no UI, no lib.rs changes).
+
+
+  Constraints: pure/deterministic - no I/O, no randomness, no wall-clock dependency; must never panic on empty segments, empty turns, or zero-duration spans.
+
+
+  Scenarios (BDD) - the four EP/BVA cases named in this task''s original scope:
+
+
+  Given a segment fully covered by one speaker''s turn (full overlap) When merge_segments_with_turns runs Then that segment is assigned that speaker.
+
+
+  Given a segment whose span is split roughly evenly between two speakers'' turns (split overlap / tie) When merge_segments_with_turns runs Then the segment is assigned the lower of the two tied speaker ids, deterministically.
+
+
+  Given a segment that falls in a silent/uncovered gap between two turns (no direct overlap) When merge_segments_with_turns runs Then the segment is assigned the nearest turn''s speaker, not None.
+
+
+  Given an empty turns list (no diarization data at all) When merge_segments_with_turns runs over any segments Then every segment is assigned None, without panicking.'
+dod:
+- A segment fully covered by one speaker's turn(s) is assigned that speaker (full-overlap case), unit-tested.
+- A segment with a tied total overlap between two or more speakers is assigned the lowest speaker id, deterministically, unit-tested (split-overlap / tie case).
+- A segment in an uncovered gap between turns is assigned the nearest turn's speaker rather than None, unit-tested (gap case).
+- An empty turns list yields None for every segment without panicking, unit-tested (degenerate case).
+- The function is pure (no I/O, no randomness) and handles empty segments input without panicking.
 created_by: M2 planning

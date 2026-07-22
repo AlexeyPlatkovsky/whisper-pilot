@@ -96,11 +96,19 @@ separate two short, acoustically-similar synthesized voices in one such run),
 so the explicit speaker-count override matters in practice, not just as a
 nice-to-have.
 
+`diarize.rs` also now (WP-7) has the turn↔segment merge algorithm itself:
+`merge_segments_with_turns` assigns each segment span the speaker whose turns
+maximally overlap it, deterministically tie-broken (lowest speaker id) and
+falling back to the nearest turn for a segment in an uncovered gap. It is a
+standalone pure function over `(u32, u32)` spans and `SpeakerTurn` — not yet
+connected to the real `transcribe::Segment` type.
+
 Diarization is not yet wired into anything: no `Segment` carries a
-`speaker_id`, no IPC command calls `diarize_samples`, and there is no UI for
-it. The turn↔segment merge and the `speaker_id` type change are separate,
-not-yet-built work (WP-7/WP-3, WP-8), as is wiring into the Transcribe run
-(WP-31) and the bubble UI (WP-9/WP-10/WP-4).
+`speaker_id`, no IPC command calls `diarize_samples` or
+`merge_segments_with_turns`, and there is no UI for it. The `speaker_id` type
+change through `Segment`/`TranscriptResult`/IPC is separate, not-yet-built
+work (WP-8), as is wiring into the Transcribe run (WP-31) and the bubble UI
+(WP-9/WP-10/WP-4).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 
