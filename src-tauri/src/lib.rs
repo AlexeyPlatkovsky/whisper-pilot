@@ -91,11 +91,26 @@ async fn transcribe_file(
     let language = language.unwrap_or_else(|| "ru".to_string());
 
     let app_support_dir = app_data_dir(&app)?;
-    let ctx = state.model(app_support_dir).await?;
-    let segments =
-        tokio::task::spawn_blocking(move || transcribe::transcribe_file(&ctx, &input, &language))
-            .await
-            .map_err(|e| AppError::Transcribe(e.to_string()))??;
+    let ctx = state.model(app_support_dir.clone()).await?;
+
+    // Decode once (off the reactor); both transcription and diarization run
+    // over the same samples.
+    let samples = tokio::task::spawn_blocking(move || audio::load_samples(&input))
+        .await
+        .map_err(|e| AppError::Transcribe(e.to_string()))??;
+    let samples_for_diarize = samples.clone();
+    let mut segments = tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples, &language))
+        .await
+        .map_err(|e| AppError::Transcribe(e.to_string()))??;
+
+    // Diarization runs automatically after transcription; any failure here
+    // (models missing, engine error, or the task itself panicking) degrades
+    // to plain speaker-less segments rather than failing the transcription.
+    let diarize_outcome = tokio::task::spawn_blocking(move || {
+        diarize::diarize_samples(&app_support_dir, samples_for_diarize, None)
+    })
+    .await;
+    diarize::apply_diarization_outcome(&mut segments, diarize_outcome);
 
     Ok(TranscriptResult {
         file_name,

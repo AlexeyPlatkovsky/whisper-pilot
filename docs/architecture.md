@@ -96,21 +96,26 @@ separate two short, acoustically-similar synthesized voices in one such run),
 so the explicit speaker-count override matters in practice, not just as a
 nice-to-have.
 
-`diarize.rs` also now (WP-7) has the turn↔segment merge algorithm itself:
+`diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
 maximally overlap it, deterministically tie-broken (lowest speaker id) and
-falling back to the nearest turn for a segment in an uncovered gap. It is a
-standalone pure function over `(u32, u32)` spans and `SpeakerTurn` — not yet
-connected to the real `transcribe::Segment` type.
+falling back to the nearest turn for a segment in an uncovered gap. `Segment`
+carries `speaker_id: Option<i32>` (WP-8, omitted from the JSON when `None` so
+existing consumers see no shape change), flowing through
+`TranscriptResult`/IPC and `ipc.ts`'s `Segment` interface.
 
-`Segment` now carries `speaker_id: Option<i32>` (WP-8, omitted from the JSON
-when `None` so existing consumers see no shape change), and the type flows
-through `TranscriptResult`/IPC and `ipc.ts`'s `Segment` interface. But
-diarization is not yet wired into anything that populates it: no IPC command
-calls `diarize_samples` or `merge_segments_with_turns`, the real
-`transcribe_file` path always sets `speaker_id: None`, and there is no UI for
-it. Wiring into the Transcribe run (WP-31) and the bubble UI (WP-9/WP-10/WP-4)
-are separate, not-yet-built work.
+**Diarization now runs automatically as part of `transcribe_file`** (WP-31):
+audio is decoded once and both transcription and diarization run over the
+same samples (each on its own `spawn_blocking`, off the async reactor);
+`diarize_samples` auto-detects the speaker count (no override parameter
+exposed yet) and, on success, `assign_speaker_ids` writes each segment's
+`speaker_id` in place. Diarization failure of any kind — missing models, an
+engine error, or the blocking task itself panicking — is fail-open: it is
+logged and the transcription still returns its (speaker-less) segments,
+never failing `transcribe_file`. There is still no Stop control, no progress
+event spanning both phases, and no persisted meeting entity (those remain
+the not-yet-built M2 library epic, F004/WP-11) and no bubble UI yet
+(WP-9/WP-10/WP-4).
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

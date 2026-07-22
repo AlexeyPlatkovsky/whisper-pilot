@@ -3,9 +3,47 @@ id: WP-31
 title: Wire diarization into the Transcribe flow (auto-run, one progress/Stop, degrade)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T12:44:01Z'
-updated_at: '2026-07-21T12:44:01Z'
+updated_at: '2026-07-22T13:07:07Z'
 parent_id: WP-2
-description: Run diarization automatically after transcription within a single Transcribe run; progress and Stop span both phases; the meeting is finished only once transcription + speaker attribution complete. If diarization models are missing or the engine fails, degrade to plain (speaker-less) segments with a note instead of failing the run. Implements F002-R6, F002-R7 (F002-T7).
+description: 'Wire diarization automatically into the existing transcribe_file IPC command: after Whisper produces segments, run diarization on the same decoded audio and merge speaker ids into those segments, degrading to plain speaker-less segments (not failing the transcription) if diarization is unavailable or errors. Implements the auto-run/degrade half of epic WP-1 (F002-R6, F002-R7), scoped down from its original text to match this app''''s ACTUAL current architecture, not the aspirational M2 meeting/workspace architecture.
+
+
+  Scope reality check (explicit, not silently assumed): this task''''s original description (''progress and Stop span both phases'', ''the meeting is finished only once transcription + speaker attribution complete'') presumes the M2 library/workspace (a Transcribe action with progress events, a Stop button, and a persisted ''meeting'' entity) - none of which exist in this codebase. F004/WP-11 (library & workspace) is a separate, still-backlog epic; there is no progress event, no Stop mechanism, and no meeting entity to wire into, because the app''''s only transcription entry point today is the single async transcribe_file Tauri command (src-tauri/src/lib.rs), which runs to completion in one blocking call and returns a TranscriptResult. This task wires diarization into THAT real entry point, not into progress/Stop/meeting concepts that don''''t exist yet - that infrastructure, if ever built, is WP-11/WP-13''''s job, not a gap in this task.
+
+
+  Scope: in lib.rs''''s transcribe_file command, decode the audio samples once (audio::load_samples), pass them to transcribe::transcribe (segments) AND, after transcription succeeds, to diarize::diarize_samples (speaker turns, auto-detected count - no speaker-count UI/parameter is added here, matching the rest of this epic''''s minimal-scope decisions so far). If diarization succeeds, convert each segment''''s (start_ms, end_ms) from u64 to u32 (saturating, per WP-8''''s already-documented bridging note - safe for any realistic meeting length) and call diarize::merge_segments_with_turns to get a Vec<Option<i32>>, then set each segment''''s speaker_id accordingly. If diarize_samples returns an error (AppError::DiarizationAsset - models not downloaded - or AppError::Diarization - engine failure) at any point, log the error (via the existing  crate, already a dependency) and return the original Whisper segments unchanged (every speaker_id stays None) - the transcription itself must still succeed and return to the user.
+
+
+  Happy path: the diarization models are downloaded (via Settings) and diarization succeeds; transcribe_file''''s returned segments each carry a speaker_id matching the assigned speaker.
+
+
+  Failure / edge cases: diarization models not downloaded -> transcribe_file still succeeds, returns segments with speaker_id: None for all (degraded, not failed); diarization engine error (e.g. corrupt model file) -> same degrade behavior; a file with only one detected speaker or very short audio -> diarization may return few/no turns, in which case merge_segments_with_turns'''' own existing empty-turns-yields-None behavior (WP-7, already tested) naturally degrades correctly - no new handling needed here beyond calling it.
+
+
+  Scope boundary: does not add a speaker-count selector UI (auto-detect only, for now), does not add progress events or a Stop control (do not exist in this app yet - not a gap, a real architectural fact), does not add a meeting/persistence entity, does not touch the UI/rendering of speaker labels (WP-9/WP-10/WP-4 - this task only makes speaker_id non-None in the data that reaches the frontend, not how it''''s displayed).
+
+
+  Target surfaces: src-tauri/src/lib.rs (transcribe_file command body - decode once, call transcribe::transcribe, then attempt diarize::diarize_samples + diarize::merge_segments_with_turns, assign speaker_id, degrade on any diarization error). No new IPC command (transcribe_file''''s existing signature/return type is unchanged - TranscriptResult still just wraps Vec<Segment>, now with speaker_id populated when diarization succeeds). No new Rust module.
+
+
+  Constraints: diarization must never cause transcribe_file to fail or change its error type/behavior when it would otherwise have succeeded (fail-open for diarization, fail-closed only for transcription itself, which is unchanged from today); no new IPC command; app_support_dir (already resolved earlier in transcribe_file for the Whisper model) is reused for diarize_samples too, no new resolution logic needed.
+
+
+  Scenarios (BDD):
+
+
+  Given the diarization models are downloaded and the file has multiple speakers When transcribe_file runs Then the returned segments carry non-None speaker_id values assigned by the overlap-merge algorithm.
+
+
+  Given the diarization models are NOT downloaded When transcribe_file runs Then it still succeeds and returns the transcript, with every segment''''s speaker_id left None (degraded, not failed).
+
+
+  Given diarization initializes but fails mid-computation (engine error) When transcribe_file runs Then it still succeeds and returns the transcript with speaker_id None for every segment, and the error is logged (not surfaced as a transcribe_file failure).'
+dod:
+- A pure helper function assigns speaker_id to a set of Segments given the corresponding SpeakerTurns (u64<->u32 span conversion + merge_segments_with_turns), unit-tested for the assigned and empty-turns cases.
+- transcribe_file still returns Ok(TranscriptResult) when diarization errors (asset-missing or engine failure), with every segment's speaker_id left None - unit-tested at the helper/wiring level without needing a real end-to-end model+audio run.
+- transcribe_file's existing behavior (segments, error type, no new IPC surface) is unchanged when diarization is not invoked or is out of scope for a given test - no regression to existing tests.
+- Full Rust test suite passes with no regressions; clippy clean; cargo build clean.
 created_by: M2 review

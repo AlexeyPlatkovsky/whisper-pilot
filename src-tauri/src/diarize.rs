@@ -4,6 +4,7 @@
 
 use crate::error::{AppError, Result};
 use crate::models;
+use crate::transcribe;
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -278,6 +279,45 @@ fn assign_speaker(segment: (u32, u32), turns: &[SpeakerTurn]) -> Option<i32> {
         });
     }
     nearest.map(|(_, speaker)| speaker)
+}
+
+/// Assign `speaker_id` on each of `segments` per `turns`' overlap, in place.
+/// A segment whose assignment comes back `None` (e.g. `turns` is empty) is
+/// left untouched — this never regresses an already-set `speaker_id`, it
+/// only ever fills one in.
+pub fn assign_speaker_ids(segments: &mut [transcribe::Segment], turns: &[SpeakerTurn]) {
+    let spans: Vec<(u32, u32)> = segments
+        .iter()
+        .map(|s| {
+            (
+                s.start_ms.min(u32::MAX as u64) as u32,
+                s.end_ms.min(u32::MAX as u64) as u32,
+            )
+        })
+        .collect();
+    let assignments = merge_segments_with_turns(&spans, turns);
+
+    for (segment, assignment) in segments.iter_mut().zip(assignments) {
+        if let Some(speaker) = assignment {
+            segment.speaker_id = Some(speaker);
+        }
+    }
+}
+
+/// Apply the outcome of a spawned diarization task to `segments`: on
+/// success, assign speaker ids; on any failure — the diarization call
+/// itself erroring, or the blocking task panicking/being cancelled — log a
+/// warning and leave `segments` exactly as they were (speaker-less). A
+/// diarization failure must never be treated as a transcription failure.
+pub fn apply_diarization_outcome(
+    segments: &mut [transcribe::Segment],
+    outcome: std::result::Result<Result<Vec<SpeakerTurn>>, tokio::task::JoinError>,
+) {
+    match outcome {
+        Ok(Ok(turns)) => assign_speaker_ids(segments, &turns),
+        Ok(Err(e)) => log::warn!("diarization unavailable, returning speaker-less segments: {e}"),
+        Err(e) => log::warn!("diarization task failed, returning speaker-less segments: {e}"),
+    }
 }
 
 #[cfg(test)]
@@ -591,5 +631,108 @@ mod tests {
         // a zero-width span), so it falls back to the nearest turn — which
         // is turn 1 here (distance 0, since 1000 lies within [0, 2000)).
         assert_eq!(merge_segments_with_turns(&segments, &turns), vec![Some(1)]);
+    }
+
+    fn transcript_segment(start_ms: u64, end_ms: u64) -> transcribe::Segment {
+        transcribe::Segment {
+            start_ms,
+            end_ms,
+            text: "hello".to_string(),
+            speaker_id: None,
+        }
+    }
+
+    #[test]
+    fn assign_speaker_ids_writes_the_merged_assignment_into_each_segment() {
+        let mut segments = [
+            transcript_segment(0, 1_000),
+            transcript_segment(2_000, 3_000),
+        ];
+        let turns = [speaker_turn(0, 1_500, 7), speaker_turn(1_500, 3_500, 4)];
+
+        assign_speaker_ids(&mut segments, &turns);
+
+        assert_eq!(segments[0].speaker_id, Some(7));
+        assert_eq!(segments[1].speaker_id, Some(4));
+    }
+
+    #[test]
+    fn assign_speaker_ids_leaves_speaker_id_untouched_when_turns_is_empty() {
+        let mut segments = [transcript_segment(0, 1_000), transcript_segment(2_000, 3_000)];
+
+        assign_speaker_ids(&mut segments, &[]);
+
+        assert_eq!(segments[0].speaker_id, None);
+        assert_eq!(segments[1].speaker_id, None);
+    }
+
+    #[test]
+    fn assign_speaker_ids_converts_u64_segment_spans_to_u32_correctly() {
+        // Realistic multi-segment, non-zero timestamps well within u32
+        // range, to exercise the u64 -> u32 conversion path directly
+        // (rather than only ever testing with values that happen to fit
+        // trivially, e.g. small round numbers already used above).
+        let mut segments = [
+            transcript_segment(61_234, 64_987),
+            transcript_segment(70_000, 75_500),
+        ];
+        let turns = [
+            speaker_turn(61_000, 65_000, 1),
+            speaker_turn(65_000, 76_000, 2),
+        ];
+
+        assign_speaker_ids(&mut segments, &turns);
+
+        assert_eq!(segments[0].speaker_id, Some(1));
+        assert_eq!(segments[1].speaker_id, Some(2));
+    }
+
+    #[tokio::test]
+    async fn apply_diarization_outcome_assigns_speakers_on_success() {
+        let mut segments = [transcript_segment(0, 1_000)];
+        let turns = vec![speaker_turn(0, 1_000, 3)];
+
+        apply_diarization_outcome(&mut segments, Ok(Ok(turns)));
+
+        assert_eq!(segments[0].speaker_id, Some(3));
+    }
+
+    #[tokio::test]
+    async fn apply_diarization_outcome_leaves_segments_untouched_on_diarization_asset_error() {
+        let mut segments = [transcript_segment(0, 1_000)];
+
+        apply_diarization_outcome(
+            &mut segments,
+            Ok(Err(AppError::DiarizationAsset("models not downloaded".to_string()))),
+        );
+
+        assert_eq!(segments[0].speaker_id, None);
+    }
+
+    #[tokio::test]
+    async fn apply_diarization_outcome_leaves_segments_untouched_on_engine_error() {
+        let mut segments = [transcript_segment(0, 1_000)];
+
+        apply_diarization_outcome(
+            &mut segments,
+            Ok(Err(AppError::Diarization("engine exploded".to_string()))),
+        );
+
+        assert_eq!(segments[0].speaker_id, None);
+    }
+
+    #[tokio::test]
+    async fn apply_diarization_outcome_leaves_segments_untouched_when_the_task_panics() {
+        let mut segments = [transcript_segment(0, 1_000)];
+
+        let join_result = tokio::task::spawn_blocking(|| {
+            panic!("simulated diarization task panic");
+        })
+        .await;
+        let err = join_result.expect_err("spawned task was made to panic");
+
+        apply_diarization_outcome(&mut segments, Err(err));
+
+        assert_eq!(segments[0].speaker_id, None);
     }
 }
