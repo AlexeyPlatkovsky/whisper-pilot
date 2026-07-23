@@ -31,10 +31,33 @@ Palette (see `tokens.css` for exact values):
   (`--wp-panel`)
 - deep teal-navy text (`--wp-text-primary` / `-secondary` / `-label`)
 - burnt-orange accent (`--wp-accent`) — the single primary accent
-- status colours: success green, error red, in-progress teal-blue
+- status colours: success green, error red, in-progress teal-blue, plus two
+  values **derived here rather than extracted from the pencil file** —
+  `--wp-attention` (dark amber, for a meeting with no source file, which the
+  pencil design gives no colour) and `--wp-success-text` (a darker green for
+  small status text, because the pencil `$success` falls below the 4.5:1
+  contrast the accessibility convention requires at 12px). Fold both into
+  `pencil/main_view.pen` on its next revision.
+- one meeting status is shown in two places at once — the sidebar row's dot and
+  the header status widget. Both resolve through `src/meetingStatus.ts` and are
+  coloured by the `--tone-*` semantic variables via the `.wp-tone--*` classes,
+  so a status has exactly one colour and one label wherever it appears.
 - rounded corners 6–16px (`--wp-radius-*`)
 - dense information layout, desktop-first, keyboard-first
 - avoid mobile spacing
+
+**Accepted accessibility exception — sidebar row status.** The sidebar row
+prints no status text; the dot carries the status as colour, as a `title`
+tooltip, and as the `aria-label` of its `role="img"`. This is a deliberate
+density trade-off, chosen so the row shows only what distinguishes one meeting
+from another. It deviates from
+`.claude/conventions/react-tauri/accessibility.md` §"Status, transcript, and
+colour", which asks for state as text and not colour alone: a screen-reader
+user still hears the status, and a mouse user still gets the tooltip, but a
+sighted keyboard-only user has colour alone for any row that is not the open
+meeting — `title` tooltips are not reachable by keyboard or touch. The open
+meeting's status is always spelled out in the header. Revisit by revealing the
+label on `:hover, :focus-within` if the colour-only path proves confusing.
 
 ## Inspirations
 

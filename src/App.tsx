@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMeeting,
   deleteMeeting,
@@ -22,11 +22,12 @@ import { formatClock } from "./format";
 import { AppLogo, Icon, type IconName } from "./Icon";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
+import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "transcribing"; file: string }
-  | { kind: "error"; message: string };
+// A running transcription is tracked by meeting id (`transcribingId`), not by
+// this union, so that it survives the user switching to another meeting and
+// back. This union only carries what the workspace itself is showing.
+type Status = { kind: "idle" } | { kind: "error"; message: string };
 
 function formatTime(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -84,14 +85,21 @@ export function App() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
+  // The meeting currently being transcribed, or null. Kept outside `status`
+  // and outside `activeMeeting` so that opening a different meeting cannot
+  // discard a run that is still going.
+  const [transcribingId, setTranscribingId] = useState<number | null>(null);
+  // Mirrors the active meeting id for use by async continuations, which would
+  // otherwise close over a stale `activeMeeting`.
+  const activeMeetingIdRef = useRef<number | null>(null);
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
-    if (status.kind !== "transcribing") return;
+    if (transcribingId === null) return;
     setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [status.kind]);
+  }, [transcribingId]);
 
   const refreshModelAvailability = useCallback(async () => {
     try {
@@ -114,6 +122,7 @@ export function App() {
   }, []);
 
   const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
+    activeMeetingIdRef.current = meeting.id;
     setActiveMeeting(meeting);
     setFileName(meeting.source_name ?? null);
     setSegments(meeting.segments);
@@ -206,17 +215,25 @@ export function App() {
     if (!activeMeeting?.source_path) return;
     const id = activeMeeting.id;
     try {
-      setStatus({
-        kind: "transcribing",
-        file: activeMeeting.source_name ?? "",
-      });
+      setTranscribingId(id);
+      setStatus({ kind: "idle" });
       setSegments([]);
       setSpeakerLabels({});
       const meeting = await transcribeMeeting(id);
-      applyActiveMeeting(meeting);
       upsertSummary(meeting);
+      // The user may have opened another meeting while this ran; the result
+      // only takes over the workspace if its meeting is still the one on
+      // screen. Either way the sidebar summary above is refreshed.
+      if (activeMeetingIdRef.current === meeting.id)
+        applyActiveMeeting(meeting);
     } catch (e) {
-      setStatus({ kind: "error", message: String(e) });
+      // The same rule on the way out: a failure belongs to the meeting that
+      // was transcribing. Reporting it against whatever the user has opened
+      // since would blame a meeting that never ran.
+      if (activeMeetingIdRef.current === id)
+        setStatus({ kind: "error", message: String(e) });
+    } finally {
+      setTranscribingId(null);
     }
   }
 
@@ -327,9 +344,28 @@ export function App() {
     await saveTextDialog(transcriptText, `${base}.txt`);
   }
 
-  const busy = status.kind === "transcribing";
+  // `busy` is global because only one transcription may run at a time: it
+  // gates starting another run, anywhere, and — conservatively — creating a
+  // meeting, which would move the workspace mid-run. It does NOT gate
+  // actions that belong to whichever meeting is on screen — those use
+  // `activeIsTranscribing`, so exporting an unrelated finished transcript or
+  // attaching a file to an idle meeting still works while a run is going.
+  const busy = transcribingId !== null;
+  const activeIsTranscribing =
+    activeMeeting !== null && transcribingId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
   const meetingTitle = activeMeeting?.title ?? "New Meeting";
+
+  // The header describes the meeting the user is looking at, through the same
+  // resolver the sidebar rows use, so the two can never disagree.
+  const headerStatus: MeetingStatusView | null = useMemo(() => {
+    if (activeIsTranscribing)
+      return resolveMeetingStatus(undefined, "transcribing");
+    if (status.kind === "error")
+      return resolveMeetingStatus(activeMeeting?.status, "error");
+    if (!activeMeeting) return null;
+    return resolveMeetingStatus(activeMeeting.status);
+  }, [activeIsTranscribing, status, activeMeeting]);
 
   if (isSettingsOpen) {
     return (
@@ -399,7 +435,7 @@ export function App() {
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
               onClick={() => activeMeeting && openRename(activeMeeting)}
-              disabled={!activeMeeting || busy}
+              disabled={!activeMeeting || activeIsTranscribing}
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -417,7 +453,7 @@ export function App() {
                   status: activeMeeting.status,
                 })
               }
-              disabled={!activeMeeting || busy}
+              disabled={!activeMeeting || activeIsTranscribing}
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -426,24 +462,26 @@ export function App() {
 
         <div className="wp-header-right">
           <div className="wp-status" role="status">
-            {busy ? (
+            {headerStatus && (
               <>
-                <Icon name="refresh-cw" size={14} className="wp-spin" />
-                <span className="wp-status-label">
-                  {t("transcribingPrefix")}
+                {activeIsTranscribing && (
+                  <Icon
+                    name="refresh-cw"
+                    size={14}
+                    className={`wp-spin wp-tone--${headerStatus.tone}`}
+                  />
+                )}
+                <span
+                  className={`wp-status-label wp-tone--${headerStatus.tone}`}
+                >
+                  {headerStatus.label}
                 </span>
-                <span className="wp-status-timer">{formatClock(elapsed)}</span>
+                {activeIsTranscribing && (
+                  <span className="wp-status-timer">
+                    {formatClock(elapsed)}
+                  </span>
+                )}
               </>
-            ) : status.kind === "error" ? (
-              <span className="wp-status-error">Error</span>
-            ) : (
-              <span className="wp-status-idle">
-                {activeMeeting?.status === "no_files"
-                  ? "No files"
-                  : hasTranscript
-                    ? "Ready"
-                    : "Idle"}
-              </span>
             )}
           </div>
 
@@ -475,7 +513,7 @@ export function App() {
               aria-label={t("save")}
               title={t("save")}
               onClick={handleSave}
-              disabled={busy || !hasTranscript}
+              disabled={activeIsTranscribing || !hasTranscript}
             >
               <Icon name="download" size={17} />
             </button>
@@ -496,7 +534,9 @@ export function App() {
             title="Choose an audio or video file"
             onClick={handleChooseFile}
             disabled={
-              busy || !activeMeeting || transcriptionModelReady !== true
+              activeIsTranscribing ||
+              !activeMeeting ||
+              transcriptionModelReady !== true
             }
           >
             <Icon name="folder" size={16} />
@@ -539,11 +579,17 @@ export function App() {
                 aria-label="Search meetings"
               />
             </div>
-            <div className="wp-meeting-list">
-              {meetingSummaries.length === 0 ? (
-                <p className="wp-info-muted">No meetings yet</p>
-              ) : (
-                meetingSummaries.map((meeting) => (
+            {/* The empty-state copy stays outside the list: a list may only
+                own list items. */}
+            {meetingSummaries.length === 0 ? (
+              <p className="wp-info-muted">No meetings yet</p>
+            ) : (
+              // WebKit drops the implicit list role from a <ul> styled
+              // `list-style: none`, and from flex list items — and WKWebView is
+              // this app's only runtime. These roles restore the native
+              // semantics rather than override them.
+              <ul className="wp-meeting-list" role="list">
+                {meetingSummaries.map((meeting) => (
                   <MeetingRow
                     key={meeting.id}
                     title={meeting.title}
@@ -553,20 +599,18 @@ export function App() {
                         ? formatDuration(meeting.duration_ms)
                         : "—"
                     }
-                    dot={meeting.status === "error" ? "error" : "ok"}
-                    status={
-                      meeting.status === "no_files"
-                        ? "No files"
-                        : meeting.status
-                    }
+                    status={resolveMeetingStatus(
+                      meeting.status,
+                      transcribingId === meeting.id ? "transcribing" : "none",
+                    )}
                     selected={activeMeeting?.id === meeting.id}
                     onSelect={() => void handleOpenMeeting(meeting.id)}
                     onRename={() => openRename(meeting)}
                     onDelete={() => setDeleteTarget(meeting)}
                   />
-                ))
-              )}
-            </div>
+                ))}
+              </ul>
+            )}
           </aside>
         )}
 
@@ -601,17 +645,19 @@ export function App() {
                 </div>
               )}
 
-              {busy && (
+              {activeIsTranscribing && (
                 <div className="wp-empty">
                   <p>Transcribing…</p>
                 </div>
               )}
 
-              {!busy && !hasTranscript && status.kind !== "error" && (
-                <div className="wp-empty">
-                  <p>{t("emptyState")}</p>
-                </div>
-              )}
+              {!activeIsTranscribing &&
+                !hasTranscript &&
+                status.kind !== "error" && (
+                  <div className="wp-empty">
+                    <p>{t("emptyState")}</p>
+                  </div>
+                )}
 
               {hasTranscript &&
                 segments.map((seg, i) => {
@@ -762,7 +808,6 @@ function MeetingRow({
   title,
   when,
   dur,
-  dot,
   status,
   selected,
   onSelect,
@@ -772,41 +817,79 @@ function MeetingRow({
   title: string;
   when: string;
   dur: string;
-  dot: string;
-  status?: string;
+  status: MeetingStatusView;
   selected?: boolean;
   onSelect: () => void;
   onRename: () => void;
   onDelete: () => void;
 }) {
+  const transcribing = status.tone === "transcribing";
   return (
-    <div className={`wp-meeting-row${selected ? " is-selected" : ""}`}>
-      <span className={`wp-meeting-dot wp-meeting-dot--${dot}`} />
+    <li
+      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
+      role="listitem"
+      aria-label={title}
+    >
+      {/* The dot is the row's whole status surface: colour for a glance, the
+          `title` tooltip on hover, and the same words to a screen reader. */}
+      <span
+        className={`wp-meeting-dot wp-tone--${status.tone}`}
+        role="img"
+        aria-label={status.label}
+        title={status.label}
+      />
       <button
         type="button"
         className="wp-meeting-open"
+        aria-label={`Open ${title}`}
         aria-current={selected ? "page" : undefined}
         onClick={onSelect}
       >
         <div className="wp-meeting-text">
-          <span className="wp-meeting-title">{title}</span>
+          {/* Long names are clipped to keep the sidebar at its fixed width, so
+              the tooltip is the only way left to read one in full. */}
+          <span className="wp-meeting-title" title={title}>
+            {title}
+          </span>
           <div className="wp-meeting-meta">
             <span>{when}</span>
             <span>{dur}</span>
-            {status && (
-              <span className={`wp-meeting-status wp-meeting-status--${dot}`}>
-                {status}
-              </span>
-            )}
           </div>
         </div>
       </button>
-      <button type="button" aria-label={`Rename ${title}`} onClick={onRename}>
-        <Icon name="pencil" size={13} />
-      </button>
-      <button type="button" aria-label={`Delete ${title}`} onClick={onDelete}>
-        <Icon name="trash-2" size={13} />
-      </button>
-    </div>
+      <span className="wp-meeting-actions">
+        {transcribing ? (
+          // While this meeting is transcribing, the spinner takes the action
+          // group's place — renaming or deleting a running meeting is not
+          // something we want to offer mid-run. It is hidden from assistive
+          // tech because the dot beside it already announces "Transcribing";
+          // exposing both would name the same status twice per row.
+          <span className="wp-meeting-busy" aria-hidden="true">
+            <Icon
+              name="refresh-cw"
+              size={13}
+              className={`wp-spin wp-tone--${status.tone}`}
+            />
+          </span>
+        ) : (
+          <>
+            <button
+              type="button"
+              aria-label={`Rename ${title}`}
+              onClick={onRename}
+            >
+              <Icon name="pencil" size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${title}`}
+              onClick={onDelete}
+            >
+              <Icon name="trash-2" size={13} />
+            </button>
+          </>
+        )}
+      </span>
+    </li>
   );
 }
