@@ -2,34 +2,30 @@
 //!
 //! ffmpeg extracts audio from video and resamples audio identically, so both
 //! input kinds go through one path — no need to branch on file type.
+//! ffmpeg writes WAV to stdout (pipe:1); hound decodes from memory —
+//! no temp file on disk.
 
 use crate::error::{AppError, Result};
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Whisper's required input rate.
 pub const SAMPLE_RATE: u32 = 16_000;
 
-/// Run ffmpeg to produce a temporary 16 kHz mono WAV from `input`.
-/// The caller owns the returned file and should delete it when done.
-pub fn normalize_to_wav(input: &Path) -> Result<PathBuf> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let out = std::env::temp_dir().join(format!("whisperpilot-{nanos}.wav"));
-
+/// Run ffmpeg to produce 16 kHz mono WAV bytes in memory from `input`.
+/// Writes to stdout (pipe:1) — no temp file.
+pub fn normalize_to_memory(input: &Path) -> Result<Vec<u8>> {
     let output = Command::new("ffmpeg")
-        .args(["-y", "-i"])
+        .args(["-i"])
         .arg(input)
         .args([
             "-vn", // drop any video stream
             "-ac", "1", // mono
             "-ar", "16000", // 16 kHz
             "-f", "wav",
+            "pipe:1",
         ])
-        .arg(&out)
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -46,12 +42,13 @@ pub fn normalize_to_wav(input: &Path) -> Result<PathBuf> {
         return Err(AppError::Ffmpeg(tail));
     }
 
-    Ok(out)
+    Ok(output.stdout)
 }
 
-/// Decode a 16 kHz mono 16-bit WAV into normalized f32 samples in [-1, 1].
-pub fn decode_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
-    let reader = hound::WavReader::open(path).map_err(|e| AppError::Audio(e.to_string()))?;
+/// Decode 16 kHz mono WAV bytes into normalized f32 samples in [-1, 1].
+pub fn decode_wav_16k_mono(data: &[u8]) -> Result<Vec<f32>> {
+    let cursor = Cursor::new(data);
+    let reader = hound::WavReader::new(cursor).map_err(|e| AppError::Audio(e.to_string()))?;
     let spec = reader.spec();
     if spec.channels != 1 || spec.sample_rate != SAMPLE_RATE {
         return Err(AppError::Audio(format!(
@@ -71,11 +68,9 @@ pub fn decode_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
     samples.map_err(|e| AppError::Audio(e.to_string()))
 }
 
-/// Convenience: normalize `input` through ffmpeg, decode it, and clean up the
-/// temporary WAV.
+/// Convenience: normalize `input` through ffmpeg and decode it.
+/// No temp file — everything stays in memory.
 pub fn load_samples(input: &Path) -> Result<Vec<f32>> {
-    let wav = normalize_to_wav(input)?;
-    let result = decode_wav_16k_mono(&wav);
-    let _ = std::fs::remove_file(&wav);
-    result
+    let wav_bytes = normalize_to_memory(input)?;
+    decode_wav_16k_mono(&wav_bytes)
 }
