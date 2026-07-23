@@ -89,8 +89,6 @@ describe("SettingsScreen", () => {
       "aria-selected",
       "true",
     );
-    expect(
-      screen.getByRole("radio", { name: "English" }),
-    ).toBeInTheDocument();
+    expect(screen.getByRole("radio", { name: "English" })).toBeInTheDocument();
   });
 });
