@@ -21,7 +21,7 @@ Only a verified mutation through this skill does.
 | `in_progress` | An approved discovery or implementation run is active | `ready`, `blocked`, `done` |
 | `ready` | Approved scope and DoR are complete; eligible for implementation | `in_progress`, `blocked` |
 | `blocked` | Progress requires an external decision, dependency, or remediation | `ready`, `in_progress` (explicit resume) |
-| `done` | DoD, evidence, local-commit policy, and completion mutation all passed | none |
+| `done` | DoD and completion evidence passed and the completion mutation was reload-verified | none |
 
 `in_progress → done` is permitted only for an implementation task after every
 required completion gate passes. Discovery closes `in_progress → ready`, never
@@ -39,10 +39,13 @@ to `done` merely because the discovery conversation finished.
    description, objective `dod`, and `dor` when a dependency or approval remains
    unresolved. Use `apply_patch` for `dod` or `dor` because the CLI does not own
    those fields.
-4. For **every lifecycle mutation**, reload the item first; make the single
-   intended mutation; add the required comment; run `taskpilot validate`; reload
-   the item; and verify the expected resulting status. A failed validation or
-   reload mismatch is `blocked`, not a completed lifecycle operation.
+4. For **every** create, field, relationship, comment, or lifecycle mutation:
+   reload the affected records first; validate identity and relationship
+   invariants; make one intended mutation; run `taskpilot validate`; reload; and
+   verify the expected fields and status. Reject self-links and parent/blocker
+   cycles. A failure after partial mutation must report the actual reloaded
+   state and `recovery required`; retry only a missing idempotent step whose
+   prior effect is known.
 
 ### Lifecycle Operations
 
@@ -76,13 +79,12 @@ a verified transition to `ready` (waiting work) or `in_progress` (active work).
 
 #### Complete implementation
 
-After DoD passes, add the completion comment with validation, smoke, review,
-and documentation evidence, then transition the item to `done`, validate,
-reload, and prove `done`. Stage those TaskPilot records with the completed code
-and create one local task-scoped commit; do not push. Report the resulting hash
-in the closure record rather than writing it back to TaskPilot after the commit.
-`task-complete` must not run before both lifecycle verification and the atomic
-commit succeed.
+After `task-quality` passes the prepared completion-evidence record, add that
+record as the completion comment, transition the item to `done`, validate,
+reload, and prove `done`. Stop there. Staging, committing, and commit-failure
+recovery belong exclusively to `work-with-git`. `task-complete` must not run
+before both lifecycle verification and the separate atomic-commit artifact
+succeed.
 
 ## Batch And Hierarchy Rules
 
@@ -107,10 +109,15 @@ own DoD passes, and a roll-up completion comment links the child evidence.
 
 ### Persist an Approved Discovery Spec
 
-Given a prepared canonical-record update, snapshot the item identity and protected
-metadata, update only the approved title, description, and `dod`, validate the
+Given a prepared canonical-record update, freshly reload the item and compare
+its `id`, `type`, `status`, and parent with the update's expected invariants.
+Return `blocked` without mutation on any mismatch. Then snapshot all protected
+metadata: `id`, `type`, `status`, parent, relations, blockers, tags, phase,
+comments, and unknown extension fields. Update only the approved title,
+description, and `dod`, validate the
 workspace, reload the item, and report whether the persisted fields and protected
-metadata match the approved update. This skill owns the TaskPilot mutation and
+metadata respectively match the approved update and the pre-mutation snapshot.
+This skill owns the TaskPilot mutation and
 validation; the discovery-record skill only prepares the update. Persisting the
 spec does not itself make the item `done`; the discovery lifecycle operation
 sets it to `ready` only after DoR passes.
@@ -144,9 +151,11 @@ an all-done result without routing; otherwise return only unfinished child IDs t
 
 `Skill: taskpilot-work - output below`
 
-| Operation result | Item | Status before → after | Evidence / verification |
-|---|---|---|---|
-| completed / blocked | `<ID>` / none | `<status> → <status>` / N/A | comment, `taskpilot validate`, and reload result / reason |
+`Route run: <manager route/run identifier>`
+
+| Operation | Operation result | Item(s) | Before → after | Evidence / verification |
+|---|---|---|---|---|
+| create / inspect / persist_spec / start_discovery / mark_ready / start_implementation / block / resume / complete / link / comment / phase_lookup | completed / blocked / recovery required | `<ID(s)>` / none | `<exact fields/status>` / N/A | preflight, mutation, `taskpilot validate`, reload comparison, and blocker/recovery detail |
 
 `Operation result` describes this skill execution only. It must never be used
 as a substitute for the item’s TaskPilot lifecycle status.

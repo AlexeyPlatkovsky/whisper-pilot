@@ -27,36 +27,51 @@ implement step logic and does not emit its own output artifact.
   status (or an explicitly approved resumed `blocked` item).
 - `Skill: work-with-git - output below` reporting the completed branch decision.
 
-If either artifact is absent, report `Blocked` and stop before Stage 1.
+If either artifact is absent, report `Blocked` and stop before Stage 0; perform
+no TaskPilot or file mutation.
 
 ## Inputs
 
 - The WhisperPilot repository root.
-- Existing documentation: `docs/idea.md`, `docs/architecture.md`,
-  `README.md`, and any other locations the user names.
-- Any tier preference or scope constraint from the user.
+- Complete authoritative documentation tree identified by `AGENTS.md`, plus
+  any other locations the user names; record inspected, missing, and excluded
+  sources.
+- Fixed WhisperPilot tier `Standard` and any user scope constraint.
 
 ## Stages
 
+Maintain a `Route execution record` bound to the manager Route run. For every
+planned stage/row, record its stable stage ID, visible artifact label or
+declared skip, attempt (starting at `1`, incremented after invalidating rework),
+SHA-256 of exact artifact text, and terminal status.
+For a declared conditional skip, record the exact evaluated condition and
+status `skipped`, with artifact label, attempt, and digest `N/A`.
+
 | Stage | Capability | Required Visible Artifact |
 | --- | --- | --- |
-| 0. Activate TaskPilot item | `Skill: taskpilot-work` — verified `ready → in_progress` before artifact edits | `Skill: taskpilot-work - output below` with reloaded `in_progress` evidence |
-| 1. Intake | direct — confirm repo root, existing docs, scope | none |
-| 2. Gap analysis | `Agent: sdd-gap-analyzer` | `Agent: sdd-gap-analyzer - output below` with `Verdict: Pass` |
-| 3. Confirm plan | direct — accept the plan; when it has ambiguous choices, confirm with the user | none |
-| 4. Reconcile docs | `Skill: sdd-doc-author` (once per doc marked migrate/create) | `Skill: sdd-doc-author - output below` |
-| 5. Features | `Skill: sdd-feature-author` (once per extracted feature) | `Skill: sdd-feature-author - output below` |
-| 6. Index | `Skill: sdd-index-sync` | `Skill: sdd-index-sync - output below` |
-| 7. Review | `Agent: sdd-spec-reviewer` | `Agent: sdd-spec-reviewer - output below` |
-| 8. Suggest companions | direct — present the bundle's `RECOMMENDS.md` companions if that file exists under `.claude/sdd/`; otherwise record that none ship with this adoption | a note of companions offered and which were adopted, or `none offered` |
-| 9. Definition of Done | `Skill: task-quality` | `Skill: task-quality - output below` with `Quality gate: pass` |
-| 10. TaskPilot completion and local commit | `Skill: taskpilot-work`, then `Skill: work-with-git` — verified `in_progress → done`, then one atomic local commit | `Skill: taskpilot-work - output below` with reloaded `done` evidence and commit hash |
-| 11. Task Complete | `Skill: task-complete` | `Skill: task-complete - output below` |
+| 0. Activate TaskPilot item | verified `ready → in_progress` or approved `blocked → in_progress` | operation-specific `taskpilot-work` artifact |
+| 1. Intake | confirm repo root, complete source inventory, Standard tier, scope | `SDD adoption intake record` |
+| 2. Gap analysis | `sdd-gap-analyzer` | `Pass` or `Needs user decision` |
+| 3. Confirm plan | resolve decision rows and version the plan | `Confirmed adoption plan` with plan version and stable row IDs, target, mode, source, dependencies |
+| 4. Reconcile docs | one `sdd-doc-author` invocation per confirmed `create new` or `migrate content` doc row; retain `reuse as-is` and optional `not needed` rows as no-action evidence | one matching `Status: completed` artifact per authoring row plus the reviewed no-action rows |
+| 5. Features | one `sdd-feature-author` invocation per confirmed feature row | one matching `Status: completed` artifact per row |
+| 6. Index | `sdd-index-sync`; pass mode, Route run, and attempt `1` initially, then prior artifact plus incremented attempt after rework | artifact with matching mode and `Status: completed` |
+| 7. Review | `sdd-spec-reviewer` | `Pass` or dispositioned `Pass with minor findings` |
+| 8. Definition of Done | prepare evidence, then `task-quality` | `Quality gate: pass` |
+| 9. TaskPilot completion and local commit | `taskpilot-work`, then `work-with-git` | separate reloaded-`done` artifact and `Local commit evidence - output below` |
+| 10. Task Complete | `task-complete` | `Skill: task-complete - output below` |
 
-Author docs in the order the gap-analysis plan specifies (foundational docs first). Stage 8
-is opt-in and may be declined. Do not advance past a stage whose expected visible artifact is
-missing. Stop when the gap-analysis verdict is `Blocked` or the Definition-of-Done
+At stage 8, pass the manager objective DoD, reloaded `in_progress` item, Route
+execution record, prepared criterion mapping, and latest accepted authoring,
+index, review, and validation artifacts to `task-quality`.
+
+Author actionable docs in confirmed-plan dependency order. Do not invoke
+`sdd-doc-author` for `reuse as-is` or `not needed` rows. Do not advance past a stage
+whose expected artifact and accepted status are missing. Stop when the
+gap-analysis verdict is `Blocked` or the Definition-of-Done
 gate is not `pass`.
+Pass the confirmed plan version, matching stable row ID, manager Route run, and
+author-attempt number to every doc-author and feature-author invocation.
 
 ## Authority Sources
 
@@ -66,11 +81,20 @@ gate is not `pass`.
 
 ## Stop Conditions
 
-- The gap analysis reports a fundamental conflict requiring a user decision — resolve at
-  stage 3 before authoring.
+- `Needs user decision` advances only to stage 3; `Blocked` stops.
 - A doc-authoring or feature step blocks — resolve before advancing.
+- A feature-author result is `recovery required` — stop all downstream stages,
+  preserve the reported tree, perform only its exact recovery action, increment
+  the author attempt with the prior artifact, and re-run stage 5 before index
+  sync.
+- An index-sync result is `recovery required` — stop downstream stages,
+  preserve the reported tree, perform only its exact recovery action, increment
+  the sync attempt with the prior artifact, and re-run stage 6.
 - `sdd-spec-reviewer` verdict is `Needs revision` — fix the cited findings, re-run the
   affected stage and stage 6, then re-run stage 7.
+- Any other `Blocked`, `skipped`, malformed, or unrecognized outcome stops.
+  After activation, persist the blocker and exact unblocking action through
+  `taskpilot-work`.
 - The convention or repository root cannot be read — stop and report the missing source.
 
 ## Output Contract

@@ -7,8 +7,10 @@ Stack: **Vitest** (runner, Vite-native, fast), **React Testing Library** (RTL), 
 - **Use `userEvent`, not `fireEvent`**, for interactions (it models real user behavior: focus, key sequences).
 - **Async:** use `findBy*` and `waitFor` for state that resolves later; never arbitrary `setTimeout`. Use `await` consistently.
 - **Test behavior, not internals:** assert on what's rendered/announced, not component state or prop wiring.
-- **Mock judiciously — at the boundary:** mock the Tauri IPC layer (`invoke` / generated `commands`) with `vi.mock`, not internal helpers. Don't mock React.
-- Each test is isolated: no shared mutable state between tests; reset mocks in `afterEach` (or `clearMocks: true`).
+- **Mock at the project boundary:** mock typed `src/ipc.ts` wrappers. Generated
+  commands are not configured; mock raw Tauri APIs only while testing a wrapper.
+- Each test is isolated: reset call history and changed implementations with
+  clear/reset/restore according to how each mock was modified.
 
 ## WhisperPilot specifics
 - Mock the typed wrappers exported by `src/ipc.ts`, not React internals or raw command strings in components.
@@ -44,7 +46,9 @@ it("is idempotent", () => {
 });
 ```
 
-Key invariants to verify: idempotence, no throw on any input, output bounds, and no unintended path or transcript content leakage. Add `fast-check` as a task dependency before using it; property tests live beside the relevant unit tests.
+Derive every invariant from the approved contract. Idempotence, no-throw,
+output bounds, and leakage are illustrative candidates, not universal
+requirements. Add `fast-check` only through the routed dependency change.
 
 ## Accessibility and IPC contracts
 
@@ -52,3 +56,6 @@ Use accessible queries and user interactions in every component test. Add an axe
 when the task first configures it. For IPC contracts, test the affected UI behavior with a
 typed `src/ipc.ts` mock and test Rust DTO serialization or command behavior at the Rust
 boundary. This repository has no generated bindings or binding-generation CI gate.
+
+For typed events, test payload handling, unsubscribe/cleanup,
+duplicate-listener prevention, and stale-event behavior when applicable.

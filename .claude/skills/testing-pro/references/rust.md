@@ -10,7 +10,8 @@ add either only through a routed dependency change.
 - **Async tests** use `#[tokio::test]`; pick `flavor = "multi_thread"` only when the test needs real concurrency.
 - **Isolate external effects** with a narrow seam, fixture, temporary directory, or in-memory/temp-file database. Never operate on the user's app-data directory or download a real model in a unit test.
 - **Clock/time:** inject or bound time-dependent behavior so tests do not rely on arbitrary wall-clock sleeps.
-- **Assert errors by variant**, not by string: `assert!(matches!(err, AdapterError::TimedOut))`, not substring matching on a message.
+- **Assert errors by variant** when the public type exposes variants; otherwise
+  assert a stable public error contract, not incidental message text.
 - **Determinism:** no shared mutable global state across tests; each test sets up its own fixtures and has no ordering dependency.
 - Unit tests live in `#[cfg(test)] mod tests` next to the code; cross-module/integration tests live in `tests/`.
 
@@ -18,7 +19,9 @@ add either only through a routed dependency change.
 - **Audio/transcription/diarization** tests use small checked-in or generated fixtures and cover supported input handling, segmentation/diarization outcome mapping, and failure paths without relying on a user file or model download.
 - **Model management** tests cover catalog state, destination selection, checksum/error handling where exposed, and progress-event payload behavior without network access.
 - **Storage** tests cover meetings, transcript segments, and settings persistence/readback against a temporary database or temporary app-data directory.
-- **Tauri commands** stay thin; test the underlying plain function, not the `#[tauri::command]` wrapper.
+- **Tauri commands** stay thin; test the plain function for behavior and add a
+  focused command/IPC contract test when wiring, arguments, injected state,
+  error conversion, or serialization changes.
 
 ## Heuristics per function/behavior
 - Happy path (correct output).
@@ -60,7 +63,8 @@ Property tests live inside `proptest! { }` blocks alongside existing `#[cfg(test
 
 ## Contract tests (DTO serialization)
 
-Every IPC struct must have a round-trip test: serialize → deserialize → assert equality.
+Every affected IPC struct must assert explicit expected JSON keys/values and
+have a round-trip test: serialize → deserialize → assert full equality.
 
 ```rust
 #[test]

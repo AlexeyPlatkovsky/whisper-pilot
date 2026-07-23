@@ -18,6 +18,13 @@ Do not use when:
 
 Emit status `blocked` (not `completed`) when the code cannot be tested at an observable boundary without an unavailable seam or runner, and name the missing prerequisite. Use a temporary database or fixture rather than user data.
 
+## Required Inputs
+
+Require the manager route, active TaskPilot scenarios/DoD or exempt-work
+objective criteria, target behavior, affected layer, existing test surface, and
+the pre-Red production diff. Block rather than invent behavior when any required
+scope input is absent.
+
 ## Core Instructions
 
 - WhisperPilot has **two test layers**. Pick the reference for the code under test:
@@ -51,12 +58,11 @@ For each non-trivial logic change:
 3. Do not substitute an existing passing test, a test written after production
    code, or an implementation-detail assertion without explaining why it is the
    lowest observable boundary.
-4. If automation is blocked, stop before production edits, report the missing
-   seam or prerequisite, and obtain explicit user approval for a manual-only
-   exception.
-5. If production behavior changed before Red evidence, revert that behavior and
-   restart Red → Green → Refactor, or obtain an explicit non-TDD exception.
-   Record an exception in the TaskPilot item and final response.
+4. If automation is unavailable for non-trivial logic, emit `blocked`. This
+   skill has no authority to waive the root TDD gate or mutate TaskPilot.
+5. If production behavior changed before Red evidence, stop, identify the
+   affected production paths, and return control to the routed implementation
+   coordinator. Never revert production or user changes from this skill.
 
 If doing partial work, load only the relevant reference file.
 
@@ -87,9 +93,19 @@ After writing or improving tests, emit:
 
 `Skill: testing-pro - output below`
 
-Status values: `completed` / `blocked` / `skipped`
+First emit one row per routed behavior:
 
-| Status | Layer (frontend/rust) | Files Reviewed / Changed | Tests Written | Red Evidence | Issues Found | Validation |
-|--------|-----------------------|--------------------------|---------------|--------------|--------------|------------|
+| Behavior / scenario / DoD ID | Layer | Test file and test name | Pre-Red production state | Red command | Red result | Status |
+|---|---|---|---|---|---|---|
+| ... | frontend / rust | ... | unchanged / pre-existing change — blocked | ... | expected behavior-specific assertion failure or approved new-symbol compile failure; include exit code and evidence | completed / blocked / skipped — no non-trivial logic |
 
-For a non-trivial logic implementation or fix, `Red Evidence` must name the test file and test name, command, expected behavior, observed failing assertion, and whether scoped production files changed before Red. Use `N/A — not a non-trivial logic implementation or fix` otherwise.
+`completed` requires an expected behavior-specific failure. A passing test,
+unrelated failure, malformed assertion, launch error, timeout, or unexplained
+compile failure is `blocked`. For a genuinely new symbol, a compile failure
+qualifies only when it names that missing symbol and no production behavior was
+added; the later Green run remains pipeline-owned.
+
+Then summarize:
+
+| Layer / Framework | Test Files | Coverage Map | Techniques Applied | Remaining Gaps |
+|---|---|---|---|---|

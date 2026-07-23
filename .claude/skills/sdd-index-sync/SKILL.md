@@ -18,11 +18,16 @@ This skill depends on files in this repository:
   the index and the ID scheme);
 - the `INDEX.md` template at `.claude/sdd/templates/docs/INDEX.md`.
 
-If the docs root cannot be located, report it as a blocker.
+If the docs root, convention, or template is missing, unreadable, or malformed,
+report it as a blocker.
 
 ## Inputs
 
 - The docs root: `docs/` at the WhisperPilot repository root.
+- Mode `create` when `docs/INDEX.md` is absent or `update` when it exists.
+- The exact manager Route run and sync-attempt number. Start at `1`; increment
+  after a retry or documentation rework invalidates a prior sync; every attempt
+  after `1` also requires the previous labeled sync artifact.
 
 ## Procedure
 
@@ -31,14 +36,22 @@ Apply the Stop Conditions throughout; halt and report when any is met.
 1. Scan the docs root for present main docs and recognized extension docs. Register only
    files that exist; do not treat build output, test results, or TaskPilot records as docs.
 2. Scan `features/` for `F<NNN>_*` folders; for each, count requirements, tasks, and
-   scenarios by their IDs. Do not infer or copy TaskPilot status into the index.
+   scenarios by their active IDs. Exclude rows carrying the exact
+   `Superseded: yes — <replacement ID or reason>` marker in the
+   Requirement/Task cell, or immediately below a scenario heading, from active
+   counts; validate that their IDs remain present, unique, and unreused. Do not
+   infer or copy TaskPilot status into the index.
 3. Scan `decisions/` for `ADR-*` files and read each status.
-4. Render `INDEX.md` from the template: the document table (present docs only), the feature
-   registry, and the decision log.
-5. Preserve human-curated "read when" descriptions and notes where they already exist;
-   replace only the generated registry rows.
-6. Flag traceability gaps surfaced while counting (a feature with no scenarios, an ADR with
-   no status) without resolving them.
+4. Validate the complete scanned source, ID/supersession rules, required feature
+   files, folder names, permitted ADR statuses, and prepared source-to-index
+   render before mutation.
+5. In `create` mode, require the index to be absent and render it from the
+   template with its generated markers. In `update` mode, require the index to
+   exist and replace only sections delimited by unique generated markers.
+   A mode/existence mismatch or missing/duplicated update marker blocks.
+6. Re-read the result and prove one-to-one correspondence with the scanned tree
+   while preserving curated sections. A post-write failure is `recovery
+   required`; report the actual index state and exact recovery action.
 
 ## Stop Conditions
 
@@ -55,9 +68,16 @@ Then include:
 
 | Field | Content |
 | --- | --- |
-| Status | `completed`, `blocked`, or `skipped` |
+| Route run / attempt | Exact manager Route run and sync-attempt number |
+| Mode | Exact `create` or `update` mode used |
+| Status | `completed` after verified write, `blocked` before mutation, or `recovery required` after a failed post-write check |
 | Docs registered | Count and names |
 | Features registered | Count and IDs |
 | ADRs registered | Count and IDs |
-| Gaps flagged | Traceability gaps found, or `none` |
+| Structural/index gaps | ID, required-file, marker, or source-to-index gaps, or `none`; full link traceability is not assessed |
 | Blockers | Unresolved issues, or `none` |
+| Validation | Source-to-index comparison and curated-content preservation result |
+
+For `recovery required`, include the actual `docs/INDEX.md` state and exact
+recovery action. Callers stop downstream work, preserve the tree, increment the
+sync attempt with the prior artifact, and rerun after recovery.

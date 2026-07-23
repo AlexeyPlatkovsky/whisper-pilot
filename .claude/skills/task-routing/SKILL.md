@@ -34,6 +34,19 @@ When unsure of complexity: treat as non-trivial.
 When unsure of risk: treat as medium.
 Apply `AGENTS.md` §Quality Tiers and state the selected tier, its justification, and any tier-specific readiness confirmation required there.
 
+`trivial` is limited to a single-file, non-behavioral correction with no
+runtime, authority, lifecycle, security, persistence, dependency, generated
+artifact, or cross-reference effect. Everything else is `non-trivial`.
+
+Risk is selected by the highest matching condition:
+
+| Risk | Observable condition |
+|---|---|
+| low | Read-only work, or a reversible non-behavioral edit within one owning artifact |
+| medium | Multi-file or behavioral work without user-data, security, permission, persistence, or external-effect impact |
+| high | User data, persistence, permissions/security, external process/network behavior, or difficult rollback |
+| system-level | Root/routing/lifecycle/safety authority changes or repository-wide execution-policy changes |
+
 Classification must be stated before any file is created, edited, or deleted.
 
 ### Phase-Level Requests
@@ -93,19 +106,24 @@ Apply this precedence before using the table:
 | Implement behavior, IPC, UI, or Rust core | `.claude/pipelines/implement-feature.md` |
 | Triage a bug or unexpected behavior with unknown root cause | `.claude/skills/triage-bug/SKILL.md` |
 | Fix a confirmed bug with reproduction steps | `.claude/pipelines/fix-bug.md` |
-| Review or improve React/TypeScript/Tauri code practices | `.claude/skills/react-tauri-expert/SKILL.md` |
+| Review or advise on React/TypeScript/Tauri code practices | `.claude/skills/react-tauri-expert/SKILL.md` |
+| Implement a requested React/TypeScript/Tauri improvement | `.claude/pipelines/implement-feature.md` |
 | Write or improve Vitest or Rust test code | `.claude/skills/testing-pro/SKILL.md` |
-| Review test code or test changes | `.claude/agents/code-reviewer.md` |
+| Review completed, validated test changes | `.claude/agents/code-reviewer.md` |
+| Review existing test code without a change diff | Manager-declared read-only test audit with explicit scope; no post-implementation validation prerequisite |
 | Validate completed work with build, test, or manual checks | `.claude/agents/test-runner.md` |
 | Resolve an open design decision with meaningful trade-offs | `.claude/skills/brainstorm/SKILL.md` |
 | Create or update non-instruction reference documentation | Direct execution with the required TaskPilot identity, git gate, `.claude/skills/documentation-maintenance/SKILL.md` outcome artifact (including the checked authoritative sources), and task-complete closure |
-| Author or update one SDD main or extension document (`docs/idea.md`, `architecture.md`, `design.md`, `testing.md`, `roadmap.md`, an ADR, or an extension doc) | `.claude/skills/sdd-doc-author/SKILL.md` |
-| Scaffold or update one SDD feature folder | `.claude/skills/sdd-feature-author/SKILL.md` |
-| Rebuild `docs/INDEX.md` after an SDD change | `.claude/skills/sdd-index-sync/SKILL.md` |
+| Author or update one SDD main or extension document (`docs/idea.md`, `architecture.md`, `design.md`, `testing.md`, `roadmap.md`, an ADR, or an extension doc) | Direct sequence: `.claude/skills/sdd-doc-author/SKILL.md`, then `.claude/skills/sdd-index-sync/SKILL.md` with mode, same Route run, attempt `1` (prior artifact plus increment on retry), then closure |
+| Scaffold or update one SDD feature folder | Direct sequence: require feature-author `Status: completed`; on `recovery required`, stop and perform its exact recovery with an incremented author attempt; then run `.claude/skills/sdd-index-sync/SKILL.md` with mode, same Route run, attempt `1` (prior artifact plus increment on retry), then closure |
+| Create or rebuild `docs/INDEX.md` after an SDD change | `.claude/skills/sdd-index-sync/SKILL.md` with mode, Route run, and sync attempt |
 | Adopt or expand an SDD docs tree | `.claude/pipelines/sdd-adopt.md` |
 | Bootstrap an SDD docs tree from an empty root | `.claude/pipelines/sdd-bootstrap.md` |
 | Assess gaps before introducing or expanding SDD | `.claude/agents/sdd-gap-analyzer.md` |
 | Review an SDD docs tree for completeness and traceability | `.claude/agents/sdd-spec-reviewer.md` |
+| Review one AI-governance instruction artifact | `.claude/agents/instruction-evaluator.md` through `.claude/skills/agent-handoff/SKILL.md` |
+| Change AI-governance instruction artifacts | Manager-declared ad-hoc direct maintenance route with Git gate, one isolated `instruction-evaluator` review per changed artifact, structural integration validation, and task-complete closure |
+| Review or change a CLI adapter | Manager-declared ad-hoc CLI route; require the adapter's invocation-contract evidence, tests through `testing-pro`, implementation through `implement-feature` when behavior changes, and code review |
 
 The SDD-document route applies only when `docs/INDEX.md` exists and lists the document, or the user explicitly frames the request as SDD / spec-driven-development work.
 
@@ -125,8 +143,9 @@ For an ad-hoc task with no matching pipeline, declare the direct capability and 
 
 | Risk | Requirement |
 |---|---|
-| Low / medium | Pipeline + local validation via `Skill: validate` for touched layers |
-| High | Pipeline + `.claude/agents/code-reviewer.md` review or manual code review before closing |
+| Low / medium mutation | Selected mutation route + artifact-appropriate validation |
+| Low / medium read-only | Stable review/assessment artifact; no build validation |
+| High | Selected mutation route + `.claude/agents/code-reviewer.md` or the domain-specific reviewer before closing |
 | System-level | Stop and require explicit user approval before any file changes |
 
 ## Output Contract
@@ -139,8 +158,12 @@ Use this table with no omitted rows:
 
 | Field | Decision | Evidence / required artifact |
 |---|---|---|
+| Route run | `<task identity>:<route>:<positive sequence>` | stable identifier unique to this routed invocation; start sequence at `1` for that task/route and increment on a new run |
 | Classification | `<complexity>; <risk>; <domain>; <quality tier>` | tier justification and readiness confirmation |
 | Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` | `AGENTS.md` task-identity decision |
+| Parent context | `<expected parent ID>` / `none` / `not applicable` | tracked work: reloaded item parent; exempt work: reason |
+| Definition of Done | stable `C-<positive integer>` criteria | objective pass/fail criteria; required explicitly for AI-governance work |
+| Execution record | `required` | pipeline-owned record, or complete ad-hoc step plan using the task-complete binding schema |
 | Lifecycle | `required` / `not applicable` | tracked work: required start, block/resume, completion, and reload-verification artifacts; exempt work: reason |
 | Git gate | `required` / `completed` / `blocked` | `Skill: work-with-git - output below` when complete |
 | Route | `<pipeline or capability path>` | selected route |

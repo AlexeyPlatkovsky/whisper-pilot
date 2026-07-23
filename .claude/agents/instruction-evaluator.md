@@ -16,25 +16,25 @@ Use this agent for a single project-local skill, agent, pipeline, convention, ro
 tool-specific adapter, prompt file, or instruction file. `.manifesto/` is template source and
 out of scope for project-landscape reviews unless the user explicitly changes that scope.
 
-## Definition
-
-A non-trivial routed handoff is a delegation whose result a later step, gate,
-or closure artifact depends on. A self-contained lookup with no downstream
-consumer is trivial and is exempt from output-artifact and traceability
-requirements.
-
 ## Required Context
 
 Before reviewing, read:
 
-- `AGENTS.md` and only the relevant project-local authorities under `.claude/`;
+- structured inputs: `target_path`, review mode (`existing` / `change`),
+  requested scope, and baseline/diff (`N/A — existing-artifact review` when no
+  change is under review);
+- `AGENTS.md` and coupled project-local authorities under `.claude/`;
 - the single target artifact; and
-- directly related artifacts needed to check conflicts.
+- coupled artifacts: explicit references, registry entries, named
+  producers/consumers, shared labels, or competing ownership of the same
+  behavior.
 
-Do not load unrelated project files. If required context or a target artifact
-cannot be read, stop and report the missing file. Do not complete a review from
-memory or inference. If the target is under `.manifesto/`, report `Blocked — out of scope`
-without evaluating it.
+Do not load unrelated project files. If required context or a target cannot be
+read, emit `Status: blocked` with the missing input/path and no evaluative
+verdict. If the target is under `.manifesto/`, use the canonical labeled
+preflight shape with `Status: blocked` and `Reason: out of scope`. A
+project-local tool-adapter review may read only its
+specifically referenced adapter convention as a narrow exception.
 
 ## Review Scope
 
@@ -47,16 +47,15 @@ For each artifact, evaluate the following.
 
 ### 2. Layer Purity
 
-Apply the project-local authority hierarchy: root contract, routing artifacts,
-pipelines, then skill or agent procedure, unless a higher layer explicitly delegates.
+Apply the ownership model from `AGENTS.md`: root policy; task-routing
+classification and routing; pipeline sequence; skill/agent procedure; conventions for
+shared quality standards.
 
 ### 3. Authority And Duplication
 
 - Does it duplicate root policy, conventions, or documentation?
 - Does it compete with another skill, agent, or pipeline?
-- Does it follow the local authority hierarchy: root contract, routing
-  artifacts, pipelines, then skill or agent procedure, unless a higher layer
-  explicitly delegates?
+- Does it follow the ownership model stated once in Layer Purity?
 - Does the change add unrelated behavior, new gates, expanded authority, or new
   required context outside the approved change?
 
@@ -94,8 +93,8 @@ validation expectations where applicable.
   read-only-inconsistent tools.
 - When an agent, skill, pipeline, manager route, output label, or path is
   added, removed, or renamed, are directly coupled registries and references
-  synchronized (`AGENTS.md`, routes, pipelines, and user-workflow docs where
-  applicable)?
+  synchronized (`AGENTS.md`, routes, pipelines, and workflow documents that
+  contain the changed path, label, capability name, or registry entry)?
 - Can downstream consumers verify the output shape without inference?
 
 ### 7. Substantive Coverage
@@ -134,10 +133,10 @@ Apply these artifact-specific checks:
 
 - Non-trivial routed handoffs must emit a stable, grep-able output artifact.
 - Flag a routed capability whose contract can be satisfied by raw tool output.
-- Manager-equivalent artifacts must require each non-trivial handoff artifact
-  before advancing.
-- `task-complete`-equivalent artifacts must reference each planned routed
-  handoff before closure.
+- `task-routing`, and only an artifact explicitly delegated routing authority
+  by `AGENTS.md` or `task-routing`, must require each declared non-trivial
+  handoff artifact before advancing.
+- `task-complete` must reference each planned routed handoff before closure.
 
 ### Bad-Case Check
 
@@ -145,17 +144,20 @@ For every artifact, identify one plausible bad invocation or bad artifact that
 should fail under the declared responsibility. If the instructions would not
 catch or handle it, flag the missing criterion.
 
-## Parallel Review Mode
+## Invocation Boundary
 
-Review one target per invocation. Identify directly coupled artifacts only as needed to
-verify conflicts; do not turn one review into a landscape-wide audit. A coordinator may run
-up to three independent invocations in parallel, but each invocation still has one target.
+Review exactly one target per invocation. Identify directly coupled artifacts
+only as needed. Coordinator scheduling belongs to the caller.
 
 ## Output Format
 
 Begin every report with:
 
 `Agent: instruction-evaluator - output below`
+
+Then emit `Target` and `Review basis`. For preflight failure, retain the stable
+label and emit `Status: blocked` plus the missing input/path; omit verdict and
+findings. Otherwise also emit `Bad-case check`.
 
 ### Verdict
 
@@ -165,15 +167,18 @@ Choose exactly one: `Accept`, `Accept with minor edits`, `Needs revision`, or
 Use `Reject / split required` when a Blocking finding means the artifact is
 unsafe, belongs in a different layer, or must be decomposed. Use `Needs
 revision` when any Blocking or Major finding remains. Use `Accept with minor
-edits` only when all findings are Minor or Info. Use `Accept` only when no
-required changes remain.
+edits` when at least one Minor and no Major/Blocking finding exists (Info may
+coexist). Use `Accept` for finding-free or Info-only reports.
 
 ### Artifact Findings
 
-| Artifact | Severity | Area | Finding | Suggested fix |
-| --- | --- | --- | --- | --- |
+| Artifact | Evidence | Severity | Area | Finding | Suggested fix |
+| --- | --- | --- | --- | --- | --- |
 
-Severity values are `Blocking`, `Major`, `Minor`, and `Info`.
+`Blocking` means unsafe authority or an impossible required route; `Major`
+means responsibility, integration, or output cannot be satisfied
+deterministically; `Minor` is a bounded clarity/maintenance weakness; `Info`
+requires no change.
 
 ### Coupled-Artifact Findings
 

@@ -34,6 +34,13 @@ brainstorm decision summary).
 
 A git commit, a validate PASS, or any intermediate output artifact does not mark this pipeline complete. Only `Skill: task-complete - output below` from the task-complete step (Step 11) closes the pipeline.
 
+Maintain a `Route execution record` bound to the manager Route run. For every
+planned step/conditional row, record its stable step ID, visible artifact label
+or declared skip, attempt (starting at `1`, incremented after invalidating
+rework), SHA-256 of exact artifact text, and terminal status.
+For a declared conditional skip, record the exact evaluated condition and
+status `skipped`, with artifact label, attempt, and digest `N/A`.
+
 ---
 
 ## Steps
@@ -44,10 +51,15 @@ A git commit, a validate PASS, or any intermediate output artifact does not mark
 
 Skill: `.claude/skills/verify-readiness/SKILL.md`
 
-Required input: existing TaskPilot ID from `Manager: manager - output below`
+Required input: manager route, reloaded item, parent context, approval
+provenance, and matching TaskPilot ID
 Required output: `Skill: verify-readiness - output below`
 
-If the verdict is `Ready`, advance to Step 0a. If it is `Blocked`, do not implement: resolve each gap per the disposition the skill recorded — for a **create** disposition on a requirements/scope gap, return to the manager to re-route `discover-feature`; for **ignore**, record the non-required omission and re-evaluate; for **skip**, update the item's narrowed scope and DoD — then re-run this gate. Do not advance to Step 0a until the verdict is `Ready`.
+If the verdict is `Ready`, advance to Step 0a. If it is `Blocked`, do not
+implement: for **create**, return to the manager to re-route
+`discover-feature`; for **skip**, use `taskpilot-work` to persist the
+user-approved narrower scope and DoD; `ignore` is valid only for a separately
+reported non-gating supporting artifact. Re-run readiness after every mutation.
 
 If the run cannot immediately resolve a DoR blocker, invoke
 `taskpilot-work` to record the cause and transition the item to `blocked`.
@@ -58,8 +70,9 @@ If the run cannot immediately resolve a DoR blocker, invoke
 
 Skill: `.claude/skills/taskpilot-work/SKILL.md`
 
-After DoR is `Ready` and before test or production edits, perform the verified
-`ready → in_progress` start operation. The required artifact must name the
+After DoR is `Ready` and before test or production edits, perform either the
+verified `ready → in_progress` start operation or the explicitly approved
+`blocked → in_progress` resume operation. The required artifact must name the
 active branch and show the reloaded `in_progress` item. In a batch, it must also
 name the visible batch manifest and confirm that this is the only active child
 unless a two-task delivery cohort was declared before edits.
@@ -67,15 +80,27 @@ unless a two-task delivery cohort was declared before edits.
 Do not advance to Step 1 without `Skill: taskpilot-work - output below` showing
 the verified lifecycle transition.
 
+Before Step 1 and before any task-authored test or production edit, capture a
+`Task baseline snapshot` bound to the manager Route run. Record the complete
+`git status --short` path/status set or `clean`; retain this immutable artifact
+through implementation and closure.
+
 ---
 
 ### Step 1 — Brainstorm (conditional)
 
-**Trigger:** open design decisions exist for this feature.
+**Trigger:** unresolved execution choices exist that do not change readiness,
+approved scope, or DoD.
 **Skip:** design is already fully resolved.
 
 Skill: `.claude/skills/brainstorm/SKILL.md`
-Required output: `Skill: brainstorm - output below` (decision summary confirmed by user)
+Required input: manager route/run identity; decision IDs and named downstream
+contracts; approved scope and DoD; known constraints; relevant authorities.
+Required output: `Skill: brainstorm - output below` with `Status: confirmed`
+and the exact confirmed summary version.
+
+If a choice changes readiness, approved scope, or DoD, do not brainstorm here:
+return to Step 0 and apply its gap disposition. Stop on `Status: blocked`.
 
 Do not advance to Step 2 until the confirmed decision summary is present.
 
@@ -87,7 +112,9 @@ Skill: `.claude/skills/testing-pro/SKILL.md`
 Required output: `Skill: testing-pro - output below`
 
 For non-trivial logic, apply `.claude/skills/testing-pro/SKILL.md` through the skill.
-Do not advance until its required evidence is complete.
+Advance only when every in-scope behavior row is `completed`; accept `skipped`
+only when the manager-declared scope contains no non-trivial logic. Stop on
+`blocked`.
 
 ---
 
@@ -95,6 +122,13 @@ Do not advance until its required evidence is complete.
 
 Skill: `.claude/skills/implement-tauri-feature/SKILL.md`
 Required output: `Skill: implement-tauri-feature - output below`
+Required input: route `implement-feature`, manager Route run, Git and lifecycle
+artifacts, Ready artifact, applicable confirmed brainstorm artifact,
+testing-pro artifact, approved scope/DoD/scenarios, and the pre-edit
+task-baseline snapshot.
+
+Advance only when `Status: Complete` and the exhaustive changed-file list is
+present. Stop and route `Blocked` or `Failed` to its stated blocker.
 
 Consult `react-tauri-expert` reference topics during implementation.
 For UI/interaction surfaces, the implementation skill must produce an interaction contract (drag/click-vs-drag, keyboard, sizing, empty/loading/error states) stating the default/initial state and a user-visible outcome.
@@ -113,20 +147,21 @@ judgment or omit a mapped check:
 
 | Changed file type | Required checks |
 | --- | --- |
-| Any `.ts` or `.tsx` file | `lint format tsc vitest build` |
-| Any front-end test file matching `*.test.ts`, `*.test.tsx`, `*.spec.ts`, or `*.spec.tsx` | Add `coverage` |
-| Any `.rs` file | `clippy rusttest cargobuild` |
-| `Cargo.lock`, or a dependency-table entry in `Cargo.toml` | `audit clippy rusttest cargobuild` |
+| Any `.ts` or `.tsx` file | `lint format tsc build` |
+| Any front-end test file matching `*.test.ts`, `*.test.tsx`, `*.spec.ts`, or `*.spec.tsx` | no additional fast check |
+| Any `.rs` file | `clippy cargobuild` |
+| `Cargo.lock`, or a dependency-table entry in `Cargo.toml` | `audit clippy cargobuild` |
 | Any front-end stylesheet or build input (`.css`, `.html`, `.svg`) with no changed `.ts` or `.tsx` file | `format build` |
 
 The plan must list each changed file that selected a row and the resulting
-`checks` value. If no row maps a changed implementation file, stop and report
-the unmapped file; do not use validation defaults. For a feature touching both
-front-end TypeScript and Rust, the required value is
-`checks="lint format tsc vitest coverage build clippy rusttest cargobuild"` when
-a front-end test file changed, and the same value without `coverage` otherwise.
+`checks` value. Build it from the union of testing and implementation changed
+files plus the task-scoped Git diff. Include manifests,
+capabilities/configuration, migrations, and assets. If no row maps a changed
+task file, stop and update this authoritative map before executing.
 
-If validation fails, fix and re-run. Do not advance to Step 4 until `Skill: validate - output below` reports all checks PASS.
+On `FAIL`, use Rework Routing; on `BLOCKED`, resolve the named environment or
+plan blocker without editing production behavior. Do not advance until
+`Overall status: PASS`.
 
 ---
 
@@ -144,8 +179,8 @@ changed production behavior.
 
 ### Step 4 — UI Verification (conditional)
 
-**Trigger:** implementation touched a visual UI or interaction surface.
-**Skip:** no visual UI or interaction surface changed.
+**Trigger:** Step 3 `validate` selects manual UI verification as `required`.
+**Skip:** it selects `skipped`.
 
 Manually verify the changed UI: run the app, exercise the affected states, and
 confirm they match the specification and the conventions in
@@ -183,8 +218,11 @@ Agent: `.claude/agents/test-runner.md`
 
 Required output: `Agent: test-runner - output below`
 
-The agent runs the `Touched-layer validation plan` commands and the applicable
-manual checks. If validation fails, use Rework Routing. If validation is
+Pass an exact final token-to-command table derived from the same exhaustive
+changed files, using the commands in `validate`: add `vitest` for front-end
+code, `coverage` for changed front-end tests, and `rusttest` for Rust code;
+preserve dependency `audit`, and include a timeout per command. The agent runs those
+commands and consumes applicable manual checks. If validation fails, use Rework Routing. If validation is
 `Blocked`, continue only when its artifact explicitly identifies an external
 verification limitation; otherwise stop and report the blocker. Record a
 permitted limitation and continue to Step 6.
@@ -229,6 +267,10 @@ visual UI or interaction surface` in the closure record.
 Agent: `.claude/agents/code-reviewer.md`
 Required output: `Agent: code-reviewer - output below`
 
+Pass the manager route, TaskPilot scope/scenarios/DoD, implementation and test
+artifacts, exhaustive changed-file list, task-scoped diff, and final validation
+artifact.
+
 If verdict is `Needs revision` or `Blocked` because TDD provenance is missing or invalid, return to Step 2. If verdict is `Needs revision` for another finding, use Rework Routing. For any other `Blocked` verdict, stop and report the blocker.
 Do not advance to Step 8 until verdict is `Approved` or `Approved with minor notes`.
 
@@ -236,27 +278,44 @@ Do not advance to Step 8 until verdict is `Approved` or `Approved with minor not
 
 ### Step 8 — Documentation Maintenance (conditional)
 
-**Trigger:** implementation changes an authoritative documentation fact:
-observable behavior, a public interface, a command signature, an architecture
-constraint, or a documented domain rule.
-**Skip:** the implementation is internal-only and changes none of those facts.
+**Trigger:** implementation changes any authoritative fact category owned by
+the skill: public behavior or user workflow; developer workflow or command;
+architecture, ownership, or source layout; domain vocabulary or business rule;
+known limitation, risk, or failure mode.
+**Skip:** the implementation changes none of those categories.
 
 Skill: `.claude/skills/documentation-maintenance/SKILL.md`
 Required output: `Skill: documentation-maintenance - output below`
+Required input: mode `implementation/fix`, manager Route run, attempt number,
+approved scope, implementation artifact, exhaustive pre-documentation file
+list, and pre-documentation task diff.
 
-If triggered, do not advance to Step 9 until this artifact is present. If
+If triggered, advance only when the `implementation/fix` artifact reports
+`documentation updated` or `documentation checked, no update needed`; stop on
+`documentation update needed but blocked`. If
 skipped, record `Skipped — no authoritative documentation fact changed` in the
 closure record.
+
+Conditional declared substep: when an SDD document or feature changed, invoke
+`.claude/skills/sdd-index-sync/SKILL.md` with the same Route run before the
+maintenance skill emits success. Pass mode and sync attempt `1`; on retry pass
+the prior labeled artifact and increment the attempt. Require its labeled `Status: completed`
+artifact in the maintenance and closure evidence.
+On `recovery required`, stop downstream work, preserve the reported tree,
+perform only the stated recovery, and retry with the incremented sync attempt.
 
 ---
 
 ### Step 9 — Definition of Done (DoD) Gate
 
-Run the DoD quality gate to verify all acceptance criteria pass, smoke checklist is complete, and edge cases are covered.
+Prepare a completion-evidence record mapping each DoD/scenario/smoke criterion
+to the latest accepted artifacts, then run the DoD quality gate.
 
 Skill: `.claude/skills/task-quality/SKILL.md`
 
-Required input: existing TaskPilot ID from `Manager: manager - output below`
+Required input: manager route, reloaded `in_progress` item, prepared
+completion-evidence record, Route execution record, and latest accepted route
+artifacts
 Required output: `Skill: task-quality - output below`
 
 If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 10 until the quality gate reports `pass`.

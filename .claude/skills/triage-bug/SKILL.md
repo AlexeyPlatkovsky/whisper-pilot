@@ -76,7 +76,11 @@ Record:
 - **Reproduction steps used:** exact commands or UI actions
 - **Observed output:** exact error, panic, wrong UI state, test failure output, or relevant log lines
 
-Make at most three reproduction attempts. If not reproduced after three runs, record `Reproduced: no / intermittent` with the evidence, set root cause to `unknown — not reproducible`, and skip to Phase 4.
+Define one attempt as one complete execution of the recorded command or UI
+action sequence. Make at most three attempts. Zero successes is `no`; at least
+one success and one failure is `intermittent`; all attempted runs reproducing is
+`yes`. For `no`, set root cause to `unknown — not reproducible` and skip to
+Phase 4.
 
 ---
 
@@ -109,7 +113,7 @@ Do not make speculative claims beyond what the code and reproduction evidence su
 
 **Type:** logic-error / UI-regression / IPC-error / media-processing / model-management / storage-error / state-management / test-only / other (specify)
 
-**Scope:** front-end / Rust core / both
+**Scope:** front-end / Rust core / both / tooling-build-CI / N/A
 
 ---
 
@@ -121,8 +125,8 @@ Choose exactly one disposition:
 |---|---|
 | `fix-bug` | Reproduced and root cause known — route to `fix-bug` pipeline |
 | `needs-more-info` | Cannot reproduce or root cause is unknown — return to user with specific questions |
-| `known-issue` | Already tracked; record the existing reference and close |
-| `wont-fix` | Out of scope, by design, or cost exceeds value — document reasoning and close |
+| `known-issue` | A verified existing TaskPilot ID covers it; recommend linking and route mutation through `taskpilot-work` |
+| `recommend-wont-fix` | Evidence shows out-of-scope or by-design behavior; require explicit user/product-owner disposition |
 
 ---
 
@@ -134,18 +138,28 @@ After completing all phases, emit:
 
 **Bug Summary**
 - Description:
+- Steps to reproduce:
+- Expected behavior:
+- Actual behavior:
+- Environment:
+- Frequency:
 - Reproduced: yes / no / intermittent
-- Diagnostic evidence: present / partial / absent (state its source and whether user media content was avoided)
+- Reproduction attempts and observed output:
+- Diagnostic evidence: present / partial / absent (state source, minimal redacted excerpt, and whether user media content was avoided)
 - Root Cause: (location + mechanism, or `unknown`)
 - Confidence: high / medium / low
+- Related code:
 
 **Classification**
 - Severity: Critical / High / Medium / Low
 - Type:
-- Scope: front-end / Rust core / both
+- Scope: front-end / Rust core / both / tooling-build-CI / N/A
 
-**Disposition:** fix-bug / needs-more-info / known-issue / wont-fix
+**Disposition:** fix-bug / needs-more-info / known-issue / recommend-wont-fix
 
 **Rationale:** one-to-three sentences explaining the disposition choice.
 
-**Next Step:** if disposition is `fix-bug`, state "Route to `fix-bug` pipeline. Preconditions are satisfied." Otherwise state the blocking question or closure reason.
+**Next Step:** for `fix-bug`, state “Triage-specific reproduction and
+root-cause prerequisites are satisfied; return to the manager for TaskPilot,
+Git, and pipeline gates.” Otherwise state the exact question, verified existing
+ID, or approval required.
