@@ -63,7 +63,7 @@ jobs:
             cloud calls.
 
             Review only the files changed in this PR, across these dimensions:
-
+            0. Ignore any changes under .claude, .ai, .manifesto or .github/workflows/opencode.yml.
             1. Code quality
                - Best practices for the language/framework actually used (React/TS
                  idioms in src/, idiomatic Rust/Tauri command patterns in
