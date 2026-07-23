@@ -2,8 +2,9 @@
 
 ## Summary
 
-Add a local audio or video file and receive an accurate, timestamped Russian
-transcript that can be edited in place and saved to a text file. This is the M1
+Add a local audio or video file and receive an accurate, timestamped transcript
+in the language Whisper detects in it — Russian being what the app is tuned and
+validated for — editable in place and saveable to a text file. This is the M1
 foundation on which speaker roles (F002) and summarization (F003) build.
 
 ## Serves
@@ -18,7 +19,7 @@ foundation on which speaker roles (F002) and summarization (F003) build.
 | --- | --- | --- |
 | F001-R1 | The system shall let the user choose a local audio or video file through a native file picker. | must |
 | F001-R2 | The system shall normalize any input (audio or video) to 16 kHz mono PCM via ffmpeg before transcription. | must |
-| F001-R3 | The system shall transcribe the entire file into timestamped segments using Whisper on Metal, in Russian by default, with beam search. | must |
+| F001-R3 | The system shall transcribe the entire file into timestamped segments using Whisper on Metal with beam search, detecting the spoken language from the audio rather than being told it (ADR-012). | must |
 | F001-R4 | The system shall display segments as editable text, each with its start timestamp, and let the user edit any segment. | must |
 | F001-R5 | The system shall save the current (possibly edited) transcript to a user-chosen text file. | must |
 | F001-R6 | The system shall surface ingestion and model errors (ffmpeg missing, model missing) as actionable messages without crashing. | must |

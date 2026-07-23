@@ -6,9 +6,9 @@ TaskPilot epic **WP-11** owns work status; each task references its `WP-<n>` ID.
 | --- | --- | --- | --- | --- |
 | F004-T1 | SQLite store: meetings/segments/notes schema + CRUD (`store.rs`) | F004-R1 | — | WP-16 |
 | F004-T2 | Auto-save wiring for segment/label/notes edits | F004-R10 | F004-T1 | WP-17 |
-| F004-T3 | `create_transcription(meeting, model, language)` command with progress events | F004-R1, F004-R8 | F004-T1 | WP-18 |
+| F004-T3 | `create_transcription(meeting, model)` command with progress events | F004-R1, F004-R8 | F004-T1 | WP-18 |
 | F004-T4 | `cancel_transcription` (Stop) via abort flag in the progress callback | F004-R8 | F004-T3 | WP-19 |
-| F004-T5 | Language selection UI (Russian / auto-detect) | F004-R6 | F004-T3 | WP-20 |
+| F004-T5 | Transcription language auto-detection (no user selection) | F004-R6 | — | WP-20 |
 | F004-T6 | `list_meetings`/`open_meeting` + meetings list UI + **+ New meeting** | F004-R3 | F004-T1 | WP-21 |
 | F004-T7 | Rename modal (≤120 chars, non-empty) + delete with confirmation (list + header) | F004-R3, F004-R4 | F004-T6 | WP-22 |
 | F004-T8 | Source-file-missing state (disable re-transcribe) | F004-R12 | F004-T6 | WP-23 |

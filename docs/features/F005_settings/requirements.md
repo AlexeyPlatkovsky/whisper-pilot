@@ -12,7 +12,8 @@ per requirement below.
 ## Serves
 
 - `idea.md` scope: "a Settings screen: AI models … Appearance … App language …
-  Update app"; "two independent language settings (UI vs transcription)".
+  Update app"; "one language setting — the app UI language … the transcription
+  language is not a setting at all".
 - `roadmap.md` phases: **M2 — Beta** (beta scope) and **M3 — Release** (release
   scope).
 - ADR-011 (settings, model management, theming, i18n, update).
@@ -50,8 +51,8 @@ per requirement below.
   radio; selecting one makes the task use it.
 - **F005-R6:** switching Light/Dark/System changes the app theme at once and
   persists; System tracks OS light/dark changes.
-- **F005-R8:** the UI renders in English by default; changing transcription
-  language does not change the UI language and vice versa.
+- **F005-R8:** the UI renders in English by default; the language detected for a
+  transcript never changes the UI language.
 - **F005-R9 / R7 / R10:** (release) the added languages/themes are selectable and
   apply; Update can check for and apply an update.
 
@@ -64,8 +65,9 @@ per requirement below.
   alongside the SQLite library (`architecture.md`).
 - Theming and i18n scaffolding are introduced in Beta even with a single language,
   so release only adds assets, not structure.
-- UI language and transcription language (ADR-007) are separate, independently
-  stored settings.
+- The UI language is the **only** language setting. The transcription language is
+  not configurable: Whisper detects it per run and the meeting records the
+  result (ADR-012).
 
 ## Out of Scope
 

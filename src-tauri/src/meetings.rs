@@ -50,7 +50,9 @@ pub fn create_empty_meeting(app_support_dir: &Path, created_at_ms: i64) -> Resul
         source_name: None,
         created_at_ms,
         duration_ms: None,
-        language: "ru".to_string(),
+        // Nothing has been decoded yet, so the meeting claims no language.
+        // `save_transcript` fills this in with what whisper detected.
+        language: crate::transcribe::UNDETECTED_LANGUAGE.to_string(),
         status: "no_files".to_string(),
     })?;
     to_dto(meeting, Vec::new(), None)
@@ -115,6 +117,9 @@ pub fn set_meeting_source(
         }
     }
     meeting.duration_ms = None;
+    // The detected language described the transcript that just went away, so it
+    // is cleared alongside the duration rather than left describing nothing.
+    meeting.language = crate::transcribe::UNDETECTED_LANGUAGE.to_string();
     store.update_meeting(&meeting)?;
 
     let notes = store.get_notes(id)?;
@@ -123,11 +128,17 @@ pub fn set_meeting_source(
 
 /// Persist a freshly produced transcript against a meeting, marking it
 /// `finished`. Segment ordinals follow the supplied order.
+///
+/// `language` is the code whisper detected while producing this transcript.
+/// The stored value is an output of the decode, never an input to it, so
+/// whatever the row held before — including a `"ru"` left by the old hardcoded
+/// default — is simply replaced.
 pub fn save_transcript(
     app_support_dir: &Path,
     id: MeetingId,
     segments: Vec<SegmentDto>,
     duration_ms: Option<i64>,
+    language: String,
 ) -> Result<MeetingDto> {
     let store = Store::open(app_support_dir)?;
     let mut meeting = store
@@ -148,6 +159,7 @@ pub fn save_transcript(
     store.replace_segments(id, &rows)?;
 
     meeting.duration_ms = duration_ms;
+    meeting.language = language;
     meeting.status = "finished".to_string();
     store.update_meeting(&meeting)?;
 
@@ -282,6 +294,20 @@ mod tests {
     }
 
     #[test]
+    fn given_a_new_meeting_when_created_then_its_language_is_undetected_not_forced_russian() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+
+        let created = create_empty_meeting(temp.path(), 123).expect("create meeting");
+
+        // Nothing has been decoded yet, so the row must not claim a language.
+        // Stamping "ru" here is what forced whisper into Russian on English
+        // audio and produced a transcript of hallucinated subtitle credits.
+        // Asserted as a literal, not via the production constant, so changing
+        // that constant cannot silently move this contract.
+        assert_eq!(created.language, "auto");
+    }
+
+    #[test]
     fn given_unknown_id_when_opening_then_typed_store_error_is_returned() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
 
@@ -354,6 +380,7 @@ mod tests {
                 speaker_id: Some(1),
             }],
             Some(2_000),
+            "en".to_string(),
         )
         .expect("save transcript");
 
@@ -364,6 +391,9 @@ mod tests {
         assert_eq!(replaced.source_name.as_deref(), Some("b.m4a"));
         assert!(replaced.segments.is_empty());
         assert_eq!(replaced.duration_ms, None);
+
+        // The detected language went with the discarded transcript.
+        assert_eq!(replaced.language, "auto");
 
         // Clearing the file returns the meeting to the empty state.
         let cleared = set_meeting_source(temp.path(), created.id, None).expect("clear source");
@@ -399,6 +429,7 @@ mod tests {
                 },
             ],
             Some(3_500),
+            "en".to_string(),
         )
         .expect("save transcript");
 
@@ -417,6 +448,65 @@ mod tests {
     }
 
     #[test]
+    fn given_a_completed_transcription_when_saved_then_the_detected_language_is_persisted() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/standup.mp4".to_string()))
+            .expect("attach source");
+
+        let saved = save_transcript(
+            temp.path(),
+            created.id,
+            vec![SegmentDto {
+                start_ms: 0,
+                end_ms: 1_400,
+                text: "Uh, your presenter now.".to_string(),
+                speaker_id: None,
+            }],
+            Some(1_400),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        assert_eq!(saved.language, "en");
+        assert_eq!(
+            open_meeting(temp.path(), created.id)
+                .expect("reopen meeting")
+                .language,
+            "en"
+        );
+    }
+
+    #[test]
+    fn given_a_legacy_russian_row_when_re_transcribed_then_the_detected_language_replaces_it() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = Store::open(temp.path()).expect("open store");
+        // A row stamped "ru" by the old hardcoded default, never a user choice.
+        let legacy = store
+            .create_meeting(meeting("Legacy", 1))
+            .expect("create legacy meeting");
+        assert_eq!(legacy.language, "ru");
+
+        let saved = save_transcript(
+            temp.path(),
+            legacy.id,
+            vec![SegmentDto {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "Okay, let's start from today.".to_string(),
+                speaker_id: None,
+            }],
+            Some(1_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        // The stored value is an output, never fed back in as a decode input,
+        // so no migration is needed to unstick a legacy row.
+        assert_eq!(saved.language, "en");
+    }
+
+    #[test]
     fn given_unknown_id_when_setting_source_or_saving_transcript_then_typed_error_returns() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
 
@@ -425,7 +515,7 @@ mod tests {
             Err(AppError::Store(_))
         ));
         assert!(matches!(
-            save_transcript(temp.path(), 999, Vec::new(), None),
+            save_transcript(temp.path(), 999, Vec::new(), None, "en".to_string()),
             Err(AppError::Store(_))
         ));
     }

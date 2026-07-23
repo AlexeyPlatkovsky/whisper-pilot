@@ -26,7 +26,8 @@ four sections, phased across milestones:
   (each light + dark) at release.
 - **App language** — the **UI** language, **English by default** (only option in
   beta); **Russian, Turkish, Spanish, German, French** at release. Independent of
-  the **transcription** language (Russian default, ADR-007).
+  the **transcription** language, which is auto-detected per run and is not a
+  setting (ADR-012).
 - **Update app** — **release only**: user-initiated check + apply.
 
 Settings persist in a **key–value store** in the app support directory, applied
@@ -42,7 +43,9 @@ release adds only assets.
   audio/transcripts/notes still never leave the device (`architecture.md`
   Security & Privacy).
 - The **UI language** default flips to **English**, superseding the earlier
-  "Russian-first surface" wording; transcription stays Russian by default.
+  "Russian-first surface" wording. (This bullet also said transcription stays
+  Russian by default; ADR-012 later removed that — the transcription language is
+  auto-detected and is not a setting.)
 - Beta stays lean (one model/task, three themes, one language) while the structure
   supports the fuller release surface.
 

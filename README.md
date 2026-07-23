@@ -9,14 +9,15 @@ during processing.
 Built for accuracy over speed: because processing runs offline in batch, it
 uses full-file context and larger models than a real-time transcriber could
 afford. Russian is the primary language today, with English and further
-languages planned.
+languages planned; the language of each recording is detected automatically.
 
 ## Features
 
 - **Local file transcription** — pick any local audio or video file and
   transcribe it end-to-end on-device.
 - **Accurate Russian transcription** — full-file Whisper decoding (Metal
-  acceleration) tuned for quality over real-time speed.
+  acceleration) tuned for quality over real-time speed. The spoken language is
+  detected automatically; there is nothing to configure.
 - **Editable, timestamped transcript** — every segment shows its start time
   and can be corrected in place.
 - **Save to a text file** — export the current (edited) transcript whenever

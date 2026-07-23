@@ -99,7 +99,7 @@ Covers: F005-R8
 Scenario: UI English by default, independent of transcription language
   Given a fresh install
   Then the UI renders in English
-  When the user sets the transcription language to Russian
+  When a Russian recording is transcribed and detected as Russian
   Then the UI language stays English
 ```
 

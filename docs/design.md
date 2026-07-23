@@ -21,11 +21,12 @@ The unit of work is a **Meeting** (one transcription of one source file; see
   progress, or a spinner with a live timer when real progress isn't available.
 - **Edit in place, saved automatically.** Transcript segments and MFU text are
   edited where they are read and persist as you go — no save button, no lost work.
-- **English UI, Russian transcription.** The app **UI language defaults to
-  English** (more languages at release); the **transcription** default is
-  **Russian** with auto-detect (ADR-007). The two are independent settings.
+- **English UI, detected transcription language.** The app **UI language defaults
+  to English** (more languages at release). The **transcription** language is
+  never chosen — Whisper detects it from the audio on every run (ADR-012). The
+  UI language is a setting; the transcription language is a result.
 - **Configurable, not cluttered.** A single **Settings** screen holds models,
-  appearance, and language; the workspace itself stays focused.
+  appearance, and the **app** language; the workspace itself stays focused.
 
 ## Layout — the two-pane shell
 
@@ -34,7 +35,7 @@ The unit of work is a **Meeting** (one transcription of one source file; see
 │ ◎◎◎  [⇤ panel]  [logo]                                  [⚙ settings]   │  ← header row 1 (traffic lights, fixed left controls, gear far right)
 ├───────────────┬───────────────────────────────────────────────────────┤
 │  Meetings      │  ⟨Meeting title⟩  [edit][copy][delete]   [model ▾]     │  ← header row 2 (meeting header)
-│  ───────────   │  [lang ▾]                     [Transcribe][Stop][MFU]  │
+│  ───────────   │                               [Transcribe][Stop][MFU]  │
 │  [+ New]       ├───────────────────────────────────────────────────────┤
 │                │  status bar: waiting / files / transcribing / done …   │  ← status bar
 │  • Meeting A   ├───────────────────────────────────────────────────────┤
@@ -82,8 +83,6 @@ Row 2 — the active meeting's header:
 - **Model switcher** — dropdown of available Whisper models; default **large**.
   If **no model is available**, the switcher shows nothing and the status bar
   shows a warning.
-- **Language selector** — Russian (default) / auto-detect; applies to the next
-  Transcribe run.
 - **Transcribe** — icon button with hover text. **Disabled** when no file is
   attached.
 - **Stop transcribe** — icon button with hover text. **Disabled by default**;
@@ -165,7 +164,8 @@ Whisper model; diarization degrades without its models).
 1. Click **+ New meeting** → an empty meeting is created and selected.
 2. Attach an audio/video file → it appears in the status bar with an **×**. The
    meeting's title defaults to the file name (renamable any time).
-3. (Optional) pick the **model** and **language**.
+3. (Optional) pick the **model**. The language is detected from the audio — there
+   is nothing to choose (ADR-012).
 4. Press **Transcribe** → the UI blocks (except **Stop**); the status bar shows a
    progress bar (or spinner+timer) across two phases: **transcribing**, then
    **identifying speakers** (diarization runs automatically — there is no separate

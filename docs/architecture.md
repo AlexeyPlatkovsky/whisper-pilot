@@ -65,10 +65,22 @@ ffmpeg is a required external dependency (system binary on PATH for now).
 ## Transcription (`transcribe.rs`)
 
 whisper-rs with the `metal` feature; the context is created once and cached in
-`AppState`. Decoding is **full-file** with beam search. **Language** defaults to
-Russian and accepts an explicit language or **auto-detect**. Whisper's progress
-callback drives a progress event; a cancel flag checked in the callback aborts a
-run. Output is timestamped `Segment`s persisted to the meeting.
+`AppState`. Decoding is **full-file** with beam search. **Language is always
+auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
+language argument, so no caller can force one. The code Whisper decoded with is
+read back from decoder state and stored on the meeting, making
+`meetings.language` an *output* of a run rather than an input to one. Detection
+uses the first 30 seconds of audio, so a recording that opens with silence can
+misdetect — a known limitation. Whisper's progress callback drives a progress
+event; a cancel flag checked in the callback aborts a run. Output is timestamped
+`Segment`s persisted to the meeting.
+
+Forcing a language is deliberately unreachable rather than merely defaulted:
+decoding audio as a language it is not in makes Whisper emit one hallucinated
+line per 30-second window instead of the transcript. `DecodeSettings` names the
+configuration as plain data so it can be asserted in a unit test — notably
+`detect_language_only`, which must stay `false` because whisper.cpp returns
+immediately after detection when it is set, yielding an empty transcript.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 + merge** (M2, `diarize.rs`) which runs automatically before the meeting is
@@ -173,7 +185,7 @@ rendering (the header's meeting-label **copy** copies the transcript).
 | `open_file_dialog` | Pick a source audio/video file | M1 |
 | `create_meeting()` | Create an empty meeting; returns its id | M2 |
 | `attach_file(meeting, path)` | Attach the source file to a meeting | M2 |
-| `create_transcription(meeting, model, language)` | Transcribe the attached file into the meeting; emits progress | M2 |
+| `create_transcription(meeting, model)` | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012) | M2 |
 | `cancel_transcription(meeting)` | Abort a running transcription (Stop) | M2 |
 | `list_meetings()` | Meetings list (summaries) | M2 |
 | `open_meeting(id)` | Full meeting (segments, notes, meta) | M2 |

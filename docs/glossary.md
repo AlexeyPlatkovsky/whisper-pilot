@@ -29,5 +29,6 @@ obvious from general software knowledge.
 | **Model catalog** | The fixed, app-defined list of the model(s) each task (transcription, diarization, notes) needs; managed in Settings → AI models (download/delete/verify). Not user-extensible. |
 | **Active model** | (Release) When a task has several downloaded models, the one selected (radio) for that task to use. |
 | **Theme** | The app's visual scheme: Light, Dark, or System (follows the OS) in beta; extra named themes (each light + dark) at release. |
-| **UI language** | The language of the app's interface (English by default; more at release) — distinct from the **transcription language** (Russian by default, ADR-007). |
+| **UI language** | The language of the app's interface (English by default; more at release) — distinct from the **transcription language**, which is auto-detected per run and never chosen (ADR-012). |
+| **Transcription language** | The language Whisper detected in a meeting's audio, stored on the meeting. An output of a run, not an input to one; there is no way to force it (ADR-012). |
 | **Full-file (batch)** | Transcribing an entire file at once with no real-time constraint, as opposed to live/streaming. |

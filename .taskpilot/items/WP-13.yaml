@@ -3,9 +3,9 @@ id: WP-13
 title: Transcription -> meeting (manual, progress, stop, language)
 priority: normal
 type: feature
-status: backlog
+status: in_progress
 created_at: '2026-07-21T10:27:56Z'
-updated_at: '2026-07-21T11:04:18Z'
+updated_at: '2026-07-23T15:16:40Z'
 parent_id: WP-11
-description: Create a meeting transcript by transcribing the attached file on the manual Transcribe action, emitting progress events and honoring Stop; expose model and language selection (Russian default / auto-detect).
+description: Create a meeting transcript by transcribing the attached file on the manual Transcribe action, emitting progress events and honoring Stop; expose model selection. The transcription language is NOT selectable - Whisper auto-detects it on every run and the detected code is stored on the meeting (ADR-012, superseding ADR-007 on this point; delivered by WP-20).
 created_by: M2 planning
