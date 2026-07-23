@@ -8,11 +8,6 @@ export interface Segment {
   speaker_id?: number;
 }
 
-export interface TranscriptResult {
-  file_name: string;
-  segments: Segment[];
-}
-
 export interface MeetingSummary {
   id: number;
   title: string;
@@ -57,11 +52,17 @@ export function openFileDialog(): Promise<string | null> {
   return invoke<string | null>("open_file_dialog");
 }
 
-export function transcribeFile(
-  path: string,
-  language = "ru",
-): Promise<TranscriptResult> {
-  return invoke<TranscriptResult>("transcribe_file", { path, language });
+/** Attach a source file to a meeting, or clear it when `path` is null. */
+export function setMeetingSource(
+  id: number,
+  path: string | null,
+): Promise<Meeting> {
+  return invoke<Meeting>("set_meeting_source", { id, path });
+}
+
+/** Transcribe the meeting's attached file and persist the result. */
+export function transcribeMeeting(id: number): Promise<Meeting> {
+  return invoke<Meeting>("transcribe_meeting", { id });
 }
 
 export function saveTextDialog(

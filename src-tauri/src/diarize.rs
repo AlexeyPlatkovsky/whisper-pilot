@@ -85,16 +85,17 @@ fn extract_segmentation_model(archive_path: &Path) -> Result<PathBuf> {
 
     let mut found = None;
     for entry in entries {
-        let mut entry = entry
-            .map_err(|e| AppError::DiarizationAsset(format!("corrupt segmentation archive: {e}")))?;
+        let mut entry = entry.map_err(|e| {
+            AppError::DiarizationAsset(format!("corrupt segmentation archive: {e}"))
+        })?;
         let path = entry.path().map_err(|e| {
             AppError::DiarizationAsset(format!("corrupt segmentation archive entry path: {e}"))
         })?;
         if path.file_name().and_then(|n| n.to_str()) == Some(SEGMENTATION_ARCHIVE_ENTRY) {
             let mut bytes = Vec::new();
-            entry
-                .read_to_end(&mut bytes)
-                .map_err(|e| AppError::DiarizationAsset(format!("corrupt segmentation archive: {e}")))?;
+            entry.read_to_end(&mut bytes).map_err(|e| {
+                AppError::DiarizationAsset(format!("corrupt segmentation archive: {e}"))
+            })?;
             found = Some(bytes);
             break;
         }
@@ -150,7 +151,10 @@ fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig
 /// Run `diarizer` over `samples` and return its turns ordered by start time.
 /// Defensive: sherpa-onnx already returns turns start-time-sorted, but this
 /// does not depend on that undocumented behavior.
-fn diarize_with(diarizer: &mut impl SpeakerDiarizer, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
+fn diarize_with(
+    diarizer: &mut impl SpeakerDiarizer,
+    samples: Vec<f32>,
+) -> Result<Vec<SpeakerTurn>> {
     let mut turns = diarizer.compute(samples)?;
     turns.sort_by_key(|t| t.start_ms);
     Ok(turns)
@@ -188,12 +192,9 @@ pub fn diarize_samples(
 ) -> Result<Vec<SpeakerTurn>> {
     let models = resolve_diarization_models(app_support_dir)?;
     let config = build_config(speaker_count);
-    let engine = sherpa_rs::diarize::Diarize::new(
-        models.segmentation_model,
-        models.embedding_model,
-        config,
-    )
-    .map_err(|e| AppError::Diarization(format!("failed to initialize diarizer: {e}")))?;
+    let engine =
+        sherpa_rs::diarize::Diarize::new(models.segmentation_model, models.embedding_model, config)
+            .map_err(|e| AppError::Diarization(format!("failed to initialize diarizer: {e}")))?;
     let mut adapter = SherpaDiarizer(engine);
     diarize_with(&mut adapter, samples)
 }
@@ -203,7 +204,10 @@ pub fn diarize_samples(
 /// invariant `Segment`/`SpeakerTurn` already uphold; a malformed span is a
 /// caller bug, not a value this function tries to recover from.
 fn overlap_ms(a: (u32, u32), b: (u32, u32)) -> u32 {
-    debug_assert!(a.0 <= a.1 && b.0 <= b.1, "spans must be well-formed (start <= end)");
+    debug_assert!(
+        a.0 <= a.1 && b.0 <= b.1,
+        "spans must be well-formed (start <= end)"
+    );
     let lo = a.0.max(b.0);
     let hi = a.1.min(b.1);
     hi.saturating_sub(lo)
@@ -212,7 +216,10 @@ fn overlap_ms(a: (u32, u32), b: (u32, u32)) -> u32 {
 /// Temporal gap (ms) between two `[start, end)` spans, or 0 if they touch or
 /// overlap. Same well-formed-span precondition as `overlap_ms`.
 fn gap_ms(a: (u32, u32), b: (u32, u32)) -> u32 {
-    debug_assert!(a.0 <= a.1 && b.0 <= b.1, "spans must be well-formed (start <= end)");
+    debug_assert!(
+        a.0 <= a.1 && b.0 <= b.1,
+        "spans must be well-formed (start <= end)"
+    );
     let lo = a.0.max(b.0);
     let hi = a.1.min(b.1);
     lo.saturating_sub(hi)
@@ -256,7 +263,8 @@ fn assign_speaker(segment: (u32, u32), turns: &[SpeakerTurn]) -> Option<i32> {
             best = Some((speaker, overlap));
         }
     }
-    let (best_speaker, best_overlap) = best.expect("turns is non-empty, so overlap_by_speaker is too");
+    let (best_speaker, best_overlap) =
+        best.expect("turns is non-empty, so overlap_by_speaker is too");
 
     if best_overlap > 0 {
         return Some(best_speaker);
@@ -379,7 +387,10 @@ mod tests {
         let resolved = resolve_diarization_models(dir.path()).unwrap();
 
         assert_eq!(resolved.embedding_model, paths[1]);
-        assert_eq!(std::fs::read(&resolved.embedding_model).unwrap(), embedding_bytes);
+        assert_eq!(
+            std::fs::read(&resolved.embedding_model).unwrap(),
+            embedding_bytes
+        );
         let extracted = std::fs::read(&resolved.segmentation_model).unwrap();
         assert_eq!(extracted, model_bytes);
         assert!(resolved
@@ -440,7 +451,10 @@ mod tests {
             .unwrap()
             .join("sherpa-onnx-pyannote-segmentation-3-0")
             .join("model.onnx");
-        assert!(!target.exists(), "no partial file left after a failed extraction");
+        assert!(
+            !target.exists(),
+            "no partial file left after a failed extraction"
+        );
     }
 
     #[test]
@@ -455,7 +469,11 @@ mod tests {
         header.set_mode(0o644);
         header.set_cksum();
         builder
-            .append_data(&mut header, "sherpa-onnx-pyannote-segmentation-3-0/README.md", &b"nope"[..])
+            .append_data(
+                &mut header,
+                "sherpa-onnx-pyannote-segmentation-3-0/README.md",
+                &b"nope"[..],
+            )
             .unwrap();
         builder.into_inner().unwrap().finish().unwrap();
 
@@ -590,7 +608,10 @@ mod tests {
         // Gap segment after both turns, closer to the second (1000ms away
         // vs 4000ms away from the first).
         let after_both = [(5_000, 5_500)];
-        assert_eq!(merge_segments_with_turns(&after_both, &turns), vec![Some(2)]);
+        assert_eq!(
+            merge_segments_with_turns(&after_both, &turns),
+            vec![Some(2)]
+        );
     }
 
     #[test]
@@ -609,17 +630,17 @@ mod tests {
     fn merge_assigns_none_for_every_segment_when_turns_is_empty() {
         let segments = [(0, 1_000), (2_000, 3_000)];
 
-        assert_eq!(
-            merge_segments_with_turns(&segments, &[]),
-            vec![None, None]
-        );
+        assert_eq!(merge_segments_with_turns(&segments, &[]), vec![None, None]);
     }
 
     #[test]
     fn merge_returns_empty_for_empty_segments() {
         let turns = [speaker_turn(0, 1_000, 1)];
 
-        assert_eq!(merge_segments_with_turns(&[], &turns), Vec::<Option<i32>>::new());
+        assert_eq!(
+            merge_segments_with_turns(&[], &turns),
+            Vec::<Option<i32>>::new()
+        );
     }
 
     #[test]
@@ -658,7 +679,10 @@ mod tests {
 
     #[test]
     fn assign_speaker_ids_leaves_speaker_id_untouched_when_turns_is_empty() {
-        let mut segments = [transcript_segment(0, 1_000), transcript_segment(2_000, 3_000)];
+        let mut segments = [
+            transcript_segment(0, 1_000),
+            transcript_segment(2_000, 3_000),
+        ];
 
         assign_speaker_ids(&mut segments, &[]);
 
@@ -703,7 +727,9 @@ mod tests {
 
         apply_diarization_outcome(
             &mut segments,
-            Ok(Err(AppError::DiarizationAsset("models not downloaded".to_string()))),
+            Ok(Err(AppError::DiarizationAsset(
+                "models not downloaded".to_string(),
+            ))),
         );
 
         assert_eq!(segments[0].speaker_id, None);

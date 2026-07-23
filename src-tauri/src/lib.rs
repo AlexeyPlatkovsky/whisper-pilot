@@ -61,13 +61,6 @@ impl AppState {
     }
 }
 
-/// Result of transcribing one file.
-#[derive(serde::Serialize)]
-struct TranscriptResult {
-    file_name: String,
-    segments: Vec<Segment>,
-}
-
 /// Open a native file picker for audio/video and return the chosen path.
 #[tauri::command]
 async fn open_file_dialog() -> Option<String> {
@@ -89,23 +82,17 @@ async fn open_file_dialog() -> Option<String> {
     .flatten()
 }
 
-/// Transcribe the file at `path` into Russian (default) timestamped segments.
-#[tauri::command]
-async fn transcribe_file(
-    app: tauri::AppHandle,
+/// Decode, transcribe, and diarize the file at `path`. Diarization runs
+/// automatically after transcription; any failure there (models missing,
+/// engine error, or the task panicking) degrades to plain speaker-less
+/// segments rather than failing the transcription.
+async fn run_transcription(
+    app_support_dir: PathBuf,
+    ctx: Arc<WhisperContext>,
     path: String,
-    language: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<TranscriptResult> {
+    language: String,
+) -> Result<Vec<Segment>> {
     let input = PathBuf::from(&path);
-    let file_name = input
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.clone());
-    let language = language.unwrap_or_else(|| "ru".to_string());
-
-    let app_support_dir = app_data_dir(&app)?;
-    let ctx = state.model(app_support_dir.clone()).await?;
 
     // Decode once (off the reactor); both transcription and diarization run
     // over the same samples.
@@ -113,23 +100,57 @@ async fn transcribe_file(
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
     let samples_for_diarize = samples.clone();
-    let mut segments = tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples, &language))
-        .await
-        .map_err(|e| AppError::Transcribe(e.to_string()))??;
+    let mut segments =
+        tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples, &language))
+            .await
+            .map_err(|e| AppError::Transcribe(e.to_string()))??;
 
-    // Diarization runs automatically after transcription; any failure here
-    // (models missing, engine error, or the task itself panicking) degrades
-    // to plain speaker-less segments rather than failing the transcription.
     let diarize_outcome = tokio::task::spawn_blocking(move || {
         diarize::diarize_samples(&app_support_dir, samples_for_diarize, None)
     })
     .await;
     diarize::apply_diarization_outcome(&mut segments, diarize_outcome);
 
-    Ok(TranscriptResult {
-        file_name,
-        segments,
-    })
+    Ok(segments)
+}
+
+/// Attach (or clear, when `path` is `None`) the source file of a meeting.
+/// Selecting the file is separate from running the transcription.
+#[tauri::command]
+fn set_meeting_source(app: tauri::AppHandle, id: i64, path: Option<String>) -> Result<MeetingDto> {
+    meetings::set_meeting_source(&app_data_dir(&app)?, id, path)
+}
+
+/// Transcribe the meeting's attached source file into Russian (default)
+/// timestamped segments and persist the result against the meeting.
+#[tauri::command]
+async fn transcribe_meeting(
+    app: tauri::AppHandle,
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<MeetingDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let meeting = meetings::open_meeting(&app_support_dir, id)?;
+    let language = meeting.language;
+    let path = meeting.source_path.ok_or_else(|| {
+        AppError::Transcribe("meeting has no source file to transcribe".to_string())
+    })?;
+
+    let ctx = state.model(app_support_dir.clone()).await?;
+    let segments = run_transcription(app_support_dir.clone(), ctx, path, language).await?;
+
+    let duration_ms = segments.last().map(|segment| segment.end_ms as i64);
+    let dtos = segments
+        .into_iter()
+        .map(|segment| meetings::SegmentDto {
+            start_ms: segment.start_ms as i64,
+            end_ms: segment.end_ms as i64,
+            text: segment.text,
+            speaker_id: segment.speaker_id.map(i64::from),
+        })
+        .collect();
+
+    meetings::save_transcript(&app_support_dir, id, dtos, duration_ms)
 }
 
 /// Save `content` to a user-chosen destination; return the path written.
@@ -242,7 +263,8 @@ pub fn run() {
             open_meeting,
             rename_meeting,
             delete_meeting,
-            transcribe_file,
+            set_meeting_source,
+            transcribe_meeting,
             save_text_dialog,
             get_settings,
             set_setting,

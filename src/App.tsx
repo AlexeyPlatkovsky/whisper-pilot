@@ -7,7 +7,8 @@ import {
   listTaskModels,
   openMeeting,
   openFileDialog,
-  transcribeFile,
+  setMeetingSource,
+  transcribeMeeting,
   saveTextDialog,
   renameMeeting,
   type Meeting as PersistedMeeting,
@@ -45,6 +46,16 @@ function formatDuration(ms: number): string {
   const s = total % 60;
   if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
   return `${m}m ${s.toString().padStart(2, "0")}s`;
+}
+
+function toSummary(meeting: PersistedMeeting): MeetingSummary {
+  return {
+    id: meeting.id,
+    title: meeting.title,
+    created_at_ms: meeting.created_at_ms,
+    duration_ms: meeting.duration_ms,
+    status: meeting.status,
+  };
 }
 
 export function App() {
@@ -110,6 +121,16 @@ export function App() {
     setStatus({ kind: "idle" });
   }, []);
 
+  const upsertSummary = useCallback((meeting: PersistedMeeting) => {
+    setMeetingSummaries((previous) =>
+      previous.some((summary) => summary.id === meeting.id)
+        ? previous.map((summary) =>
+            summary.id === meeting.id ? toSummary(meeting) : summary,
+          )
+        : [toSummary(meeting), ...previous],
+    );
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
 
@@ -117,8 +138,17 @@ export function App() {
       try {
         const summaries = await listMeetings();
         if (cancelled) return;
+        // The workspace is always backed by a real, persisted meeting. When the
+        // library is empty we seed one so the initial meeting can be renamed or
+        // deleted and never loses its transcript when another meeting is opened.
+        if (summaries.length === 0) {
+          const meeting = await createMeeting();
+          if (cancelled) return;
+          setMeetingSummaries([toSummary(meeting)]);
+          applyActiveMeeting(meeting);
+          return;
+        }
         setMeetingSummaries(summaries);
-        if (summaries.length === 0) return;
         const meeting = await openMeeting(summaries[0].id);
         if (!cancelled) applyActiveMeeting(meeting);
       } catch (error) {
@@ -157,19 +187,45 @@ export function App() {
     return formatDuration(segments[segments.length - 1].end_ms);
   }, [segments]);
 
-  async function handleAddFile() {
+  // Selecting a file only attaches it to the active meeting; transcription is
+  // a separate, explicit action (the Transcribe button).
+  async function handleChooseFile() {
+    if (!activeMeeting) return;
     try {
       const path = await openFileDialog();
       if (!path) return;
-      const shortName = path.split("/").pop() ?? path;
-      setStatus({ kind: "transcribing", file: shortName });
+      const meeting = await setMeetingSource(activeMeeting.id, path);
+      applyActiveMeeting(meeting);
+      upsertSummary(meeting);
+    } catch (e) {
+      setStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  async function handleTranscribe() {
+    if (!activeMeeting?.source_path) return;
+    const id = activeMeeting.id;
+    try {
+      setStatus({
+        kind: "transcribing",
+        file: activeMeeting.source_name ?? "",
+      });
       setSegments([]);
       setSpeakerLabels({});
-      setFileName(shortName);
-      const result = await transcribeFile(path, "ru");
-      setSegments(result.segments);
-      setFileName(result.file_name);
-      setStatus({ kind: "idle" });
+      const meeting = await transcribeMeeting(id);
+      applyActiveMeeting(meeting);
+      upsertSummary(meeting);
+    } catch (e) {
+      setStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  async function handleRemoveFile() {
+    if (!activeMeeting) return;
+    try {
+      const meeting = await setMeetingSource(activeMeeting.id, null);
+      applyActiveMeeting(meeting);
+      upsertSummary(meeting);
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
     }
@@ -178,17 +234,8 @@ export function App() {
   async function handleCreateMeeting() {
     try {
       const meeting = await createMeeting();
-      setMeetingSummaries((previous) => [
-        {
-          id: meeting.id,
-          title: meeting.title,
-          created_at_ms: meeting.created_at_ms,
-          duration_ms: meeting.duration_ms,
-          status: meeting.status,
-        },
-        ...previous.filter((summary) => summary.id !== meeting.id),
-      ]);
-      if (activeMeeting?.id === meeting.id) applyActiveMeeting(meeting);
+      upsertSummary(meeting);
+      applyActiveMeeting(meeting);
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
     }
@@ -249,19 +296,19 @@ export function App() {
     );
     try {
       await deleteMeeting(target.id);
-      if (activeMeeting?.id === target.id && remaining[0]) {
+      const wasActive = activeMeeting?.id === target.id;
+      if (wasActive && remaining[0]) {
         const next = await openMeeting(remaining[0].id);
         setMeetingSummaries(remaining);
         applyActiveMeeting(next);
+      } else if (wasActive) {
+        // Deleting the last meeting seeds a fresh empty one so the workspace
+        // always has a real, persisted meeting backing it.
+        const meeting = await createMeeting();
+        setMeetingSummaries([toSummary(meeting)]);
+        applyActiveMeeting(meeting);
       } else {
         setMeetingSummaries(remaining);
-        if (activeMeeting?.id === target.id) {
-          setActiveMeeting(null);
-          setFileName(null);
-          setSegments([]);
-          setSpeakerLabels({});
-          setStatus({ kind: "idle" });
-        }
       }
       setDeleteTarget(null);
     } catch (error) {
@@ -302,7 +349,7 @@ export function App() {
       {/* ---- Top header (shares the row with the macOS traffic lights, which
           the OS draws via the Overlay titleBarStyle — we reserve space for
           them on the left rather than drawing our own) ------------------------ */}
-      <header className="wp-header" data-tauri-drag-region>
+      <header className="wp-header" data-tauri-drag-region="deep">
         <div className="wp-header-lead">
           <div className="wp-header-left">
             {/* Reserved gap for the OS traffic lights (close/min/max) */}
@@ -401,7 +448,20 @@ export function App() {
           </div>
 
           <div className="wp-action-group">
-            <ActionIcon icon="play" label="Start" disabled />
+            <button
+              type="button"
+              className="wp-icon-btn"
+              aria-label="Transcribe"
+              title="Transcribe"
+              onClick={handleTranscribe}
+              disabled={
+                busy ||
+                !activeMeeting?.source_path ||
+                transcriptionModelReady !== true
+              }
+            >
+              <Icon name="play" size={17} />
+            </button>
             <span className="wp-sep" />
             <ActionIcon icon="refresh-cw" label="Re-run" disabled />
             <span className="wp-sep" />
@@ -434,8 +494,10 @@ export function App() {
             className="wp-icon-btn wp-info-add"
             aria-label="Choose file"
             title="Choose an audio or video file"
-            onClick={handleAddFile}
-            disabled={busy || transcriptionModelReady !== true}
+            onClick={handleChooseFile}
+            disabled={
+              busy || !activeMeeting || transcriptionModelReady !== true
+            }
           >
             <Icon name="folder" size={16} />
           </button>
@@ -446,12 +508,7 @@ export function App() {
                 type="button"
                 className="wp-icon-btn wp-icon-btn--tiny"
                 aria-label="Remove file"
-                onClick={() => {
-                  setFileName(null);
-                  setSegments([]);
-                  setSpeakerLabels({});
-                  setStatus({ kind: "idle" });
-                }}
+                onClick={handleRemoveFile}
               >
                 <Icon name="x" size={12} />
               </button>

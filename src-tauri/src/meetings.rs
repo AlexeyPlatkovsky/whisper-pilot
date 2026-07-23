@@ -2,7 +2,7 @@
 
 use crate::error::AppError;
 use crate::error::Result;
-use crate::store::{Meeting, MeetingId, MeetingNotes, NewMeeting, Store};
+use crate::store::{Meeting, MeetingId, MeetingNotes, NewMeeting, NewSegment, Store};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -79,6 +79,81 @@ pub fn open_meeting(app_support_dir: &Path, id: MeetingId) -> Result<MeetingDto>
     let segments = store.list_segments(id)?;
     let notes = store.get_notes(id)?;
     to_dto(meeting, segments, notes)
+}
+
+/// Attach a source file to a meeting, or clear it when `source_path` is `None`.
+/// Either way any prior transcript is discarded: attaching a file marks the
+/// meeting `ready` to transcribe, clearing it returns it to the empty
+/// `no_files` state. Selecting the file and running transcription are separate,
+/// explicit actions.
+pub fn set_meeting_source(
+    app_support_dir: &Path,
+    id: MeetingId,
+    source_path: Option<String>,
+) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    let mut meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+
+    // Changing the source invalidates the existing transcript and duration.
+    store.replace_segments(id, &[])?;
+    match source_path {
+        Some(path) => {
+            let name = Path::new(&path)
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| path.clone());
+            meeting.source_path = Some(path);
+            meeting.source_name = Some(name);
+            meeting.status = "ready".to_string();
+        }
+        None => {
+            meeting.source_path = None;
+            meeting.source_name = None;
+            meeting.status = "no_files".to_string();
+        }
+    }
+    meeting.duration_ms = None;
+    store.update_meeting(&meeting)?;
+
+    let notes = store.get_notes(id)?;
+    to_dto(meeting, Vec::new(), notes)
+}
+
+/// Persist a freshly produced transcript against a meeting, marking it
+/// `finished`. Segment ordinals follow the supplied order.
+pub fn save_transcript(
+    app_support_dir: &Path,
+    id: MeetingId,
+    segments: Vec<SegmentDto>,
+    duration_ms: Option<i64>,
+) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    let mut meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+
+    let rows: Vec<NewSegment> = segments
+        .iter()
+        .enumerate()
+        .map(|(ordinal, segment)| NewSegment {
+            ordinal: ordinal as i64,
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            text: segment.text.clone(),
+            speaker_id: segment.speaker_id,
+        })
+        .collect();
+    store.replace_segments(id, &rows)?;
+
+    meeting.duration_ms = duration_ms;
+    meeting.status = "finished".to_string();
+    store.update_meeting(&meeting)?;
+
+    let stored = store.list_segments(id)?;
+    let notes = store.get_notes(id)?;
+    to_dto(meeting, stored, notes)
 }
 
 pub fn rename_meeting(app_support_dir: &Path, id: MeetingId, title: String) -> Result<MeetingDto> {
@@ -240,6 +315,119 @@ mod tests {
             serde_json::from_value(json).expect("deserialize meeting DTO");
 
         assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn given_empty_meeting_when_source_attached_then_it_is_ready_with_a_derived_name() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        let attached = set_meeting_source(
+            temp.path(),
+            created.id,
+            Some("/recordings/Weekly sync.m4a".to_string()),
+        )
+        .expect("attach source");
+
+        assert_eq!(attached.status, "ready");
+        assert_eq!(
+            attached.source_path.as_deref(),
+            Some("/recordings/Weekly sync.m4a")
+        );
+        assert_eq!(attached.source_name.as_deref(), Some("Weekly sync.m4a"));
+        assert!(attached.segments.is_empty());
+    }
+
+    #[test]
+    fn given_transcribed_meeting_when_source_replaced_or_cleared_then_transcript_is_discarded() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/a.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![SegmentDto {
+                start_ms: 0,
+                end_ms: 2_000,
+                text: "Saved".to_string(),
+                speaker_id: Some(1),
+            }],
+            Some(2_000),
+        )
+        .expect("save transcript");
+
+        // Attaching a different file drops the prior transcript and duration.
+        let replaced = set_meeting_source(temp.path(), created.id, Some("/b.m4a".to_string()))
+            .expect("replace source");
+        assert_eq!(replaced.status, "ready");
+        assert_eq!(replaced.source_name.as_deref(), Some("b.m4a"));
+        assert!(replaced.segments.is_empty());
+        assert_eq!(replaced.duration_ms, None);
+
+        // Clearing the file returns the meeting to the empty state.
+        let cleared = set_meeting_source(temp.path(), created.id, None).expect("clear source");
+        assert_eq!(cleared.status, "no_files");
+        assert_eq!(cleared.source_path, None);
+        assert_eq!(cleared.source_name, None);
+        assert!(cleared.segments.is_empty());
+    }
+
+    #[test]
+    fn given_attached_meeting_when_transcript_saved_then_it_is_finished_and_reopens_with_segments()
+    {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+
+        let saved = save_transcript(
+            temp.path(),
+            created.id,
+            vec![
+                SegmentDto {
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    text: "First".to_string(),
+                    speaker_id: Some(1),
+                },
+                SegmentDto {
+                    start_ms: 1_000,
+                    end_ms: 3_500,
+                    text: "Second".to_string(),
+                    speaker_id: None,
+                },
+            ],
+            Some(3_500),
+        )
+        .expect("save transcript");
+
+        assert_eq!(saved.status, "finished");
+        assert_eq!(saved.duration_ms, Some(3_500));
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert_eq!(
+            reopened
+                .segments
+                .iter()
+                .map(|segment| segment.text.as_str())
+                .collect::<Vec<_>>(),
+            vec!["First", "Second"]
+        );
+        assert_eq!(reopened.status, "finished");
+    }
+
+    #[test]
+    fn given_unknown_id_when_setting_source_or_saving_transcript_then_typed_error_returns() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+
+        assert!(matches!(
+            set_meeting_source(temp.path(), 999, Some("/x.m4a".to_string())),
+            Err(AppError::Store(_))
+        ));
+        assert!(matches!(
+            save_transcript(temp.path(), 999, Vec::new(), None),
+            Err(AppError::Store(_))
+        ));
     }
 
     #[test]

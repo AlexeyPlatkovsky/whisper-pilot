@@ -4,12 +4,6 @@ This file is the root operational contract for the WhisperPilot project.
 All AI tools working on this project must read this file before starting any work.
 This file overrides any tool-specific adapter on conflict.
 
-Instruction authority is layered: `AGENTS.md` owns project-wide policy;
-`task-routing` owns classification and routing; pipelines own step order; skills
-and agents own procedures and output contracts; and conventions own shared
-quality standards. Lower layers may narrow a higher-layer rule but must not
-contradict it.
-
 ## Agent And Subagent Execution
 
 Distinct-agent handoffs must preserve the invoked agent's declared state-mutation
@@ -22,21 +16,17 @@ execution context executes its own instructions directly.
 
 An applicable project instruction, pipeline, or routed handoff that explicitly
 names an agent or subagent is standing user authorization to invoke that agent.
-Do not request separate user approval for that invocation. This authorization is
-limited to the named agent, its declared responsibility, and the structured
-inputs required by the invoking artifact. Stop for a new user decision only when
-a higher-level gate requires consent, the invocation is outside that scope, or
-the handoff cannot preserve the declared state-mutation boundary safely.
+Do not request separate user approval for that invocation.
 
 ---
 
 ## Project
 
 WhisperPilot is a macOS desktop application for **offline transcription of local
-audio and video files**, primarily in Russian, with speaker attribution and a
-local-LLM summary. There is no live capture and no cloud. Product scope,
-milestones, and engines are owned by `docs/idea.md`; technical architecture is
-owned by `docs/architecture.md`. Do not restate them here.
+audio and video files**, with speaker attribution and a local-LLM summary. 
+There is no live capture and no cloud. Product scope, milestones, and engines 
+are owned by `docs/idea.md`; technical architecture is owned by `docs/architecture.md`. 
+Do not restate them here.
 
 ---
 
@@ -44,8 +34,7 @@ owned by `docs/architecture.md`. Do not restate them here.
 
 When the user asks a question, requests an assessment or review, or asks whether
 something is possible, answer the question before taking implementation action.
-Do not interpret questions such as "can we do this?", "is this correct?", or
-"would this work?" as requests to make changes.
+Do not interpret questions such as requests to make changes.
 
 Read-only inspection is permitted when needed to answer accurately. Do not
 create, edit, or delete files; run state-changing commands; or initiate work
@@ -60,7 +49,12 @@ classification and routing gates before making changes.
 
 ## Task Classification
 
-Before any file is created, edited, or deleted, state the task classification.
+Stating the task classification is a required output. Before any file is
+created, edited, or deleted, state it explicitly in your response as
+`<complexity>; <risk>; <domain>`. If that line is absent, the classification
+gate has not been satisfied and no file may be touched. This line is the minimum
+gate; non-trivial work additionally states the Quality Tier and full
+classification through `.claude/skills/task-routing/SKILL.md`.
 For every non-trivial task, as determined by
 `.claude/skills/task-routing/SKILL.md`, use that skill and do not implement until
 it emits `Manager: manager - output below`. TaskPilot-only administration is
@@ -68,6 +62,31 @@ exempt from routing; `.claude/skills/taskpilot-work/SKILL.md` owns that
 procedure. This exemption applies only to metadata-only administration; the
 underlying non-trivial work still requires its TaskPilot identity and branch
 decision.
+
+---
+
+## Non-Negotiable Gates And User Waivers
+
+The classification gate, the `task-routing` gate for non-trivial work (subject
+only to the routing exemptions defined in §Task Classification), the Git branch
+decision gate for non-trivial work, and the system-level approval stop are
+mandatory stop gates. They may not be skipped, deferred, or collapsed for
+convenience. For trivial work the branch gate resolves by defaulting to the
+current branch per §Git Operation Authority.
+
+A user waiver is interpreted literally and minimally: it removes only the
+specific obligation the user named, and nothing adjacent. Waiving a TaskPilot
+item — or any single artifact — never waives classification, routing, the routed
+quality gates, or the branch decision. A terse instruction ("just fix it", "no
+ticket", "quick change") is not a waiver of any gate. When a broad instruction
+could be read as skipping a gate, treat it as authorization to do the work, not
+permission to skip the gate, and proceed through the gate. To skip a mandatory
+gate the user must say so explicitly for that specific gate.
+
+An operating mode that biases toward acting without pausing — for example, Auto
+Mode — changes only whether to ask optional clarifying questions. It never
+overrides a mandatory stop gate and never converts an ambiguous instruction into
+a waiver. When bias-to-action and a stop gate conflict, the stop gate wins.
 
 ---
 

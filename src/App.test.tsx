@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
+import type { Meeting, Segment } from "./ipc";
 
 const TRANSCRIPTION_DOWNLOADED = {
   id: "transcription",
@@ -17,12 +18,41 @@ const TRANSCRIPTION_NOT_DOWNLOADED = {
   downloaded: false,
 };
 
+// The workspace is always backed by a real, persisted meeting. On an empty
+// library the app seeds this one on mount; attaching a file and transcribing
+// are separate, explicit steps that each return an updated meeting.
+const EMPTY_MEETING: Meeting = {
+  id: 100,
+  title: "New Meeting",
+  created_at_ms: 0,
+  language: "ru",
+  status: "no_files",
+  segments: [],
+};
+
+const ATTACHED_MEETING: Meeting = {
+  ...EMPTY_MEETING,
+  source_path: "/path/to/meeting.mp3",
+  source_name: "meeting.mp3",
+  status: "ready",
+  segments: [],
+};
+
+function transcribedMeeting(segments: Segment[]): Meeting {
+  return {
+    ...ATTACHED_MEETING,
+    status: "finished",
+    duration_ms: segments.at(-1)?.end_ms ?? 0,
+    segments,
+  };
+}
+
+const HELLO_SEGMENT: Segment = { start_ms: 0, end_ms: 1000, text: "Hello" };
+
 vi.mock("./ipc", () => ({
   openFileDialog: vi.fn(async () => "/path/to/meeting.mp3"),
-  transcribeFile: vi.fn(async () => ({
-    file_name: "meeting.mp3",
-    segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
-  })),
+  setMeetingSource: vi.fn(),
+  transcribeMeeting: vi.fn(),
   createMeeting: vi.fn(),
   deleteMeeting: vi.fn(),
   listMeetings: vi.fn(),
@@ -45,6 +75,14 @@ async function waitForAddFileEnabled() {
   );
 }
 
+// The default flow: attach a file, then explicitly transcribe it.
+async function chooseAndTranscribe(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(screen.getByRole("button", { name: "Choose file" }));
+  const transcribe = await screen.findByRole("button", { name: "Transcribe" });
+  await waitFor(() => expect(transcribe).not.toBeDisabled());
+  await user.click(transcribe);
+}
+
 // listTaskModels has no factory default (every test sets its own
 // resolved/rejected value); reset it so a persistent implementation or a
 // leftover "once" queue from one test can never leak into the next.
@@ -52,13 +90,15 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.mocked(ipc.listTaskModels).mockReset();
   vi.mocked(ipc.openFileDialog).mockResolvedValue("/path/to/meeting.mp3");
-  vi.mocked(ipc.transcribeFile).mockResolvedValue({
-    file_name: "meeting.mp3",
-    segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
-  });
+  vi.mocked(ipc.createMeeting).mockResolvedValue({ ...EMPTY_MEETING });
+  vi.mocked(ipc.setMeetingSource).mockImplementation(async (_id, path) =>
+    path === null ? { ...EMPTY_MEETING } : { ...ATTACHED_MEETING },
+  );
+  vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+    transcribedMeeting([HELLO_SEGMENT]),
+  );
   vi.mocked(ipc.saveTextDialog).mockResolvedValue(null);
   vi.mocked(ipc.listMeetings).mockResolvedValue([]);
-  vi.mocked(ipc.createMeeting).mockReset();
   vi.mocked(ipc.deleteMeeting).mockReset();
   vi.mocked(ipc.openMeeting).mockReset();
   vi.mocked(ipc.renameMeeting).mockReset();
@@ -89,7 +129,7 @@ describe("App — Settings entry point", () => {
     render(<App />);
     await waitForAddFileEnabled();
 
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hello");
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
@@ -104,7 +144,7 @@ describe("App — Settings entry point", () => {
     render(<App />);
     await waitForAddFileEnabled();
 
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hello");
 
     expect(
@@ -196,11 +236,8 @@ describe("App — English strings", () => {
 
   it("shows a compact transcribing status — label plus a ticking timer, no filename or blurb", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    let resolveTranscribe: (v: {
-      file_name: string;
-      segments: { start_ms: number; end_ms: number; text: string }[];
-    }) => void = () => {};
-    vi.mocked(ipc.transcribeFile).mockReturnValue(
+    let resolveTranscribe: (meeting: Meeting) => void = () => {};
+    vi.mocked(ipc.transcribeMeeting).mockReturnValue(
       new Promise((resolve) => {
         resolveTranscribe = resolve;
       }),
@@ -214,6 +251,11 @@ describe("App — English strings", () => {
       render(<App />);
       await waitForAddFileEnabled();
       await user.click(screen.getByRole("button", { name: "Choose file" }));
+      const transcribe = await screen.findByRole("button", {
+        name: "Transcribe",
+      });
+      await waitFor(() => expect(transcribe).not.toBeDisabled());
+      await user.click(transcribe);
 
       // The transcribing state lives in the header status region (role="status").
       const status = await screen.findByRole("status");
@@ -233,10 +275,7 @@ describe("App — English strings", () => {
         "00:02",
       );
 
-      resolveTranscribe({
-        file_name: "meeting.mp3",
-        segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
-      });
+      resolveTranscribe(transcribedMeeting([HELLO_SEGMENT]));
       await screen.findByDisplayValue("Hello");
     } finally {
       vi.useRealTimers();
@@ -270,7 +309,26 @@ describe("App — file handling", () => {
     await waitForAddFileEnabled();
     await user.click(screen.getByRole("button", { name: "Choose file" }));
 
+    expect(ipc.setMeetingSource).not.toHaveBeenCalled();
     expect(screen.getByText("No file loaded")).toBeInTheDocument();
+  });
+
+  it("attaches a chosen file without transcribing until Transcribe is clicked", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose file" }));
+
+    // File is attached, but no transcript is produced on its own.
+    expect(await screen.findByText("meeting.mp3")).toBeInTheDocument();
+    expect(ipc.transcribeMeeting).not.toHaveBeenCalled();
+    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Transcribe" }));
+    expect(await screen.findByDisplayValue("Hello")).toBeInTheDocument();
+    expect(ipc.transcribeMeeting).toHaveBeenCalledWith(EMPTY_MEETING.id);
   });
 
   it("shows a model-missing warning when the transcription model is not downloaded", async () => {
@@ -284,16 +342,16 @@ describe("App — file handling", () => {
     ).toBeInTheDocument();
   });
 
-  it("displays the transcription error when transcribeFile rejects", async () => {
+  it("displays the transcription error when transcribeMeeting rejects", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeFile).mockRejectedValue(
+    vi.mocked(ipc.transcribeMeeting).mockRejectedValue(
       new Error("whisper failed"),
     );
     const user = userEvent.setup();
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
 
     expect(await screen.findByText(/whisper failed/i)).toBeInTheDocument();
   });
@@ -304,12 +362,13 @@ describe("App — file handling", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hello");
 
     await user.click(screen.getByRole("button", { name: "Remove file" }));
 
-    expect(screen.getByText("No file loaded")).toBeInTheDocument();
+    expect(ipc.setMeetingSource).toHaveBeenCalledWith(EMPTY_MEETING.id, null);
+    expect(await screen.findByText("No file loaded")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
   });
 
@@ -319,7 +378,7 @@ describe("App — file handling", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hello");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
@@ -384,18 +443,43 @@ describe("App — persisted meeting workspace", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("Older meeting")).toBeInTheDocument();
     expect(screen.queryByText("Product Standup")).not.toBeInTheDocument();
+    // A non-empty library must not seed an extra meeting.
+    expect(ipc.createMeeting).not.toHaveBeenCalled();
   });
 
-  it("shows an empty library rather than fake sample rows when no meetings exist", async () => {
+  it("seeds a single New Meeting when the library is empty, without fake sample rows", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    // listMeetings defaults to [] in beforeEach.
+
     render(<App />);
 
-    expect(await screen.findByText("No meetings yet")).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "New Meeting" }),
+    ).toBeInTheDocument();
+    expect(ipc.createMeeting).toHaveBeenCalledOnce();
+    expect(screen.queryByText("No meetings yet")).not.toBeInTheDocument();
     expect(screen.queryByText("Product Standup")).not.toBeInTheDocument();
   });
 
   it("creates and selects an empty meeting without opening a file dialog or starting transcription", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    // Start from a non-empty library so no meeting is auto-seeded on mount.
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: 1,
+        title: "Older meeting",
+        created_at_ms: 1_000,
+        status: "finished",
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue({
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+      language: "ru",
+      status: "finished",
+      segments: [],
+    });
     vi.mocked(ipc.createMeeting).mockResolvedValue({
       id: 3,
       title: "New Meeting",
@@ -407,13 +491,12 @@ describe("App — persisted meeting workspace", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await user.click(
-      await screen.findByRole("button", { name: "New meeting" }),
-    );
+    await screen.findByRole("heading", { name: "Older meeting" });
+    await user.click(screen.getByRole("button", { name: "New meeting" }));
 
     expect(ipc.createMeeting).toHaveBeenCalledOnce();
     expect(ipc.openFileDialog).not.toHaveBeenCalled();
-    expect(ipc.transcribeFile).not.toHaveBeenCalled();
+    expect(ipc.transcribeMeeting).not.toHaveBeenCalled();
     expect(
       screen.getByRole("heading", { name: "New Meeting" }),
     ).toBeInTheDocument();
@@ -477,6 +560,41 @@ describe("App — persisted meeting workspace", () => {
       screen.getByRole("heading", { name: "Newest meeting" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent("disk full");
+  });
+
+  it("switches focus to a newly created meeting instead of staying on the previous one", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
+    vi.mocked(ipc.createMeeting).mockResolvedValue({
+      id: 9,
+      title: "New Meeting",
+      created_at_ms: 9_000,
+      language: "ru",
+      status: "no_files",
+      segments: [],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Newest meeting" });
+    await user.click(screen.getByRole("button", { name: "New meeting" }));
+
+    // The workspace now shows the new meeting, and the previous one is still
+    // listed in the sidebar (nothing is lost).
+    expect(
+      await screen.findByRole("heading", { name: "New Meeting" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /^Newest meeting/ }),
+    ).toBeInTheDocument();
   });
 });
 
@@ -627,6 +745,44 @@ describe("App — persisted meeting controls", () => {
       screen.queryByRole("button", { name: /Quarterly planning/ }),
     ).not.toBeInTheDocument();
   });
+
+  it("seeds a fresh meeting after the last one is deleted", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: ACTIVE_MEETING.id,
+        title: ACTIVE_MEETING.title,
+        created_at_ms: ACTIVE_MEETING.created_at_ms,
+        status: ACTIVE_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(ACTIVE_MEETING);
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    vi.mocked(ipc.createMeeting).mockResolvedValue({
+      id: 5,
+      title: "New Meeting",
+      created_at_ms: 5_000,
+      language: "ru",
+      status: "no_files",
+      segments: [],
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(ipc.deleteMeeting).toHaveBeenCalledWith(2);
+    expect(ipc.createMeeting).toHaveBeenCalledOnce();
+    expect(
+      await screen.findByRole("heading", { name: "New Meeting" }),
+    ).toBeInTheDocument();
+  });
 });
 
 describe("App — transcript editing", () => {
@@ -636,7 +792,7 @@ describe("App — transcript editing", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     const textarea = await screen.findByDisplayValue("Hello");
 
     await user.clear(textarea);
@@ -653,19 +809,18 @@ describe("App — speaker rendering", () => {
     // "Speaker 6"); index 2 is speaker_id 2 ("Speaker 3"). An index-based
     // fake (e.g. i % N) would instead print three different labels here,
     // so this fails against position-driven labeling, not just no labeling.
-    vi.mocked(ipc.transcribeFile).mockResolvedValue({
-      file_name: "meeting.mp3",
-      segments: [
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribedMeeting([
         { start_ms: 0, end_ms: 1000, text: "A", speaker_id: 5 },
         { start_ms: 1000, end_ms: 2000, text: "B", speaker_id: 5 },
         { start_ms: 2000, end_ms: 3000, text: "C", speaker_id: 2 },
-      ],
-    });
+      ]),
+    );
     const user = userEvent.setup();
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
 
     await screen.findByDisplayValue("A");
     const [firstSpeaker6, secondSpeaker6] = screen.getAllByText("Speaker 6");
@@ -691,15 +846,14 @@ describe("App — speaker rendering", () => {
 
   it("renders no speaker label when segments carry no speaker_id, and stays editable", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeFile).mockResolvedValue({
-      file_name: "meeting.mp3",
-      segments: [{ start_ms: 0, end_ms: 1000, text: "Hello" }],
-    });
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribedMeeting([{ start_ms: 0, end_ms: 1000, text: "Hello" }]),
+    );
     const user = userEvent.setup();
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
 
     const textarea = await screen.findByDisplayValue("Hello");
     expect(screen.queryByText(/^Speaker \d+$/)).not.toBeInTheDocument();
@@ -711,14 +865,13 @@ describe("App — speaker rendering", () => {
 
 describe("App — speaker rename", () => {
   function mockThreeSpeakerSegments() {
-    vi.mocked(ipc.transcribeFile).mockResolvedValue({
-      file_name: "meeting.mp3",
-      segments: [
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribedMeeting([
         { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
         { start_ms: 1000, end_ms: 2000, text: "There", speaker_id: 3 },
         { start_ms: 2000, end_ms: 3000, text: "Yo", speaker_id: 1 },
-      ],
-    });
+      ]),
+    );
   }
 
   it("renames every segment sharing a speaker_id, leaving other speakers unchanged", async () => {
@@ -728,7 +881,7 @@ describe("App — speaker rename", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
@@ -745,18 +898,17 @@ describe("App — speaker rename", () => {
 
   it("includes the renamed label in the saved transcript, and leaves speaker-less segments bare", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeFile).mockResolvedValue({
-      file_name: "meeting.mp3",
-      segments: [
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribedMeeting([
         { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
         { start_ms: 1000, end_ms: 2000, text: "No speaker here" },
-      ],
-    });
+      ]),
+    );
     const user = userEvent.setup();
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     await user.click(screen.getByRole("button", { name: "Rename Speaker 4" }));
@@ -781,7 +933,7 @@ describe("App — speaker rename", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
@@ -802,7 +954,7 @@ describe("App — speaker rename", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
@@ -824,7 +976,7 @@ describe("App — speaker rename", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
@@ -845,7 +997,7 @@ describe("App — speaker rename", () => {
     render(<App />);
 
     await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
@@ -861,11 +1013,12 @@ describe("App — speaker rename", () => {
     // segment happens to reuse speaker_id 3 - it must show the default
     // label, not the previous transcript's "Alice" rename.
     await user.click(screen.getByRole("button", { name: "Remove file" }));
-    vi.mocked(ipc.transcribeFile).mockResolvedValue({
-      file_name: "other.mp3",
-      segments: [{ start_ms: 0, end_ms: 1000, text: "Fresh", speaker_id: 3 }],
-    });
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribedMeeting([
+        { start_ms: 0, end_ms: 1000, text: "Fresh", speaker_id: 3 },
+      ]),
+    );
+    await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Fresh");
 
     expect(screen.queryByText("Alice")).not.toBeInTheDocument();
