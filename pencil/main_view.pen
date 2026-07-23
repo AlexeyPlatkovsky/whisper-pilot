@@ -46,41 +46,6 @@
               "alignItems": "center",
               "children": [
                 {
-                  "type": "frame",
-                  "id": "n9ji32",
-                  "name": "Traffic Lights",
-                  "width": 52,
-                  "height": 12,
-                  "gap": 8,
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "ellipse",
-                      "id": "o4GNN",
-                      "name": "Close",
-                      "fill": "#FF5F57",
-                      "width": 12,
-                      "height": 12
-                    },
-                    {
-                      "type": "ellipse",
-                      "id": "a9IlOy",
-                      "name": "Minimize",
-                      "fill": "#FEBC2E",
-                      "width": 12,
-                      "height": 12
-                    },
-                    {
-                      "type": "ellipse",
-                      "id": "n5KCsn",
-                      "name": "Maximize",
-                      "fill": "#28C840",
-                      "width": 12,
-                      "height": 12
-                    }
-                  ]
-                },
-                {
                   "id": "DG2Du",
                   "type": "ref",
                   "ref": "w3FRFT",
@@ -151,6 +116,14 @@
                       "fill": "$text-secondary"
                     }
                   ]
+                },
+                {
+                  "id": "HSwP4",
+                  "type": "ref",
+                  "ref": "v7Jyg",
+                  "name": "Traffic Lights Ref",
+                  "width": 52,
+                  "height": 12
                 }
               ]
             },
@@ -1298,477 +1271,530 @@
       "height": 744,
       "fill": "$canvas-bg",
       "cornerRadius": 12,
+      "layout": "vertical",
       "children": [
         {
           "type": "frame",
-          "id": "DGoUX",
-          "name": "Settings Sidebar",
-          "width": 200,
-          "height": "fill_container",
+          "id": "C3miP",
+          "name": "Settings Header",
+          "width": 1280,
+          "height": 52,
           "fill": "$panel",
-          "stroke": "$border",
-          "strokeWidth": {
-            "right": 1
-          },
-          "layout": "vertical",
-          "gap": 4,
           "padding": [
-            16,
-            12
+            0,
+            16
           ],
+          "justifyContent": "space_between",
+          "alignItems": "center",
           "children": [
             {
               "type": "frame",
-              "id": "Ts6FT",
-              "name": "App Brand",
-              "width": "fill_container",
-              "height": 40,
-              "gap": 10,
+              "id": "ICv6K",
+              "name": "Settings Header Left",
+              "gap": 16,
               "alignItems": "center",
               "children": [
                 {
-                  "id": "niBh3",
+                  "id": "IOiyE",
+                  "type": "ref",
+                  "ref": "v7Jyg",
+                  "name": "Settings Traffic Lights",
+                  "width": 52,
+                  "height": 12
+                },
+                {
+                  "id": "w715k1",
                   "type": "ref",
                   "ref": "w3FRFT",
-                  "name": "App Logo Settings",
-                  "width": 24,
-                  "height": 24
+                  "name": "Settings App Logo",
+                  "width": 28,
+                  "height": 28
                 },
                 {
                   "type": "text",
-                  "id": "hYHjE",
-                  "name": "App Name",
+                  "id": "e9lLP3",
+                  "name": "Settings Title",
                   "fill": "$text-primary",
-                  "content": "WhisperPilot",
+                  "content": "Settings -> AI Models",
                   "fontFamily": "$font-body",
-                  "fontSize": 14,
+                  "fontSize": 15,
                   "fontWeight": "600"
                 }
               ]
             },
             {
-              "id": "Ok6nx",
-              "type": "ref",
-              "ref": "T8qfVH",
-              "name": "AI Models Nav",
-              "width": "fill_container",
-              "fill": "#F2EFE9",
-              "cornerRadius": 6,
-              "descendants": {
-                "p9gpZ": {
-                  "icon": "cpu",
-                  "fill": "$accent"
-                },
-                "JgrIW": {
-                  "content": "AI Models",
-                  "fill": "$text-primary"
-                }
-              }
+              "type": "icon",
+              "id": "D582d",
+              "name": "Settings Close",
+              "width": 18,
+              "height": 18,
+              "icon": "x",
+              "library": "lucide",
+              "fill": "$text-label"
             },
             {
-              "id": "dhAa5",
-              "type": "ref",
-              "ref": "T8qfVH",
-              "name": "Appearance Nav",
-              "width": "fill_container",
-              "descendants": {
-                "p9gpZ": {
-                  "icon": "palette-bold",
-                  "fill": "$text-secondary",
-                  "library": "phosphor"
-                },
-                "JgrIW": {
-                  "content": "Appearance",
-                  "fill": "$text-secondary"
-                }
-              }
-            },
-            {
-              "id": "JCKDm",
-              "type": "ref",
-              "ref": "T8qfVH",
-              "name": "About Nav",
-              "width": "fill_container",
-              "descendants": {
-                "p9gpZ": {
-                  "icon": "info",
-                  "fill": "$text-secondary"
-                },
-                "JgrIW": {
-                  "content": "About",
-                  "fill": "$text-secondary"
-                }
-              }
+              "type": "rectangle",
+              "id": "cr5Lw",
+              "layoutPosition": "absolute",
+              "x": 0,
+              "y": 51,
+              "name": "Settings Header Border",
+              "fill": "$border",
+              "width": 800,
+              "height": 1
             }
           ]
         },
         {
           "type": "frame",
-          "id": "kOhSu",
-          "name": "Settings Content",
-          "width": "fill_container",
+          "id": "vqH7X",
+          "name": "Settings Main Area",
+          "width": 1280,
           "height": "fill_container",
-          "fill": "$canvas-bg",
-          "layout": "vertical",
-          "gap": 32,
-          "padding": [
-            32,
-            40
-          ],
           "children": [
             {
-              "type": "text",
-              "id": "P1wHwf",
-              "name": "Tab Title",
-              "fill": "$text-primary",
-              "content": "AI Models",
-              "fontFamily": "$font-body",
-              "fontSize": 24,
-              "fontWeight": "600"
-            },
-            {
               "type": "frame",
-              "id": "ISNfh",
-              "name": "Transcription Section",
-              "width": "fill_container",
+              "id": "DGoUX",
+              "name": "Settings Sidebar",
+              "width": 200,
+              "height": "fill_container",
+              "fill": "$panel",
+              "stroke": "$border",
+              "strokeWidth": {
+                "right": 1
+              },
               "layout": "vertical",
-              "gap": 12,
+              "gap": 4,
+              "padding": [
+                16,
+                12
+              ],
               "children": [
                 {
-                  "id": "ds3KF",
+                  "id": "Ok6nx",
                   "type": "ref",
-                  "ref": "ndhpP",
-                  "name": "Transcription Header",
+                  "ref": "T8qfVH",
+                  "name": "AI Models Nav",
                   "width": "fill_container",
+                  "fill": "#F2EFE9",
+                  "cornerRadius": 6,
                   "descendants": {
-                    "tVjpy": {
-                      "content": "Transcription Models"
+                    "p9gpZ": {
+                      "icon": "cpu",
+                      "fill": "$accent"
                     },
-                    "QqhpJ": {
-                      "content": "Choose the Whisper model used to transcribe your meetings."
+                    "JgrIW": {
+                      "content": "AI Models",
+                      "fill": "$text-primary"
                     }
                   }
                 },
                 {
-                  "type": "frame",
-                  "id": "cth1W",
-                  "name": "Transcription Rows",
+                  "id": "dhAa5",
+                  "type": "ref",
+                  "ref": "T8qfVH",
+                  "name": "Appearance Nav",
                   "width": "fill_container",
-                  "fill": "$panel",
-                  "cornerRadius": 10,
-                  "layout": "vertical",
-                  "children": [
-                    {
-                      "id": "zvNlz",
-                      "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "Whisper Small",
-                      "width": "fill_container",
-                      "descendants": {
-                        "TrSRw": {
-                          "stroke": "$accent",
-                          "effect": [],
-                          "strokeAlignment": "inner",
-                          "strokeWidth": "$font-size-xs"
-                        },
-                        "qPg98": {
-                          "content": "Whisper Small"
-                        },
-                        "ZhQso": {
-                          "content": "Recommended"
-                        },
-                        "sj91O": {
-                          "content": "487 MB"
-                        },
-                        "RD5eL": {
-                          "icon": "check",
-                          "fill": "$success"
-                        },
-                        "I9wrg4": {
-                          "fill": "$text-label"
-                        }
-                      }
+                  "descendants": {
+                    "p9gpZ": {
+                      "icon": "palette-bold",
+                      "fill": "$text-secondary",
+                      "library": "phosphor"
                     },
-                    {
-                      "type": "rectangle",
-                      "id": "v2ey5",
-                      "name": "Sep 1",
-                      "fill": "$border",
-                      "width": "fill_container",
-                      "height": 1
-                    },
-                    {
-                      "id": "zdt2y",
-                      "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "Whisper Medium",
-                      "width": "fill_container",
-                      "descendants": {
-                        "qPg98": {
-                          "content": "Whisper Medium"
-                        },
-                        "iGFW1": {
-                          "enabled": false
-                        },
-                        "ZhQso": {
-                          "content": ""
-                        },
-                        "sj91O": {
-                          "content": "1.5 GB"
-                        },
-                        "RD5eL": {
-                          "icon": "download",
-                          "fill": "$accent"
-                        },
-                        "I9wrg4": {
-                          "fill": "$border"
-                        }
-                      }
-                    },
-                    {
-                      "type": "rectangle",
-                      "id": "Lsz9F",
-                      "name": "Sep 2",
-                      "fill": "$border",
-                      "width": "fill_container",
-                      "height": 1
-                    },
-                    {
-                      "id": "MKDaq",
-                      "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "Whisper Large Turbo",
-                      "width": "fill_container",
-                      "descendants": {
-                        "qPg98": {
-                          "content": "Whisper Large Turbo"
-                        },
-                        "iGFW1": {
-                          "enabled": false
-                        },
-                        "ZhQso": {
-                          "content": ""
-                        },
-                        "sj91O": {
-                          "content": "6.0 GB"
-                        },
-                        "RD5eL": {
-                          "icon": "download",
-                          "fill": "$accent"
-                        },
-                        "I9wrg4": {
-                          "fill": "$border"
-                        }
-                      }
+                    "JgrIW": {
+                      "content": "Appearance",
+                      "fill": "$text-secondary"
                     }
-                  ]
+                  }
+                },
+                {
+                  "id": "JCKDm",
+                  "type": "ref",
+                  "ref": "T8qfVH",
+                  "name": "About Nav",
+                  "width": "fill_container",
+                  "descendants": {
+                    "p9gpZ": {
+                      "icon": "info",
+                      "fill": "$text-secondary"
+                    },
+                    "JgrIW": {
+                      "content": "About",
+                      "fill": "$text-secondary"
+                    }
+                  }
                 }
               ]
             },
             {
               "type": "frame",
-              "id": "GF1Yx",
-              "name": "Diarization Section",
+              "id": "kOhSu",
+              "name": "Settings Content",
               "width": "fill_container",
+              "height": "fill_container",
+              "fill": "$canvas-bg",
               "layout": "vertical",
-              "gap": 12,
+              "gap": 32,
+              "padding": [
+                32,
+                40
+              ],
               "children": [
                 {
-                  "id": "ktesl",
-                  "type": "ref",
-                  "ref": "ndhpP",
-                  "name": "Diarization Header",
-                  "width": "fill_container",
-                  "descendants": {
-                    "tVjpy": {
-                      "content": "Speaker Diarization"
-                    },
-                    "QqhpJ": {
-                      "content": "Identify individual speakers in your recordings."
-                    }
-                  }
+                  "type": "text",
+                  "id": "P1wHwf",
+                  "name": "Tab Title",
+                  "fill": "$text-primary",
+                  "content": "AI Models",
+                  "fontFamily": "$font-body",
+                  "fontSize": 24,
+                  "fontWeight": "600"
                 },
                 {
                   "type": "frame",
-                  "id": "lDJLp",
-                  "name": "Diarization Rows",
+                  "id": "ISNfh",
+                  "name": "Transcription Section",
                   "width": "fill_container",
-                  "fill": "$panel",
-                  "cornerRadius": 10,
                   "layout": "vertical",
+                  "gap": 12,
                   "children": [
                     {
-                      "id": "nFXPm",
+                      "id": "ds3KF",
                       "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "pyannote",
+                      "ref": "ndhpP",
+                      "name": "Transcription Header",
                       "width": "fill_container",
                       "descendants": {
-                        "TrSRw": {
-                          "stroke": "$accent",
-                          "strokeAlignment": "inner",
-                          "strokeWidth": "$font-size-xs",
-                          "strokeLinecap": "butt",
-                          "strokeLinejoin": "miter"
+                        "tVjpy": {
+                          "content": "Transcription Models"
                         },
-                        "qPg98": {
-                          "content": "pyannote + 3D-Speaker"
-                        },
-                        "iGFW1": {
-                          "enabled": false
-                        },
-                        "ZhQso": {
-                          "content": ""
-                        },
-                        "sj91O": {
-                          "content": "1.2 GB"
-                        },
-                        "RD5eL": {
-                          "icon": "check",
-                          "fill": "$success"
-                        },
-                        "I9wrg4": {
-                          "fill": "$text-label"
+                        "QqhpJ": {
+                          "content": "Choose the Whisper model used to transcribe your meetings."
                         }
                       }
+                    },
+                    {
+                      "type": "frame",
+                      "id": "cth1W",
+                      "name": "Transcription Rows",
+                      "width": "fill_container",
+                      "fill": "$panel",
+                      "cornerRadius": 10,
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "zvNlz",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "Whisper Small",
+                          "width": "fill_container",
+                          "descendants": {
+                            "TrSRw": {
+                              "stroke": "$accent",
+                              "effect": [],
+                              "strokeAlignment": "inner",
+                              "strokeWidth": "$font-size-xs"
+                            },
+                            "qPg98": {
+                              "content": "Whisper Small"
+                            },
+                            "ZhQso": {
+                              "content": "Recommended"
+                            },
+                            "sj91O": {
+                              "content": "487 MB"
+                            },
+                            "RD5eL": {
+                              "icon": "check",
+                              "fill": "$success"
+                            },
+                            "I9wrg4": {
+                              "fill": "$text-label"
+                            }
+                          }
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "v2ey5",
+                          "name": "Sep 1",
+                          "fill": "$border",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "zdt2y",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "Whisper Medium",
+                          "width": "fill_container",
+                          "descendants": {
+                            "qPg98": {
+                              "content": "Whisper Medium"
+                            },
+                            "iGFW1": {
+                              "enabled": false
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "1.5 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "download",
+                              "fill": "$accent"
+                            },
+                            "I9wrg4": {
+                              "fill": "$border"
+                            }
+                          }
+                        },
+                        {
+                          "type": "rectangle",
+                          "id": "Lsz9F",
+                          "name": "Sep 2",
+                          "fill": "$border",
+                          "width": "fill_container",
+                          "height": 1
+                        },
+                        {
+                          "id": "MKDaq",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "Whisper Large Turbo",
+                          "width": "fill_container",
+                          "descendants": {
+                            "qPg98": {
+                              "content": "Whisper Large Turbo"
+                            },
+                            "iGFW1": {
+                              "enabled": false
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "6.0 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "download",
+                              "fill": "$accent"
+                            },
+                            "I9wrg4": {
+                              "fill": "$border"
+                            }
+                          }
+                        }
+                      ]
                     }
                   ]
-                }
-              ]
-            },
-            {
-              "type": "frame",
-              "id": "SSoxp",
-              "name": "MFU Models Section",
-              "width": "fill_container",
-              "layout": "vertical",
-              "gap": 12,
-              "children": [
-                {
-                  "id": "jk3KT",
-                  "type": "ref",
-                  "ref": "ndhpP",
-                  "name": "MFU Header",
-                  "width": "fill_container",
-                  "descendants": {
-                    "tVjpy": {
-                      "content": "MFU Models"
-                    },
-                    "QqhpJ": {
-                      "content": "Choose the local model that crafts your meeting notes."
-                    }
-                  }
                 },
                 {
                   "type": "frame",
-                  "id": "T1RBY",
-                  "name": "MFU Rows",
+                  "id": "GF1Yx",
+                  "name": "Diarization Section",
                   "width": "fill_container",
-                  "fill": "$panel",
-                  "cornerRadius": 10,
                   "layout": "vertical",
+                  "gap": 12,
                   "children": [
                     {
-                      "id": "XMfgM",
+                      "id": "ktesl",
                       "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "MFU Small",
+                      "ref": "ndhpP",
+                      "name": "Diarization Header",
                       "width": "fill_container",
                       "descendants": {
-                        "TrSRw": {
-                          "stroke": "$accent",
-                          "strokeAlignment": "inner",
-                          "strokeWidth": "$font-size-xs"
+                        "tVjpy": {
+                          "content": "Speaker Diarization"
                         },
-                        "qPg98": {
-                          "content": "MFU Small"
-                        },
-                        "ZhQso": {
-                          "content": ""
-                        },
-                        "sj91O": {
-                          "content": "2.1 GB"
-                        },
-                        "RD5eL": {
-                          "icon": "check",
-                          "fill": "$success"
-                        },
-                        "I9wrg4": {
-                          "fill": "$text-label"
+                        "QqhpJ": {
+                          "content": "Identify individual speakers in your recordings."
                         }
                       }
                     },
                     {
-                      "type": "rectangle",
-                      "id": "S77gk",
-                      "name": "Sep 3",
-                      "fill": "$border",
+                      "type": "frame",
+                      "id": "lDJLp",
+                      "name": "Diarization Rows",
                       "width": "fill_container",
-                      "height": 1
-                    },
+                      "fill": "$panel",
+                      "cornerRadius": 10,
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "nFXPm",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "pyannote",
+                          "width": "fill_container",
+                          "descendants": {
+                            "TrSRw": {
+                              "stroke": "$accent",
+                              "strokeAlignment": "inner",
+                              "strokeWidth": "$font-size-xs",
+                              "strokeLinecap": "butt",
+                              "strokeLinejoin": "miter"
+                            },
+                            "qPg98": {
+                              "content": "pyannote + 3D-Speaker"
+                            },
+                            "iGFW1": {
+                              "enabled": false
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "1.2 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "check",
+                              "fill": "$success"
+                            },
+                            "I9wrg4": {
+                              "fill": "$text-label"
+                            }
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "SSoxp",
+                  "name": "MFU Models Section",
+                  "width": "fill_container",
+                  "layout": "vertical",
+                  "gap": 12,
+                  "children": [
                     {
-                      "id": "UaISd",
+                      "id": "jk3KT",
                       "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "MFU Medium",
+                      "ref": "ndhpP",
+                      "name": "MFU Header",
                       "width": "fill_container",
                       "descendants": {
-                        "qPg98": {
-                          "content": "MFU Medium"
+                        "tVjpy": {
+                          "content": "MFU Models"
                         },
-                        "iGFW1": {
-                          "enabled": false
-                        },
-                        "ZhQso": {
-                          "content": ""
-                        },
-                        "sj91O": {
-                          "content": "4.8 GB"
-                        },
-                        "RD5eL": {
-                          "icon": "download",
-                          "fill": "$accent"
-                        },
-                        "I9wrg4": {
-                          "fill": "$border"
+                        "QqhpJ": {
+                          "content": "Choose the local model that crafts your meeting notes."
                         }
                       }
                     },
                     {
-                      "type": "rectangle",
-                      "id": "tQhqg",
-                      "name": "Sep 4",
-                      "fill": "$border",
+                      "type": "frame",
+                      "id": "T1RBY",
+                      "name": "MFU Rows",
                       "width": "fill_container",
-                      "height": 1
-                    },
-                    {
-                      "id": "gsLHt",
-                      "type": "ref",
-                      "ref": "JWXtu",
-                      "name": "MFU Large",
-                      "width": "fill_container",
-                      "descendants": {
-                        "qPg98": {
-                          "content": "MFU Large"
+                      "fill": "$panel",
+                      "cornerRadius": 10,
+                      "layout": "vertical",
+                      "children": [
+                        {
+                          "id": "XMfgM",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "MFU Small",
+                          "width": "fill_container",
+                          "descendants": {
+                            "TrSRw": {
+                              "stroke": "$accent",
+                              "strokeAlignment": "inner",
+                              "strokeWidth": "$font-size-xs"
+                            },
+                            "qPg98": {
+                              "content": "MFU Small"
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "2.1 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "check",
+                              "fill": "$success"
+                            },
+                            "I9wrg4": {
+                              "fill": "$text-label"
+                            }
+                          }
                         },
-                        "iGFW1": {
-                          "enabled": false
+                        {
+                          "type": "rectangle",
+                          "id": "S77gk",
+                          "name": "Sep 3",
+                          "fill": "$border",
+                          "width": "fill_container",
+                          "height": 1
                         },
-                        "ZhQso": {
-                          "content": ""
+                        {
+                          "id": "UaISd",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "MFU Medium",
+                          "width": "fill_container",
+                          "descendants": {
+                            "qPg98": {
+                              "content": "MFU Medium"
+                            },
+                            "iGFW1": {
+                              "enabled": false
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "4.8 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "download",
+                              "fill": "$accent"
+                            },
+                            "I9wrg4": {
+                              "fill": "$border"
+                            }
+                          }
                         },
-                        "sj91O": {
-                          "content": "9.2 GB"
+                        {
+                          "type": "rectangle",
+                          "id": "tQhqg",
+                          "name": "Sep 4",
+                          "fill": "$border",
+                          "width": "fill_container",
+                          "height": 1
                         },
-                        "RD5eL": {
-                          "icon": "download",
-                          "fill": "$accent"
-                        },
-                        "I9wrg4": {
-                          "fill": "$border"
+                        {
+                          "id": "gsLHt",
+                          "type": "ref",
+                          "ref": "JWXtu",
+                          "name": "MFU Large",
+                          "width": "fill_container",
+                          "descendants": {
+                            "qPg98": {
+                              "content": "MFU Large"
+                            },
+                            "iGFW1": {
+                              "enabled": false
+                            },
+                            "ZhQso": {
+                              "content": ""
+                            },
+                            "sj91O": {
+                              "content": "9.2 GB"
+                            },
+                            "RD5eL": {
+                              "icon": "download",
+                              "fill": "$accent"
+                            },
+                            "I9wrg4": {
+                              "fill": "$border"
+                            }
+                          }
                         }
-                      }
+                      ]
                     }
                   ]
                 }
@@ -1782,9 +1808,9 @@
           "layoutPosition": "absolute",
           "x": 0,
           "y": 0,
-          "name": "Frame 1",
-          "width": "fit_content(420)",
-          "height": "fit_content(160)",
+          "name": "Download Modal",
+          "width": 1280,
+          "height": 744,
           "justifyContent": "space_between",
           "alignItems": "center",
           "children": [
@@ -1804,8 +1830,8 @@
               "type": "frame",
               "id": "rqoxe",
               "layoutPosition": "absolute",
-              "x": 410,
-              "y": 290,
+              "x": 430,
+              "y": 292,
               "name": "Modal Panel",
               "width": 420,
               "height": 160,
@@ -2328,6 +2354,44 @@
           "fontFamily": "$font-body",
           "fontSize": 13,
           "fontWeight": "normal"
+        }
+      ]
+    },
+    {
+      "type": "frame",
+      "id": "v7Jyg",
+      "x": 0,
+      "y": -1580,
+      "name": "Traffic Lights",
+      "reusable": true,
+      "width": 52,
+      "height": 12,
+      "gap": 8,
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "ellipse",
+          "id": "rRfo6",
+          "name": "Close",
+          "fill": "#FF5F57",
+          "width": 12,
+          "height": 12
+        },
+        {
+          "type": "ellipse",
+          "id": "vYW4Y",
+          "name": "Minimize",
+          "fill": "#FEBC2E",
+          "width": 12,
+          "height": 12
+        },
+        {
+          "type": "ellipse",
+          "id": "w2LGr",
+          "name": "Maximize",
+          "fill": "#28C840",
+          "width": 12,
+          "height": 12
         }
       ]
     }
