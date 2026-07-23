@@ -12,11 +12,21 @@ contradict it.
 
 ## Agent And Subagent Execution
 
-Distinct-agent handoffs must preserve the invoked agent's declared tool access,
-sandbox, and state-mutation boundary; they must not be executed inline. When
-runner selection or recovery is necessary, use
+Distinct-agent handoffs must preserve the invoked agent's declared state-mutation
+boundary and must not be executed inline. A runner with an exact declared tool
+and sandbox boundary is preferred; a broader runner may be used only when it is
+explicitly constrained to the invoked agent's declared boundary and the handoff
+records that exception. When runner selection or recovery is necessary, use
 `.claude/skills/agent-handoff/SKILL.md`. An agent already running in an isolated
 execution context executes its own instructions directly.
+
+An applicable project instruction, pipeline, or routed handoff that explicitly
+names an agent or subagent is standing user authorization to invoke that agent.
+Do not request separate user approval for that invocation. This authorization is
+limited to the named agent, its declared responsibility, and the structured
+inputs required by the invoking artifact. Stop for a new user decision only when
+a higher-level gate requires consent, the invocation is outside that scope, or
+the handoff cannot preserve the declared state-mutation boundary safely.
 
 ---
 

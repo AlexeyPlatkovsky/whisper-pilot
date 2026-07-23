@@ -29,7 +29,7 @@ Required fields:
 - **Steps to reproduce:** exact user or system actions that trigger it
 - **Expected behavior:** what should happen
 - **Actual behavior:** what actually happens (include error messages verbatim)
-- **Environment:** OS, build mode (dev/release), relevant CLI tool version if applicable
+- **Environment:** macOS version, build mode (dev/release), source media format, selected language/model, and model-download state when applicable
 - **Frequency:** always / intermittent / once observed
 
 If `Steps to reproduce` is `unknown`, proceed to Phase 2 with that noted — reproduction attempts may clarify it.
@@ -42,49 +42,33 @@ If the report describes two or more distinct defects (compound report), stop and
 
 Attempt to reproduce the bug in the local environment.
 
-#### 2a — Check Logs First
+#### 2a — Gather Diagnostic Evidence
 
-Before running any commands, check whether log output from a prior run is already available. Log files are written to `~/Library/Logs/WhisperPilot/voicepilot-YYYY-MM-DD.log`.
+The current application initializes `env_logger` but does not define a persistent log-file
+contract. Do not assume a `~/Library/Logs` path or inspect a user's files without a supplied
+path. Use one of these sources, in order: the reported error, failing test output, a console
+excerpt supplied by the user, or a scoped local reproduction with `RUST_LOG=debug`.
 
-```bash
-ls ~/Library/Logs/WhisperPilot/
-tail -200 ~/Library/Logs/WhisperPilot/voicepilot-$(date +%Y-%m-%d).log
-```
-
-If the 200-line tail does not reach the relevant component, search by pattern instead:
-
-```bash
-grep -n "resampler:\|feed_audio:\|whisper:\|vad:\|segment " ~/Library/Logs/WhisperPilot/voicepilot-$(date +%Y-%m-%d).log | tail -100
-```
-
-If `ls ~/Library/Logs/WhisperPilot/` returns empty or the directory does not exist, record `Log evidence: absent`. For non-front-end-only bugs, skip to RUST_LOG=debug collection below; for confirmed front-end-only bugs (UI rendering, visual copy, test tooling), proceed directly to Phase 2b.
-
-**Key log patterns** (all operational metadata — no audio samples, transcript text, or API keys):
-- `resampler:` — sample counts in/buffered/out; zeros indicate pipeline stalls
-- `feed_audio:` — 48 kHz in, 16 kHz out, rolling window size
-- `whisper: transcribing window=` — samples Whisper receives (expect ~16 000–80 000 for 1–5 s)
-- `whisper: hallucination filtered` — noise artefacts discarded by the filter
-- `vad: silence boundary` — VAD-triggered speech-end flush
-- `segment finalized:` — text_len and timestamp; absence means no segments reached the adapter
-
-**When to collect RUST_LOG=debug output:** ask the user to run with debug logging when the bug is not confirmed front-end-only (i.e., not isolated to UI rendering, visual copy, or test tooling). This covers all audio, transcription, pipeline, VAD, session, IPC, and adapter bugs.
+For local media-processing bugs, ask for or record only operational evidence: media format,
+model readiness, error text, command output, and whether diarization fell back to
+speaker-less segments. Do not request audio contents, full transcript contents, or unrelated
+personal files.
 
 ```bash
-RUST_LOG=debug npm run tauri dev 2>&1 | tee /tmp/vp-debug.log
+RUST_LOG=debug npm run tauri -- dev
 ```
 
-If neither the tail nor the grep returns any of the six key patterns, record `Log evidence: partial — file exists, no key patterns found` and note which patterns were searched. For non-front-end-only bugs, ask the user to collect RUST_LOG=debug output.
-
-Record relevant log excerpts in the `Observed output` field prefixed with `[from log]`. If no log is available, record `Log evidence: absent` and note that debug output must be collected before the next reproduction attempt.
+Run this only when a local reproduction is authorized and safe. Record diagnostic excerpts in
+`Observed output` prefixed with `[console]`; otherwise record `Diagnostic evidence: absent`.
 
 #### 2b — Run Checks
 
 Commands depend on the affected layer:
 
 ```
-npm run dev          # start front-end dev build (if UI behavior is reported)
-cargo build          # verify Rust core compiles
-cargo nextest run    # check for related failures in existing tests
+npm run tauri -- dev                                   # real macOS Tauri window, if UI behavior is reported
+npm run test:run                                       # relevant front-end tests
+cargo test --manifest-path src-tauri/Cargo.toml        # relevant Rust tests
 ```
 
 Record:
@@ -100,7 +84,7 @@ Make at most three reproduction attempts. If not reproduced after three runs, re
 
 Identify the specific code location and mechanism causing the bug. Use `Read` and `Bash` (grep, cargo check, test output) to locate the defect.
 
-If the bug involves existing UI flow, IPC routing, Rust core process/adapters, or storage behavior, read the relevant sections of `docs/architecture.md` before concluding root cause. If root-cause evidence crosses layers, load the additional relevant sections. Skip architecture docs when the bug is isolated to tests, copy, or unrelated tooling, and record the skip reason in the rationale if relevant.
+If the bug involves existing UI flow, IPC routing, Rust core processing, model management, settings, or meeting storage, read the relevant sections of `docs/architecture.md` before concluding root cause. If root-cause evidence crosses layers, load the additional relevant sections. Skip architecture docs when the bug is isolated to tests, copy, or unrelated tooling, and record the skip reason in the rationale if relevant.
 
 Record:
 - **Location:** file path and line range (or `unknown` if not locatable)
@@ -123,7 +107,7 @@ Do not make speculative claims beyond what the code and reproduction evidence su
 | Medium | Feature partially broken or degraded; workaround exists |
 | Low | Minor UI glitch, edge-case failure, or cosmetic issue |
 
-**Type:** logic-error / UI-regression / IPC-error / subprocess-error / state-management / test-only / other (specify)
+**Type:** logic-error / UI-regression / IPC-error / media-processing / model-management / storage-error / state-management / test-only / other (specify)
 
 **Scope:** front-end / Rust core / both
 
@@ -151,7 +135,7 @@ After completing all phases, emit:
 **Bug Summary**
 - Description:
 - Reproduced: yes / no / intermittent
-- Log evidence: present / partial / absent (note if key patterns were found)
+- Diagnostic evidence: present / partial / absent (state its source and whether user media content was avoided)
 - Root Cause: (location + mechanism, or `unknown`)
 - Confidence: high / medium / low
 

@@ -53,7 +53,7 @@ If either artifact is absent, report `Blocked` and stop before Stage 1.
 | 9. Review | `Agent: sdd-spec-reviewer` | `Agent: sdd-spec-reviewer - output below` |
 | 10. Suggest companions | direct — present the bundle's `RECOMMENDS.md` companions if that file exists under `.claude/sdd/`; otherwise record that none ship with this adoption | a note of companions offered and which were adopted, or `none offered` |
 | 11. Definition of Done | `Skill: task-quality` | `Skill: task-quality - output below` with `Quality gate: pass` |
-| 12. Local commit and TaskPilot completion | `Skill: work-with-git`, then `Skill: taskpilot-work` — required local commit and verified `in_progress → done` | commit hash and `Skill: taskpilot-work - output below` with reloaded `done` evidence |
+| 12. TaskPilot completion and local commit | `Skill: taskpilot-work`, then `Skill: work-with-git` — verified `in_progress → done`, then one atomic local commit | `Skill: taskpilot-work - output below` with reloaded `done` evidence and commit hash |
 | 13. Task Complete | `Skill: task-complete` | `Skill: task-complete - output below` |
 
 On the `Lean` tier, skip stages 4, 5, and 7. Stage 10 is opt-in and may be declined. Do not

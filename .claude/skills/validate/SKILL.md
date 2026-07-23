@@ -14,8 +14,6 @@ Run a configurable set of CI-equivalent checks against the working tree and repo
 Use when:
 - a pipeline step has finished writing code and needs a quick post-edit check
 - the task modified files across layers (TS + Rust) and full local validation is needed
-- a design-contract change touches `docs/design-book.md`, tokens, themes, or UI
-  styling and needs the `design-system` check
 - the pipeline explicitly calls this skill as part of its Steps
 
 Do not use:
@@ -32,16 +30,15 @@ The caller passes a space-separated list of check names in the `checks` paramete
 | `lint` | `npm run lint` | Any TS/TSX change |
 | `format` | `npm run format:check` | Any source change |
 | `tsc` | `npx tsc --noEmit` | Any TS/TSX change |
-| `vitest` | `npm run test` | Any TS/TSX change |
-| `design-system` | `npm run test:design-system` | Any UI styling, token, theme, or design-book change |
+| `vitest` | `npm run test:run` | Any TS/TSX change |
 | `coverage` | `npm run test:coverage` | After adding new tests or modifying tested code |
 | `build` | `npm run build` | Any TS/TSX change |
 | `clippy` | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | Any Rust change |
-| `nextest` | `cargo nextest run --manifest-path src-tauri/Cargo.toml` | Any Rust change |
+| `rusttest` | `cargo test --manifest-path src-tauri/Cargo.toml` | Any Rust change |
 | `cargobuild` | `cargo build --manifest-path src-tauri/Cargo.toml` | Any Rust change |
 | `audit` | `cargo audit --manifest-path src-tauri/Cargo.toml` | Any `Cargo.lock` or dependency change |
 
-When the caller does not specify checks, default to `lint format tsc vitest clippy nextest`.
+When the caller does not specify checks, default to `lint format tsc vitest clippy rusttest`.
 
 ### Check name validation
 

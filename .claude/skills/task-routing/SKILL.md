@@ -98,7 +98,7 @@ Apply this precedence before using the table:
 | Review test code or test changes | `.claude/agents/code-reviewer.md` |
 | Validate completed work with build, test, or manual checks | `.claude/agents/test-runner.md` |
 | Resolve an open design decision with meaningful trade-offs | `.claude/skills/brainstorm/SKILL.md` |
-| Create or update non-instruction reference documentation | Direct execution |
+| Create or update non-instruction reference documentation | Direct execution with the required TaskPilot identity, git gate, `.claude/skills/documentation-maintenance/SKILL.md` outcome artifact (including the checked authoritative sources), and task-complete closure |
 | Author or update one SDD main or extension document (`docs/idea.md`, `architecture.md`, `design.md`, `testing.md`, `roadmap.md`, an ADR, or an extension doc) | `.claude/skills/sdd-doc-author/SKILL.md` |
 | Scaffold or update one SDD feature folder | `.claude/skills/sdd-feature-author/SKILL.md` |
 | Rebuild `docs/INDEX.md` after an SDD change | `.claude/skills/sdd-index-sync/SKILL.md` |

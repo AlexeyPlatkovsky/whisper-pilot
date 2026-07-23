@@ -1,7 +1,10 @@
 # Integrations
 
-<!-- Optional extension document. Owns external-service contracts and dependencies.
-     Keep the architecture overview in architecture.md and register this document in INDEX.md. -->
+<!-- Optional extension document. Owns external-system contracts and dependencies.
+     WhisperPilot has no cloud transcription or live capture; document an integration
+     only when it is a real dependency (for example, a user-initiated model download).
+     Keep the architecture overview in architecture.md and register this document in
+     INDEX.md. -->
 
 ## Overview
 

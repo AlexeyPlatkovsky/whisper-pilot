@@ -6,15 +6,15 @@
 - Extract large component bodies into smaller subcomponents early — improves both readability and memoization boundaries.
 
 ## Re-render hygiene
-- Select narrow Zustand slices; avoid subscribing to the whole store.
+- Keep state subscriptions and contexts narrow; avoid placing unrelated application state in one provider.
 - Memoize expensive derived values with `useMemo`; memoize callbacks passed to memoized children with `useCallback`.
 - Wrap pure presentational children in `React.memo` when they re-render under an often-changing parent.
 - Stable `key`s for lists; never array index for dynamic/reorderable lists.
 
-## Chat-specific (WhisperPilot)
-- The message list can grow long — virtualize once it's large (`[opt]` until it's a real problem).
-- A streaming/blocking response should update without re-rendering the entire transcript: isolate the in-flight message into its own component.
-- Auto-scroll-to-bottom must not fight the user scrolling up to read history.
+## Transcript and meeting-specific (WhisperPilot)
+- Transcript and meeting lists can grow long. Virtualize only after profiling or a reproducible interaction problem; mark this as `[opt]` until then.
+- Keep a transcription progress update or model-download event from needlessly re-rendering unrelated settings, meeting, or transcript UI.
+- Preserve the user's selected meeting and reading position when a refresh or background model-status update completes, unless the user initiated navigation.
 
 ## Notes
 - React 19: the compiler may auto-memoize, but do not rely on it for correctness; explicit stable identities still matter for lists and effects.

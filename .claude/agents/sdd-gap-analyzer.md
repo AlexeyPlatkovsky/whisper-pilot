@@ -21,9 +21,8 @@ structure. If it is unavailable, report that as a blocker.
 ## Required Inputs and Context
 
 - The WhisperPilot repository root.
-- Existing documentation: `docs/idea.md` (product specification), `docs/architecture.md`,
-  `README.md`, and any other doc locations
-  the user names.
+- Existing documentation: `docs/INDEX.md`, `docs/idea.md`, `docs/architecture.md`,
+  `README.md`, and any additional document locations the user names.
 - Any tier preference or scope constraint from the user.
 
 ## Procedure
@@ -33,8 +32,8 @@ Apply the Stop Conditions throughout; halt and report when any is met.
 1. Inventory existing documentation: list each doc and the concern it actually covers.
 2. Inventory the code at a high level to infer architecture, integrations, data, and the
    features that exist but may be undocumented — in WhisperPilot: `src/` (React 19 +
-   TypeScript front-end), `src-tauri/` (Rust/Tauri core: audio, adapters, session,
-   orchestrator), and `e2e/` (Playwright tests). Mark inferences as assumptions.
+   TypeScript front end) and `src-tauri/` (Rust/Tauri core for local file transcription,
+   diarization, models, settings, and meeting storage). Mark inferences as assumptions.
 3. Map existing material to each target document and to candidate feature folders.
 4. Recommend a tier, justified by project size and the material found.
 5. For each target document, classify the action: `reuse as-is`, `migrate content`,

@@ -40,26 +40,38 @@ After the output label, write `Closure: complete` or `Closure: blocked`. Then pr
 
 ### 3. Every Executed Step Must Appear
 
-Every executed step is a row. If a planned step was skipped, include it and explain why in `Comment`.
+Use the selected pipeline (or the manager-declared ad-hoc route) as the
+authoritative plan. Every executed step is a row. If a planned conditional step
+was skipped, include it and name the declared skip condition in `Comment`.
+For a pipeline step that creates a visible manual record rather than invoking a
+skill or agent, reference that record by its declared label.
 
 ### 4. Reference Output Artifacts
 
-For planned routed handoffs, `Comment` must reference the step's visible output artifact label (e.g. `Skill: implement-tauri-feature - output below`).
+For every planned routed handoff, `Comment` must reference the step's visible
+output artifact label (for example, `Skill: implement-tauri-feature - output
+below`). For a conditional handoff that was skipped, reference its declared
+skip condition instead. Do not infer an artifact from a tool call, a commit, or
+an unlabelled narrative.
 
 ### 5. Refuse Incomplete Closure
 
-If a required planned output artifact is missing from the conversation, do not declare completion. Set `Closure: blocked` and name the missing artifact so the manager can return to the missing step.
+If a required planned output artifact or visible manual record is missing from
+the conversation, do not declare completion. Set `Closure: blocked` and name
+the missing evidence so the manager can return to the missing step.
 
 For tracked work, a passing DoD gate, a commit, or a completion comment is not
 enough. If the required lifecycle artifact does not show the expected reloaded
 TaskPilot state (`done` for implementation/fixes; `ready` for discovery), set
 `Closure: blocked` and name the missing or mismatched state.
 
-If `AGENTS.md` §Final Response Gate prevents completion because a required artifact
-reports a failure or implementation blocker, set `Closure: blocked` and name that
-artifact and state. A selected pipeline may close with a `Blocked` artifact only
-when it explicitly records an external verification limitation, every independent
-downstream gate ran successfully, and the closure table names its scope and cause.
+If `AGENTS.md` §Final Response Gate prevents completion because a required
+artifact reports a failure or implementation blocker, set `Closure: blocked`
+and name that artifact and state. A selected pipeline may close despite a
+`Blocked` validation artifact only when its own step explicitly permits an
+external verification limitation, the artifact records that limitation's scope
+and cause, every independent downstream gate passed, and the closure table
+names the limitation. No other `Blocked` artifact permits complete closure.
 
 ### 6. Final Response Requirement
 

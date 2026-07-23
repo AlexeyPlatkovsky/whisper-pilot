@@ -28,9 +28,8 @@ If the docs root cannot be located, report it as a blocker.
 
 Apply the Stop Conditions throughout; halt and report when any is met.
 
-1. Scan the docs root for present main docs and extension docs. In WhisperPilot, register
-   extension docs when present
-   results and is not registered as a document.
+1. Scan the docs root for present main docs and recognized extension docs. Register only
+   files that exist; do not treat build output, test results, or TaskPilot records as docs.
 2. Scan `features/` for `F<NNN>_*` folders; for each, count requirements, tasks, and
    scenarios by their IDs. Do not infer or copy TaskPilot status into the index.
 3. Scan `decisions/` for `ADR-*` files and read each status.

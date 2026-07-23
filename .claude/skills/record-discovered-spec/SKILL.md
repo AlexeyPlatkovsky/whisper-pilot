@@ -36,6 +36,8 @@ Then emit:
 | Status | TaskPilot Item | Prepared Fields | Persistence Handoff |
 |--------|----------------|-----------------|------------|
 
-Valid `Status` values: `completed` / `failed` / `blocked`.
+Valid `Status` values: `completed` / `blocked`. Use `blocked` for an absent,
+inconsistent, or mismatched required input; the caller must not continue until
+a completed handoff is emitted.
 For `completed`, `Persistence Handoff` must name `taskpilot-work` and include the
 protected metadata to preserve.

@@ -1,14 +1,16 @@
 # Database
 
 <!-- Optional extension doc. Owns persistence: data model, schema, migrations.
-     In WhisperPilot persistence is local SQLite managed by the session layer
-     (src-tauri/src/session/ — SessionManager, schema + migrations).
-     Leave a summary + link in architecture.md. Register this doc in INDEX.md. -->
+     In WhisperPilot the local SQLite meeting library is implemented in
+     src-tauri/src/store.rs; settings and model assets have their own local storage.
+     Record only verified locations and current migration behavior. Leave a summary +
+     link in architecture.md and register this document in INDEX.md. -->
 
 ## Storage
 
-<!-- Engine and location, e.g. SQLite under ~/Library/Application Support/WhisperPilot/;
-     key configuration; what is never persisted (raw audio). -->
+<!-- Engine and verified storage location; key configuration; retained data; and data
+     deliberately not persisted. Do not assume the source media is copied: meetings
+     may instead reference the user-selected local file path. -->
 
 ## Entities
 

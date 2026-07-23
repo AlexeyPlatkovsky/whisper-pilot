@@ -1,13 +1,14 @@
 # F<NNN> <Feature Name> — Scenarios
 
-<!-- Behavior verification for the feature: Gherkin scenarios + a manual checklist.
-     Each scenario traces to one or more requirement IDs. -->
+<!-- Behavior verification for the feature: Gherkin scenarios plus a manual checklist.
+     Each scenario traces to one or more requirement IDs. Cover success, relevant error,
+     and boundary states; do not write unverifiable implementation steps. -->
 
 ## Scenarios
 
 ### F<NNN>-S1: <scenario name>
 
-Covers: F<NNN>-R1
+**Covers:** `F<NNN>-R1`
 
 ```gherkin
 Scenario: <scenario name>
@@ -20,7 +21,8 @@ Scenario: <scenario name>
 
 ## Manual Verification Checklist
 
-<!-- For checks not easily automated. Each item should be observable and link to a requirement. -->
+<!-- For checks not easily automated. Each item must be observable, name the environment
+     or fixture needed when material, and link to a requirement. -->
 
 - [ ] (F<NNN>-R1) <observable check>
 - [ ] <accessibility / error-state / edge-case check>

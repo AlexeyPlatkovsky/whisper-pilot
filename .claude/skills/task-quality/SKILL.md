@@ -47,7 +47,8 @@ Evaluate the supplied item's description, DoD, evidence, and completion comment.
    checklist below is verified; record each inapplicable scoped check with its
    rationale.
 4. **Edge cases covered** — negative scenarios from the description have been tested
-5. **Local validation passes** — the touched layers build and tests pass (see validate/SKILL.md)
+5. **Local validation passes** — the touched layers build and tests pass (see
+   `.claude/skills/validate/SKILL.md`)
 
 Pass: all criteria pass and the item has a TaskPilot completion comment referencing test and verification results. The invoking pipeline must then use `taskpilot-work` to make and reload-verify the `in_progress → done` transition; this gate alone never closes an item.
 Block: report each gap.

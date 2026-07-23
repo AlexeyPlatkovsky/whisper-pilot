@@ -22,9 +22,9 @@ This skill depends on files in this repository:
 
 If either is unavailable, report it as a blocker before writing.
 
-Feature folders live under `docs/features/`. TaskPilot (`VP-<n>`) remains the sole tracker
+Feature folders live under `docs/features/`. TaskPilot (`WP-<n>`) remains the sole tracker
 of work status per `AGENTS.md`: when a TaskPilot item exists for a task, reference its
-`VP-<n>` ID in the `tasks.md` row; do not duplicate TaskPilot workflow states there.
+`WP-<n>` ID in the `tasks.md` row; do not duplicate TaskPilot workflow states there.
 
 ## Inputs
 

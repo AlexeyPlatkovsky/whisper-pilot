@@ -1,39 +1,43 @@
-# Rust / Tauri Core Testing — cargo-nextest + tokio + mockall
+# Rust / Tauri Core Testing — cargo test + tokio
 
-Stack: **cargo-nextest** (preferred runner; process-per-test isolation, faster), `#[tokio::test]` for async, **`mockall`** for trait-based mocking. `cargo test` remains the fallback (and is required for doctests, which nextest doesn't run).
+Stack for routed local work: `cargo test --manifest-path src-tauri/Cargo.toml`; use
+`#[tokio::test]` for async code. CI separately installs and runs `cargo-nextest` as declared
+in `.github/workflows/ci.yml`; it is not a Cargo manifest dependency and local routed
+validation does not require it. The current manifest does not include `mockall` or `proptest`;
+add either only through a routed dependency change.
 
 ## Core rules
 - **Async tests** use `#[tokio::test]`; pick `flavor = "multi_thread"` only when the test needs real concurrency.
-- **Isolate external effects behind traits**, then mock with `mockall`:
-  - Subprocess execution (running a CLI) → a `CommandRunner`/`ProcessRunner` trait, mocked in tests; never spawn the real `codex`/`claude`/`gemini` in unit tests.
-  - Clock/time (timeouts) → an injectable time source so timeout tests are deterministic.
-  - SQLite/storage → test against an in-memory or temp-file database, not the user's real store.
+- **Isolate external effects** with a narrow seam, fixture, temporary directory, or in-memory/temp-file database. Never operate on the user's app-data directory or download a real model in a unit test.
+- **Clock/time:** inject or bound time-dependent behavior so tests do not rely on arbitrary wall-clock sleeps.
 - **Assert errors by variant**, not by string: `assert!(matches!(err, AdapterError::TimedOut))`, not substring matching on a message.
-- **Determinism / nextest-friendliness:** no shared mutable global state across tests; each test sets up its own fixtures. Avoid ordering dependencies (nextest runs tests in separate processes).
+- **Determinism:** no shared mutable global state across tests; each test sets up its own fixtures and has no ordering dependency.
 - Unit tests live in `#[cfg(test)] mod tests` next to the code; cross-module/integration tests live in `tests/`.
 
-## WhisperPilot specifics (adapters, routing, storage, commands)
-- **CLI adapter** tests cover: command/argument construction (correct binary + flags like `codex exec --json -s read-only`), parsing of the structured output into the typed result, mapping of failures to the `AdapterError` taxonomy (binaryNotFound / notAuthenticated / nonZeroExit / timedOut / outputParseFailure / cancelled), timeout behavior, and cancellation — all with a mocked runner.
-- **Routing layer** tests cover: a request routes to the correct adapter; unknown/!registered targets error cleanly.
-- **Storage** tests cover: messages persist and read back; session references (`codex_session_id`) round-trip — against a temp DB.
+## WhisperPilot specifics (transcription, diarization, storage, commands)
+- **Audio/transcription/diarization** tests use small checked-in or generated fixtures and cover supported input handling, segmentation/diarization outcome mapping, and failure paths without relying on a user file or model download.
+- **Model management** tests cover catalog state, destination selection, checksum/error handling where exposed, and progress-event payload behavior without network access.
+- **Storage** tests cover meetings, transcript segments, and settings persistence/readback against a temporary database or temporary app-data directory.
 - **Tauri commands** stay thin; test the underlying plain function, not the `#[tauri::command]` wrapper.
 
 ## Heuristics per function/behavior
 - Happy path (correct output).
-- Boundary/edge inputs (empty prompt, large output).
-- Error path (each mapped `AdapterError` variant has a test).
-- Async cancellation / timeout (deterministic via injected time + mocked runner).
+- Boundary/edge inputs (empty/invalid title, empty media result, large transcript, timestamp boundaries).
+- Error path (for a changed public Rust function, test every `AppError` variant it constructs
+  or propagates; for a changed Tauri command, also test every error outcome explicitly named
+  in the routed TaskPilot item's scenarios or DoD).
+- Async cancellation or timeout only when the production behavior exposes it; make the test deterministic.
 
 ## Anti-patterns (findings)
-- Spawning real CLI binaries or hitting the real filesystem/DB in unit tests.
+- Downloading models, opening native dialogs, or hitting the user's filesystem/DB in unit tests.
 - Matching errors by message string instead of variant.
-- Shared global mutable state or test ordering dependence.
+- Shared global mutable state, model cache, or test ordering dependence.
 - `#[test]` on an async fn (won't compile/await correctly) instead of `#[tokio::test]`.
 - Timeout tests that rely on real wall-clock sleeps (flaky).
 
-## Property-based tests (proptest)
+## Property-based tests (optional)
 
-For parsing and stripping functions, use `proptest` to verify invariants. See `.claude/conventions/testing-taxonomy.md` §Additional Quality Practices for requirements.
+For parsing and transformation functions, use `proptest` only after adding it as a routed dev dependency. See `.claude/conventions/testing-taxonomy.md` §Additional Quality Practices for applicability.
 
 ```rust
 use proptest::prelude::*;
@@ -52,9 +56,9 @@ proptest! {
 }
 ```
 
-Add `proptest = "1"` to `[dev-dependencies]`. Property tests live inside `proptest! { }` blocks alongside existing `#[cfg(test)]` modules.
+Property tests live inside `proptest! { }` blocks alongside existing `#[cfg(test)]` modules after the dependency is added.
 
-## Contract tests (round-trip serde)
+## Contract tests (DTO serialization)
 
 Every IPC struct must have a round-trip test: serialize → deserialize → assert equality.
 
@@ -72,18 +76,7 @@ Contract tests live in the same `#[cfg(test)]` module as the struct definition.
 
 ## Integration tests
 
-For pipelines that compose store + adapter registry + routing, write integration tests in `src-tauri/tests/` using an in-memory SQLite store and stub adapters (no real CLI spawns):
-
-```rust
-use side_pilot_lib::storage::Store;
-use side_pilot_lib::adapters::AdapterRegistry;
-
-#[tokio::test]
-async fn full_roundtrip() {
-    let store = Store::in_memory().unwrap();
-    let registry = make_stub_registry();
-    // exercise the pipeline
-}
-```
-
-Integration tests verify the same composition the Tauri commands use at runtime.
+For workflows that compose storage with transcription or diarization outcome handling, write
+integration tests in `src-tauri/tests/` using temporary directories/databases and bounded
+fixtures. Integration tests verify the same composition that Tauri commands expose, without
+native dialogs, model downloads, or user data.

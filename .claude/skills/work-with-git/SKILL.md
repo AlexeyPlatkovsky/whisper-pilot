@@ -73,9 +73,22 @@ After edits:
 1. Inspect `git status --short`.
 2. For ID-bearing work, before each commit and immediately before merge into `main`, compare the provisional ID with the registry and current local/fetched-remote task branches. The first task merged into `main` keeps a colliding ID; block each later merge into `main` until that task takes the next unused ID and updates its branch and artifacts. Intermediate branch merges do not finalize IDs. Prior provisional commit messages remain a documented collision exception.
 3. Report changed files and whether anything remains unstaged or uncommitted.
-4. For tracked implementation work, create and report the required local commit
-   before its TaskPilot completion transition. For AI-governance work, report
-   whether a commit was requested or remains uncommitted.
+4. For tracked implementation work, verify the `in_progress → done` TaskPilot
+   transition first, then stage its finalized TaskPilot records with the code
+   and create the required local commit. Report the commit hash in closure
+   evidence without a post-commit TaskPilot write. For AI-governance work,
+   report whether a commit was requested or remains uncommitted.
+
+### Commit-failure recovery
+
+If a local commit fails after a tracked item's verified `done` transition, do
+not run task-complete or make another TaskPilot write. Emit `Local commit
+evidence — failed` with the Git error and `git status --short` output. Resolve
+only the staging, Git, hook, or environment cause without changing task code or
+TaskPilot records, then re-stage the unchanged task scope and retry the same
+local commit. If recovery requires a task-code, test, or TaskPilot-record
+change, stop and report an atomicity blocker; a coordinator must resolve the
+completed lifecycle state before implementation can resume.
 
 ## Output Contract
 

@@ -1,8 +1,9 @@
 # Testing
 
-<!-- Owns: test strategy and how feature scenarios/checklists are executed.
-     Per-feature scenario content lives in features/F<NNN>/scenarios.md.
-     Omit this file entirely on the Lean tier. -->
+<!-- Owns: test strategy and how feature scenarios/checklists are executed. Per-feature
+     scenario content lives in features/F<NNN>/scenarios.md. Use only commands and
+     tooling verified in the repository; label planned levels as planned. Omit this file
+     entirely on the Lean tier. -->
 
 ## Strategy
 
@@ -11,16 +12,16 @@
 
 ## Test Levels
 
-<!-- WhisperPilot's test pyramid; adjust rows to match the current suite. -->
+<!-- WhisperPilot's current test pyramid. Adjust the rows to match the current suite;
+     do not list scripts, CI jobs, or tools that the repository does not provide. -->
 
 | Level | Scope | Tooling |
 | --- | --- | --- |
-| Unit (front-end) | Stores, plain IPC bindings | Vitest (`npm run test:unit`) |
-| Component | React components, hooks, App shell, Bubble overlay | Vitest + React Testing Library (`npm run test:component`) |
-| Contract | IPC command name + type-shape contracts (TS ↔ Rust serde) | Vitest (`npm run test:contract`) |
-| Design-system | Design-book/token sync, prohibited raw CSS values | Vitest (`npm run test:design-system`) |
-| Unit/Integration (Rust) | Audio pipeline, adapters, SessionManager lifecycle | cargo-nextest + tokio + mockall (`npm run test:api`, `cargo nextest run`) |
-| End-to-end | Critical paths against the Vite dev build, Tauri APIs mocked | Playwright WebKit (`npm run test:e2e`) |
+| Unit/Component (front-end) | React UI, local state, and IPC bindings | Vitest + React Testing Library (`npm run test:run`) |
+| Unit (Rust) | Rust modules and local persistence/processing logic | `cargo test --manifest-path src-tauri/Cargo.toml` (`npm run test:api`) |
+| Typecheck | TypeScript compilation | `npm run typecheck` |
+| Lint / format | Front-end static checks and formatting | `npm run lint`, `npm run format:check` |
+| Model-backed manual verification | Real local media, ffmpeg, and installed models | Explicit local run; not part of the default automated suite |
 
 ## Running Feature Scenarios
 
@@ -30,17 +31,17 @@
 
 ## Coverage Expectations
 
-<!-- What must be covered before a feature is considered done.
-     Front-end coverage threshold is enforced at 80% (`npm run test:coverage`). -->
+<!-- What must be covered before a feature is considered done. State only enforced
+     thresholds; if no threshold is configured, define risk-based expectations instead. -->
 
 ## Environments
 
-<!-- Where tests run: local and CI (.github/workflows/ci.yml, 9 parallel jobs).
-     The default suite never calls live OpenAI APIs; live smoke tests are
-     environment-gated. -->
+<!-- Where tests run: local and any configured CI workflow. The default suite must not
+     depend on network access, model downloads, or cloud APIs. Model-backed checks are
+     explicit local verification unless CI configuration proves otherwise. -->
 
 ## Quality Gates
 
-<!-- Conditions that block completion: `npm run validate`-equivalent checks — lint,
-     format, typecheck, Vitest suites, coverage, cargo build/clippy (zero warnings)/
-     nextest — plus the task-quality smoke checklist and DoD gate. -->
+<!-- Conditions that block completion. Refer to AGENTS.md and the routed validation
+     skill for mandatory gates; list the verified, task-relevant commands selected for
+     the change rather than inventing an aggregate validation script. -->

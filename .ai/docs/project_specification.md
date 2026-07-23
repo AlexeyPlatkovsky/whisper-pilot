@@ -20,8 +20,9 @@ release preparation.
 - **Mode:** single-tool.
 - **Active tool:** Codex.
 - **Instruction landscape:** the root `AGENTS.md` contract and the project-local
-  AI-governance materials under `.claude/`; `.manifesto/` is the adopted
-  framework source used to compose and review that landscape.
+  AI-governance materials under `.claude/`.
+- **Template library:** `.manifesto/` contains reusable templates only. It is
+  outside the project-local instruction landscape and does not override it.
 
 ## Known Capability Triggers
 

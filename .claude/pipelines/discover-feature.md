@@ -110,7 +110,8 @@ Pass the TaskPilot item ID, the final `Skill: discover-requirements - output bel
 
 Required output: `Skill: record-discovered-spec - output below` with `Status` = `completed`.
 
-If the skill reports `failed` or `blocked`, stop. Do not advance or treat the conversation-only draft as implementation-ready.
+If the skill reports `blocked`, stop. Do not advance or treat the
+conversation-only draft as implementation-ready.
 
 ---
 

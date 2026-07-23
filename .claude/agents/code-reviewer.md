@@ -13,7 +13,7 @@ Read:
 - The implementation diff or changed-file list for the current task. If using `git diff`, confirm the diff scope matches the current task; do not assume `HEAD~1` is the right boundary.
 - The `Agent: test-runner - output below` validation artifact for non-trivial routed work, unless the implementation artifact marks every validation layer N/A.
 - For a non-trivial logic change, the `Skill: testing-pro - output below` artifact with complete Red evidence required by `.claude/skills/testing-pro/SKILL.md`.
-- If the review touches UI, IPC, Rust core, adapters, CLI process execution, links, storage, sessions, or messages: read the relevant sections of `docs/architecture.md`. If architecture docs are not relevant, record the skip reason in Reviewed Scope.
+- If the review touches UI, IPC, Rust core, local audio/video processing, transcription, diarization, model management, or meeting storage: read the relevant sections of `docs/architecture.md`. If architecture docs are not relevant, record the skip reason in Reviewed Scope.
 - For any non-trivial change (front-end or Rust): `.claude/conventions/react-tauri/change-hygiene.md` — enforce §1–§3 (state-lifecycle completeness, refactor-invariant re-check, adversarial input coverage) at the severities below; §4 (integration re-audit) is advisory context, not a gated finding
 - For front-end changes: load only the relevant convention files based on the touched surface:
   - windowing: `.claude/conventions/react-tauri/tauri-windowing.md`
@@ -22,7 +22,7 @@ Read:
   - performance: `.claude/conventions/react-tauri/react-performance.md`
   - accessibility: `.claude/conventions/react-tauri/accessibility.md`
   - cross-platform: `.claude/conventions/react-tauri/cross-platform.md`
-- For Rust/adapter changes: `.claude/skills/testing-pro/references/rust.md`
+- For Rust core changes: `.claude/skills/testing-pro/references/rust.md`
 - For front-end test changes: `.claude/skills/testing-pro/references/frontend.md`
 - For any change that adds or modifies tests, TaskPilot description scenarios, or `dod` criteria: `.claude/conventions/testing-taxonomy.md` — enforce §Spec-to-Test Traceability, §Coverage Placement (Push-Down + E2E Budget), and the §Test-Design Techniques (Case Derivation) → §Application Rules "Make the derivation visible" standard at the severities below
 
@@ -34,7 +34,6 @@ If the diff or list of changed files is missing, return verdict `Blocked` immedi
 - Verify `.claude/skills/testing-pro/SKILL.md` against the scope record and required Red-evidence artifact
 - Cite the Red test, command, observed failure, and any approved non-TDD exception in the TDD Check output
 - Apply the test-coverage expectations in `.claude/skills/testing-pro/SKILL.md` rather than redefining them here.
-- Rust tests are isolated: no shared mutable global state, nextest-friendly (parallelism-safe)
 
 ### Coverage Traceability (see `testing-taxonomy.md`)
 Apply only when the change adds or modifies tests, TaskPilot description scenarios, or `dod` criteria.
@@ -44,18 +43,18 @@ Apply only when the change adds or modifies tests, TaskPilot description scenari
 - **Technique visibility:** non-trivial cases derived by a named technique (EP / BVA / decision table / state-transition / pairwise) name that technique via comment or Gherkin tag, per §Test-Design Techniques (Case Derivation) → §Application Rules. Missing visibility on such derived cases is **Minor**.
 
 ### React/TypeScript Layer (if touched)
-- IPC calls use generated bindings; every call has a matching capability permission in `src-tauri/capabilities/`
+- IPC calls are centralized in `src/ipc.ts`; changed command names, arguments, and result shapes match registered Rust commands and their serializable DTOs
+- Every new Tauri plugin API or non-default capability used by the front end has a minimally scoped matching permission in `src-tauri/capabilities/`; do not require a capability entry for a registered `core:default` command without evidence that Tauri requires it
 - Business logic lives in plain TS modules, not embedded in components
 - Test queries are accessible: `getByRole` / `getByLabelText` preferred over `getByTestId`
-- State placement is correct: component-local vs Zustand vs TanStack Query
+- State placement matches the existing surface: keep view-local state in React unless the routed task introduces and justifies a shared state or query library
 
 ### Rust Layer (if touched)
 - Tauri command handlers are thin wrappers — no business logic inside `#[tauri::command]` functions
-- External effects (subprocess, fs, time) are behind mockable traits; tests use `mockall`
-- Async tests use `#[tokio::test]`; errors are asserted by variant, not by string content
+- Apply the Rust test expectations in `.claude/skills/testing-pro/references/rust.md`; do not restate them as reviewer policy.
 
 ### Change Hygiene (see `change-hygiene.md`)
-- **State-lifecycle completeness:** new state (status sets, refs, slices) is removed on *every* exit path — success, error, delete, clear, switch-away — not only the happy path. A stranded id (e.g. unread/pending left set after the chat is deleted) is **Major**.
+- **State-lifecycle completeness:** new state (status values, refs, collections) is updated or cleared on *every* exit path — success, error, delete, clear, switch-away, cancel, and unmount — not only the happy path. A stranded active meeting, stale transcript, or pending state is **Major**.
 - **Refactor-invariant re-check:** after a multiplicity change (a component extracted to render more than once) static DOM ids / `htmlFor` / `aria-describedby` must be `useId()`-derived, not hard-coded; after a constant change, coupled constants/call sites are still consistent (no dead thresholds). A duplicate-id or broken-invariant regression is **Major**.
 - **Adversarial input coverage:** validators/formatters/parsers have tests for empty, whitespace, boundary, wrong-kind, and over-length inputs, and never return a value that violates their own documented invariant. A missing adversarial test for non-trivial validation logic is **Major**; an actual invariant-violating return is **Blocking**.
 
@@ -63,7 +62,7 @@ Apply only when the change adds or modifies tests, TaskPilot description scenari
 - No abstractions beyond what the task requires
 - No error handling for scenarios that cannot happen
 - Comments explain only non-obvious *why*, not *what*
-- Reuses existing project helpers/conventions instead of re-deriving them (e.g. window drag / click-vs-drag via `src/state/drag.ts`, window sizing via `src/state/windowResize.ts`); re-implementing behavior that already exists is a Major finding
+- Reuses existing project helpers and modules instead of re-deriving behavior; cite the actual existing helper or module when reporting duplication. Do not require scaffold paths that are absent from the repository.
 - If the project does not build after implementation, flag as Blocking
 
 ## Severity Levels
@@ -71,7 +70,7 @@ Apply only when the change adds or modifies tests, TaskPilot description scenari
 | Severity | Meaning |
 |---|---|
 | Blocking | Correctness bug; missing capability permission; build failure; untestable logic shipped without an explicit manual-test note |
-| Major | Failure to satisfy `.claude/skills/testing-pro/SKILL.md`, business logic in a Tauri command handler, uncovered TaskPilot description `Scenario:` or DoD bullet, or unjustified E2E duplication of a lower-level assertion |
+| Major | Failure to satisfy `.claude/skills/testing-pro/SKILL.md`, business logic in a Tauri command handler, uncovered TaskPilot description `Scenario:` or DoD bullet, or missing required runtime UI evidence for a window/WebKit-only behavior |
 | Minor | Style/naming inconsistency; missing accessible query in test; small abstraction creep; orphan behavioral test; missing named-technique visibility |
 | Info | Observation with no required action |
 

@@ -17,6 +17,12 @@ Before this pipeline begins:
 - An existing TaskPilot ID in `ready` status (or an explicitly approved resumed
   `blocked` item) is present in the manager artifact.
 - `Skill: work-with-git - output below` reports the completed branch decision.
+- If the manager assigned **Lite** tier, its artifact also contains the reduced
+  readiness confirmation required by `AGENTS.md` and
+  `.claude/skills/task-routing/SKILL.md`: `(target identified) and DoD present`.
+
+If any precondition is absent, stop and report the missing artifact or
+confirmation. Do not begin Step 0.
 
 ## Execution Contract
 
@@ -100,10 +106,39 @@ Before advancing, run the four change-hygiene audits in `.claude/conventions/rea
 Skill: `.claude/skills/validate/SKILL.md`
 Required output: `Skill: validate - output below`
 
-Select checks matching the touched layers. For a typical feature touching both front-end and Rust:
-`checks="lint format tsc vitest coverage clippy nextest cargobuild"`
+Before invoking the skill, emit a visible `Touched-layer validation plan` from
+the changed-file list in `Skill: implement-tauri-feature - output below`. Select
+the ordered, de-duplicated union of these checks; do not select checks by
+judgment or omit a mapped check:
+
+| Changed file type | Required checks |
+| --- | --- |
+| Any `.ts` or `.tsx` file | `lint format tsc vitest build` |
+| Any front-end test file matching `*.test.ts`, `*.test.tsx`, `*.spec.ts`, or `*.spec.tsx` | Add `coverage` |
+| Any `.rs` file | `clippy rusttest cargobuild` |
+| `Cargo.lock`, or a dependency-table entry in `Cargo.toml` | `audit clippy rusttest cargobuild` |
+| Any front-end stylesheet or build input (`.css`, `.html`, `.svg`) with no changed `.ts` or `.tsx` file | `format build` |
+
+The plan must list each changed file that selected a row and the resulting
+`checks` value. If no row maps a changed implementation file, stop and report
+the unmapped file; do not use validation defaults. For a feature touching both
+front-end TypeScript and Rust, the required value is
+`checks="lint format tsc vitest coverage build clippy rusttest cargobuild"` when
+a front-end test file changed, and the same value without `coverage` otherwise.
 
 If validation fails, fix and re-run. Do not advance to Step 4 until `Skill: validate - output below` reports all checks PASS.
+
+---
+
+### Rework Routing
+
+Whenever Steps 3–9 require a return to implementation, classify the required
+production change before editing it. If it changes non-trivial logic or an
+observable behavior covered by the TDD Provenance Gate, return to Step 2 and
+obtain refreshed `Skill: testing-pro - output below` evidence before changing
+production code. Otherwise, return to Step 3. Re-run every downstream step
+whose evidence the rework invalidates; a prior passing artifact does not cover
+changed production behavior.
 
 ---
 
@@ -114,11 +149,31 @@ If validation fails, fix and re-run. Do not advance to Step 4 until `Skill: vali
 
 Manually verify the changed UI: run the app, exercise the affected states, and
 confirm they match the specification and the conventions in
-`.claude/conventions/react-tauri/`. Record the states checked and the outcome.
+`.claude/conventions/react-tauri/`. Emit a visible `Manual UI verification
+record` in this form:
 
-If a state does not match, return to Step 3. If it cannot be assessed from
-available inputs, stop and report the blocker; if the limitation is external,
-record it and continue to Step 5.
+`Status` — exactly one of `Pass`, `Fail`, or `External verification limitation`.
+
+**Environment** — macOS version, Safari/WebKit version when WKWebView-sensitive behavior is
+verified, and app build mode.
+
+| State / interaction | Expected result | Observed result | Result |
+| --- | --- | --- | --- |
+
+Each `Result` is exactly `Pass`, `Fail`, or `Not assessed`. A `Pass` status
+requires every row to be `Pass`; a `Fail` status requires at least one `Fail`
+row and names the implementation defect. `External verification limitation` is
+allowed only when no implementation defect was found and must add this table:
+
+| Scope | Cause | Unavailable Coverage | Implementation Defect Found |
+| --- | --- | --- | --- |
+
+The final column must be `no`. This table uses the same limitation fields that
+`test-runner` requires.
+
+On `Fail`, use Rework Routing. On `External verification limitation`, pass the
+record to Step 5. If the manual verification cannot produce one of these
+statuses, stop and report the blocker.
 
 ---
 
@@ -128,11 +183,16 @@ Agent: `.claude/agents/test-runner.md`
 
 Required output: `Agent: test-runner - output below`
 
-The agent runs locally whichever build/test/manual checks apply to the touched layers. If validation fails, return to Step 3. If validation is `Blocked`, continue only when its artifact explicitly identifies an external verification limitation; otherwise stop and report the blocker. Record a permitted limitation and continue to Step 6.
+The agent runs the `Touched-layer validation plan` commands and the applicable
+manual checks. If validation fails, use Rework Routing. If validation is
+`Blocked`, continue only when its artifact explicitly identifies an external
+verification limitation; otherwise stop and report the blocker. Record a
+permitted limitation and continue to Step 6.
 
 For UI/interaction changes, the agent consumes the Step 4 manual UI verification
-record. It requires a passing result unless that record explicitly identifies an
-external verification limitation, which it records without treating as a fail.
+record. Pass the visible `Manual UI verification record` as explicit input. It
+requires a passing result unless that record explicitly identifies an external
+verification limitation, which it records without treating as a fail.
 
 ---
 
@@ -142,9 +202,25 @@ external verification limitation, which it records without treating as a fail.
 **Skip:** no visual UI or interaction surface changed.
 
 Self-review the visual result against the `.claude/conventions/react-tauri/`
-accessibility, performance, and platform-scope conventions. If it needs revision,
-return to Step 3. If it cannot be assessed, stop and report the blocker; record a
-permitted external limitation and continue to Step 7.
+accessibility, performance, and platform-scope conventions. Emit a visible
+`Design self-review record` in this form:
+
+`Status` — exactly one of `Pass`, `Needs revision`, or `External verification limitation`.
+
+| Convention / requirement | Evidence checked | Result |
+| --- | --- | --- |
+
+Each `Result` is exactly `Pass`, `Needs revision`, or `Not assessed`. A `Pass`
+status requires every row to be `Pass`; `Needs revision` requires at least one
+row with that result. `External verification limitation` is allowed only when
+no implementation defect was found and must add the same `Scope`, `Cause`,
+`Unavailable Coverage`, and `Implementation Defect Found` table defined in
+Step 4, with `no` in its final column.
+
+On `Needs revision`, use Rework Routing. On `External verification limitation`,
+record the limitation and continue to Step 7. If the review cannot produce one
+of these statuses, stop and report the blocker. If skipped, state `Skipped — no
+visual UI or interaction surface` in the closure record.
 
 ---
 
@@ -153,17 +229,24 @@ permitted external limitation and continue to Step 7.
 Agent: `.claude/agents/code-reviewer.md`
 Required output: `Agent: code-reviewer - output below`
 
-If verdict is `Needs revision` or `Blocked` because TDD provenance is missing or invalid, return to Step 2. If verdict is `Needs revision` for another finding, return to Step 3. For any other `Blocked` verdict, stop and report the blocker.
+If verdict is `Needs revision` or `Blocked` because TDD provenance is missing or invalid, return to Step 2. If verdict is `Needs revision` for another finding, use Rework Routing. For any other `Blocked` verdict, stop and report the blocker.
 Do not advance to Step 8 until verdict is `Approved` or `Approved with minor notes`.
 
 ---
 
-### Step 8 — Documentation Maintenance
+### Step 8 — Documentation Maintenance (conditional)
+
+**Trigger:** implementation changes an authoritative documentation fact:
+observable behavior, a public interface, a command signature, an architecture
+constraint, or a documented domain rule.
+**Skip:** the implementation is internal-only and changes none of those facts.
 
 Skill: `.claude/skills/documentation-maintenance/SKILL.md`
 Required output: `Skill: documentation-maintenance - output below`
 
-Do not advance to Step 9 until this artifact is present.
+If triggered, do not advance to Step 9 until this artifact is present. If
+skipped, record `Skipped — no authoritative documentation fact changed` in the
+closure record.
 
 ---
 
@@ -184,17 +267,24 @@ If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 10 unti
 
 After the DoD gate passes, invoke `.claude/skills/taskpilot-work/SKILL.md` to
 add completion evidence and perform the verified `in_progress → done`
-transition. Then stage the finalized TaskPilot records with the task code and
-create the one local task-scoped commit required by `AGENTS.md` and
-`.claude/skills/work-with-git/SKILL.md`; do not push. The output must include
-the commit hash and prove that reloading the item returned `done` before the
-atomic commit.
+transition. Its artifact must prove that reloading the item returned `done`.
+Then, following the commit boundary already established by
+`.claude/skills/work-with-git/SKILL.md`, stage the finalized TaskPilot records
+with the task code and create the one local task-scoped commit required by
+`AGENTS.md`; do not push. Emit visible `Local commit evidence` naming the
+commit hash and any uncommitted remainder.
+
+Required evidence: `Skill: taskpilot-work - output below` and `Local commit
+evidence`
+
+If the local commit fails after the verified `done` transition, follow the
+commit-failure recovery procedure in `.claude/skills/work-with-git/SKILL.md`.
 
 For a declared delivery cohort, perform its one shared local commit and complete
 both task records atomically only after both DoD gates pass. If either cannot
 complete, split the cohort or leave both items unfinished.
 
-Do not advance to Task Complete without this lifecycle artifact.
+Do not advance to Task Complete without both lifecycle and commit artifacts.
 
 ---
 

@@ -137,7 +137,7 @@ an all-done result without routing; otherwise return only unfinished child IDs t
 | Parent | `taskpilot item parent CHILD-ID PARENT-ID` |
 | Block | `taskpilot item blocks BLOCKER-ID BLOCKED-ID` |
 | Relate | `taskpilot item relates SOURCE-ID TARGET-ID` |
-| Comment | `taskpilot item comment VP-1 "Validation and smoke results"` |
+| Comment | `taskpilot item comment WP-1 "Validation and smoke results"` |
 | Validate | `taskpilot validate` |
 
 ## Output Contract

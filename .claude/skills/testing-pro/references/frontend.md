@@ -11,17 +11,17 @@ Stack: **Vitest** (runner, Vite-native, fast), **React Testing Library** (RTL), 
 - Each test is isolated: no shared mutable state between tests; reset mocks in `afterEach` (or `clearMocks: true`).
 
 ## WhisperPilot specifics
-- Wrap components under test in their real providers (TanStack Query client, Zustand store) using a small `renderWithProviders` helper.
-- For IPC, mock the generated command/`invoke` to return typed fixtures; assert the UI reflects loading → success → error.
-- Test the send flow: typing a prompt + pressing Enter triggers the mutation; the response appears; the input clears.
-- Test the error path: a rejected IPC call surfaces a visible, accessible error (not a silent failure).
-- Assert the `aria-live` region receives the new assistant message.
+- Mock the typed wrappers exported by `src/ipc.ts`, not React internals or raw command strings in components.
+- Assert the UI reflects the relevant loading → success → error path for meeting creation, file transcription, settings, or model download.
+- Test user-visible flows such as choosing a file, opening/renaming/deleting a meeting, changing a setting, or managing a model; do not introduce chat or assistant-message cases.
+- Test the error path: a rejected IPC call surfaces a visible, accessible error instead of failing silently.
+- Assert an `aria-live` region only when the touched UI is designed to announce progress, completion, or errors.
 
 ## Heuristics per component/behavior
 - Renders expected content for given props/state (happy path).
 - Responds correctly to user interaction (`userEvent`).
 - Handles the async/error state from IPC.
-- Edge: empty history, very long message, in-flight (disabled send) state.
+- Edge: empty meeting library, invalid or over-long meeting title, unavailable model, cancelled file dialog, or in-flight transcription state.
 
 ## Anti-patterns (findings)
 - `getByTestId` where a role/label query works.
@@ -30,9 +30,9 @@ Stack: **Vitest** (runner, Vite-native, fast), **React Testing Library** (RTL), 
 - Mocking internals rather than the IPC boundary.
 - Missing failure-path test for any IPC-driven behavior.
 
-## Property-based tests (fast-check)
+## Property-based tests (optional fast-check)
 
-For parsing, stripping, and transformation functions, use `fast-check` to verify invariants across random inputs. See `.claude/conventions/testing-taxonomy.md` §Additional Quality Practices for requirements.
+For parsing, stripping, and transformation functions, use `fast-check` to verify invariants across random inputs only after the routed task adds that dependency. See `.claude/conventions/testing-taxonomy.md` §Additional Quality Practices for applicability.
 
 ```ts
 import fc from "fast-check";
@@ -44,33 +44,11 @@ it("is idempotent", () => {
 });
 ```
 
-Key invariants to verify: idempotence, no throw on any input, output is never longer than input (for reduction functions), no secrets/URLs leaked in output. Property tests live in `*.proptest.ts` files alongside regular tests.
+Key invariants to verify: idempotence, no throw on any input, output bounds, and no unintended path or transcript content leakage. Add `fast-check` as a task dependency before using it; property tests live beside the relevant unit tests.
 
-## Accessibility tests (jest-axe)
+## Accessibility and IPC contracts
 
-Run an axe audit after rendering a component with live data. Use the `src/test/a11y.ts` helper.
-
-```ts
-import { checkA11y } from "../test/a11y";
-
-it("has no a11y violations", async () => {
-  const { container } = render(<MyComponent />);
-  await checkA11y(container, "my component expanded");
-});
-```
-
-A11y tests live in `*.a11y.test.tsx` files. E2E a11y uses `@axe-core/playwright`.
-
-## Contract tests (IPC shapes)
-
-Verify generated TypeScript types match the Rust source and are importable. The CI gate `cargo test export_bindings` + `git diff --exit-code src/chat/generated` ensures generated files are never stale.
-
-```ts
-it("all generated contract modules are importable", async () => {
-  for (const mod of ["AdapterRequest", "Message", "Route" /* ...more modules */]) {
-    await expect(import(`./generated/${mod as string}`)).resolves.toBeDefined();
-  }
-});
-```
-
-Contract tests live in `src/chat/contract.test.ts`.
+Use accessible queries and user interactions in every component test. Add an axe tool only
+when the task first configures it. For IPC contracts, test the affected UI behavior with a
+typed `src/ipc.ts` mock and test Rust DTO serialization or command behavior at the Rust
+boundary. This repository has no generated bindings or binding-generation CI gate.

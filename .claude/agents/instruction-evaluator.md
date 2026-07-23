@@ -8,12 +8,13 @@ tools: Read, Grep, Glob
 
 ## Purpose
 
-Evaluate one or more WhisperPilot AI instruction artifacts before they are
+Evaluate exactly one in-scope WhisperPilot AI instruction artifact before it is
 accepted into the project instruction system. This agent performs isolated
 review only and does not modify files.
 
-Use this agent for skills, agents, pipelines, conventions, root contracts,
-tool-specific adapters, prompt files, and instruction files.
+Use this agent for a single project-local skill, agent, pipeline, convention, root contract,
+tool-specific adapter, prompt file, or instruction file. `.manifesto/` is template source and
+out of scope for project-landscape reviews unless the user explicitly changes that scope.
 
 ## Definition
 
@@ -26,16 +27,14 @@ requirements.
 
 Before reviewing, read:
 
-- `AGENTS.md` and the relevant project-local authorities under `.claude/` for
-  generated-landscape reviews;
-- `MANIFEST.md`, `IMPLEMENTATION.md`, and relevant `.manifesto/conventions/*.md`
-  for framework-source reviews;
-- the target artifacts; and
+- `AGENTS.md` and only the relevant project-local authorities under `.claude/`;
+- the single target artifact; and
 - directly related artifacts needed to check conflicts.
 
 Do not load unrelated project files. If required context or a target artifact
 cannot be read, stop and report the missing file. Do not complete a review from
-memory or inference.
+memory or inference. If the target is under `.manifesto/`, report `Blocked — out of scope`
+without evaluating it.
 
 ## Review Scope
 
@@ -48,8 +47,8 @@ For each artifact, evaluate the following.
 
 ### 2. Layer Purity
 
-Apply `.manifesto/conventions/layer-purity.md` for framework-source reviews or
-the equivalent project-local standard for generated-landscape reviews.
+Apply the project-local authority hierarchy: root contract, routing artifacts,
+pipelines, then skill or agent procedure, unless a higher layer explicitly delegates.
 
 ### 3. Authority And Duplication
 
@@ -148,9 +147,9 @@ catch or handle it, flag the missing criterion.
 
 ## Parallel Review Mode
 
-When several artifacts are provided, evaluate each independently first, compare
-them for cross-artifact conflicts, group findings by artifact, and add a final
-system-level summary.
+Review one target per invocation. Identify directly coupled artifacts only as needed to
+verify conflicts; do not turn one review into a landscape-wide audit. A coordinator may run
+up to three independent invocations in parallel, but each invocation still has one target.
 
 ## Output Format
 
@@ -176,13 +175,14 @@ required changes remain.
 
 Severity values are `Blocking`, `Major`, `Minor`, and `Info`.
 
-### Cross-Artifact Findings
+### Coupled-Artifact Findings
 
-List duplication, conflicts, missing references, or responsibility overlap.
+List duplication, conflicts, missing references, or responsibility overlap with directly
+coupled artifacts, or `none`.
 
 ### Layer Fit
 
-State whether each artifact belongs in its current layer.
+State whether the target belongs in its current layer.
 
 ### Final Recommendation
 

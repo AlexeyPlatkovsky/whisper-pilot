@@ -18,6 +18,8 @@ Read:
 - the implementation artifact (the pipeline step's output or the task's produced-file summary listing touched layers and expected validation commands)
 
 If the requested validation scope or implementation artifact is missing, return `Blocked`.
+Run only commands named by the active manager or pipeline artifact, plus a directly
+applicable local default below. Do not invent an unavailable test layer.
 
 ## Responsibilities
 
@@ -52,11 +54,10 @@ If the requested validation scope or implementation artifact is missing, return 
 Run only commands relevant to touched layers:
 
 ```text
-npm run test                                       # Front-end unit tests (Vitest)
-npm run test:e2e                                   # WebKit E2E (Playwright)
+npm run test:run                                   # Front-end unit tests (Vitest, non-watch)
 npm run lint                                       # Front-end lint (ESLint)
 npm run format:check                               # Front-end format (Prettier)
-cargo nextest run --manifest-path src-tauri/Cargo.toml                      # Rust core tests
+cargo test --manifest-path src-tauri/Cargo.toml    # Rust core and integration tests
 cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings  # Rust lint
 ```
 
@@ -78,6 +79,9 @@ Then provide:
 **Blocking Failures** — list failures that must return to implementation, or `None`.
 
 **Validation Summary** — one sentence stating whether the routed validation gate is satisfied.
+
+**Skipped Checks** — each non-run relevant default, with the observable reason (`not
+touched`, `not requested`, or `command unavailable`).
 
 **External Validation Limitation** — `N/A`, or a table with `Scope`, `Cause`,
 `Unavailable Coverage`, and `Implementation Defect Found` (`yes` / `no`). A

@@ -65,23 +65,40 @@ Skill: `.claude/skills/validate/SKILL.md`
 Required output: `Skill: validate - output below`
 
 Select checks matching the touched layers:
-`checks="lint format tsc vitest coverage clippy nextest cargobuild"`
+`checks="lint format tsc vitest coverage clippy rusttest cargobuild"`
 
 If validation fails, fix and re-run. Do not advance until `Skill: validate - output below` reports all checks PASS.
 
 ---
 
-### Step 3 — Dedicated Validation
+### Step 3 — Runtime UI Verification (conditional)
+
+**Trigger:** the fix changes a visual UI or interaction surface.
+**Skip:** no visual UI or interaction surface changed.
+
+Run the affected flow in the real Tauri macOS window and emit the `Manual UI
+verification record` defined by `.claude/conventions/testing-taxonomy.md`
+§Runtime UI verification evidence. On `Fail`, use Rework Routing. An external
+verification limitation may continue only when the record states that no
+implementation defect was found. Do not advance to Step 4 until the applicable
+record is present.
+
+---
+
+### Step 4 — Dedicated Validation
 
 Agent: `.claude/agents/test-runner.md`
 Required output: `Agent: test-runner - output below`
 
-The agent runs the full test suite for every touched layer (`npm run test` and `npm run test:e2e` front-end, `cargo nextest run` Rust core). All tests — new and pre-existing — must pass. If validation fails, return to Step 2.
-Do not advance to Step 4 until this artifact is present with a passing result.
+The agent runs the applicable configured test suite for every touched layer
+(`npm run test:run` for front-end; `cargo test --manifest-path
+src-tauri/Cargo.toml` for Rust). For UI fixes, pass the Step 3 `Manual UI
+verification record` as explicit input.
+All tests — new and pre-existing — must pass. If validation fails, return to
+Step 2 through Rework Routing.
+Do not advance to Step 5 until this artifact is present with a passing result.
 
----
-
-### Step 4 — Review
+### Step 5 — Review
 
 Agent: `.claude/agents/code-reviewer.md`
 Required output: `Agent: code-reviewer - output below`
@@ -91,24 +108,26 @@ The reviewer must confirm:
 - the fix is minimal and does not introduce new behavior beyond the bug scope
 - no Blocking or Major findings remain
 
-If verdict is `Needs revision` or `Blocked` because TDD provenance is missing or invalid, return to Step 1. If verdict is `Needs revision` for another finding, return to Step 2. For any other `Blocked` verdict, stop and report the blocker.
-Do not advance to Step 5 until verdict is `Approved` or `Approved with minor notes`.
+If verdict is `Needs revision` or `Blocked` because TDD provenance is missing or invalid, use Rework Routing. If verdict is `Needs revision` for another finding, use Rework Routing. For any other `Blocked` verdict, stop and report the blocker.
+Do not advance to Step 6 until verdict is `Approved` or `Approved with minor notes`.
 
 ---
 
-### Step 5 — Documentation Maintenance (conditional)
+### Step 6 — Documentation Maintenance (conditional)
 
-**Trigger:** the fix changes observable behavior, a public interface, a command signature, an architecture constraint, or a domain fact documented in `AGENTS.md`, `docs/idea.md`, `docs/architecture.md`, or `.claude/docs/`.
+**Trigger:** the fix changes an authoritative documentation fact: observable
+behavior, a public interface, a command signature, an architecture constraint,
+or a documented domain rule. Consult `AGENTS.md` to identify the owning source.
 **Skip:** fix is internal-only with no externally visible behavioral change.
 
 Skill: `.claude/skills/documentation-maintenance/SKILL.md`
 Required output: `Skill: documentation-maintenance - output below`
 
-Do not advance to Step 6 until this artifact is present (if triggered).
+Do not advance to Step 7 until this artifact is present (if triggered).
 
 ---
 
-### Step 6 — Definition of Done (DoD) Gate
+### Step 7 — Definition of Done (DoD) Gate
 
 Run the DoD quality gate to verify all acceptance criteria pass, smoke checklist is complete, and edge cases are covered.
 
@@ -117,22 +136,34 @@ Skill: `.claude/skills/task-quality/SKILL.md`
 Required input: existing TaskPilot ID from `Manager: manager - output below`
 Required output: `Skill: task-quality - output below`
 
-If the verdict is `blocked`, fix gaps and re-run. Do not advance to Step 7 until the quality gate reports `pass`.
+If the verdict is `blocked`, use Rework Routing. Do not advance to Step 8 until the quality gate reports `pass`.
 
 ---
 
-### Step 7 — Local Commit And TaskPilot Completion
+### Step 8 — Local Commit And TaskPilot Completion
 
-After DoD passes, create the required local task-scoped commit; do not push.
-Invoke `taskpilot-work` to add completion evidence, including the commit hash,
-and perform the verified `in_progress → done` transition. For a declared
-two-task delivery cohort, both DoD gates must pass before its one shared commit
-and both completion transitions occur. Do not advance without reloaded `done`
-evidence.
+After DoD passes, invoke `taskpilot-work` to add completion evidence and perform
+the verified `in_progress → done` transition. Then follow the commit boundary
+and commit-failure recovery procedure in `.claude/skills/work-with-git/SKILL.md`;
+do not push. The lifecycle artifact must prove reloaded `done` before the atomic
+commit, and the closure record reports the commit hash. For a declared two-task
+delivery cohort, both DoD gates must pass before both verified completion
+transitions and their one shared commit.
 
----
 
-### Step 8 — Task Complete
+### Step 9 — Task Complete
 
 Skill: `.claude/skills/task-complete/SKILL.md`
 Required output: `Skill: task-complete - output below`
+
+---
+
+### Rework Routing
+
+Whenever Steps 2–7 require a return to implementation, classify the required
+production change before editing it. If it changes non-trivial logic or an
+observable behavior covered by the TDD Provenance Gate, return to Step 1 and
+obtain refreshed `Skill: testing-pro - output below` evidence before changing
+production code. Otherwise, return to Step 2. Re-run every downstream step
+whose evidence the rework invalidates; a prior passing artifact does not cover
+changed production behavior.

@@ -50,7 +50,7 @@ Ask only about decisions that materially affect routing, orchestration, validati
 ## Output Contract
 
 At the end of a brainstorming phase, produce a decision summary:
-- each decision made
+- one row for each decision made
 - the selected option
 - any caveats or constraints noted by the user
 
@@ -59,3 +59,12 @@ Execution may begin only after the user confirms the summary.
 The summary must begin with:
 
 `Skill: brainstorm - output below`
+
+Then emit:
+
+| Decision | Selected Option | Caveats / Confirmation |
+|----------|-----------------|-------------------------|
+
+Until the user confirms, write `awaiting user confirmation` in the final
+column and do not treat the artifact as a completed decision summary. After
+confirmation, state `confirmed by user` in that column.

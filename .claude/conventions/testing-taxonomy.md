@@ -10,36 +10,48 @@ All test code must target the correct level per the following taxonomy:
 
 | Level | Scope | Tools | Directory |
 |-------|-------|-------|-----------|
-| **Unit** | Pure functions, reducers, helpers | Vitest / cargo-nextest | `src/**/*.test.{ts,tsx}`, `#[cfg(test)]` |
-| **Component** | Single React component with mocked IPC | Vitest + RTL + userEvent | `src/components/*.test.tsx` |
-| **Integration** | Store + registry pipeline, Tauri command layer | cargo-nextest (Rust) | `src-tauri/tests/` |
-| **Contract** | IPC shape validation, round-trip serde | Vitest / cargo test | `src/chat/contract.test.ts`, Rust inline |
-| **E2E** | Full UI in WebKit engine | Playwright WebKit | `e2e/*.spec.ts` |
-| **A11y** | Accessibility axe audits | jest-axe / @axe-core/playwright | `*.a11y.test.tsx`, `e2e/a11y.spec.ts` |
-| **Property** | Randomized invariant verification | fast-check / proptest | `*.proptest.ts`, Rust inline |
+| **Unit** | Pure TypeScript functions or isolated Rust logic | Vitest / `cargo test` | `src/**/*.test.{ts,tsx}`, Rust `#[cfg(test)]` |
+| **Component** | A React component with the IPC boundary mocked | Vitest + RTL + userEvent | `src/*.test.tsx` or next to the component |
+| **Integration** | Multiple Rust modules, storage, or transcription/diarization pipeline seams | `cargo test` | `src-tauri/tests/` |
+| **Contract** | Rust command DTO serialization and the matching `src/ipc.ts` wrapper shape | Vitest / `cargo test` | Rust inline or matching front-end test |
+| **Runtime UI verification** | Window, WKWebView, layout, or platform behavior that jsdom cannot execute | Manual Tauri macOS verification | Evidence artifact, not a standing test directory |
+| **Property** | Randomized invariant verification when a suitable library is explicitly added | fast-check / proptest | Close to the tested function |
 
 ## Additional Quality Practices
 
-- **Coverage thresholds** enforced via `@vitest/coverage-v8` (80% lines, branches, functions, statements).
-- **Dependency auditing** via `npm audit --production` and `cargo audit`.
-- **Smoke tests** tag critical-path tests with `[smoke]` (Vitest) or `@smoke` (Playwright).
-- **Property-based testing** for parsing, stripping, and reduction functions. Use `fast-check` (TS) and `proptest` (Rust).
-- **Accessibility testing** via `jest-axe` for components and `@axe-core/playwright` for E2E.
-- **Mutation testing** validates test quality on `feature/*` branches. Stryker-js + cargo-mutants.
-- **Contract tests** verify round-trip serialization for all IPC types and that generated TypeScript bindings match the Rust source of truth.
-- **Static analysis** uses `typescript-eslint stylisticTypeChecked` rules, `eslint-plugin-testing-library`, and `clippy::pedantic`.
+- **Coverage thresholds, mutation testing, E2E, property testing, and axe audits are not configured project-wide.** Add them only through a routed change that adds the dependency, command, and ownership; do not claim them as existing gates.
+- **Accessibility** is tested through accessible RTL queries for component behavior and manual real-window verification where WKWebView behavior matters.
+- **Contract tests** verify observable Rust command DTO behavior and consistency with the typed wrappers in `src/ipc.ts`; this project does not currently generate bindings.
+- **Static analysis** uses the commands actually defined by the repository (`npm run lint`, `npm run typecheck`, `npm run format:check`, and relevant Cargo checks). Do not require an unconfigured linter mode.
+
+## Runtime UI verification evidence
+
+Runtime UI verification is a task-local evidence artifact, not a test directory. The routed
+pipeline records it in the visible `Manual UI verification record`, passes it to
+`test-runner`, and cites it in the TaskPilot completion evidence. The record uses this format:
+
+`Status` — exactly one of `Pass`, `Fail`, or `External verification limitation`.
+
+**Environment** — macOS version, Safari/WebKit version for WKWebView-sensitive behavior, and
+app build mode.
+
+| State / interaction | Expected result | Observed result | Result |
+| --- | --- | --- | --- |
+
+For an external verification limitation, also record `Scope`, `Cause`, `Unavailable Coverage`,
+and `Implementation Defect Found` (`no`). A `Pass` requires all relevant rows to pass; a `Fail`
+must identify the implementation defect.
 
 ## Selection Heuristics
 
 | What's being tested | Level | Example location |
 |---------------------|-------|-----------------|
-| Pure function (parser, reducer, helper) | Unit | `src/state/chat.test.ts`, `#[cfg(test)]` |
-| Single React component | Component | `src/components/Bubble.test.tsx` |
-| Store + adapter + routing pipeline | Integration | `src-tauri/tests/integration_store_routing.rs` |
-| IPC type round-trip | Contract | `src/chat/contract.test.ts` |
-| Full UI in WebKit | E2E | `e2e/composer.spec.ts` |
-| Accessibility audit | A11y | `src/components/Bubble.a11y.test.tsx` |
-| Invariant over random inputs | Property | `src/**/*.proptest.ts` |
+| Pure function (formatting, i18n, theme, speaker label) | Unit | `src/*.test.ts`, Rust `#[cfg(test)]` |
+| Single React screen or section | Component | `src/*Screen.test.tsx`, `src/*Section.test.tsx` |
+| Meeting storage or transcription/diarization pipeline seam | Integration | `src-tauri/tests/*.rs` |
+| IPC DTO and wrapper agreement | Contract | Rust inline or the matching `src/ipc.ts` consumer test |
+| Window/WebKit-specific behavior | Runtime UI verification | Manual Tauri macOS evidence |
+| Invariant over random inputs | Property | Only after the task configures fast-check or proptest |
 
 ## Test-Design Techniques (Case Derivation)
 
@@ -49,11 +61,11 @@ Every technique must produce **negative and invalid cases**, not only valid ones
 
 | Technique | Derive cases when | Cases it forces | Project example |
 |-----------|-------------------|-----------------|-----------------|
-| **Equivalence Partitioning (EP)** | An input has distinguishable classes that should each be handled the same way | One representative per valid class **and** per invalid class | Provider reasoning value: classes `empty` / `"none"` / `arbitrary non-empty` → each handled distinctly (no flag vs passed-through arg) |
-| **Boundary Value Analysis (BVA)** | An input is ordered — numeric, length, count, or size | At, just below, and just above each boundary (min−1, min, max, max+1) | Composer auto-grow height: at the 32px min-height, and just-below/at/just-above the 96px max-height scroll threshold; prompt length empty vs single-char vs very long |
-| **Decision Table** | Behavior depends on a **combination** of independent conditions | Enumerate all 2ⁿ condition combinations; mark impossible ones explicitly as unreachable (documented, not tested); one test per reachable rule | Preference fallback (SP-036): file-valid × per-provider-valid/invalid → which providers keep settings vs use Rust defaults; CLI arg construction from model × reasoning × provider |
-| **State-Transition** | Behavior is **stateful** — events move the system between states | Valid transitions, invalid events per state, and guard conditions | Prompt lifecycle: in-flight vs idle; an in-flight prompt keeps its config snapshot when preferences change mid-flight; panel open/collapsed; session lifecycle |
-| **Pairwise / Combinatorial** | ≥3 independent multi-valued parameters make full coverage explode | Every pair of parameter values covered (pairwise is the coverage goal, not a fixed case count; no tool is mandated) | Provider × model × reasoning × platform (macOS/Windows) matrices |
+| **Equivalence Partitioning (EP)** | An input has distinguishable classes that should each be handled the same way | One representative per valid class **and** per invalid class | Meeting title: empty / whitespace / valid non-empty / over limit |
+| **Boundary Value Analysis (BVA)** | An input is ordered — numeric, length, count, or size | At, just below, and just above each boundary (min−1, min, max, max+1) | Meeting-title limit or timestamp boundaries |
+| **Decision Table** | Behavior depends on a **combination** of independent conditions | Enumerate all 2ⁿ condition combinations; mark impossible ones explicitly as unreachable (documented, not tested); one test per reachable rule | Model availability × selected task × download state |
+| **State-Transition** | Behavior is **stateful** — events move the system between states | Valid transitions, invalid events per state, and guard conditions | Idle → transcribing → completed/error; meeting open/delete/create lifecycle |
+| **Pairwise / Combinatorial** | ≥3 independent multi-valued parameters make full coverage explode | Every pair of parameter values covered (pairwise is the coverage goal, not a fixed case count; no tool is mandated) | Input media format × language × model availability |
 
 ### Application Rules
 
@@ -84,5 +96,8 @@ A single scenario may be covered by tests at more than one level (e.g. a unit te
 Traceability says *that* a scenario is covered; this rule says *at which level*. Choose the level deliberately, biased toward the bottom of the pyramid:
 
 - **Push down.** Cover a behavior at the **lowest level that can actually exercise it.** If a rule can be verified by a unit test over a pure function, do not promote it to a component test; if a component test with mocked IPC suffices, do not promote it to E2E. A higher-level test is justified only by behavior the lower level genuinely cannot reach (real engine rendering, cross-process wiring, real WebKit quirks).
-- **E2E budget.** The budget is a justification test, not a numeric cap. E2E (Playwright WebKit) is the scarcest level — slowest and most brittle — and is reserved for **critical-path and cross-engine behavior that no lower level can cover**: end-to-end routing through the real window, platform/WebKit-specific rendering, and `[smoke]`/`@smoke`-tagged critical paths. New E2E coverage must justify why the scenario cannot be pushed down. Duplicating a lower-level assertion at E2E is not added coverage — it is budget spent for no gain.
-- **Runtime UI validation is not E2E.** The runtime-UI-validation gate (`AGENTS.md` §Quality Gates) requires real-window evidence for UI changes; satisfying it does not require a standing E2E spec. Prefer pushing the *assertion* down while supplying runtime evidence separately.
+- **Runtime UI budget.** Apply real-window verification whenever the selected runtime-UI scope
+  cannot be exercised below the window. The highest-priority, non-exhaustive examples are
+  file-dialog handoff, native-window layout, and macOS rendering. It is evidence, not an
+  unconfigured E2E suite. Prefer pushing behavioral assertions down while supplying runtime
+  evidence separately.

@@ -1,8 +1,10 @@
 # Design Book
 
-<!-- WhisperPilot-specific extension document. Owns design-system tokens, theme mappings,
-     reusable patterns, and component-style rules. Keep product flows, screens, and states
-     in design.md; link there instead of duplicating them. Register this extension in INDEX.md. -->
+<!-- Optional extension document. Owns design-system tokens, theme mappings, reusable
+     patterns, and component-style rules. Create it only when the design system needs
+     its own lifecycle; otherwise keep design detail in design.md. Keep product flows,
+     screens, and states in design.md, link instead of duplicating them, and register
+     this extension in INDEX.md when present. -->
 
 ## Tokens And Themes
 

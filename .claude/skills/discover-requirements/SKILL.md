@@ -17,7 +17,8 @@ Use only when `.claude/pipelines/discover-feature.md` invokes initial or gap-tar
 
 Before asking any questions:
 
-1. Read any existing `.feature` files under `docs/` relevant to the topic.
+1. Read the relevant feature requirements, scenarios, and task records under
+   `docs/features/`, when they exist.
 2. If the requested work touches or depends on existing UI, IPC, Rust core, or database behavior, read the relevant sections of `docs/architecture.md`.
 3. State which architecture docs were checked, or "Architecture docs skipped: <reason>."
 
@@ -97,7 +98,13 @@ A confirmed explicit statement counts as answered. Silence or a vague "yeah" doe
 
 Do not emit the draft spec until ALL six rounds have explicit answers. An answer counts as explicit only if it directly addresses the sub-question. A single word, a restated question title, or a vague qualifier ("it should work", "normal cases") does not qualify — re-ask that sub-question before advancing. An answer of "not applicable" or "none" is valid when it was explicitly confirmed (see "None Verification" above for Rounds 3 and 4).
 
-At **epic** or **feature** altitude (see §Altitude Calibration), a *coordinating-level* answer — one that names which child feature or task owns the deferred detail — counts as an explicit answer for Rounds 2–5; the deferred detail is not a gap at this altitude. Every round still requires such an answer; altitude lowers the required depth, never the requirement to answer.
+At **epic** or **feature** altitude (see §Altitude Calibration), a
+*coordinating-level* answer — one that names which child feature or task owns
+the deferred detail — counts as an explicit answer for Rounds 2–5; the deferred
+detail is not a gap at this altitude. A coordinating answer is required only
+for the sub-questions that §Altitude Calibration permits to be deferred; answer
+the remaining sub-questions at that altitude's required depth. Altitude lowers
+the required depth, never the requirement to answer what that altitude owns.
 
 ## Draft Spec Format
 
@@ -150,9 +157,19 @@ Child-feature breakdown:
 ```
 
 Apply the fields by altitude:
-- **Epic:** set Proposed BDD scenarios and Child-task breakdown to `Not applicable — epic altitude`; populate Child-feature breakdown; keep Description, Non-goals, Constraints, and DoD at epic depth.
-- **Feature:** populate feature-level Proposed BDD scenarios and Child-task breakdown; set Child-feature breakdown to `Not applicable — feature altitude`.
-- **Task / standalone:** populate exhaustive Proposed BDD scenarios; set both child-breakdown fields to their task-altitude not-applicable values.
+- **Epic:** replace the entire Proposed BDD scenarios section and Child-task
+  breakdown value with `Not applicable — epic altitude`; populate Child-feature
+  breakdown. Keep Description, Non-goals, Constraints, and DoD at epic depth.
+- **Feature:** replace the illustrative BDD scenario placeholders with
+  feature-level scenarios, populate Child-task breakdown, and set Child-feature
+  breakdown to `Not applicable — feature altitude`.
+- **Task / standalone:** replace the illustrative BDD scenario placeholders
+  with exhaustive scenarios; set both child-breakdown fields to their
+  task-altitude not-applicable values.
+
+The three BDD blocks in the format are illustrative placeholders, not a
+requirement to create exactly three scenarios. Include every scenario surfaced
+at the applicable altitude.
 
 For a UI-only task with no deeper logic, the required happy-path BDD scenario may
 be the UI smoke path: it states the starting UI state, the functional interaction
