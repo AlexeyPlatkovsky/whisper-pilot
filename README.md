@@ -25,10 +25,12 @@ languages planned; the language of each recording is detected automatically.
 - **Clear error handling** — missing dependencies or models surface as
   readable messages instead of crashes.
 
-WhisperPilot is pre-1.0 and under active development. Planned next: a
-persisted meeting library, speaker-attributed transcripts (colored
-per-speaker chat), Markdown/plain-text export, and local AI-generated meeting
-notes.
+WhisperPilot is pre-1.0 and under active development. A persisted meeting
+library (reopen, rename, delete) and speaker-attributed transcripts (colored
+per-speaker chat) are implemented. Planned next: auto-saved edits and
+transcription progress/Stop wired into the library, a source-missing state
+for meetings whose file has moved, Markdown/plain-text export, and — after
+that — local AI-generated meeting notes.
 
 ## Requirements
 

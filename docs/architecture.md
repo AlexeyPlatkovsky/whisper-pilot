@@ -13,9 +13,10 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meeting workspace                audio.rs      ffmpeg normalize + WAV decode
   transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
   MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
-  settings screen                  export.rs     meeting → Markdown / plain text
-  ipc.ts / events                  error.rs      AppError → serialized to JS
-  theming / i18n                   settings.rs   key–value settings store (theme, ui_language, active models)
+  settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
+  ipc.ts / events                  export.rs     meeting → Markdown / plain text
+  theming / i18n                   error.rs      AppError → serialized to JS
+                                   settings.rs   key–value settings store (theme, ui_language, active models)
                                    models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
