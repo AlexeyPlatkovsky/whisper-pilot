@@ -3,9 +3,9 @@ id: WP-51
 title: Swap diarization embedding model to NeMo TitaNet-large
 priority: normal
 type: task
-status: ready
+status: cancelled
 created_at: '2026-07-24T14:32:53Z'
-updated_at: '2026-07-24T14:33:32Z'
+updated_at: '2026-07-24T15:18:01Z'
 parent_id: WP-2
 description: 'Experiment: replace the diarization embedding model (currently 3D-Speaker CAM++, 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx) with NVIDIA NeMo''s TitaNet-large, already ONNX-exported and hosted by the sherpa-onnx project itself, to test whether a stronger speaker embedding reduces the over-clustering seen in practice (a real 1:1 recording produced roughly 44 detected speaker clusters against a real 2-speaker conversation).
 
