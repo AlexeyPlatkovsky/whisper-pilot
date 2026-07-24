@@ -1,0 +1,23 @@
+schema_version: 1
+id: WP-48
+title: Coalesce consecutive same-speaker segments for display
+priority: normal
+type: task
+status: done
+created_at: '2026-07-24T13:24:02Z'
+updated_at: '2026-07-24T13:35:26Z'
+parent_id: WP-3
+description: 'Whisper''s own segmentation produces many short (~2-3s) fragments that don''t align with real speaker turns. WP-3/WP-7 already assign a `speaker_id` to each fine-grained segment by max-overlap with diarization turns, but the UI (WP-4/WP-9) renders one `wp-speaker-block` per raw segment, so a single continuous turn shows up as many tiny consecutive blocks instead of one.
+
+  Add a display-time coalescing transform: merge consecutive segments that share the same `Some(speaker_id)` into one block (joining text, spanning first `start_ms` to last `end_ms`), as long as the gap between them does not exceed a small tolerance (a real pause should still break the block). Segments with `speaker_id: None` (diarization unavailable) are never merged with each other or a neighbor — only equal, present speaker ids merge, so a diarization failure never fabricates false turn continuity.
+
+  This is a read-time/display transform only: the underlying fine-grained segments already persisted per-row in SQLite (`store.list_segments`, `store.replace_segments`) are NOT changed, re-ordered, or lossily rewritten — coalescing applies to the `Vec<SegmentDto>` on the way out to the frontend (the single conversion point is `to_dto` in src-tauri/src/meetings.rs, used by `open_meeting`, `save_transcript`, `rename_meeting`, `set_meeting_source`, `create_empty_meeting`), so editing a coalesced block, re-opening the meeting, and export all see the same merged blocks consistently. No IPC contract shape change (still `Vec<SegmentDto>`), no frontend change required — `src/App.tsx` already renders one block per array entry with no client-side grouping, so fewer larger entries render automatically as fewer, larger blocks.
+
+  Out of scope: whisper decode parameter tuning, diarization threshold/speaker-count tuning (separate follow-ups already discussed with the user), and overlapping-speaker support (blocked on the diarization engine itself, per WP-2''s ExcludeOverlap ceiling in vendored sherpa-onnx — a distinct, larger effort).'
+dod:
+- A pure function in src-tauri/src/meetings.rs merges consecutive SegmentDto entries that share the same present (non-null) speaker_id into one block (text joined with a single space, start_ms = first segment's, end_ms = last segment's), gated by a gap-tolerance constant so a real pause (gap exceeding the tolerance) still starts a new block.
+- Segments whose speaker_id is null are left as individual, unmerged entries (never coalesced with each other or an adjacent speaker), verified by a unit test.
+- to_dto applies the coalescing transform to the segments list before building MeetingDto.segments, so every read path (open_meeting, save_transcript, rename_meeting, set_meeting_source, create_empty_meeting) returns coalesced blocks consistently.
+- 'The underlying SQLite rows remain fine-grained: a unit test proves store.list_segments still returns the original, uncoalesced rows after save_transcript/to_dto has produced a coalesced MeetingDto.'
+- 'Unit tests cover: multiple consecutive same-speaker segments merge into one block; a gap larger than tolerance between same-speaker segments starts a new block; alternating speakers never merge; adjacent null-speaker segments never merge with each other or a neighboring speaker; a single segment list and an empty list both pass through correctly (no panic).'
+- cargo test and cargo clippy pass; npm run build and existing frontend tests remain green (no frontend change expected, but the IPC contract round-trip test in meetings.rs must still pass).

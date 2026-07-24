@@ -198,11 +198,55 @@ fn validate_title(title: String) -> Result<String> {
     Ok(title)
 }
 
+/// A gap this long (ms) between consecutive same-speaker segments reads as a
+/// real pause rather than a whisper segmentation artifact, so it starts a new
+/// coalesced block instead of merging.
+const COALESCE_GAP_TOLERANCE_MS: i64 = 1_000;
+
+/// Merge consecutive `segments` that share the same present `speaker_id` into
+/// single display blocks: text joined with a space, spanning the first
+/// segment's `start_ms` to the last segment's `end_ms`. A gap larger than
+/// `COALESCE_GAP_TOLERANCE_MS` between same-speaker segments starts a new
+/// block. Segments with `speaker_id: None` are never merged with each other
+/// or a neighboring speaker, so a diarization failure never fabricates false
+/// turn continuity. Read-time/display transform only — the caller's
+/// underlying stored rows are untouched.
+fn coalesce_by_speaker(segments: Vec<SegmentDto>) -> Vec<SegmentDto> {
+    let mut coalesced: Vec<SegmentDto> = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let merged = match (coalesced.last_mut(), segment.speaker_id) {
+            (Some(prev), Some(id))
+                if prev.speaker_id == Some(id)
+                    && segment.start_ms - prev.end_ms <= COALESCE_GAP_TOLERANCE_MS =>
+            {
+                prev.end_ms = segment.end_ms;
+                prev.text.push(' ');
+                prev.text.push_str(&segment.text);
+                true
+            }
+            _ => false,
+        };
+        if !merged {
+            coalesced.push(segment);
+        }
+    }
+    coalesced
+}
+
 fn to_dto(
     meeting: Meeting,
     segments: Vec<crate::store::StoredSegment>,
     notes: Option<MeetingNotes>,
 ) -> Result<MeetingDto> {
+    let segments = segments
+        .into_iter()
+        .map(|segment| SegmentDto {
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            text: segment.text,
+            speaker_id: segment.speaker_id,
+        })
+        .collect();
     Ok(MeetingDto {
         id: meeting.id,
         title: meeting.title,
@@ -212,15 +256,7 @@ fn to_dto(
         duration_ms: meeting.duration_ms,
         language: meeting.language,
         status: meeting.status,
-        segments: segments
-            .into_iter()
-            .map(|segment| SegmentDto {
-                start_ms: segment.start_ms,
-                end_ms: segment.end_ms,
-                text: segment.text,
-                speaker_id: segment.speaker_id,
-            })
-            .collect(),
+        segments: coalesce_by_speaker(segments),
         notes,
     })
 }
@@ -445,6 +481,120 @@ mod tests {
             vec!["First", "Second"]
         );
         assert_eq!(reopened.status, "finished");
+    }
+
+    fn dto(start_ms: i64, end_ms: i64, text: &str, speaker_id: Option<i64>) -> SegmentDto {
+        SegmentDto {
+            start_ms,
+            end_ms,
+            text: text.to_string(),
+            speaker_id,
+        }
+    }
+
+    // EP/BVA: same-speaker merge, gap-tolerance boundary (merge at exactly
+    // the tolerance, split just past it), different-speaker split,
+    // speakerless never merges, empty/single pass through unchanged.
+
+    #[test]
+    fn coalesce_merges_consecutive_segments_sharing_the_same_speaker() {
+        let segments = vec![
+            dto(0, 1_000, "Hello", Some(1)),
+            dto(1_000, 2_000, "there", Some(1)),
+            dto(2_000, 3_000, "friend", Some(1)),
+        ];
+
+        assert_eq!(
+            coalesce_by_speaker(segments),
+            vec![dto(0, 3_000, "Hello there friend", Some(1))]
+        );
+    }
+
+    #[test]
+    fn coalesce_merges_when_the_gap_is_exactly_at_the_tolerance_boundary() {
+        let segments = vec![
+            dto(0, 1_000, "First", Some(1)),
+            dto(1_000 + COALESCE_GAP_TOLERANCE_MS, 3_000, "Second", Some(1)),
+        ];
+
+        assert_eq!(
+            coalesce_by_speaker(segments),
+            vec![dto(0, 3_000, "First Second", Some(1))]
+        );
+    }
+
+    #[test]
+    fn coalesce_starts_a_new_block_when_the_gap_exceeds_the_tolerance() {
+        let second_start = 1_000 + COALESCE_GAP_TOLERANCE_MS + 1;
+        let segments = vec![
+            dto(0, 1_000, "First", Some(1)),
+            dto(second_start, 3_000, "Second", Some(1)),
+        ];
+
+        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
+    }
+
+    #[test]
+    fn coalesce_never_merges_across_different_speakers() {
+        let segments = vec![
+            dto(0, 1_000, "First", Some(1)),
+            dto(1_000, 2_000, "Second", Some(2)),
+        ];
+
+        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
+    }
+
+    #[test]
+    fn coalesce_never_merges_speakerless_segments_with_each_other_or_a_neighbor() {
+        let segments = vec![
+            dto(0, 1_000, "A", None),
+            dto(1_000, 2_000, "B", None),
+            dto(2_000, 3_000, "C", Some(1)),
+        ];
+
+        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
+    }
+
+    #[test]
+    fn coalesce_passes_through_an_empty_list_and_a_single_segment_without_panicking() {
+        assert_eq!(coalesce_by_speaker(Vec::new()), Vec::<SegmentDto>::new());
+
+        let single = vec![dto(0, 1_000, "Solo", Some(1))];
+        assert_eq!(coalesce_by_speaker(single.clone()), single);
+    }
+
+    #[test]
+    fn given_consecutive_same_speaker_segments_when_saved_then_display_coalesces_but_stored_rows_stay_fine_grained(
+    ) {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+
+        let saved = save_transcript(
+            temp.path(),
+            created.id,
+            vec![
+                dto(0, 1_000, "Hello", Some(1)),
+                dto(1_000, 2_000, "there", Some(1)),
+            ],
+            Some(2_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        assert_eq!(saved.segments, vec![dto(0, 2_000, "Hello there", Some(1))]);
+
+        let stored = Store::open(temp.path())
+            .expect("open store")
+            .list_segments(created.id)
+            .expect("list stored segments");
+        assert_eq!(stored.len(), 2, "underlying rows must stay fine-grained");
+        assert_eq!(stored[0].text, "Hello");
+        assert_eq!(stored[1].text, "there");
+
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert_eq!(reopened.segments, vec![dto(0, 2_000, "Hello there", Some(1))]);
     }
 
     #[test]

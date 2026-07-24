@@ -55,6 +55,15 @@ UI edits (segment text, speaker labels, notes) are **auto-saved**: each edit
 will persist to the DB immediately; there is no explicit save state. Export is
 a separate, explicit write to an external file.
 
+Stored `segments` rows stay whisper's original fine-grained spans — `to_dto`
+(`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into larger
+display blocks on every read path (see Speaker Diarization below); the
+ordinal-keyed rows themselves are never merged or rewritten. **Not yet
+designed:** WP-17's auto-save wiring will edit whatever the UI renders, which
+after WP-48 is a coalesced block that can span multiple underlying
+ordinal-keyed rows — the write-back mapping from an edited coalesced block
+back to its source row(s) still needs a design before WP-17 is implemented.
+
 ## Audio Ingestion (`audio.rs`)
 
 Any input — audio or video — is normalized through **one** path: ffmpeg produces
@@ -122,6 +131,20 @@ falling back to the nearest turn for a segment in an uncovered gap. `Segment`
 carries `speaker_id: Option<i32>` (WP-8, omitted from the JSON when `None` so
 existing consumers see no shape change), flowing through
 `TranscriptResult`/IPC and `ipc.ts`'s `Segment` interface.
+
+Because whisper's own segmentation is not speaker-aware, one continuous turn
+routinely comes back from `transcribe.rs` as many short (~2-3s) fragments that
+all land on the same `speaker_id`. `meetings.rs`'s `to_dto` (WP-48) coalesces
+consecutive segments sharing the same present `speaker_id` into one display
+block — text joined, spanning the first segment's start to the last segment's
+end — as long as the gap between them stays within a small tolerance (a
+longer gap still starts a new block, since that reads as a real pause).
+Segments with `speaker_id: None` are never coalesced with each other or a
+neighboring speaker, so a diarization failure never fabricates false turn
+continuity. This runs on every read path (`open_meeting`, `save_transcript`,
+`rename_meeting`, `set_meeting_source`, `create_empty_meeting`); the
+`segments` table itself keeps storing whisper's original fine-grained rows
+(see Meeting Model & Persistence above) — coalescing is display-only.
 
 **Diarization now runs automatically as part of `transcribe_file`** (WP-31):
 audio is decoded once and both transcription and diarization run over the
