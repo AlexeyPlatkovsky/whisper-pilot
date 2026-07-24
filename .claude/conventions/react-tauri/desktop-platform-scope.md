@@ -14,7 +14,7 @@ WhisperPilot targets **macOS only** (macOS 13+). It is not a Windows, Linux, iOS
 ## Tauri Configuration
 
 - `bundle.targets` should be limited to `["dmg", "app"]` (macOS targets only) — do not include `msi`, `nsis`, `deb`, or `appimage`.
-- `tauri.conf.json` window config should use macOS-specific settings: `transparent`, `decorations: false` on macOS 14+ for rounded corners, `macOSPrivateApi: true` for ScreenCaptureKit.
+- Treat `src-tauri/tauri.conf.json` as the authoritative main-window configuration. Follow `.claude/conventions/react-tauri/tauri-windowing.md` for its design constraints and required real-window verification; do not add ScreenCaptureKit or capture-related configuration without an approved product change.
 
 ## Design
 

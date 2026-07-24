@@ -40,6 +40,9 @@ pub enum AppError {
     #[error("speaker diarization failed: {0}")]
     Diarization(String),
 
+    #[error("meeting store failed: {0}")]
+    Store(String),
+
     #[error("{0}")]
     Io(String),
 }

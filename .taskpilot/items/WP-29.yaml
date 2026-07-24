@@ -3,9 +3,9 @@ id: WP-29
 title: Status bar states (waiting/attached/transcribing/finished/creating-MFU/no-model)
 priority: normal
 type: task
-status: backlog
+status: in_progress
 created_at: '2026-07-21T11:04:49Z'
-updated_at: '2026-07-21T11:04:49Z'
+updated_at: '2026-07-23T10:31:37Z'
 parent_id: WP-25
 description: 'Single status line reflecting meeting state: waiting-for-file, attached-file(s), transcribing (progress bar, else spinner + per-second timer), finished, creating-MFU (UI-blocked spinner+timer), no-model warning. Implements F004-R9 (F004-T13).'
 created_by: M2 UI planning

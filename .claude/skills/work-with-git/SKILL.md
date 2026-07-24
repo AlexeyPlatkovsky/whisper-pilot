@@ -7,11 +7,14 @@ description: Manage git branch selection for WhisperPilot tasks and report the c
 
 ## Purpose
 
-Keep WhisperPilot work on a task-specific git branch before edits begin.
+Enforce the user-authorized branch decision and task-scoped commit boundary.
 
 ## When This Skill Applies
 
-Use this skill when the manager routes non-trivial work before edits begin, immediately before any merge into canonical branch `main`, or when the user asks about task branch strategy.
+Use this skill when the manager routes non-trivial work before edits begin,
+immediately before an authorized merge into canonical branch `main`, or when the
+user asks about task branch strategy. A branch-strategy question uses
+`advisory-only` mode and performs no Git mutation.
 
 For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 §Git Operation Authority.
@@ -23,13 +26,19 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 - Create new task branches only from `origin/main` unless the user explicitly names another base.
 - If the task continues related work on a branch created before the task-ID rule and its uncommitted changes match the task, keep working on it and report a legacy branch exception.
 - For ID-bearing work, keep working on an existing task branch only when its name contains the task ID and its uncommitted changes match the task.
-- For instruction-system changes, apply the same existing-task-branch rule as other ID-bearing work.
+- For TaskPilot-exempt instruction-system work, use the explicitly approved
+  current branch or an explicitly approved descriptive branch; do not require
+  or invent a TaskPilot ID.
 - It is acceptable to perform a child task on a branch named for its parent feature or epic when the branch clearly covers the requested work.
 - On a feature/epic batch branch, the branch name does not make the parent the
   active work item. The routed batch manifest must identify the one active child
   task (or the explicitly declared two-task delivery cohort) before edits.
 - If the current branch or uncommitted changes appear unrelated to the requested task, stop and ask the user whether to create a new branch or stay on the current branch.
-- If an ID-bearing task needs a new branch, name it `<kind>/vp-<number>-short-task-slug`, with no tool prefix. Use a lowercase TaskPilot ID and a kebab-case slug of 3-6 meaningful words. Map TaskPilot types to `<kind>` as follows: `bug` → `bug`, `feature` → `feat`, and `task` or `epic` → `task`. For example: `feat/vp-01-introduce-local-ai`.
+- If an ID-bearing task needs a new branch, name it
+  `<kind>/<lowercase-taskpilot-id>-<3-to-6-word-kebab-slug>`, with no tool
+  prefix. Map types as follows: `bug` → `bug`, `feature` → `feat`, and `task`
+  or `epic` → `task`. Example: `feat/wp-17-introduce-local-ai`.
+- Never publish a branch unless the user explicitly requests that push in the current instruction. Branch-creation approval does not authorize an initial `git push -u`, and no pipeline or task lifecycle step may infer push authority.
 - Apply `AGENTS.md` §Git Operation Authority for branch publication and every Git mutation.
 - Preserve user changes and follow the destructive-action rules in `AGENTS.md`.
 
@@ -38,8 +47,11 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 The commit/push boundary is owned by `AGENTS.md`; this skill formats and verifies
 the required task-scoped local commits.
 
-- A tracked implementation item cannot transition to `done` until its completed
-  work is in a local commit. Push remains separately and explicitly authorized.
+- A tracked implementation task's local commit must include both its code and
+  every related TaskPilot item/comment/lifecycle file. Prepare and verify the
+  `done` lifecycle record first, stage it with the code, then make the single
+  task-scoped local commit. Report that hash in closure evidence without a
+  post-commit TaskPilot write.
 - In a normal delivery, one task has one local commit and every commit message
   begins `<TASKPILOT-ID>: `, for example `WP-17: `.
 - A two-task delivery cohort is the only multi-task commit exception. Its commit
@@ -67,11 +79,30 @@ Before edits:
 After edits:
 
 1. Inspect `git status --short`.
-2. For ID-bearing work, before each commit and immediately before merge into `main`, compare the provisional ID with the registry and current local/fetched-remote task branches. The first task merged into `main` keeps a colliding ID; block each later merge into `main` until that task takes the next unused ID and updates its branch and artifacts. Intermediate branch merges do not finalize IDs. Prior provisional commit messages remain a documented collision exception.
+2. For ID-bearing work, before each commit and authorized merge, verify the
+   canonical TaskPilot ID against the registry. Any duplicate or inconsistent
+   identity is a blocker returned to `taskpilot-work`; this skill never assigns
+   or renumbers TaskPilot IDs.
 3. Report changed files and whether anything remains unstaged or uncommitted.
-4. For tracked implementation work, create and report the required local commit
-   before its TaskPilot completion transition. For AI-governance work, report
-   whether a commit was requested or remains uncommitted.
+   Before committing, enumerate task-scoped paths, stage only those paths, and
+   inspect `git diff --cached --name-status`. Block if any staged path is
+   unrelated to the manager-declared scope.
+4. For tracked implementation work, verify the `in_progress → done` TaskPilot
+   transition first, then stage its finalized TaskPilot records with the code
+   and create the required local commit. Report the commit hash in closure
+   evidence without a post-commit TaskPilot write. For AI-governance work,
+   report whether a commit was requested or remains uncommitted.
+
+### Commit-failure recovery
+
+If a local commit fails after a tracked item's verified `done` transition, do
+not run task-complete or make another TaskPilot write. Emit `Local commit
+evidence — failed` with the Git error and `git status --short` output. Resolve
+only the staging, Git, hook, or environment cause without changing task code or
+TaskPilot records, then re-stage the unchanged task scope and retry the same
+local commit. If recovery requires a task-code, test, or TaskPilot-record
+change, stop and report an atomicity blocker; a coordinator must resolve the
+completed lifecycle state before implementation can resume.
 
 ## Output Contract
 
@@ -86,3 +117,11 @@ Then report:
 
 `Status` must be one of: `completed`, `skipped`, or `blocked`.
 `Remote Published` must be one of: `Yes (push succeeded)`, `No (push failed — see reason)`, `No (skipped — task continues on existing branch)`, or `No (skipped — publication not approved)`.
+
+For an authorized local commit, emit:
+
+`Local commit evidence - output below`
+
+| Status | Task identity | Staged paths verified | Commit hash | Uncommitted remainder | Push |
+|---|---|---|---|---|---|
+| completed / blocked / failed | `<ID(s)>` / exempt | yes / no — reason | `<hash>` / none | `<paths>` / none | skipped / completed / failed |

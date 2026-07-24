@@ -6,15 +6,17 @@ Turn the stateless M1 transcription flow into a persisted, **two-pane workspace*
 a left **Meetings** list and a right meeting workspace (header, status bar,
 transcript, MFU section). Meetings persist in a local SQLite library with
 reopen/rename/delete and **auto-saved** edits. Transcription is a **manual**,
-UI-blocking action with progress and **Stop**. Includes language selection, a
-model switcher, a source-missing state, and Markdown/plain-text export. One file
+UI-blocking action with progress and **Stop**, with the language auto-detected.
+Includes a model switcher, a source-missing state, and Markdown/plain-text
+export. One file
 per meeting. Detailed layout is owned by `design.md`; this feature specifies the
 behavior.
 
 ## Serves
 
 - `idea.md` scope: "a persisted library of meetings … edits auto-saved";
-  "export … to Markdown and plain text"; "Russian … with an auto-detect option".
+  "export … to Markdown and plain text"; "the transcription language … always
+  auto-detected from the audio, never chosen".
 - `roadmap.md` phase: **M2 — Library & workspace**.
 - `design.md`: the two-pane shell, header, status bar, MFU section.
 - ADR-008 (persistence), ADR-010 (shell + manual triggers).
@@ -29,7 +31,7 @@ behavior.
 | F004-R3 | The system shall let the user create a new meeting (**+ New meeting**), and open, rename, and delete meetings from the list; rename is a modal (input ≤120 chars, non-empty, Save/Cancel) and delete requires confirmation. | must |
 | F004-R4 | The system shall show a meeting header with the meeting label and **edit** (rename), **copy** (copies the full transcript to the clipboard), and **delete** (confirmed) actions. | must |
 | F004-R5 | The system shall provide a **model switcher** (default the `large` model); when no model is available it shall hide the switcher and show a warning in the status bar. | must |
-| F004-R6 | The system shall let the user choose the transcription **language** (Russian default or auto-detect) before transcribing. | must |
+| F004-R6 | The system shall **auto-detect** the transcription **language** on every run and shall not offer the user any language choice; the detected code is stored on the meeting (ADR-012). | must |
 | F004-R7 | The system shall let the user **attach one** source file to a meeting, shown in the status bar with an **×** to detach (no confirmation); transcription does not start on attach. | must |
 | F004-R8 | The system shall transcribe only on the **Transcribe** action (disabled with no file attached) and allow **Stop** (disabled unless a run is active); while a run is active the UI is blocked except Stop, and a cancelled run persists no meeting transcript. The run includes diarization (F002); the meeting is **finished** only once transcription and speaker attribution are both done. | must |
 | F004-R9 | The system shall reflect state in a **status bar**: waiting-for-file, attached-file(s), transcribing (progress bar spanning transcription **and** the speaker-identification phase, else spinner + live 1-second timer), finished, creating-MFU (UI-blocked spinner + timer), and no-model warning. | must |
@@ -51,7 +53,8 @@ behavior.
   edit opens the rename modal; delete confirms.
 - **F004-R5:** the switcher lists available models with `large` default; with none
   installed it is hidden and the status bar warns.
-- **F004-R6:** the chosen language is applied; auto-detect lets Whisper decide.
+- **F004-R6:** no language control is presented anywhere; an English recording
+  transcribes as English and the meeting records the detected code.
 - **F004-R7:** attaching shows the file with an ×; × detaches it; a second file
   replaces the first (one at a time); attach alone starts nothing.
 - **F004-R8:** Transcribe is disabled with no file; during a run only Stop is

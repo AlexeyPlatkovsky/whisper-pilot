@@ -18,8 +18,4 @@ describe("t", () => {
       "The Whisper model isn't downloaded. Open Settings → AI models to download it.",
     );
   });
-
-  it("returns the transcribing status label", () => {
-    expect(t("transcribingPrefix")).toBe("Transcribing");
-  });
 });

@@ -22,8 +22,9 @@ Adopt a **persistent two-pane shell**, mirroring VoicePilot's Sessions layout:
   collapsible via a header **toggle** placed immediately after the macOS traffic
   lights; the collapsed state persists across restarts.
 - **Right pane** — the active meeting: a header (meeting label with
-  edit/copy/delete, model switcher, language selector, Transcribe, Stop, Create
-  MFU), a **status bar**, the transcript, and the **MFU section** beneath it.
+  edit/copy/delete, model switcher, Transcribe, Stop, Create MFU), a **status
+  bar**, the transcript, and the **MFU section** beneath it. (The language
+  selector listed here originally was withdrawn by ADR-012.)
 - **"Meeting"** is the single product noun — UI copy, data model, and IPC all use
   it (supersedes "document"; see ADR-008 wording).
 - **Manual, explicit, UI-blocking operations.** Transcription runs only on
@@ -39,8 +40,9 @@ Adopt a **persistent two-pane shell**, mirroring VoicePilot's Sessions layout:
 ## Consequences
 
 - Past work is always in reach; navigation is state, not screens.
-- Decoupling attach → Transcribe lets the user set model/language first and makes
-  runs deliberate; a manual MFU trigger (vs auto-on-completion) supersedes the
+- Decoupling attach → Transcribe lets the user set the model first (language
+  selection withdrawn by ADR-012) and makes runs deliberate; a manual MFU
+  trigger (vs auto-on-completion) supersedes the
   earlier F003-R2 auto-generation and matches the button-driven header.
 - No MFU cancel means a stuck LLM run is a force-quit — acceptable for the MVP,
   revisit if runs prove long or flaky.
@@ -51,8 +53,8 @@ Adopt a **persistent two-pane shell**, mirroring VoicePilot's Sessions layout:
 ## Alternatives Considered
 
 - **Keep the M1 wizard / auto-transcribe on file pick** — simplest, but gives no
-  library home and removes user control over model/language; rejected with the
-  library.
+  library home and removes user control over the model (language selection
+  withdrawn by ADR-012); rejected with the library.
 - **Auto-generate MFU on completion** (original F003-R2) — one less click, but
   fights the "explicit, blocking action" model and the disabled-until-finished
   button; rejected in favor of the manual Create MFU button.

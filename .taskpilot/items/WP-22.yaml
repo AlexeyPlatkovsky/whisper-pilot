@@ -3,9 +3,21 @@ id: WP-22
 title: Rename modal (<=120, non-empty) + delete with confirmation (list + header)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T10:28:00Z'
-updated_at: '2026-07-21T11:04:22Z'
+updated_at: '2026-07-22T15:31:00Z'
 parent_id: WP-14
-description: Rename via modal with Save/Cancel, input <=120 chars, empty rejected; delete asks for confirmation from both the list row and the header.
+description: 'Complete the persisted-library controls introduced by WP-21. The active meeting title is editable from the meeting header, and each persisted meeting can be renamed from its sidebar row. Opening either entry point shows the same accessible modal with the existing title selected. Save accepts a trimmed, non-empty label of at most 120 characters, persists it through the WP-16 SQLite store, closes the modal, and updates both the active header and sidebar without a reload. Cancel or Escape closes without a write.
+
+  Deletion is available from the active-meeting header and each sidebar row. It must first show a confirmation identifying the meeting; cancelling changes nothing. Confirming deletes the stored meeting and its cascaded data. If the deleted meeting was active, select and open the next newest remaining meeting; if none remain, show the empty workspace. If rename/delete/open IPC fails, retain the existing visible workspace and show an accessible error. A missing or already-deleted id returns a typed store error.
+
+  Scenarios: - Given an open meeting, when the user saves a valid renamed label, then the persisted title appears in the header and sidebar after reopening. - Given the rename modal, when the title is empty, whitespace-only, or 121 characters, then Save is blocked with a visible validation message and no database write occurs. - Given a meeting row or active header, when the user cancels deletion, then the meeting remains unchanged; when confirmation succeeds, it is removed from SQLite and the sidebar, and the next newest meeting or empty workspace becomes active. - Given a rename/delete/open failure, when the operation rejects, then the currently displayed meeting remains visible and the error is announced.
+
+  Scope boundary: this task does not attach/detach files, transcribe, manage models/language, auto-save transcript edits, export, or implement the source-missing state. Target surfaces: `src-tauri/src/meetings.rs`, `src-tauri/src/lib.rs`, `src/ipc.ts`, `src/App.tsx`, `src/App.test.tsx`, and the SQLite store APIs already provided by WP-16. Constraints: local/offline SQLite only, macOS desktop, real keyboard-operable controls, and no static meeting mock data.'
+dod:
+- '`rename_meeting` and `delete_meeting` Tauri commands validate and persist the expected store changes; unit tests cover valid rename, invalid labels, deletion, and unknown ids.'
+- Header and sidebar rename entry points use one accessible modal; valid save updates the active workspace/sidebar, while Cancel/Escape and invalid values make no write.
+- Header and sidebar delete entry points require confirmation; confirmation removes the record and selects the next newest remaining meeting or the empty workspace.
+- Operation failures retain the active workspace and announce an accessible error; component tests cover the key state transitions and validation boundaries.
+- Typecheck, lint, frontend tests, Rust nextest, clippy, production build, and scoped formatting pass; native Tauri startup/manual UI verification is recorded.
 created_by: M2 planning

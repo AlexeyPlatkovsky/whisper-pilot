@@ -1,22 +1,24 @@
 # API (Tauri IPC Contract)
 
 <!-- Optional extension doc. Owns interface contracts split out of architecture.md.
-     In WhisperPilot the API surface is the Tauri v2 IPC boundary: invoke commands and
-     emitted events between the React front-end (src/ipc/commands.ts) and the Rust core
-     (src-tauri/src/commands.rs). Leave a summary + link in architecture.md. Register
-     this doc in INDEX.md. When the contract grows into several areas, promote to
-     docs/api/ with a mini-index. -->
+     In WhisperPilot the API surface is the Tauri v2 IPC boundary between the React
+     front end (currently src/ipc.ts) and registered Rust commands (currently
+     src-tauri/src/lib.rs). Include only implemented contracts or explicitly labelled
+     planned contracts. Leave a summary + link in architecture.md and register this
+     document in INDEX.md. Promote to docs/api/ with a mini-index only when it grows
+     into independently maintained areas. -->
 
 ## Overview
 
-<!-- The IPC surface: command groups (session, capture, engines, models), event channels,
-     and where the TS and Rust sides of the contract live. -->
+<!-- The IPC surface: command groups, event channels, and the current TypeScript and
+     Rust contract locations. WhisperPilot processes user-selected local audio/video
+     files; it has no live-capture API. -->
 
 ## Conventions
 
-<!-- Shared rules: serde type-shape parity (TS ↔ Rust), error propagation
-     (WhisperPilotError / AppError), event naming, payload size limits, what never crosses
-     the boundary (e.g. API keys stay in Rust). -->
+<!-- Shared rules: TS ↔ Rust type-shape parity, error serialization, event naming,
+     payload-size limits, and data that must not cross the boundary. Do not invent
+     secret-bearing API flows: transcription and notes are local-only. -->
 
 ## Commands
 

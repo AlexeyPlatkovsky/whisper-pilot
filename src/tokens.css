@@ -40,6 +40,26 @@
   --wp-warning: #c65d2e;
   --wp-in-progress: #176c8f; /* transcribing / in-progress status */
 
+  /* --- Colour: derived status tones (NOT present in the pencil source) ----
+     pencil/main_view.pen defines no colour for a meeting that has no source
+     file, and its $success green measures 3.4:1 against the selected-row
+     background — below the 4.5:1 that .claude/conventions/react-tauri/
+     accessibility.md requires for the 12px header status label. These two
+     values fill those gaps; fold them into the pencil file on its next
+     revision.
+
+     The sidebar row no longer prints its status as text — the dot alone
+     carries it — so on that surface these tones are non-text UI at the 3:1
+     bar, which all six clear. The 4.5:1 bar still governs the header label.
+
+     Accepted exception: the `ready` tone reuses --wp-text-label (#5a7684),
+     which measures ~4.2:1 on the selected-row background. That is under 4.5:1
+     but the tone is no longer used as text anywhere, so nothing currently
+     depends on the shortfall; it is recorded here because darkening
+     --wp-text-label app-wide is a separate change that would resolve it. */
+  --wp-attention: #8a5f10; /* dark amber — meeting has no source file */
+  --wp-success-text: #46704c; /* AA-safe green for small status text */
+
   /* --- Colour: speaker identity (10-slot categorical, fixed order) -------- */
   --wp-speaker-0: #2a78d6; /* blue */
   --wp-speaker-1: #eb6834; /* orange */

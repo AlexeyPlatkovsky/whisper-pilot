@@ -33,8 +33,9 @@ speed because processing is offline and batch.
 - Transcribing local **audio and video** files (audio extracted from video),
   **one file at a time**.
 - **Offline, on-device** transcription, speaker separation, and note generation.
-- **Russian** as the primary language, with an **auto-detect** option; English
-  added afterward.
+- **Russian** as the primary language the app is tuned and validated for; the
+  transcription language itself is always **auto-detected** from the audio,
+  never chosen (ADR-012). English added afterward as a focus.
 - A **speaker-attributed**, editable transcript.
 - Structured **meeting notes** generated locally — summary, key decisions,
   action items, open questions, participants — editable and copyable.
@@ -46,8 +47,9 @@ speed because processing is offline and batch.
   (light / dark / system themes; more themes at release), **App language** (the UI
   language — English by default, more languages at release), and **Update app**
   (release only).
-- Two independent language settings: the **app UI language** (English by default)
-  and the **transcription language** (Russian by default, with auto-detect).
+- One language **setting** — the **app UI language** (English by default). The
+  **transcription language** is not a setting at all: Whisper detects it per run
+  and the meeting records what was detected.
 
 ### Out of scope
 

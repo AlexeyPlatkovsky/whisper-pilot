@@ -6,8 +6,13 @@
 
 use std::path::PathBuf;
 
-/// A real audio file to exercise the pipeline. Reuses a VoicePilot fixture;
-/// override with WHISPERPILOT_TEST_AUDIO to point at a Russian sample.
+/// A real audio file to exercise the pipeline, in any language. Reuses a
+/// VoicePilot fixture; override with WHISPERPILOT_TEST_AUDIO.
+///
+/// The English-specific regression below needs English speech, so it reads
+/// WHISPERPILOT_TEST_AUDIO_EN instead and skips when that is unset — one
+/// variable cannot serve both a language-agnostic and a language-asserting
+/// test.
 fn sample_path() -> Option<PathBuf> {
     if let Ok(p) = std::env::var("WHISPERPILOT_TEST_AUDIO") {
         return Some(PathBuf::from(p));
@@ -43,15 +48,82 @@ fn transcribes_a_real_file_into_segments() {
         }
     };
 
-    // English fixture, but decode as-is to prove the ffmpeg+whisper path.
-    let lang = std::env::var("WHISPERPILOT_TEST_LANG").unwrap_or_else(|_| "en".to_string());
-    let segments =
-        whisperpilot_lib::transcribe::transcribe_file(&ctx, &audio, &lang).expect("transcription");
+    // No language is passed in — auto-detection is the only mode.
+    let result =
+        whisperpilot_lib::transcribe::transcribe_file(&ctx, &audio).expect("transcription");
+    let segments = &result.segments;
 
+    eprintln!("detected language: {}", result.language);
     assert!(!segments.is_empty(), "expected at least one segment");
-    for s in &segments {
+    for s in segments {
         eprintln!("[{:>6}–{:>6}ms] {}", s.start_ms, s.end_ms, s.text);
     }
     // Timestamps must be ordered and non-degenerate.
     assert!(segments.iter().all(|s| s.end_ms >= s.start_ms));
+    // Whisper resolved a real language rather than falling through.
+    assert_ne!(
+        result.language,
+        whisperpilot_lib::transcribe::UNDETECTED_LANGUAGE
+    );
+}
+
+/// The WP-20 regression. Forcing Russian on English speech made whisper emit
+/// one hallucinated subtitle credit per fixed 30s analysis window instead of a
+/// transcript. Auto-detection must name the language and segment naturally.
+///
+/// Needs an English recording; point WHISPERPILOT_TEST_AUDIO_EN at one.
+#[test]
+#[ignore]
+fn auto_detects_english_speech_instead_of_forcing_russian() {
+    let Ok(audio) = std::env::var("WHISPERPILOT_TEST_AUDIO_EN").map(PathBuf::from) else {
+        eprintln!("SKIP: no English sample audio (set WHISPERPILOT_TEST_AUDIO_EN)");
+        return;
+    };
+
+    let ctx = match whisperpilot_lib::transcribe::load_model(&app_support_dir()) {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            eprintln!("SKIP: model unavailable: {e}");
+            return;
+        }
+    };
+
+    let result =
+        whisperpilot_lib::transcribe::transcribe_file(&ctx, &audio).expect("transcription");
+
+    eprintln!("detected language: {}", result.language);
+    assert_eq!(
+        result.language, "en",
+        "English speech must detect as English"
+    );
+
+    // Asserted before anything else: every check below this line is vacuously
+    // true on an empty transcript. whisper.cpp returns from
+    // whisper_full_with_state the moment it has detected the language if
+    // detect_language is set, which yields Ok with zero segments and would let
+    // a silently empty result pass for a fix.
+    assert!(
+        !result.segments.is_empty(),
+        "auto-detection must still decode a transcript, not stop at the language"
+    );
+
+    // A segment spanning a whole 30s window is the signature of a collapsed
+    // decode: whisper emits one per window with no internal timestamps.
+    let degenerate: Vec<_> = result
+        .segments
+        .iter()
+        .filter(|s| s.end_ms - s.start_ms >= 29_900)
+        .collect();
+    assert!(
+        degenerate.is_empty(),
+        "segments spanning a full 30s analysis window indicate a collapsed decode: {degenerate:?}"
+    );
+    // The known hallucination must not appear at all.
+    assert!(
+        !result
+            .segments
+            .iter()
+            .any(|s| s.text.contains("Субтитры сделал")),
+        "hallucinated Russian subtitle credit present in an English transcript"
+    );
 }

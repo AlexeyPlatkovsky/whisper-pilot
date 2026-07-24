@@ -1,20 +1,21 @@
 # Operations
 
-<!-- Optional extension doc. Owns runtime, build/signing, observability, runbooks.
-     WhisperPilot is a local macOS desktop app — there is no server deployment; "operations"
-     means dev/release builds, code signing, macOS permissions, and local logs.
-     Leave a summary + link in architecture.md. Register this doc in INDEX.md. -->
+<!-- Optional extension doc. Owns runtime, build/signing, observability, and runbooks.
+     WhisperPilot is a local macOS desktop app with no server deployment. Document only
+     verified build, signing, permission, and logging behavior; do not introduce live
+     capture or Screen Recording requirements. Leave a summary + link in
+     architecture.md and register this doc in INDEX.md. -->
 
 ## Environments
 
-<!-- How builds differ: `npm run tauri:dev` dev build vs signed debug/release .app bundle
-     (`npm run tauri build -- --debug`), and what each requires (signing identity,
-     Screen Recording permission). -->
+<!-- How development and release builds differ, using commands verified in
+     package.json and Tauri configuration. Record required signing or macOS permissions
+     only when they are actually configured. -->
 
 ## Build & Signing
 
-<!-- How a runnable app is produced: Tauri build commands, TAURI_SIGNING_IDENTITY,
-     Entitlements.plist, granting Screen Recording permission. -->
+<!-- How a runnable app is produced, including only verified Tauri build commands,
+     signing identities, entitlements, notarization, and release artifacts. -->
 
 ## Configuration
 
@@ -23,14 +24,15 @@
 
 ## Observability
 
-<!-- Logs at ~/Library/Logs/WhisperPilot/voicepilot-YYYY-MM-DD.log (and stderr); log levels
-     per build type; RUST_LOG override; what logs never contain (audio, transcript text,
-     API keys). -->
+<!-- Verified log destinations, levels, and collection steps. State which sensitive local
+     data (audio, transcript text, notes, file paths) must never be logged. Do not claim
+     a log path, telemetry, or remote reporting mechanism without implementation evidence. -->
 
 ## Runbooks
 
 <!-- Step-by-step responses to common operational situations
-     (e.g. capture permission denied, missing model file, log collection for a bug report). -->
+     (for example, missing local model assets, ffmpeg unavailable, or local-log
+     collection for a bug report). -->
 
 ### <situation>
 

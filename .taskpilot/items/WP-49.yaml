@@ -1,0 +1,38 @@
+schema_version: 1
+id: WP-49
+title: Wire speaker-count override end-to-end for known-speaker meetings
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-24T13:56:56Z'
+updated_at: '2026-07-24T13:57:00Z'
+parent_id: WP-2
+description: >-
+  diarize.rs's build_config/diarize_samples already accept an optional
+  speaker_count (Some(n) selects exact-k clustering via sherpa-onnx's
+  cutree_k, deterministic, no threshold guessing) but the only production
+  call site (lib.rs run_transcription, around line 107-109) hardcodes None,
+  and there is no UI field or IPC parameter for it anywhere (ipc.ts's
+  transcribeMeeting takes only the meeting id). For a known-speaker-count
+  meeting (e.g. a 1:1), auto-detect's threshold-based cut is unreliable —
+  confirmed in practice: a real 1:1 recording produced roughly 44 detected
+  speaker clusters, labels up to "Speaker 43", against sherpa-onnx's own
+  vendored fast-clustering.cc source read directly (complete-linkage AHC
+  over cosine distance, cut by a fixed threshold when no explicit count is
+  given) — while an explicit count sidesteps the threshold path entirely.
+
+  Scope: add an optional "number of speakers" input surfaced in the UI
+  (reasonable default: unset/auto, but easy to set, e.g. 2 for a 1:1),
+  thread it through the transcribe_meeting Tauri command and
+  run_transcription into diarize_samples's existing speaker_count
+  parameter. No changes needed to diarize.rs itself — the parameter and its
+  clustering behavior already exist and are unit-tested at diarize.rs's
+  build_config tests. This is purely wiring UI to IPC to the existing
+  parameter.
+
+  Out of scope: auto-detect quality for meetings where the speaker count is
+  genuinely unknown (see WP-50) and any clustering algorithm changes.
+dod:
+  - "A speaker-count input exists in the UI and its value reaches diarize_samples as Some(n) when set."
+  - "Leaving it unset preserves today's auto-detect behavior (None into build_config's existing auto-detect path) with no regression."
+  - "Existing diarize.rs and meetings.rs tests continue to pass unchanged (no diarize.rs logic changes expected)."

@@ -18,15 +18,17 @@ being rewritten. No public distribution or notarization in the current horizon.
   Russian transcript that can be exported. Stateless (no library yet).
 - **Feature:** [`F001_file-transcription`](features/F001_file-transcription/requirements.md)
 - **Exit criteria:** file → ffmpeg → Whisper (Metal, full-file, Russian) →
-  editable segments → save, verified end-to-end on a real file.
+  editable segments → save, verified end-to-end on a real file. *(As shipped in
+  M1; the forced Russian decode was superseded by ADR-012 — the language is now
+  auto-detected.)*
 
 ### M2 — Library, workspace & speaker roles — **Beta** (next)
 
 - **Goal:** Turn the stateless flow into a persisted two-pane workspace **and**
   attribute the transcript by speaker, to a **beta-ready** app. A local library of
   **meetings** with reopen/rename/delete, **auto-saved** edits, a manual
-  **Transcribe** action with **progress + Stop**, language selection (Russian /
-  auto-detect), and **Markdown / plain-text export**; local **diarization** so the
+  **Transcribe** action with **progress + Stop**, automatic language detection,
+  and **Markdown / plain-text export**; local **diarization** so the
   transcript renders as a per-speaker chat of **colored bubbles**; plus a
   **Settings** screen (beta scope): **AI models** download/delete (one model per
   task), **Appearance** (light / dark / system themes), and **App language**
@@ -70,8 +72,9 @@ being rewritten. No public distribution or notarization in the current horizon.
   but reads better with the M2 speaker labels present. The release Settings scope
   builds directly on the beta Settings shell.
 - **UI language vs transcription language:** the **app UI** defaults to **English**
-  (localized further at release); the **transcription** default stays **Russian**
-  with auto-detect (ADR-007). They are independent settings.
+  (localized further at release) and is a setting; the **transcription** language
+  is always auto-detected and is not selectable (ADR-012, superseding ADR-007 on
+  this point).
 
 ## Non-Goals (Over Time)
 

@@ -1,7 +1,9 @@
 # Architecture
 
-<!-- Owns: technical structure. Keep product/UX in design.md and the decision log in
-     decisions/. Link to ADRs for the "why" behind a choice. -->
+<!-- Owns: technical structure. For WhisperPilot, describe the React/Tauri/Rust
+     boundaries and local-file processing without restating product flows. Keep
+     product/UX in design.md and decision rationale in decisions/. Link to ADRs for
+     the "why" behind a choice, and clearly label planned components as planned. -->
 
 ## System Context
 
@@ -25,11 +27,14 @@
 
 ## Integrations
 
-<!-- External services, APIs, and how the system depends on them. -->
+<!-- External dependencies and how the system depends on them. WhisperPilot has no
+     cloud processing; user-initiated model downloads are the only normal network
+     operation. -->
 
 ## Constraints
 
-<!-- Performance, security, compliance, cost, or platform constraints. -->
+<!-- Performance, privacy, platform, and dependency constraints. Include the
+     offline/local-first guarantee, macOS scope, and any required local tools. -->
 
 ## Cross-Cutting Concerns
 

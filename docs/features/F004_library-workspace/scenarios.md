@@ -69,17 +69,27 @@ Scenario: Default model and the no-model case
   Then the switcher is hidden and the status bar shows a warning
 ```
 
-### F004-S6: Language selection
+### F004-S6: Language is auto-detected, never chosen
 
 Covers: F004-R6
 
 ```gherkin
-Scenario: Russian default and auto-detect
+Scenario: No language control exists
   Given a file to transcribe
-  When the user keeps the default
-  Then it is transcribed as Russian
-  When the user chooses auto-detect
-  Then Whisper detects the language
+  When the user looks for a language control
+  Then there is none anywhere in the app
+
+Scenario: The language is detected from the audio
+  Given an English recording
+  When it is transcribed
+  Then Whisper detects English
+  And the transcript is the English speech
+  And the meeting records the detected code
+
+Scenario: A meeting has no language until it is transcribed
+  Given a meeting that has been created but never transcribed
+  Then its stored language is the not-yet-detected value
+  And detaching its source file returns it to that value
 ```
 
 ### F004-S7: Attach and detach a file

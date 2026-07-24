@@ -16,6 +16,17 @@
   --error: var(--wp-error);
   --selected: var(--wp-selected);
   --status-progress: var(--wp-in-progress);
+
+  /* Meeting-status tones. One definition per state, consumed by both surfaces
+     that show a status (the sidebar row's dot and the header label) via the
+     .wp-tone--* classes below, so they cannot drift apart. Keys match the
+     `tone` values produced by src/meetingStatus.ts. */
+  --tone-no-files: var(--wp-attention);
+  --tone-ready: var(--muted);
+  --tone-transcribing: var(--status-progress);
+  --tone-finished: var(--wp-success-text);
+  --tone-error: var(--error);
+  --tone-unknown: var(--muted);
   color-scheme: light dark;
 }
 
@@ -35,6 +46,10 @@
     --error: #e06a6e;
     --selected: #1c2e36;
     --status-progress: #4bb3d8;
+    /* The remaining tones inherit from --muted/--status-progress/--error,
+       which this block already re-points; only these two need a dark value. */
+    --tone-no-files: #d9a02e;
+    --tone-finished: var(--success);
     --wp-speaker-0: #3987e5;
     --wp-speaker-1: #d95926;
     --wp-speaker-2: #199e70;
@@ -75,6 +90,10 @@
     --error: #e06a6e;
     --selected: #1c2e36;
     --status-progress: #4bb3d8;
+    /* The remaining tones inherit from --muted/--status-progress/--error,
+       which this block already re-points; only these two need a dark value. */
+    --tone-no-files: #d9a02e;
+    --tone-finished: var(--success);
     --wp-speaker-0: #3987e5;
     --wp-speaker-1: #d95926;
     --wp-speaker-2: #199e70;
@@ -102,6 +121,10 @@
   --error: #e06a6e;
   --selected: #1c2e36;
   --status-progress: #4bb3d8;
+  /* The remaining tones inherit from --muted/--status-progress/--error,
+     which this block already re-points; only these two need a dark value. */
+  --tone-no-files: #d9a02e;
+  --tone-finished: var(--success);
   --wp-speaker-0: #3987e5;
   --wp-speaker-1: #d95926;
   --wp-speaker-2: #199e70;
@@ -276,7 +299,9 @@ body {
 }
 
 .wp-status-label {
-  color: var(--text-secondary);
+  /* Reads --tone like the other tone consumers, so this default never depends
+     on sitting before .wp-tone--* in the file. */
+  color: var(--tone, var(--text-secondary));
 }
 
 .wp-status-timer {
@@ -286,17 +311,42 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.wp-status-idle {
-  color: var(--muted);
-}
-
-.wp-status-error {
-  color: var(--error);
-}
-
 .wp-spin {
-  color: var(--accent);
+  /* Falls back to the accent for the non-status spinners (model download);
+     a spinner that also carries a .wp-tone--* class takes that tone instead. */
+  color: var(--tone, var(--accent));
   animation: wp-spin 0.8s linear infinite;
+}
+
+/* Meeting-status tones — the single place a status colour is written.
+   Each class sets --tone as well as `color`, so consumers can opt in via
+   var(--tone) instead of competing with these rules on source order. Source
+   order was load-bearing in an earlier revision and silently lost the dot its
+   colour; --tone removes that whole class of regression, which no test in
+   this project can detect (jsdom does not compute the cascade). */
+.wp-tone--no-files {
+  --tone: var(--tone-no-files);
+  color: var(--tone);
+}
+.wp-tone--ready {
+  --tone: var(--tone-ready);
+  color: var(--tone);
+}
+.wp-tone--transcribing {
+  --tone: var(--tone-transcribing);
+  color: var(--tone);
+}
+.wp-tone--finished {
+  --tone: var(--tone-finished);
+  color: var(--tone);
+}
+.wp-tone--error {
+  --tone: var(--tone-error);
+  color: var(--tone);
+}
+.wp-tone--unknown {
+  --tone: var(--tone-unknown);
+  color: var(--tone);
 }
 
 @keyframes wp-spin {
@@ -389,6 +439,15 @@ body {
 
 .wp-sidebar {
   flex: 0 0 var(--wp-sidebar-width);
+  /* `min-width: 0` is the load-bearing line for the fixed rail. A flex item's
+     automatic minimum size is its *content's* min-content width — here the
+     full nowrap meeting title — and that overrides `flex-basis`, so one long
+     name used to push the whole sidebar past 300px. Zeroing it re-pins the
+     column and pushes the clipping down to .wp-meeting-title, whose
+     text-overflow could never engage while nothing above it was constrained.
+     max-width is a belt-and-braces guard against a future grow/shrink edit. */
+  min-width: 0;
+  max-width: var(--wp-sidebar-width);
   display: flex;
   flex-direction: column;
   gap: var(--wp-space-sm);
@@ -427,16 +486,68 @@ body {
   flex-direction: column;
   gap: 2px;
   overflow-y: auto;
+  /* Never scroll sideways: an over-long row must clip, not widen the rail. */
+  overflow-x: hidden;
   min-height: 0;
+  /* Native <ul>/<li> carry the list semantics; strip the default marker and
+     block spacing so the rows lay out exactly as before. */
+  list-style: none;
+  margin: 0;
+  padding: 0;
 }
 
 .wp-meeting-row {
   display: flex;
+  width: 100%;
   align-items: center;
   gap: var(--wp-space-sm);
-  padding: 10px;
+  /* Trimmed on the right so the action icons sit close to the rail edge. */
+  padding: 10px var(--wp-space-xs) 10px 10px;
   border-radius: var(--wp-radius-sm);
-  cursor: default;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.wp-meeting-open {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The trailing control slot. Its width is fixed at the two-button size so the
+   row does not reflow when the spinner takes their place mid-run. */
+.wp-meeting-actions {
+  /* One button's box, and the gap between the pair — tight enough that the two
+     icons read as one group. Both sizes live here so the reserved slot below
+     stays correct if either changes. */
+  --wp-row-action: 22px;
+  --wp-row-action-gap: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: var(--wp-row-action-gap);
+  min-width: calc(2 * var(--wp-row-action) + var(--wp-row-action-gap));
+}
+
+.wp-meeting-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--wp-row-action);
+  height: var(--wp-row-action);
+  padding: 0;
+  border: 0;
+  border-radius: var(--wp-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
 .wp-meeting-row.is-selected {
@@ -449,19 +560,27 @@ body {
 
 .wp-meeting-dot {
   flex: 0 0 auto;
-  width: 8px;
-  height: 8px;
+  /* The dot is the row's only status surface, so its tooltip has to be
+     catchable: 6px of padding widens the hover target to 20px, and the
+     negative margin hands that padding back to the layout so the row keeps
+     the 8px footprint it always had.
+     These numbers are border-box (see the `*` reset above): 20px outer minus
+     2x6px padding leaves the painted 8px content box. */
+  width: 20px;
+  height: 20px;
+  padding: 6px;
+  margin: -6px;
   border-radius: 50%;
-  background: var(--muted);
-}
-.wp-meeting-dot--ok {
-  background: var(--success);
-}
-.wp-meeting-dot--progress {
-  background: var(--status-progress);
-}
-.wp-meeting-dot--error {
-  background: var(--error);
+  /* Filled from the --tone set by the .wp-tone--* class it carries, so the dot
+     and the header's status label are literally the same colour value. Reading
+     the custom property rather than `currentColor` keeps this independent of
+     where the rule sits relative to the tone classes. */
+  background: var(--tone, var(--tone-unknown));
+  /* Must stay AFTER the `background` shorthand, which resets every background
+     longhand it does not mention. Clips the paint to the 8px content box; the
+     border-radius follows, 10px at the border edge less 6px of padding = 4px,
+     which is still a full circle on an 8px box. */
+  background-clip: content-box;
 }
 
 .wp-meeting-text {
@@ -489,15 +608,17 @@ body {
   color: var(--muted);
 }
 
-.wp-meeting-status {
-  margin-left: auto;
-  font-weight: 500;
-}
-.wp-meeting-status--progress {
-  color: var(--status-progress);
-}
-.wp-meeting-status--error {
-  color: var(--error);
+/* Matches one action button, so the fixed-width action slot around it keeps the
+   row from reflowing when a transcription starts or ends. */
+.wp-meeting-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  /* Falls back in case this ever renders outside .wp-meeting-actions, which is
+     where the custom property is declared. */
+  width: var(--wp-row-action, 22px);
+  height: var(--wp-row-action, 22px);
 }
 
 /* Workspace: transcript panel + MFU panel */

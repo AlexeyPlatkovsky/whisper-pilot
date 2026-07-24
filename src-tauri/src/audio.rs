@@ -2,34 +2,56 @@
 //!
 //! ffmpeg extracts audio from video and resamples audio identically, so both
 //! input kinds go through one path — no need to branch on file type.
+//! ffmpeg writes raw PCM to stdout (pipe:1); a valid WAV header is prepended
+//! in memory so hound can decode without a temp file on disk.
 
 use crate::error::{AppError, Result};
-use std::path::{Path, PathBuf};
+use std::io::Cursor;
+use std::path::Path;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Whisper's required input rate.
 pub const SAMPLE_RATE: u32 = 16_000;
 
-/// Run ffmpeg to produce a temporary 16 kHz mono WAV from `input`.
-/// The caller owns the returned file and should delete it when done.
-pub fn normalize_to_wav(input: &Path) -> Result<PathBuf> {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    let out = std::env::temp_dir().join(format!("whisperpilot-{nanos}.wav"));
+const BITS_PER_SAMPLE: u16 = 16;
+const NUM_CHANNELS: u16 = 1;
 
+/// Build a canonical 44-byte WAV header for 16-bit mono PCM at `SAMPLE_RATE` Hz.
+fn wav_header(pcm_len: u32) -> [u8; 44] {
+    let byte_rate = SAMPLE_RATE * NUM_CHANNELS as u32 * (BITS_PER_SAMPLE / 8) as u32;
+    let block_align = NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
+    let riff_size = 36 + pcm_len;
+
+    let mut h = [0u8; 44];
+    h[0..4].copy_from_slice(b"RIFF");
+    h[4..8].copy_from_slice(&riff_size.to_le_bytes());
+    h[8..12].copy_from_slice(b"WAVE");
+    h[12..16].copy_from_slice(b"fmt ");
+    h[16..20].copy_from_slice(&16u32.to_le_bytes()); // PCM chunk size
+    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM format
+    h[22..24].copy_from_slice(&NUM_CHANNELS.to_le_bytes());
+    h[24..28].copy_from_slice(&SAMPLE_RATE.to_le_bytes());
+    h[28..32].copy_from_slice(&byte_rate.to_le_bytes());
+    h[32..34].copy_from_slice(&block_align.to_le_bytes());
+    h[34..36].copy_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
+    h[36..40].copy_from_slice(b"data");
+    h[40..44].copy_from_slice(&pcm_len.to_le_bytes());
+    h
+}
+
+/// Run ffmpeg to produce 16 kHz mono raw PCM in memory from `input`.
+/// Returns raw s16le bytes — caller prepends a WAV header for hound.
+pub fn normalize_to_memory(input: &Path) -> Result<Vec<u8>> {
     let output = Command::new("ffmpeg")
-        .args(["-y", "-i"])
+        .args(["-i"])
         .arg(input)
         .args([
             "-vn", // drop any video stream
             "-ac", "1", // mono
             "-ar", "16000", // 16 kHz
-            "-f", "wav",
+            "-f", "s16le",
+            "pipe:1",
         ])
-        .arg(&out)
         .output()
         .map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -46,12 +68,13 @@ pub fn normalize_to_wav(input: &Path) -> Result<PathBuf> {
         return Err(AppError::Ffmpeg(tail));
     }
 
-    Ok(out)
+    Ok(output.stdout)
 }
 
-/// Decode a 16 kHz mono 16-bit WAV into normalized f32 samples in [-1, 1].
-pub fn decode_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
-    let reader = hound::WavReader::open(path).map_err(|e| AppError::Audio(e.to_string()))?;
+/// Decode 16 kHz mono WAV bytes into normalized f32 samples in [-1, 1].
+pub fn decode_wav_16k_mono(data: &[u8]) -> Result<Vec<f32>> {
+    let cursor = Cursor::new(data);
+    let reader = hound::WavReader::new(cursor).map_err(|e| AppError::Audio(e.to_string()))?;
     let spec = reader.spec();
     if spec.channels != 1 || spec.sample_rate != SAMPLE_RATE {
         return Err(AppError::Audio(format!(
@@ -71,11 +94,13 @@ pub fn decode_wav_16k_mono(path: &Path) -> Result<Vec<f32>> {
     samples.map_err(|e| AppError::Audio(e.to_string()))
 }
 
-/// Convenience: normalize `input` through ffmpeg, decode it, and clean up the
-/// temporary WAV.
+/// Convenience: normalize `input` through ffmpeg and decode it.
+/// Assembles the WAV header + raw PCM in memory — no temp file.
 pub fn load_samples(input: &Path) -> Result<Vec<f32>> {
-    let wav = normalize_to_wav(input)?;
-    let result = decode_wav_16k_mono(&wav);
-    let _ = std::fs::remove_file(&wav);
-    result
+    let pcm = normalize_to_memory(input)?;
+    let header = wav_header(pcm.len() as u32);
+    let mut wav = Vec::with_capacity(header.len() + pcm.len());
+    wav.extend_from_slice(&header);
+    wav.extend_from_slice(&pcm);
+    decode_wav_16k_mono(&wav)
 }

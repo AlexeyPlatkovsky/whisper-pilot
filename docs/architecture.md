@@ -13,9 +13,10 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meeting workspace                audio.rs      ffmpeg normalize + WAV decode
   transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
   MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
-  settings screen                  export.rs     meeting → Markdown / plain text
-  ipc.ts / events                  error.rs      AppError → serialized to JS
-  theming / i18n                   settings.rs   key–value settings store (theme, ui_language, active models)
+  settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
+  ipc.ts / events                  export.rs     meeting → Markdown / plain text
+  theming / i18n                   error.rs      AppError → serialized to JS
+                                   settings.rs   key–value settings store (theme, ui_language, active models)
                                    models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
@@ -30,8 +31,12 @@ cancellable via Tauri events.
 
 ## Meeting Model & Persistence (`store.rs`)
 
-The library is a local **SQLite** database (via `rusqlite`, reusing VoicePilot's
-patterns). A **meeting** is one transcription of one source file. Meetings
+The library is a local **SQLite** database (`whisperpilot.sqlite3` in the app
+support directory, via bundled `rusqlite`). WP-16 implements the idempotent
+schema and Rust CRUD store. WP-21/WP-22 expose create/list/open/rename/delete
+commands and hydrate the workspace from persisted meetings; attaching files,
+transcription, and UI auto-save wiring remain follow-on work. A **meeting** is
+one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
 defined "source missing" state).
@@ -40,13 +45,24 @@ Entities (indicative):
 
 | Entity | Key fields |
 |---|---|
-| `meetings` | id, title, source_path, source_name, created_at, duration_ms, language, status |
-| `segments` | id, meeting_id, ordinal, start_ms, end_ms, text, speaker_id (M2) |
+| `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
+| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2) |
 | `notes` | meeting_id, summary, decisions, action_items, open_questions, participants (M3) |
 
-Edits (segment text, speaker labels, notes) are **auto-saved**: each edit
-persists to the DB immediately; there is no explicit save state. Export is a
-separate, explicit write to an external file.
+The store replaces/reads segments in ordinal order, upserts a single notes
+record per meeting, and cascades meeting deletion to dependent rows. Follow-on
+UI edits (segment text, speaker labels, notes) are **auto-saved**: each edit
+will persist to the DB immediately; there is no explicit save state. Export is
+a separate, explicit write to an external file.
+
+Stored `segments` rows stay whisper's original fine-grained spans — `to_dto`
+(`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into larger
+display blocks on every read path (see Speaker Diarization below); the
+ordinal-keyed rows themselves are never merged or rewritten. **Not yet
+designed:** WP-17's auto-save wiring will edit whatever the UI renders, which
+after WP-48 is a coalesced block that can span multiple underlying
+ordinal-keyed rows — the write-back mapping from an edited coalesced block
+back to its source row(s) still needs a design before WP-17 is implemented.
 
 ## Audio Ingestion (`audio.rs`)
 
@@ -59,10 +75,22 @@ ffmpeg is a required external dependency (system binary on PATH for now).
 ## Transcription (`transcribe.rs`)
 
 whisper-rs with the `metal` feature; the context is created once and cached in
-`AppState`. Decoding is **full-file** with beam search. **Language** defaults to
-Russian and accepts an explicit language or **auto-detect**. Whisper's progress
-callback drives a progress event; a cancel flag checked in the callback aborts a
-run. Output is timestamped `Segment`s persisted to the meeting.
+`AppState`. Decoding is **full-file** with beam search. **Language is always
+auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
+language argument, so no caller can force one. The code Whisper decoded with is
+read back from decoder state and stored on the meeting, making
+`meetings.language` an *output* of a run rather than an input to one. Detection
+uses the first 30 seconds of audio, so a recording that opens with silence can
+misdetect — a known limitation. Whisper's progress callback drives a progress
+event; a cancel flag checked in the callback aborts a run. Output is timestamped
+`Segment`s persisted to the meeting.
+
+Forcing a language is deliberately unreachable rather than merely defaulted:
+decoding audio as a language it is not in makes Whisper emit one hallucinated
+line per 30-second window instead of the transcript. `DecodeSettings` names the
+configuration as plain data so it can be asserted in a unit test — notably
+`detect_language_only`, which must stay `false` because whisper.cpp returns
+immediately after detection when it is set, yielding an empty transcript.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 + merge** (M2, `diarize.rs`) which runs automatically before the meeting is
@@ -103,6 +131,20 @@ falling back to the nearest turn for a segment in an uncovered gap. `Segment`
 carries `speaker_id: Option<i32>` (WP-8, omitted from the JSON when `None` so
 existing consumers see no shape change), flowing through
 `TranscriptResult`/IPC and `ipc.ts`'s `Segment` interface.
+
+Because whisper's own segmentation is not speaker-aware, one continuous turn
+routinely comes back from `transcribe.rs` as many short (~2-3s) fragments that
+all land on the same `speaker_id`. `meetings.rs`'s `to_dto` (WP-48) coalesces
+consecutive segments sharing the same present `speaker_id` into one display
+block — text joined, spanning the first segment's start to the last segment's
+end — as long as the gap between them stays within a small tolerance (a
+longer gap still starts a new block, since that reads as a real pause).
+Segments with `speaker_id: None` are never coalesced with each other or a
+neighboring speaker, so a diarization failure never fabricates false turn
+continuity. This runs on every read path (`open_meeting`, `save_transcript`,
+`rename_meeting`, `set_meeting_source`, `create_empty_meeting`); the
+`segments` table itself keeps storing whisper's original fine-grained rows
+(see Meeting Model & Persistence above) — coalescing is display-only.
 
 **Diarization now runs automatically as part of `transcribe_file`** (WP-31):
 audio is decoded once and both transcription and diarization run over the
@@ -167,7 +209,7 @@ rendering (the header's meeting-label **copy** copies the transcript).
 | `open_file_dialog` | Pick a source audio/video file | M1 |
 | `create_meeting()` | Create an empty meeting; returns its id | M2 |
 | `attach_file(meeting, path)` | Attach the source file to a meeting | M2 |
-| `create_transcription(meeting, model, language)` | Transcribe the attached file into the meeting; emits progress | M2 |
+| `create_transcription(meeting, model)` | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012) | M2 |
 | `cancel_transcription(meeting)` | Abort a running transcription (Stop) | M2 |
 | `list_meetings()` | Meetings list (summaries) | M2 |
 | `open_meeting(id)` | Full meeting (segments, notes, meta) | M2 |

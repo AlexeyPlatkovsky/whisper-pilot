@@ -1,26 +1,40 @@
-//! WhisperPilot core: offline file transcription (Russian) with a summary to come.
+//! WhisperPilot core: offline file transcription (language auto-detected) with
+//! a summary to come.
 
 pub mod audio;
 pub mod diarize;
 pub mod error;
+pub mod meetings;
 pub mod models;
 pub mod settings;
+pub mod store;
 pub mod transcribe;
 
 use error::{AppError, Result};
+use meetings::{MeetingDto, MeetingSummaryDto};
 use models::TaskModel;
 use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
-use transcribe::Segment;
 use whisper_rs::WhisperContext;
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
     app.path()
         .app_data_dir()
         .map_err(|e| AppError::Io(e.to_string()))
+}
+
+fn now_ms() -> Result<i64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|error| AppError::Store(error.to_string()))
+        .and_then(|duration| {
+            i64::try_from(duration.as_millis())
+                .map_err(|_| AppError::Store("current time exceeds i64 milliseconds".into()))
+        })
 }
 
 /// The whisper model is loaded lazily on first use and cached for the session —
@@ -47,13 +61,6 @@ impl AppState {
     }
 }
 
-/// Result of transcribing one file.
-#[derive(serde::Serialize)]
-struct TranscriptResult {
-    file_name: String,
-    segments: Vec<Segment>,
-}
-
 /// Open a native file picker for audio/video and return the chosen path.
 #[tauri::command]
 async fn open_file_dialog() -> Option<String> {
@@ -75,23 +82,16 @@ async fn open_file_dialog() -> Option<String> {
     .flatten()
 }
 
-/// Transcribe the file at `path` into Russian (default) timestamped segments.
-#[tauri::command]
-async fn transcribe_file(
-    app: tauri::AppHandle,
+/// Decode, transcribe, and diarize the file at `path`. Diarization runs
+/// automatically after transcription; any failure there (models missing,
+/// engine error, or the task panicking) degrades to plain speaker-less
+/// segments rather than failing the transcription.
+async fn run_transcription(
+    app_support_dir: PathBuf,
+    ctx: Arc<WhisperContext>,
     path: String,
-    language: Option<String>,
-    state: State<'_, AppState>,
-) -> Result<TranscriptResult> {
+) -> Result<transcribe::Transcription> {
     let input = PathBuf::from(&path);
-    let file_name = input
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| path.clone());
-    let language = language.unwrap_or_else(|| "ru".to_string());
-
-    let app_support_dir = app_data_dir(&app)?;
-    let ctx = state.model(app_support_dir.clone()).await?;
 
     // Decode once (off the reactor); both transcription and diarization run
     // over the same samples.
@@ -99,23 +99,68 @@ async fn transcribe_file(
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
     let samples_for_diarize = samples.clone();
-    let mut segments = tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples, &language))
-        .await
-        .map_err(|e| AppError::Transcribe(e.to_string()))??;
+    let mut transcription =
+        tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples))
+            .await
+            .map_err(|e| AppError::Transcribe(e.to_string()))??;
 
-    // Diarization runs automatically after transcription; any failure here
-    // (models missing, engine error, or the task itself panicking) degrades
-    // to plain speaker-less segments rather than failing the transcription.
     let diarize_outcome = tokio::task::spawn_blocking(move || {
         diarize::diarize_samples(&app_support_dir, samples_for_diarize, None)
     })
     .await;
-    diarize::apply_diarization_outcome(&mut segments, diarize_outcome);
+    diarize::apply_diarization_outcome(&mut transcription.segments, diarize_outcome);
 
-    Ok(TranscriptResult {
-        file_name,
-        segments,
-    })
+    Ok(transcription)
+}
+
+/// Attach (or clear, when `path` is `None`) the source file of a meeting.
+/// Selecting the file is separate from running the transcription.
+#[tauri::command]
+fn set_meeting_source(app: tauri::AppHandle, id: i64, path: Option<String>) -> Result<MeetingDto> {
+    meetings::set_meeting_source(&app_data_dir(&app)?, id, path)
+}
+
+/// Transcribe the meeting's attached source file into timestamped segments and
+/// persist the result against the meeting. Whisper detects the language itself;
+/// the meeting's stored `language` is an output of that decode, never an input
+/// to it, so a value left by an earlier run does not influence this one.
+#[tauri::command]
+async fn transcribe_meeting(
+    app: tauri::AppHandle,
+    id: i64,
+    state: State<'_, AppState>,
+) -> Result<MeetingDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let meeting = meetings::open_meeting(&app_support_dir, id)?;
+    let path = meeting.source_path.ok_or_else(|| {
+        AppError::Transcribe("meeting has no source file to transcribe".to_string())
+    })?;
+
+    let ctx = state.model(app_support_dir.clone()).await?;
+    let transcription = run_transcription(app_support_dir.clone(), ctx, path).await?;
+
+    let duration_ms = transcription
+        .segments
+        .last()
+        .map(|segment| segment.end_ms as i64);
+    let dtos = transcription
+        .segments
+        .into_iter()
+        .map(|segment| meetings::SegmentDto {
+            start_ms: segment.start_ms as i64,
+            end_ms: segment.end_ms as i64,
+            text: segment.text,
+            speaker_id: segment.speaker_id.map(i64::from),
+        })
+        .collect();
+
+    meetings::save_transcript(
+        &app_support_dir,
+        id,
+        dtos,
+        duration_ms,
+        transcription.language,
+    )
 }
 
 /// Save `content` to a user-chosen destination; return the path written.
@@ -136,6 +181,35 @@ async fn save_text_dialog(content: String, default_name: Option<String>) -> Resu
     };
     std::fs::write(&dest, content)?;
     Ok(Some(dest.to_string_lossy().to_string()))
+}
+
+/// Create and return an empty persisted meeting. Attaching a file and starting
+/// transcription are separate, explicit actions.
+#[tauri::command]
+fn create_meeting(app: tauri::AppHandle) -> Result<MeetingDto> {
+    meetings::create_empty_meeting(&app_data_dir(&app)?, now_ms()?)
+}
+
+/// List persisted meetings newest first for the library sidebar.
+#[tauri::command]
+fn list_meetings(app: tauri::AppHandle) -> Result<Vec<MeetingSummaryDto>> {
+    meetings::list_meetings(&app_data_dir(&app)?)
+}
+
+/// Open a complete persisted meeting for the active workspace.
+#[tauri::command]
+fn open_meeting(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    meetings::open_meeting(&app_data_dir(&app)?, id)
+}
+
+#[tauri::command]
+fn rename_meeting(app: tauri::AppHandle, id: i64, title: String) -> Result<MeetingDto> {
+    meetings::rename_meeting(&app_data_dir(&app)?, id, title)
+}
+
+#[tauri::command]
+fn delete_meeting(app: tauri::AppHandle, id: i64) -> Result<()> {
+    meetings::delete_meeting(&app_data_dir(&app)?, id)
 }
 
 /// Read all settings (theme, ui_language, active model), applying beta
@@ -194,7 +268,13 @@ pub fn run() {
         .manage(AppState::default())
         .invoke_handler(tauri::generate_handler![
             open_file_dialog,
-            transcribe_file,
+            create_meeting,
+            list_meetings,
+            open_meeting,
+            rename_meeting,
+            delete_meeting,
+            set_meeting_source,
+            transcribe_meeting,
             save_text_dialog,
             get_settings,
             set_setting,

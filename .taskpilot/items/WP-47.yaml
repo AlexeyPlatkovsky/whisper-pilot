@@ -1,0 +1,19 @@
+schema_version: 1
+id: WP-47
+title: Pipe ffmpeg stdout to memory instead of temp WAV file
+priority: normal
+type: task
+status: done
+created_at: '2026-07-23T17:29:33Z'
+updated_at: '2026-07-23T17:34:22Z'
+description: 'Replace the temp-file roundtrip in audio.rs (ffmpeg writes WAV to OS temp dir → hound reads from disk → delete) with piping ffmpeg stdout directly into memory via Cursor<Vec<u8>>. ffmpeg already writes the exact WAV bytes we need; piping them avoids unnecessary disk I/O, eliminates temp-file cleanup code, and reduces OS temp-dir churn.
+
+  Target surface: src-tauri/src/audio.rs only. normalize_to_wav becomes normalize_to_memory (returns Vec<u8>), decode_wav_16k_mono accepts &[u8] via Cursor, load_samples chains them with no temp file.
+
+  Constraints: same ffmpeg args, same hound decode, same validation, same error surface. The -y flag is dropped (no file to overwrite). No change to transcribe.rs, lib.rs, or any other module.'
+dod:
+- normalize_to_wav replaced with normalize_to_memory that pipes ffmpeg stdout to Vec<u8> via Command::output(), no temp file written
+- decode_wav_16k_mono reads from &[u8] (Cursor<Vec<u8>>) instead of a file path; same validation and sample conversion logic preserved
+- load_samples no longer creates or deletes a temp file; the remove_file call is removed
+- cargo build, cargo clippy, and cargo nextest all pass with no regressions
+created_by: audio pipeline improvement

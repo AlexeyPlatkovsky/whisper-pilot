@@ -1,7 +1,9 @@
 # Idea
 
-<!-- Owns: problem, users, value, scope, non-goals, principles, success signals.
-     Keep technical structure in architecture.md and UX detail in design.md. -->
+<!-- Owns: problem, users, value, scope, non-goals, principles, and success signals.
+     For WhisperPilot, state the offline/local-first privacy boundary and local
+     audio/video-file focus when relevant. Keep technical structure in architecture.md
+     and UX detail in design.md. -->
 
 ## Problem
 

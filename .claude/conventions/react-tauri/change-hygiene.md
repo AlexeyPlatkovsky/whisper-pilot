@@ -7,8 +7,8 @@ has shipped and then had to fix in a later round.
 
 ## 1. State-lifecycle completeness
 
-When you add a new piece of state (a `useState`/`useReducer` field, a Zustand
-slice, a `Set`/`Map` of ids, a ref), enumerate **every** path that adds to it
+When you add a new piece of state (a `useState`/`useReducer` field, a shared
+context value, a `Set`/`Map` of ids, a ref), enumerate **every** path that adds to it
 **and every path that must remove from it** before moving on:
 
 - add paths: create, submit, receive, select…

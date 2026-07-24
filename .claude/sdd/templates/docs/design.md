@@ -1,9 +1,9 @@
 # Design
 
-<!-- Owns: product/UX design — flows, screens, states. Keep technical structure in
-     architecture.md. In WhisperPilot UI design detail (tokens, patterns) lives here (no separate
-     design-book.md yet); add one only if the design system grows enough to warrant it,
-     and omit this file entirely on the Lean tier. -->
+<!-- Owns: product/UX design — flows, screens, states, interaction patterns, and
+     accessibility. Keep technical structure in architecture.md. Keep UI system detail
+     here unless it grows enough to warrant the optional design-book.md extension.
+     Omit this file entirely on the Lean tier. -->
 
 ## UX Principles
 

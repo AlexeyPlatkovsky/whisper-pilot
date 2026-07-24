@@ -7,45 +7,46 @@ description: Run local CI-equivalent checks (lint, format, typecheck, tests, cov
 
 ## Purpose
 
-Run a configurable set of CI-equivalent checks against the working tree and report pass/fail. Called by pipelines after implementation to catch regressions before the dedicated test-runner or review step. Prevents the "fixed coverage but forgot to re-run format" class of gaps.
+Run a caller-declared fast post-edit check plan and report auditable
+pass/fail/block evidence before the independent `test-runner` gate.
 
 ## When This Skill Applies
 
 Use when:
 - a pipeline step has finished writing code and needs a quick post-edit check
-- the task modified files across layers (TS + Rust) and full local validation is needed
-- a design-contract change touches `docs/design-book.md`, tokens, themes, or UI
-  styling and needs the `design-system` check
+- the task modified code and needs fast post-edit feedback
 - the pipeline explicitly calls this skill as part of its Steps
 
 Do not use:
 - as a replacement for the dedicated `test-runner` agent
-- for tasks that write no code (triage, documentation-only, etc.), except
-  design-contract documentation that is validated by the `design-system` check
+- for tasks that write no code (triage, documentation-only, instruction-only)
 
 ## Check Selection
 
-The caller passes a space-separated list of check names in the `checks` parameter. Each name maps to a command:
+The caller passes the implementation artifact, exhaustive changed-file list,
+the pipeline's file-to-check mapping result, and a space-separated `checks`
+value. Missing changed files or a check-plan mismatch is `BLOCKED`.
 
 | Check | Command | When to run |
 |-------|---------|-------------|
 | `lint` | `npm run lint` | Any TS/TSX change |
 | `format` | `npm run format:check` | Any source change |
 | `tsc` | `npx tsc --noEmit` | Any TS/TSX change |
-| `vitest` | `npm run test` | Any TS/TSX change |
-| `design-system` | `npm run test:design-system` | Any UI styling, token, theme, or design-book change |
+| `vitest` | `npm run test:run` | Any TS/TSX change |
 | `coverage` | `npm run test:coverage` | After adding new tests or modifying tested code |
 | `build` | `npm run build` | Any TS/TSX change |
 | `clippy` | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings` | Any Rust change |
-| `nextest` | `cargo nextest run --manifest-path src-tauri/Cargo.toml` | Any Rust change |
+| `rusttest` | `cargo test --manifest-path src-tauri/Cargo.toml` | Any Rust change |
 | `cargobuild` | `cargo build --manifest-path src-tauri/Cargo.toml` | Any Rust change |
 | `audit` | `cargo audit --manifest-path src-tauri/Cargo.toml` | Any `Cargo.lock` or dependency change |
 
-When the caller does not specify checks, default to `lint format tsc vitest clippy nextest`.
+For routed work, an absent or empty `checks` value is `BLOCKED`; do not invent a
+default. Ad-hoc command execution is outside this skill.
 
 ### Check name validation
 
-Before running, validate each requested check name against the table above. If any name is unknown (e.g. `checks="foo"`), report FAIL with the unknown name and stop — do not run partial checks. If `checks` is an empty string, treat it as unspecified and use the default set.
+Before running, validate each requested check name against the table above. An
+unknown or empty name is `BLOCKED`; do not run a partial plan.
 
 ## Rules
 
@@ -54,15 +55,28 @@ Before running, validate each requested check name against the table above. If a
 Run each requested check sequentially. For each:
 - print the check name and the command
 - capture stdout + stderr
-- report `PASS` or `FAIL`
+- report `PASS`, `FAIL`, or `BLOCKED`
 
 ### 2. Stop on First Failure
 
-If any check fails, stop. Do not run remaining checks. Report the failure output and the failed check name so the executor can fix and re-run.
+If an executed check finds a code defect, report `FAIL` and stop. Missing
+tooling, invalid input, timeout, signal termination, or infrastructure failure
+is `BLOCKED`, not `FAIL`. List all checks not run after fail-fast.
 
-### 3. Do Not Modify Files
+### 3. Mutation Boundary
 
-This skill is read-only. Do not auto-fix lint or format issues. The executor must fix and re-run validation.
+Do not intentionally edit source, tests, configuration, or TaskPilot files and
+never run auto-fix commands. Named validation commands may create build,
+coverage, audit, or cache outputs. Compare `git status --short` before and after;
+unexpected tracked-file changes are `BLOCKED`.
+
+### 4. Manual UI Verification Selection
+
+From the exhaustive changed-file list, emit `required` when a visual UI or
+interaction surface changed, otherwise `skipped — no visual UI or interaction
+surface changed`. When required, name the pipeline's `Manual UI verification
+record`; this skill selects the requirement but does not perform the manual
+check.
 
 ## Output Contract
 
@@ -70,9 +84,15 @@ Emit:
 
 `Skill: validate - output below`
 
-| Check | Result | Details |
-|-------|--------|---------|
+`Overall status: PASS / FAIL / BLOCKED`
 
-`Result` is `PASS` or `FAIL`. `Details` is empty on pass, or the first 10 lines of the failure output on fail.
+| Check | Exact command | Result | Exit / duration | Evidence |
+|---|---|---|---|---|
 
-When any check has `FAIL`, the skill did not pass.
+Then list `Not run after fail-fast` and emit:
+
+`Manual UI verification: required — Manual UI verification record / skipped — no visual UI or interaction surface changed`
+
+Include the requested-versus-run check list and the pre/post working-tree
+comparison. `PASS` requires every requested check to pass and no unexpected
+tracked-file mutation.

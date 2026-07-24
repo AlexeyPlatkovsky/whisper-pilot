@@ -1,6 +1,7 @@
 # ADR-007: Russian-first, English added later
 
-- **Status:** accepted
+- **Status:** partially superseded (2026-07-23) — the language-selection decision
+  below is replaced by ADR-012; the Russian-first product focus still stands
 - **Date:** 2026-07-21
 - **Deciders:** Alexey Platkovsky
 
@@ -18,6 +19,13 @@ Russian), with an explicit per-transcription **auto-detect** option that lets
 Whisper choose. Add first-class English as a follow-on after M1–M3 are stable —
 a small change that does not alter the pipeline shape.
 
+> **Superseded by [ADR-012](ADR-012-auto-detect-only-transcription.md)
+> (2026-07-23)** on the language mechanism only. Whisper now always detects the
+> language and the user cannot select one; `language = "ru"` as a forced decode
+> default caused a real defect (WP-20). The Russian-first *product focus* — what
+> the app is optimized and validated for, and the ordering of the English
+> follow-on — is unchanged.
+
 ## Consequences
 
 - The product is optimized and validated for Russian first; accuracy claims are
@@ -33,4 +41,6 @@ a small change that does not alter the pipeline shape.
   the model supports it whenever needed.
 - **Auto-detect as the only mode** — convenient but misdetects on short/quiet
   clips; offered as an option alongside the Russian default rather than as the
-  default itself.
+  default itself. *(This is the alternative ADR-012 later adopted: forcing a
+  default proved far more damaging in practice than a misdetection, because a
+  wrong forced language does not degrade the transcript — it replaces it.)*

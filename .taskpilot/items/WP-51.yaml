@@ -1,0 +1,27 @@
+schema_version: 1
+id: WP-51
+title: Swap diarization embedding model to NeMo TitaNet-large
+priority: normal
+type: task
+status: ready
+created_at: '2026-07-24T14:32:53Z'
+updated_at: '2026-07-24T14:33:32Z'
+parent_id: WP-2
+description: 'Experiment: replace the diarization embedding model (currently 3D-Speaker CAM++, 3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx) with NVIDIA NeMo''s TitaNet-large, already ONNX-exported and hosted by the sherpa-onnx project itself, to test whether a stronger speaker embedding reduces the over-clustering seen in practice (a real 1:1 recording produced roughly 44 detected speaker clusters against a real 2-speaker conversation).
+
+  This is decoupled from the separate, larger FluidAudio-migration epic under discussion (paused mid-brainstorm, not abandoned) and from WP-50 (which tunes the auto-detect clustering threshold/min-duration, a different lever than the embedding model itself) — this task changes only which embedding model produces the vectors that get clustered.
+
+  diarize.rs''s resolve_diarization_models picks the embedding asset by file extension (.onnx), not by filename or catalog position, so this is purely a models.rs CATALOG data change (new url/sha256/size_bytes/ file_name/label for the diarization entry''s second ModelAsset) — no diarize.rs logic changes.
+
+  Replacement asset, independently verified three ways (GitHub release API asset metadata, the release''s checksum.txt, and directly downloading and hashing the file): url https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_large.onnx (the "recongition" typo is the real, existing tag name, already used by today''s campplus asset URL too), size_bytes 101405493, sha256 d51abcf31717ef28162f26acb9d44dd4127c3d44c9b8624f699f3425daca8e77.
+
+  Scope decision: hard-replace the campplus entry (matches "try this instead" framing) rather than adding a user-selectable choice between the two — a selectable option is a bigger, separate scope (settings UI) not requested here. Existing users with the old embedding model already downloaded will see it read as "not downloaded" for the new entry (the catalog''s is_asset_downloaded check compares file size against the new asset''s size_bytes) and will need to re-download — this is the same behavior the catalog already has for any asset URL/hash/size change, no new migration code needed.
+
+  Risk: high per task-routing (external network/download behavior change to a shipped, in-active-use feature). No automated test can detect whether clustering quality actually improved — that requires manual verification against real multi-speaker audio (ideally the same 1:1 recording that showed ~44 spurious speakers), run via RUST_LOG=info npm run tauri:dev per CLAUDE.md''s Debugging section, with the resulting detected-speaker-count captured as evidence. If TitaNet performs worse in that manual check, this task''s disposition is to report that finding and not merge/keep the swap — the experiment can fail closed.'
+dod:
+- models.rs's diarization CATALOG entry's embedding ModelAsset is updated to NeMo TitaNet-large's url, sha256, size_bytes, and file_name (verified values above), and the entry's label reflects the change (no longer names 3D-Speaker/CAM++).
+- No diarize.rs logic changes are needed or made; resolve_diarization_models continues to pick the embedding asset by .onnx extension, verified by the existing test suite passing unchanged.
+- Existing models.rs and diarize.rs unit tests pass; any test that hardcodes the old campplus URL/sha/size/filename is updated to the new TitaNet values.
+- 'Manual verification: a real multi-speaker recording (ideally the one that previously showed roughly 44 detected speakers) is transcribed with RUST_LOG=info npm run tauri:dev, and the resulting detected-speaker count is captured as before/after evidence in the completion comment. If the result is worse or inconclusive, that is captured honestly and the swap''s disposition (keep vs. revert) is decided from that evidence, not assumed.'
+- docs/architecture.md's Speaker Diarization section and any other prose naming the old embedding model by name are updated to name TitaNet-large instead.
+- cargo test and cargo clippy pass; npm test/build remain green (no frontend change expected).

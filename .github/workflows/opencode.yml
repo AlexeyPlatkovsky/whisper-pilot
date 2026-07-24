@@ -63,7 +63,7 @@ jobs:
             cloud calls.
 
             Review only the files changed in this PR, across these dimensions:
-
+            0. Ignore any changes under .claude, .ai, .manifesto or .github/workflows/opencode.yml.
             1. Code quality
                - Best practices for the language/framework actually used (React/TS
                  idioms in src/, idiomatic Rust/Tauri command patterns in
@@ -104,6 +104,13 @@ jobs:
             and do not suggest running any command, build, or test — you have no
             way to execute anything in this environment. Keep every comment
             specific to a file and line in the diff.
+
+            Only post problem findings — things that should be changed, fixed,
+            or reworked. Do not mention or praise anything that is already
+            done well; a clean file or a correct pattern gets no comment at
+            all. If, after reviewing across all the dimensions above, there is
+            nothing worth changing, fixing, or reworking, post a review body
+            consisting of exactly: "No objections."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

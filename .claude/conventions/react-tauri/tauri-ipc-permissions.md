@@ -1,25 +1,25 @@
-# Tauri IPC, Commands, `tauri-specta` & Permissions
+# Tauri IPC, Commands, and Permissions
 
 ## Commands (Rust → exposed to React)
 
-- Define commands with `#[tauri::command]` in the Rust core; register them in the `invoke_handler`.
-- Keep commands thin: validate input, call a plain Rust function/trait (unit-testable without Tauri), map the result/error to a serializable type.
-- Long-running work (CLI subprocess) must be `async` and cancellable; never block the main thread.
+- Define commands with `#[tauri::command]` in `src-tauri/src/lib.rs` and register them in the `invoke_handler`.
+- Keep command handlers thin: validate input, call a testable Rust function, and map results and errors to serializable values.
+- CPU-intensive or synchronous file work must not run on the async reactor; use `tauri::async_runtime::spawn_blocking` for it. Use an already-async API directly only when it does not block the reactor. Cancellation is required only when the routed requirement calls for it.
 
-## Type-safe bindings with `tauri-specta`
+## Type-safe front-end calls
 
-- Annotate commands and their argument/return types so `tauri-specta` can emit a TypeScript bindings file.
-- The React side imports the generated `commands.xxx()` / typed `invoke` wrapper — **do not** hand-write `invoke<SomeType>("name")`, which silently lies about the return type.
-- Regenerate bindings whenever a command signature changes; treat the generated file as build output, not hand-edited.
+- The current project centralizes typed `invoke` and event calls in `src/ipc.ts`; components import those wrappers rather than calling `invoke` directly.
+- When a command shape changes, update its Rust registration and serializable DTOs together with the matching `src/ipc.ts` wrapper and TypeScript interface. Do not use `any` or duplicate command strings in UI components.
+- This project does not currently use generated `tauri-specta` bindings. Do not introduce a binding generator as an incidental change; propose it through the normal architecture and routing process.
 
 ## Capabilities & permissions (Tauri v2)
 
-- Tauri v2 is deny-by-default. Every command and plugin API the front-end uses must be enabled in `src-tauri/capabilities/*.json`.
+- Tauri v2 capabilities are configured in `src-tauri/capabilities/*.json`. Check the active capability file when adding a plugin API, window permission, or a command outside the existing `core:default` scope.
 - Scope plugin permissions tightly: e.g. `shell` plugin should allow only the specific CLI invocations the app needs, not arbitrary execution.
 - A frontend call failing with a permission error is a missing-capability bug — fix the capability file, don't broaden permissions blindly.
 
 ## Rules
 - Command handlers are thin adapters over testable Rust functions.
-- All IPC types are generated or explicitly validated; never `any`.
-- Every IPC/plugin call has a corresponding, minimally-scoped capability permission.
-- Errors cross the IPC boundary as typed, serializable values that React can branch on (map to the adapter error taxonomy in `docs/idea.md` where relevant).
+- All IPC types are explicitly represented in Rust and `src/ipc.ts`; never use `any`.
+- Every IPC/plugin call has the applicable minimally scoped capability permission; do not broaden permissions without identifying the exact new API or command.
+- Errors cross the IPC boundary as serializable values that React can present safely. Do not expose filesystem paths or internal diagnostic detail unless the product requirement permits it.

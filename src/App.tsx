@@ -1,10 +1,18 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  createMeeting,
+  deleteMeeting,
   getSettings,
+  listMeetings,
   listTaskModels,
+  openMeeting,
   openFileDialog,
-  transcribeFile,
+  setMeetingSource,
+  transcribeMeeting,
   saveTextDialog,
+  renameMeeting,
+  type Meeting as PersistedMeeting,
+  type MeetingSummary,
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
@@ -14,11 +22,12 @@ import { formatClock } from "./format";
 import { AppLogo, Icon, type IconName } from "./Icon";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
+import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
 
-type Status =
-  | { kind: "idle" }
-  | { kind: "transcribing"; file: string }
-  | { kind: "error"; message: string };
+// A running transcription is tracked by meeting id (`transcribingId`), not by
+// this union, so that it survives the user switching to another meeting and
+// back. This union only carries what the workspace itself is showing.
+type Status = { kind: "idle" } | { kind: "error"; message: string };
 
 function formatTime(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -40,28 +49,15 @@ function formatDuration(ms: number): string {
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
 
-// Presentational sidebar sample — the meeting library (persistence) is not built
-// in M1. Rendered as static scaffolding to match the pencil design; the selected
-// row reflects the currently loaded file when one is present.
-const SAMPLE_MEETINGS = [
-  { title: "Product Standup", when: "Yesterday", dur: "18m", dot: "ok" },
-  { title: "Design Review", when: "Jul 19", dur: "55m", dot: "ok" },
-  {
-    title: "Client Call - Acme",
-    when: "Jul 18",
-    dur: "1h 12m",
-    dot: "progress",
-    status: "Transcribing",
-  },
-  { title: "Sprint Retrospective", when: "Jul 17", dur: "37m", dot: "ok" },
-  {
-    title: "Architecture Sync",
-    when: "Jul 16",
-    dur: "1h 05m",
-    dot: "error",
-    status: "MFU Failed",
-  },
-] as const;
+function toSummary(meeting: PersistedMeeting): MeetingSummary {
+  return {
+    id: meeting.id,
+    title: meeting.title,
+    created_at_ms: meeting.created_at_ms,
+    duration_ms: meeting.duration_ms,
+    status: meeting.status,
+  };
+}
 
 export function App() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -76,16 +72,36 @@ export function App() {
   const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
     {},
   );
+  const [meetingSummaries, setMeetingSummaries] = useState<MeetingSummary[]>(
+    [],
+  );
+  const [activeMeeting, setActiveMeeting] = useState<PersistedMeeting | null>(
+    null,
+  );
+  const [renameTarget, setRenameTarget] = useState<Pick<
+    PersistedMeeting,
+    "id" | "title"
+  > | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const [renameError, setRenameError] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
+  // The meeting currently being transcribed, or null. Kept outside `status`
+  // and outside `activeMeeting` so that opening a different meeting cannot
+  // discard a run that is still going.
+  const [transcribingId, setTranscribingId] = useState<number | null>(null);
+  // Mirrors the active meeting id for use by async continuations, which would
+  // otherwise close over a stale `activeMeeting`.
+  const activeMeetingIdRef = useRef<number | null>(null);
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
-    if (status.kind !== "transcribing") return;
+    if (transcribingId === null) return;
     setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [status.kind]);
+  }, [transcribingId]);
 
-  async function refreshModelAvailability() {
+  const refreshModelAvailability = useCallback(async () => {
     try {
       const models = await listTaskModels();
       const transcription = models.find((m) => m.id === "transcription");
@@ -93,17 +109,67 @@ export function App() {
     } catch {
       setTranscriptionModelReady(false);
     }
-  }
+  }, []);
 
   useEffect(() => {
     void refreshModelAvailability();
-  }, []);
+  }, [refreshModelAvailability]);
 
   useEffect(() => {
     getSettings()
       .then((s) => applyTheme(s.theme as Theme))
       .catch(() => {});
   }, []);
+
+  const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
+    activeMeetingIdRef.current = meeting.id;
+    setActiveMeeting(meeting);
+    setFileName(meeting.source_name ?? null);
+    setSegments(meeting.segments);
+    setSpeakerLabels({});
+    setStatus({ kind: "idle" });
+  }, []);
+
+  const upsertSummary = useCallback((meeting: PersistedMeeting) => {
+    setMeetingSummaries((previous) =>
+      previous.some((summary) => summary.id === meeting.id)
+        ? previous.map((summary) =>
+            summary.id === meeting.id ? toSummary(meeting) : summary,
+          )
+        : [toSummary(meeting), ...previous],
+    );
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMeetingLibrary() {
+      try {
+        const summaries = await listMeetings();
+        if (cancelled) return;
+        // The workspace is always backed by a real, persisted meeting. When the
+        // library is empty we seed one so the initial meeting can be renamed or
+        // deleted and never loses its transcript when another meeting is opened.
+        if (summaries.length === 0) {
+          const meeting = await createMeeting();
+          if (cancelled) return;
+          setMeetingSummaries([toSummary(meeting)]);
+          applyActiveMeeting(meeting);
+          return;
+        }
+        setMeetingSummaries(summaries);
+        const meeting = await openMeeting(summaries[0].id);
+        if (!cancelled) applyActiveMeeting(meeting);
+      } catch (error) {
+        if (!cancelled) setStatus({ kind: "error", message: String(error) });
+      }
+    }
+
+    void loadMeetingLibrary();
+    return () => {
+      cancelled = true;
+    };
+  }, [applyActiveMeeting]);
 
   function resolveSpeakerLabel(speakerId: number): string {
     return speakerLabels[speakerId] ?? speakerLabel(speakerId);
@@ -130,21 +196,140 @@ export function App() {
     return formatDuration(segments[segments.length - 1].end_ms);
   }, [segments]);
 
-  async function handleAddFile() {
+  // Selecting a file only attaches it to the active meeting; transcription is
+  // a separate, explicit action (the Transcribe button).
+  async function handleChooseFile() {
+    if (!activeMeeting) return;
     try {
       const path = await openFileDialog();
       if (!path) return;
-      const shortName = path.split("/").pop() ?? path;
-      setStatus({ kind: "transcribing", file: shortName });
-      setSegments([]);
-      setSpeakerLabels({});
-      setFileName(shortName);
-      const result = await transcribeFile(path, "ru");
-      setSegments(result.segments);
-      setFileName(result.file_name);
-      setStatus({ kind: "idle" });
+      const meeting = await setMeetingSource(activeMeeting.id, path);
+      applyActiveMeeting(meeting);
+      upsertSummary(meeting);
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  async function handleTranscribe() {
+    if (!activeMeeting?.source_path) return;
+    const id = activeMeeting.id;
+    try {
+      setTranscribingId(id);
+      setStatus({ kind: "idle" });
+      setSegments([]);
+      setSpeakerLabels({});
+      const meeting = await transcribeMeeting(id);
+      upsertSummary(meeting);
+      // The user may have opened another meeting while this ran; the result
+      // only takes over the workspace if its meeting is still the one on
+      // screen. Either way the sidebar summary above is refreshed.
+      if (activeMeetingIdRef.current === meeting.id)
+        applyActiveMeeting(meeting);
+    } catch (e) {
+      // The same rule on the way out: a failure belongs to the meeting that
+      // was transcribing. Reporting it against whatever the user has opened
+      // since would blame a meeting that never ran.
+      if (activeMeetingIdRef.current === id)
+        setStatus({ kind: "error", message: String(e) });
+    } finally {
+      setTranscribingId(null);
+    }
+  }
+
+  async function handleRemoveFile() {
+    if (!activeMeeting) return;
+    try {
+      const meeting = await setMeetingSource(activeMeeting.id, null);
+      applyActiveMeeting(meeting);
+      upsertSummary(meeting);
+    } catch (e) {
+      setStatus({ kind: "error", message: String(e) });
+    }
+  }
+
+  async function handleCreateMeeting() {
+    try {
+      const meeting = await createMeeting();
+      upsertSummary(meeting);
+      applyActiveMeeting(meeting);
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  async function handleOpenMeeting(id: number) {
+    try {
+      applyActiveMeeting(await openMeeting(id));
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  function openRename(meeting: Pick<PersistedMeeting, "id" | "title">) {
+    setRenameTarget(meeting);
+    setRenameDraft(meeting.title);
+    setRenameError(null);
+  }
+
+  function closeRename() {
+    setRenameTarget(null);
+    setRenameError(null);
+  }
+
+  async function handleRename(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!renameTarget) return;
+    const title = renameDraft.trim();
+    if (!title) {
+      setRenameError("Meeting label is required");
+      return;
+    }
+    if (Array.from(title).length > 120) {
+      setRenameError("Meeting label must be 120 characters or fewer");
+      return;
+    }
+    try {
+      const meeting = await renameMeeting(renameTarget.id, title);
+      setMeetingSummaries((previous) =>
+        previous.map((summary) =>
+          summary.id === meeting.id
+            ? { ...summary, title: meeting.title }
+            : summary,
+        ),
+      );
+      applyActiveMeeting(meeting);
+      closeRename();
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
+  }
+
+  async function handleDelete() {
+    if (!deleteTarget) return;
+    const target = deleteTarget;
+    const remaining = meetingSummaries.filter(
+      (meeting) => meeting.id !== target.id,
+    );
+    try {
+      await deleteMeeting(target.id);
+      const wasActive = activeMeeting?.id === target.id;
+      if (wasActive && remaining[0]) {
+        const next = await openMeeting(remaining[0].id);
+        setMeetingSummaries(remaining);
+        applyActiveMeeting(next);
+      } else if (wasActive) {
+        // Deleting the last meeting seeds a fresh empty one so the workspace
+        // always has a real, persisted meeting backing it.
+        const meeting = await createMeeting();
+        setMeetingSummaries([toSummary(meeting)]);
+        applyActiveMeeting(meeting);
+      } else {
+        setMeetingSummaries(remaining);
+      }
+      setDeleteTarget(null);
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
     }
   }
 
@@ -159,11 +344,28 @@ export function App() {
     await saveTextDialog(transcriptText, `${base}.txt`);
   }
 
-  const busy = status.kind === "transcribing";
+  // `busy` is global because only one transcription may run at a time: it
+  // gates starting another run, anywhere, and — conservatively — creating a
+  // meeting, which would move the workspace mid-run. It does NOT gate
+  // actions that belong to whichever meeting is on screen — those use
+  // `activeIsTranscribing`, so exporting an unrelated finished transcript or
+  // attaching a file to an idle meeting still works while a run is going.
+  const busy = transcribingId !== null;
+  const activeIsTranscribing =
+    activeMeeting !== null && transcribingId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
-  const meetingTitle = fileName
-    ? fileName.replace(/\.[^.]+$/, "")
-    : "New Meeting";
+  const meetingTitle = activeMeeting?.title ?? "New Meeting";
+
+  // The header describes the meeting the user is looking at, through the same
+  // resolver the sidebar rows use, so the two can never disagree.
+  const headerStatus: MeetingStatusView | null = useMemo(() => {
+    if (activeIsTranscribing)
+      return resolveMeetingStatus(undefined, "transcribing");
+    if (status.kind === "error")
+      return resolveMeetingStatus(activeMeeting?.status, "error");
+    if (!activeMeeting) return null;
+    return resolveMeetingStatus(activeMeeting.status);
+  }, [activeIsTranscribing, status, activeMeeting]);
 
   if (isSettingsOpen) {
     return (
@@ -183,7 +385,7 @@ export function App() {
       {/* ---- Top header (shares the row with the macOS traffic lights, which
           the OS draws via the Overlay titleBarStyle — we reserve space for
           them on the left rather than drawing our own) ------------------------ */}
-      <header className="wp-header" data-tauri-drag-region>
+      <header className="wp-header" data-tauri-drag-region="deep">
         <div className="wp-header-lead">
           <div className="wp-header-left">
             {/* Reserved gap for the OS traffic lights (close/min/max) */}
@@ -207,10 +409,10 @@ export function App() {
               <button
                 type="button"
                 className="wp-icon-btn"
-                aria-label={t("addFile")}
-                title={t("addFile")}
-                onClick={handleAddFile}
-                disabled={busy || transcriptionModelReady !== true}
+                aria-label="New meeting"
+                title="New meeting"
+                onClick={handleCreateMeeting}
+                disabled={busy}
               >
                 <Icon name="plus" size={18} />
               </button>
@@ -232,7 +434,8 @@ export function App() {
               type="button"
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
-              disabled
+              onClick={() => activeMeeting && openRename(activeMeeting)}
+              disabled={!activeMeeting || activeIsTranscribing}
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -240,7 +443,17 @@ export function App() {
               type="button"
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Delete meeting"
-              disabled
+              onClick={() =>
+                activeMeeting &&
+                setDeleteTarget({
+                  id: activeMeeting.id,
+                  title: activeMeeting.title,
+                  created_at_ms: activeMeeting.created_at_ms,
+                  duration_ms: activeMeeting.duration_ms,
+                  status: activeMeeting.status,
+                })
+              }
+              disabled={!activeMeeting || activeIsTranscribing}
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -249,25 +462,44 @@ export function App() {
 
         <div className="wp-header-right">
           <div className="wp-status" role="status">
-            {busy ? (
+            {headerStatus && (
               <>
-                <Icon name="refresh-cw" size={14} className="wp-spin" />
-                <span className="wp-status-label">
-                  {t("transcribingPrefix")}
+                {activeIsTranscribing && (
+                  <Icon
+                    name="refresh-cw"
+                    size={14}
+                    className={`wp-spin wp-tone--${headerStatus.tone}`}
+                  />
+                )}
+                <span
+                  className={`wp-status-label wp-tone--${headerStatus.tone}`}
+                >
+                  {headerStatus.label}
                 </span>
-                <span className="wp-status-timer">{formatClock(elapsed)}</span>
+                {activeIsTranscribing && (
+                  <span className="wp-status-timer">
+                    {formatClock(elapsed)}
+                  </span>
+                )}
               </>
-            ) : status.kind === "error" ? (
-              <span className="wp-status-error">Error</span>
-            ) : (
-              <span className="wp-status-idle">
-                {hasTranscript ? "Ready" : "Idle"}
-              </span>
             )}
           </div>
 
           <div className="wp-action-group">
-            <ActionIcon icon="play" label="Start" disabled />
+            <button
+              type="button"
+              className="wp-icon-btn"
+              aria-label="Transcribe"
+              title="Transcribe"
+              onClick={handleTranscribe}
+              disabled={
+                busy ||
+                !activeMeeting?.source_path ||
+                transcriptionModelReady !== true
+              }
+            >
+              <Icon name="play" size={17} />
+            </button>
             <span className="wp-sep" />
             <ActionIcon icon="refresh-cw" label="Re-run" disabled />
             <span className="wp-sep" />
@@ -281,7 +513,7 @@ export function App() {
               aria-label={t("save")}
               title={t("save")}
               onClick={handleSave}
-              disabled={busy || !hasTranscript}
+              disabled={activeIsTranscribing || !hasTranscript}
             >
               <Icon name="download" size={17} />
             </button>
@@ -300,8 +532,12 @@ export function App() {
             className="wp-icon-btn wp-info-add"
             aria-label="Choose file"
             title="Choose an audio or video file"
-            onClick={handleAddFile}
-            disabled={busy || transcriptionModelReady !== true}
+            onClick={handleChooseFile}
+            disabled={
+              activeIsTranscribing ||
+              !activeMeeting ||
+              transcriptionModelReady !== true
+            }
           >
             <Icon name="folder" size={16} />
           </button>
@@ -312,12 +548,7 @@ export function App() {
                 type="button"
                 className="wp-icon-btn wp-icon-btn--tiny"
                 aria-label="Remove file"
-                onClick={() => {
-                  setFileName(null);
-                  setSegments([]);
-                  setSpeakerLabels({});
-                  setStatus({ kind: "idle" });
-                }}
+                onClick={handleRemoveFile}
               >
                 <Icon name="x" size={12} />
               </button>
@@ -348,25 +579,38 @@ export function App() {
                 aria-label="Search meetings"
               />
             </div>
-            <div className="wp-meeting-list">
-              <MeetingRow
-                title={fileName ? meetingTitle : "Quarterly Planning Sync"}
-                when="Today"
-                dur={hasTranscript ? durationLabel : "42m"}
-                dot="ok"
-                selected
-              />
-              {SAMPLE_MEETINGS.map((m) => (
-                <MeetingRow
-                  key={m.title}
-                  title={m.title}
-                  when={m.when}
-                  dur={m.dur}
-                  dot={m.dot}
-                  status={"status" in m ? m.status : undefined}
-                />
-              ))}
-            </div>
+            {/* The empty-state copy stays outside the list: a list may only
+                own list items. */}
+            {meetingSummaries.length === 0 ? (
+              <p className="wp-info-muted">No meetings yet</p>
+            ) : (
+              // WebKit drops the implicit list role from a <ul> styled
+              // `list-style: none`, and from flex list items — and WKWebView is
+              // this app's only runtime. These roles restore the native
+              // semantics rather than override them.
+              <ul className="wp-meeting-list" role="list">
+                {meetingSummaries.map((meeting) => (
+                  <MeetingRow
+                    key={meeting.id}
+                    title={meeting.title}
+                    when={new Date(meeting.created_at_ms).toLocaleDateString()}
+                    dur={
+                      meeting.duration_ms
+                        ? formatDuration(meeting.duration_ms)
+                        : "—"
+                    }
+                    status={resolveMeetingStatus(
+                      meeting.status,
+                      transcribingId === meeting.id ? "transcribing" : "none",
+                    )}
+                    selected={activeMeeting?.id === meeting.id}
+                    onSelect={() => void handleOpenMeeting(meeting.id)}
+                    onRename={() => openRename(meeting)}
+                    onDelete={() => setDeleteTarget(meeting)}
+                  />
+                ))}
+              </ul>
+            )}
           </aside>
         )}
 
@@ -396,22 +640,24 @@ export function App() {
               )}
 
               {status.kind === "error" && (
-                <div className="wp-notice wp-notice--error">
+                <div className="wp-notice wp-notice--error" role="alert">
                   {status.message}
                 </div>
               )}
 
-              {busy && (
+              {activeIsTranscribing && (
                 <div className="wp-empty">
                   <p>Transcribing…</p>
                 </div>
               )}
 
-              {!busy && !hasTranscript && status.kind !== "error" && (
-                <div className="wp-empty">
-                  <p>{t("emptyState")}</p>
-                </div>
-              )}
+              {!activeIsTranscribing &&
+                !hasTranscript &&
+                status.kind !== "error" && (
+                  <div className="wp-empty">
+                    <p>{t("emptyState")}</p>
+                  </div>
+                )}
 
               {hasTranscript &&
                 segments.map((seg, i) => {
@@ -462,6 +708,74 @@ export function App() {
           </aside>
         </section>
       </div>
+
+      {renameTarget && (
+        <div className="modal-overlay">
+          <form
+            className="modal-panel confirm-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Rename meeting"
+            onSubmit={handleRename}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") closeRename();
+            }}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Rename meeting</span>
+            </div>
+            <label htmlFor="meeting-label">Meeting label</label>
+            <input
+              id="meeting-label"
+              type="text"
+              value={renameDraft}
+              autoFocus
+              onFocus={(event) => event.currentTarget.select()}
+              onChange={(event) => {
+                setRenameDraft(event.target.value);
+                setRenameError(null);
+              }}
+              aria-invalid={renameError ? true : undefined}
+            />
+            {renameError && <p role="alert">{renameError}</p>}
+            <div className="confirm-actions">
+              <button type="button" onClick={closeRename}>
+                Cancel
+              </button>
+              <button type="submit">Save</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {deleteTarget && (
+        <div className="modal-overlay">
+          <div
+            className="modal-panel confirm-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label={`Delete ${deleteTarget.title}`}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setDeleteTarget(null);
+            }}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Delete {deleteTarget.title}?</span>
+            </div>
+            <p className="confirm-warning">
+              This permanently removes the meeting and its transcript.
+            </p>
+            <div className="confirm-actions">
+              <button type="button" onClick={() => setDeleteTarget(null)}>
+                Cancel
+              </button>
+              <button type="button" onClick={() => void handleDelete()}>
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -494,32 +808,88 @@ function MeetingRow({
   title,
   when,
   dur,
-  dot,
   status,
   selected,
+  onSelect,
+  onRename,
+  onDelete,
 }: {
   title: string;
   when: string;
   dur: string;
-  dot: string;
-  status?: string;
+  status: MeetingStatusView;
   selected?: boolean;
+  onSelect: () => void;
+  onRename: () => void;
+  onDelete: () => void;
 }) {
+  const transcribing = status.tone === "transcribing";
   return (
-    <div className={`wp-meeting-row${selected ? " is-selected" : ""}`}>
-      <span className={`wp-meeting-dot wp-meeting-dot--${dot}`} />
-      <div className="wp-meeting-text">
-        <span className="wp-meeting-title">{title}</span>
-        <div className="wp-meeting-meta">
-          <span>{when}</span>
-          <span>{dur}</span>
-          {status && (
-            <span className={`wp-meeting-status wp-meeting-status--${dot}`}>
-              {status}
-            </span>
-          )}
+    <li
+      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
+      role="listitem"
+      aria-label={title}
+    >
+      {/* The dot is the row's whole status surface: colour for a glance, the
+          `title` tooltip on hover, and the same words to a screen reader. */}
+      <span
+        className={`wp-meeting-dot wp-tone--${status.tone}`}
+        role="img"
+        aria-label={status.label}
+        title={status.label}
+      />
+      <button
+        type="button"
+        className="wp-meeting-open"
+        aria-label={`Open ${title}`}
+        aria-current={selected ? "page" : undefined}
+        onClick={onSelect}
+      >
+        <div className="wp-meeting-text">
+          {/* Long names are clipped to keep the sidebar at its fixed width, so
+              the tooltip is the only way left to read one in full. */}
+          <span className="wp-meeting-title" title={title}>
+            {title}
+          </span>
+          <div className="wp-meeting-meta">
+            <span>{when}</span>
+            <span>{dur}</span>
+          </div>
         </div>
-      </div>
-    </div>
+      </button>
+      <span className="wp-meeting-actions">
+        {transcribing ? (
+          // While this meeting is transcribing, the spinner takes the action
+          // group's place — renaming or deleting a running meeting is not
+          // something we want to offer mid-run. It is hidden from assistive
+          // tech because the dot beside it already announces "Transcribing";
+          // exposing both would name the same status twice per row.
+          <span className="wp-meeting-busy" aria-hidden="true">
+            <Icon
+              name="refresh-cw"
+              size={13}
+              className={`wp-spin wp-tone--${status.tone}`}
+            />
+          </span>
+        ) : (
+          <>
+            <button
+              type="button"
+              aria-label={`Rename ${title}`}
+              onClick={onRename}
+            >
+              <Icon name="pencil" size={13} />
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete ${title}`}
+              onClick={onDelete}
+            >
+              <Icon name="trash-2" size={13} />
+            </button>
+          </>
+        )}
+      </span>
+    </li>
   );
 }
