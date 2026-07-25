@@ -18,7 +18,7 @@ Read:
 - The `Agent: test-runner - output below` validation artifact for non-trivial routed work.
 - For a non-trivial logic change, the `Skill: testing-pro - output below` artifact with complete Red evidence required by `.claude/skills/testing-pro/SKILL.md`.
 - If the review touches UI, IPC, Rust core, local audio/video processing, transcription, diarization, model management, or meeting storage: read the relevant sections of `docs/architecture.md`. If architecture docs are not relevant, record the skip reason in Reviewed Scope.
-- For any non-trivial change (front-end or Rust): `.claude/conventions/react-tauri/change-hygiene.md` — enforce §1–§3 (state-lifecycle completeness, refactor-invariant re-check, adversarial input coverage) at the severities below; §4 (integration re-audit) is advisory context, not a gated finding
+- For any non-trivial change (front-end or Rust): `.claude/conventions/react-tauri/change-hygiene.md` — enforce §1–§3 (state-lifecycle completeness, refactor-invariant re-check, adversarial input coverage) and §5 (comment scope) at the severities below; §4 (integration re-audit) is advisory context, not a gated finding
 - For front-end changes: load only the relevant convention files based on the touched surface:
   - windowing: `.claude/conventions/react-tauri/tauri-windowing.md`
   - IPC/permissions: `.claude/conventions/react-tauri/tauri-ipc-permissions.md`
@@ -64,11 +64,12 @@ Apply only when the change adds or modifies tests, TaskPilot description scenari
 - **State-lifecycle completeness:** new state (status values, refs, collections) is updated or cleared on *every* exit path — success, error, delete, clear, switch-away, cancel, and unmount — not only the happy path. A stranded active meeting, stale transcript, or pending state is **Major**.
 - **Refactor-invariant re-check:** after a multiplicity change (a component extracted to render more than once) static DOM ids / `htmlFor` / `aria-describedby` must be `useId()`-derived, not hard-coded; after a constant change, coupled constants/call sites are still consistent (no dead thresholds). A duplicate-id or broken-invariant regression is **Major**.
 - **Adversarial input coverage:** validators/formatters/parsers have tests for empty, whitespace, boundary, wrong-kind, and over-length inputs, and never return a value that violates their own documented invariant. A missing adversarial test for non-trivial validation logic is **Major**; an actual invariant-violating return is **Blocking**.
+- **Comment scope** (see `change-hygiene.md` §5; cross-reference: this overlaps with the General rule below on *why*-vs-*what*, but specifically targets narrative length/pointer, not content type): a doc comment (`///`, `//!`, or a block comment) is **Minor** if it contains any measurement, rejected alternative, or decision-history detail beyond a bare pointer — regardless of the comment's total line count (a short comment that still narrates is still a violation; length alone is not a safe harbor). Non-blank prose lines, excluding the pointer line itself, should stay in the 1–3 range for a genuine non-obvious-constraint statement. When the comment names an ADR or `docs/architecture.md` section as its durable record, confirm that target actually exists and covers the claim (both are readable with this agent's own tools); a pointer to a TaskPilot item/comment cannot be resolved with this agent's `Read/Grep/Glob` tools, so treat it as presence-only — flag an obviously fabricated or nonsensical TaskPilot reference, but do not require content verification for it the way you would for an ADR or architecture.md pointer.
 
 ### General
 - No abstractions beyond what the task requires
 - No error handling for scenarios that cannot happen
-- Comments explain only non-obvious *why*, not *what*
+- Comments explain only non-obvious *why*, not *what* (for narrative-length/pointer violations specifically, see Change Hygiene → Comment scope above)
 - Reuses existing project helpers and modules instead of re-deriving behavior; cite the actual existing helper or module when reporting duplication. Do not require scaffold paths that are absent from the repository.
 - If the project does not build after implementation, flag as Blocking
 - Map every approved in-scope scenario and DoD criterion to implementation and

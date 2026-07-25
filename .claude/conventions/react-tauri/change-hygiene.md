@@ -1,9 +1,11 @@
 # Change Hygiene
 
 Mechanical checks that catch the defect classes which pass unit tests but break
-in use. None of these require new tooling; they are short audits run during
-implementation and enforced in review. Each maps to a real defect this project
-has shipped and then had to fix in a later round.
+in use, plus (§5) a documentation/maintainability hygiene check that passes
+tests but rots the codebase's institutional knowledge instead. None of these
+require new tooling; they are short audits run during implementation and
+enforced in review. Each maps to a real defect this project has shipped and
+then had to fix in a later round.
 
 ## 1. State-lifecycle completeness
 
@@ -53,6 +55,28 @@ token. Before closing, do a quick "what did this touch that I changed earlier in
 this task?" pass: shared components, shared constants/tokens, shared state, and
 shared CSS. Per-change review does not catch interaction defects between changes.
 
+## 5. Comment scope: code documents code, not decisions
+
+A source doc comment (`///`, `//!`, or a block comment) states the non-obvious
+*why* for the code immediately below it, in as few lines as that constraint
+needs — typically 1–3. It never narrates an investigation — what was tried,
+what was rejected, empirical measurements, before/after numbers, or a
+decision's history — regardless of how few lines it takes to do so. That
+record already belongs somewhere durable (an ADR, `docs/architecture.md`, or
+the TaskPilot item/comments produced for the task); point to it instead of
+duplicating it in the code.
+
+- A multi-paragraph or multi-line comment block restating measurements,
+  alternatives considered, or a discovery above a constant/function is a
+  hygiene defect even when every fact in it is accurate — trim it to the
+  short constraint a future reader needs plus a pointer to the full record.
+- The pointer must resolve to a durable record that already exists — an ADR
+  section, a `docs/architecture.md` paragraph, or a TaskPilot comment that is
+  actually there. Trimming a comment down to a pointer whose target was never
+  written loses the investigation entirely rather than relocating it; if no
+  durable record exists yet, create it (route through `documentation-maintenance`
+  for product-facing docs) before trimming the comment.
+
 ---
 
 §1–§3 are advisory during implementation (run them yourself) and **enforced in
@@ -60,4 +84,5 @@ review**: `code-reviewer` loads this file and flags a stranded-state leak, a
 broken invariant after a refactor/constant change, a missing adversarial test,
 or an invariant-violating return. `code-reviewer.md` owns the severity it
 assigns each (do not restate severities here, so the two never drift). §4 is
-**advisory only** — apply judgment; it is not a standalone gated finding.
+**advisory only** — apply judgment; it is not a standalone gated finding. §5 is
+**enforced in review** like §1–§3.
