@@ -11,7 +11,11 @@ vi.mock("./ipc", () => ({
   downloadModel: vi.fn(),
   deleteModel: vi.fn(),
   onModelDownloadProgress: vi.fn(async () => () => {}),
-  getSettings: vi.fn(async () => ({ theme: "system", ui_language: "en" })),
+  getSettings: vi.fn(async () => ({
+    theme: "system",
+    ui_language: "en",
+    active_model_diarization: "none",
+  })),
   setSetting: vi.fn(),
 }));
 

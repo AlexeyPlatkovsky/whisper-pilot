@@ -88,7 +88,7 @@ export interface Settings {
   theme: string;
   ui_language: string;
   active_model_transcription?: string;
-  active_model_diarization?: string;
+  active_model_diarization: string;
 }
 
 export function getSettings(): Promise<Settings> {

@@ -12,6 +12,7 @@ describe("AppLanguageSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "system",
       ui_language: "en",
+      active_model_diarization: "none",
     });
 
     render(<AppLanguageSection />);

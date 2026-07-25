@@ -72,7 +72,11 @@ vi.mock("./ipc", () => ({
   downloadModel: vi.fn(),
   deleteModel: vi.fn(),
   onModelDownloadProgress: vi.fn(async () => () => {}),
-  getSettings: vi.fn(async () => ({ theme: "system", ui_language: "en" })),
+  getSettings: vi.fn(async () => ({
+    theme: "system",
+    ui_language: "en",
+    active_model_diarization: "none",
+  })),
   setSetting: vi.fn(),
 }));
 
@@ -365,6 +369,50 @@ describe("App — file handling", () => {
     await chooseAndTranscribe(user);
 
     expect(await screen.findByText(/whisper failed/i)).toBeInTheDocument();
+  });
+
+  it("shows a blocking modal when transcription succeeds but diarization degraded, dismissed by OK", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribeResult(
+        transcribedMeeting([HELLO_SEGMENT]),
+        "active diarization model is missing",
+      ),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+
+    const dialog = await screen.findByRole("alertdialog", {
+      name: "Speaker identification issue",
+    });
+    expect(dialog).toHaveTextContent("active diarization model is missing");
+
+    await user.click(screen.getByRole("button", { name: "OK" }));
+
+    expect(
+      screen.queryByRole("alertdialog", {
+        name: "Speaker identification issue",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show the diarization warning modal when transcription succeeds cleanly", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByDisplayValue("Hello");
+
+    expect(
+      screen.queryByRole("alertdialog", {
+        name: "Speaker identification issue",
+      }),
+    ).not.toBeInTheDocument();
   });
 
   it("removes the attached file chip and clears the transcript", async () => {

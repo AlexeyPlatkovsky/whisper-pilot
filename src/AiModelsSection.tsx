@@ -145,6 +145,13 @@ export function AiModelsSection() {
     try {
       await deleteModel(id);
       setModels(await listTaskModels());
+      // Deleting the active diarization variant reverts the backend
+      // setting to "none"; re-read it so the radio group's selection
+      // doesn't keep pointing at a model that no longer exists on disk.
+      const settings = await getSettings();
+      setDiarizationModel(
+        settings.active_model_diarization ?? NONE_DIARIZATION_MODEL,
+      );
     } catch (e) {
       setRowState((prev) => ({
         ...prev,

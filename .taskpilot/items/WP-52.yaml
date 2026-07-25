@@ -3,9 +3,9 @@ id: WP-52
 title: Dual diarization embedding model selection (campplus + TitaNet-large)
 priority: normal
 type: feature
-status: in_progress
+status: done
 created_at: '2026-07-24T18:45:44Z'
-updated_at: '2026-07-24T19:12:04Z'
+updated_at: '2026-07-25T06:20:17Z'
 parent_id: WP-1
 description: 'Description: End users currently get exactly one diarization embedding model (3D-Speaker CAM++) with no choice, and real-world testing showed it badly over-clusters (a real 1:1 recording produced roughly 44 detected speaker clusters against 2 real speakers). This feature lets the end user choose, in Settings, which diarization embedding model is active -- the current CAM++ model, NVIDIA NeMo''s TitaNet-large (labeled "Recommended"), or None (diarization skipped, plain transcription only) -- via a three-way radio group that shows each downloaded option''s file size and disables any option not yet downloaded. Happy path: the user opens Settings, sees the diarization row with three radio options, selects one (downloading it first via the existing download action if not already present), and the choice persists and takes effect on the next transcribe_meeting run, with no app restart needed. Primary failure mode: if the model file backing the active selection is missing or corrupt at transcription time, the pipeline still finishes and returns plain, speaker-less segments (the existing fail-open behavior is preserved), but a blocking modal popup with a short status message and an "OK" button is now shown to make the degradation visible, where today it is only logged server-side. Scope boundary: this changes only which embedding model produces the vectors that get clustered; it does not touch the segmentation model, the auto-detect clustering threshold (WP-50), the speaker-count override (WP-49), or overlapping-speaker support, and it does not retroactively re-diarize already-saved meetings -- only future transcriptions are affected.
 

@@ -317,5 +317,36 @@ describe("AiModelsSection", () => {
       );
       expect(await screen.findByRole("radio", { name: "None" })).toBeChecked();
     });
+
+    it("reverts the selection to None after deleting the currently active variant", async () => {
+      vi.mocked(ipc.getSettings)
+        .mockResolvedValueOnce({
+          theme: "system",
+          ui_language: "en",
+          active_model_diarization: "campplus",
+        })
+        .mockResolvedValueOnce({
+          theme: "system",
+          ui_language: "en",
+          active_model_diarization: "none",
+        });
+      vi.mocked(ipc.listTaskModels)
+        .mockResolvedValueOnce([CAMPPLUS_DOWNLOADED, TITANET_NOT_DOWNLOADED])
+        .mockResolvedValueOnce([
+          { ...CAMPPLUS_DOWNLOADED, downloaded: false },
+          TITANET_NOT_DOWNLOADED,
+        ]);
+      vi.mocked(ipc.deleteModel).mockResolvedValue(undefined);
+      const user = userEvent.setup();
+
+      render(<AiModelsSection />);
+      expect(await screen.findByRole("radio", { name: "CAM++" })).toBeChecked();
+
+      await user.click(screen.getByRole("button", { name: "Delete CAM++" }));
+      await user.click(await screen.findByRole("button", { name: "Delete" }));
+
+      expect(ipc.deleteModel).toHaveBeenCalledWith("diarization-campplus");
+      expect(await screen.findByRole("radio", { name: "None" })).toBeChecked();
+    });
   });
 });

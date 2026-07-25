@@ -154,9 +154,23 @@ exposed yet) and, on success, `assign_speaker_ids` writes each segment's
 `speaker_id` in place. Diarization failure of any kind — missing models, an
 engine error, or the blocking task itself panicking — is fail-open: it is
 logged and the transcription still returns its (speaker-less) segments,
-never failing `transcribe_file`. There is still no Stop control, no progress
-event spanning both phases, and no persisted meeting entity (those remain
-the not-yet-built M2 library epic, F004/WP-11).
+never failing `transcribe_file`. There is still no Stop control, no progress event
+spanning both phases, and no persisted meeting entity (those remain the
+not-yet-built M2 library epic, F004/WP-11).
+
+**The active diarization embedding model is user-selectable** (WP-52): Settings
+offers a three-way choice — None (skip diarization), CAM++ (3D-Speaker,
+original default), or TitaNet-large (NeMo, "Recommended" — a stronger
+embedding aimed at the over-clustering seen in practice with CAM++ on some
+recordings) — persisted as `active_model.diarization` and read fresh on every
+`transcribe_meeting` run, no restart needed. `resolve_diarization_models`
+picks the active embedding asset by id, not file extension, since the
+diarization catalog entry now bundles more than one `.onnx` embedding. A
+missing/corrupt active model still fails open to plain segments as above, but
+this is no longer silent: `transcribe_meeting` returns a
+`{ meeting, diarization_warning }` wrapper (IPC contract below), and the
+frontend shows a blocking modal so the degradation is visible rather than only
+logged server-side.
 
 The transcript renders segments with real per-speaker coloring (WP-9):
 `src/speakerColors.ts` maps a `speaker_id` to one of 10 categorical colors
@@ -188,13 +202,21 @@ release themes) and **i18n** (English default, release languages); the OS scheme
 drives the *System* theme.
 
 `models.rs` manages a **fixed, app-defined catalog** of the model(s) each task
-needs (transcription = Whisper, diarization = sherpa-onnx, notes = llama/Qwen at
-M3). **Download** fetches from a known URL, streams progress, and marks a model
-ready only after **SHA verification**; **Delete** removes the local file. A task
-whose required model is absent is disabled or degrades (Transcribe needs the
-Whisper model; diarization degrades per F002-R7). Beta manages **one model per
-task**; at release a task may hold several with an **Active** selection. This
-supersedes the earlier "manual model placement / deferred model management" note.
+needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
+selectable embedding, notes = llama/Qwen at M3). **Download** fetches from a
+known URL, streams progress, and marks a model ready only after **SHA
+verification**; **Delete** removes the local file. A task whose required model
+is absent is disabled or degrades (Transcribe needs the Whisper model;
+diarization degrades per F002-R7). Beta manages **one model per task** for
+transcription; at release other tasks may hold several with an **Active**
+selection. Diarization is ahead of that general timeline (WP-52): its catalog
+entry already holds one shared segmentation asset plus multiple
+independently-downloadable embedding variants (CAM++, TitaNet-large), addressed
+by a synthetic `"diarization-<variant>"` id, with an `active_model.diarization`
+setting selecting which embedding is Active (or `"none"` to skip diarization
+entirely — the default for every user, including those upgrading from before
+this selection existed). This supersedes the earlier "manual model placement /
+deferred model management" note.
 
 ## Export (`export.rs`)
 

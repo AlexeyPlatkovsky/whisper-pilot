@@ -28,6 +28,7 @@ describe("AppearanceSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "system",
       ui_language: "en",
+      active_model_diarization: "none",
     });
 
     render(<AppearanceSection />);
@@ -41,6 +42,7 @@ describe("AppearanceSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "dark",
       ui_language: "en",
+      active_model_diarization: "none",
     });
 
     render(<AppearanceSection />);
@@ -52,10 +54,12 @@ describe("AppearanceSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "system",
       ui_language: "en",
+      active_model_diarization: "none",
     });
     vi.mocked(ipc.setSetting).mockResolvedValue({
       theme: "dark",
       ui_language: "en",
+      active_model_diarization: "none",
     });
     const user = userEvent.setup();
 
@@ -75,10 +79,12 @@ describe("AppearanceSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "dark",
       ui_language: "en",
+      active_model_diarization: "none",
     });
     vi.mocked(ipc.setSetting).mockResolvedValue({
       theme: "system",
       ui_language: "en",
+      active_model_diarization: "none",
     });
     const user = userEvent.setup();
 
@@ -92,6 +98,7 @@ describe("AppearanceSection", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "light",
       ui_language: "en",
+      active_model_diarization: "none",
     });
     vi.mocked(ipc.setSetting).mockRejectedValue(new Error("disk full"));
     const user = userEvent.setup();

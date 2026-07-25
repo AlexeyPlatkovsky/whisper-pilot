@@ -300,11 +300,19 @@ async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
 }
 
 /// Delete catalog entry `id`'s downloaded file(s), returning it to
-/// not-downloaded.
+/// not-downloaded. If `id` was the currently active diarization variant,
+/// also reverts `active_model.diarization` to "none" so a later
+/// transcription does not fail open against a model no longer on disk.
 #[tauri::command]
 fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
     let dir = app_data_dir(&app)?;
-    models::delete_model(&dir, &id)
+    models::delete_model(&dir, &id)?;
+
+    let active = settings::get_settings(&dir).active_model_diarization;
+    if models::delete_clears_active_diarization_variant(&id, &active) {
+        settings::set_setting(&dir, "active_model.diarization", "none")?;
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

@@ -1119,8 +1119,8 @@ body {
   margin-left: var(--wp-space-sm);
   padding: 1px 6px;
   border-radius: var(--wp-radius-sm);
-  background: var(--accent);
-  color: var(--accent-contrast, #fff);
+  border: 1px solid var(--accent);
+  color: var(--text);
   font-size: var(--wp-font-size-xs, 0.75rem);
   font-weight: 600;
   vertical-align: middle;

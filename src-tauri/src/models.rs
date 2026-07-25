@@ -165,6 +165,25 @@ impl<'a> ResolvedTarget<'a> {
             ResolvedTarget::Variant { own, .. } => vec![own],
         }
     }
+
+    /// The variant id this target addresses, if it addresses one selectable
+    /// variant within a multi-variant entry rather than a whole entry.
+    pub fn variant_id(&self) -> Option<&'a str> {
+        match self {
+            ResolvedTarget::Entry(_) => None,
+            ResolvedTarget::Variant { own, .. } => own.variant_id,
+        }
+    }
+}
+
+/// Whether deleting download/delete-addressable id `deleted_id` should also
+/// revert the active diarization selection to "none" — true exactly when
+/// `deleted_id` names the variant `active` currently selects, so a later
+/// transcription does not fail open against a model no longer on disk.
+pub fn delete_clears_active_diarization_variant(deleted_id: &str, active: &str) -> bool {
+    resolve_catalog_target(deleted_id)
+        .and_then(|target| target.variant_id())
+        .is_some_and(|variant_id| variant_id == active)
 }
 
 /// Resolve a download/delete-addressable id to its target assets. A bare
@@ -866,6 +885,46 @@ mod tests {
     #[test]
     fn resolve_catalog_target_returns_none_for_an_unknown_id() {
         assert!(resolve_catalog_target("not-a-real-id").is_none());
+    }
+
+    #[test]
+    fn delete_clears_active_diarization_variant_true_when_deleted_id_is_the_active_variant() {
+        assert!(delete_clears_active_diarization_variant(
+            "diarization-titanet-large",
+            "titanet-large",
+        ));
+    }
+
+    #[test]
+    fn delete_clears_active_diarization_variant_false_for_a_different_variant() {
+        assert!(!delete_clears_active_diarization_variant(
+            "diarization-campplus",
+            "titanet-large",
+        ));
+    }
+
+    #[test]
+    fn delete_clears_active_diarization_variant_false_when_active_is_none() {
+        assert!(!delete_clears_active_diarization_variant(
+            "diarization-titanet-large",
+            "none",
+        ));
+    }
+
+    #[test]
+    fn delete_clears_active_diarization_variant_false_for_a_whole_entry_id() {
+        assert!(!delete_clears_active_diarization_variant(
+            "transcription",
+            "titanet-large",
+        ));
+    }
+
+    #[test]
+    fn delete_clears_active_diarization_variant_false_for_an_unknown_id() {
+        assert!(!delete_clears_active_diarization_variant(
+            "not-a-real-id",
+            "titanet-large",
+        ));
     }
 
     #[test]
