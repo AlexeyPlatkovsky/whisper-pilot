@@ -5,139 +5,31 @@ priority: normal
 type: feature
 status: in_progress
 created_at: '2026-07-24T18:45:44Z'
-updated_at: '2026-07-24T18:46:03Z'
+updated_at: '2026-07-24T19:12:04Z'
 parent_id: WP-1
-description: >-
-  Description: End users currently get exactly one diarization embedding
-  model (3D-Speaker CAM++) with no choice, and real-world testing showed it
-  badly over-clusters (a real 1:1 recording produced roughly 44 detected
-  speaker clusters against 2 real speakers). This feature lets the end user
-  choose, in Settings, which diarization embedding model is active -- the
-  current CAM++ model, NVIDIA NeMo's TitaNet-large (labeled "Recommended"),
-  or None (diarization skipped, plain transcription only) -- via a
-  three-way radio group that shows each downloaded option's file size and
-  disables any option not yet downloaded. Happy path: the user opens
-  Settings, sees the diarization row with three radio options, selects one
-  (downloading it first via the existing download action if not already
-  present), and the choice persists and takes effect on the next
-  transcribe_meeting run, with no app restart needed. Primary failure mode:
-  if the model file backing the active selection is missing or corrupt at
-  transcription time, the pipeline still finishes and returns plain,
-  speaker-less segments (the existing fail-open behavior is preserved), but
-  a blocking modal popup with a short status message and an "OK" button is
-  now shown to make the degradation visible, where today it is only logged
-  server-side. Scope boundary: this changes only which embedding model
-  produces the vectors that get clustered; it does not touch the
-  segmentation model, the auto-detect clustering threshold (WP-50), the
-  speaker-count override (WP-49), or overlapping-speaker support, and it
-  does not retroactively re-diarize already-saved meetings -- only future
-  transcriptions are affected.
+description: 'Description: End users currently get exactly one diarization embedding model (3D-Speaker CAM++) with no choice, and real-world testing showed it badly over-clusters (a real 1:1 recording produced roughly 44 detected speaker clusters against 2 real speakers). This feature lets the end user choose, in Settings, which diarization embedding model is active -- the current CAM++ model, NVIDIA NeMo''s TitaNet-large (labeled "Recommended"), or None (diarization skipped, plain transcription only) -- via a three-way radio group that shows each downloaded option''s file size and disables any option not yet downloaded. Happy path: the user opens Settings, sees the diarization row with three radio options, selects one (downloading it first via the existing download action if not already present), and the choice persists and takes effect on the next transcribe_meeting run, with no app restart needed. Primary failure mode: if the model file backing the active selection is missing or corrupt at transcription time, the pipeline still finishes and returns plain, speaker-less segments (the existing fail-open behavior is preserved), but a blocking modal popup with a short status message and an "OK" button is now shown to make the degradation visible, where today it is only logged server-side. Scope boundary: this changes only which embedding model produces the vectors that get clustered; it does not touch the segmentation model, the auto-detect clustering threshold (WP-50), the speaker-count override (WP-49), or overlapping-speaker support, and it does not retroactively re-diarize already-saved meetings -- only future transcriptions are affected.
 
-  Non-goals: Overlapping-speaker support (separate, blocked on the
-  diarization engine's own limitations). The FluidAudio/CoreML migration
-  (separate, larger epic; brainstorm paused mid-decision). WP-49
-  (speaker-count override) and WP-50 (auto-detect threshold/min-duration
-  tuning) -- both untouched, independent levers, not superseded by this
-  work. Offering the TitaNet-small variant as a fourth option -- only None,
-  campplus, and TitaNet-large are selectable. Retroactive re-diarization of
-  already-saved meetings when the active model changes -- only future
-  transcriptions use the newly selected model. Depending on or requiring
-  WP-19 (UI blocked except Stop during transcription, still backlog) --
-  concurrent mutation of the active model during an in-flight transcription
-  run is an accepted, pre-existing Beta-scope gap, not addressed by this
-  feature.
+  Non-goals: Overlapping-speaker support (separate, blocked on the diarization engine''s own limitations). The FluidAudio/CoreML migration (separate, larger epic; brainstorm paused mid-decision). WP-49 (speaker-count override) and WP-50 (auto-detect threshold/min-duration tuning) -- both untouched, independent levers, not superseded by this work. Offering the TitaNet-small variant as a fourth option -- only None, campplus, and TitaNet-large are selectable. Retroactive re-diarization of already-saved meetings when the active model changes -- only future transcriptions use the newly selected model. Depending on or requiring WP-19 (UI blocked except Stop during transcription, still backlog) -- concurrent mutation of the active model during an in-flight transcription run is an accepted, pre-existing Beta-scope gap, not addressed by this feature.
 
-  Constraints / design notes: No performance/latency requirements beyond
-  normal responsiveness (explicit "none"). No new security/permission
-  requirements beyond the existing SHA-256-verified-download pattern
-  already used for every catalog asset (explicit "none"). Standard HTML
-  radio-button interaction semantics (click to select, native keyboard
-  navigation, disabled attribute for undownloaded options) -- nothing
-  custom. The missing/corrupt-active-model warning surfaces as a blocking
-  modal popup (short text + "OK" button), not a status-line message -- this
-  supersedes an earlier, looser "status line" phrasing from
-  mid-discussion once the concrete design was given. Concurrent mutation
-  of the active model during an in-flight transcription run is explicitly
-  accepted as a pre-existing Beta-scope gap, not solved by this feature.
+  Constraints / design notes: No performance/latency requirements beyond normal responsiveness (explicit "none"). No new security/permission requirements beyond the existing SHA-256-verified-download pattern already used for every catalog asset (explicit "none"). Standard HTML radio-button interaction semantics (click to select, native keyboard navigation, disabled attribute for undownloaded options) -- nothing custom. The missing/corrupt-active-model warning surfaces as a blocking modal popup (short text + "OK" button), not a status-line message -- this supersedes an earlier, looser "status line" phrasing from mid-discussion once the concrete design was given. Concurrent mutation of the active model during an in-flight transcription run is explicitly accepted as a pre-existing Beta-scope gap, not solved by this feature.
 
-  Dependencies / integration: Extends WP-2 (Diarization engine integration
-  (sherpa-onnx), status done). Sibling to WP-49 (backlog) and WP-50
-  (backlog) -- both untouched. Builds on WP-48 (done) without changing it.
-  Supersedes WP-51 (cancelled). Does not depend on WP-19 (backlog) -- see
-  Non-goals.
+  Dependencies / integration: Extends WP-2 (Diarization engine integration (sherpa-onnx), status done). Sibling to WP-49 (backlog) and WP-50 (backlog) -- both untouched. Builds on WP-48 (done) without changing it. Supersedes WP-51 (cancelled). Does not depend on WP-19 (backlog) -- see Non-goals.
 
-  Target surfaces: src-tauri/src/models.rs (CATALOG diarization entry
-  restructuring -- the core structural change: per-variant identity +
-  independent per-asset downloaded state). src-tauri/src/diarize.rs
-  (resolve_diarization_models: id/filename-based embedding matching,
-  active-variant threading through diarize_samples/DiarizationModelPaths).
-  src-tauri/src/settings.rs (new active_model.diarization key, Settings
-  struct field, validation, mirroring the existing
-  active_model.transcription pattern). src-tauri/src/lib.rs (thread the
-  setting into diarize_samples; new non-fatal-diarization-warning IPC
-  surface -- today apply_diarization_outcome only logs server-side).
-  src/ipc.ts (new setting key type, updated TaskModel-equivalent DTO shape
-  for per-variant download/active state, new diarization-warning modal
-  payload type). Settings AI-models UI component (frontend, exact file TBD
-  during implementation) -- the three-way radio group. A blocking modal
-  popup component (new, or reuse an existing pattern -- TBD during
-  implementation).
+  Target surfaces: src-tauri/src/models.rs (CATALOG diarization entry restructuring -- the core structural change: per-variant identity + independent per-asset downloaded state). src-tauri/src/diarize.rs (resolve_diarization_models: id/filename-based embedding matching, active-variant threading through diarize_samples/DiarizationModelPaths). src-tauri/src/settings.rs (new active_model.diarization key, Settings struct field, validation, mirroring the existing active_model.transcription pattern). src-tauri/src/lib.rs (thread the setting into diarize_samples; new non-fatal-diarization-warning IPC surface -- today apply_diarization_outcome only logs server-side). src/ipc.ts (new setting key type, updated TaskModel-equivalent DTO shape for per-variant download/active state, new diarization-warning modal payload type). Settings AI-models UI component (frontend, exact file TBD during implementation) -- the three-way radio group. A blocking modal popup component (new, or reuse an existing pattern -- TBD during implementation).
 
-  Proposed BDD scenarios: S-1 Select and use the recommended model -- Given
-  TitaNet-large is downloaded and the active diarization model is None,
-  When the user selects the TitaNet-large radio option in Settings, Then
-  active_model.diarization persists as TitaNet-large and the next
-  transcribe_meeting run uses it. S-2 Default state skips diarization --
-  Given a fresh install or an existing user upgrading to this feature, with
-  no active_model.diarization set, When the user runs transcribe_meeting
-  without visiting Settings first, Then diarization is skipped and the
-  meeting has plain, speaker-less segments. S-3 Deleting the active model
-  reverts to None -- Given TitaNet-large is the active diarization model,
-  When the user deletes the TitaNet-large model file via the existing
-  delete action while idle, Then active_model.diarization reverts to None
-  and the next transcription returns plain segments. S-4 Missing active
-  model at transcription time shows a blocking modal -- Given the active
-  diarization model's file is missing or corrupt at the moment
-  transcribe_meeting runs, When the transcription pipeline runs, Then it
-  still finishes with plain, speaker-less segments and a blocking modal
-  popup with a short status message and an "OK" button is shown. S-5
-  Settings persistence failure reverts the selection -- Given the user
-  selects a new active diarization model in Settings, When persisting the
-  active_model.diarization setting fails, Then the radio selection reverts
-  to its prior value and an error is shown. S-6 Undownloaded model is not
-  selectable -- Given TitaNet-large has not been downloaded yet, When the
-  user views the diarization row in Settings, Then the TitaNet-large radio
-  option is disabled until it is downloaded.
+  Proposed BDD scenarios: S-1 Select and use the recommended model -- Given TitaNet-large is downloaded and the active diarization model is None, When the user selects the TitaNet-large radio option in Settings, Then active_model.diarization persists as TitaNet-large and the next transcribe_meeting run uses it. S-2 Default state skips diarization -- Given a fresh install or an existing user upgrading to this feature, with no active_model.diarization set, When the user runs transcribe_meeting without visiting Settings first, Then diarization is skipped and the meeting has plain, speaker-less segments. S-3 Deleting the active model reverts to None -- Given TitaNet-large is the active diarization model, When the user deletes the TitaNet-large model file via the existing delete action while idle, Then active_model.diarization reverts to None and the next transcription returns plain segments. S-4 Missing active model at transcription time shows a blocking modal -- Given the active diarization model''s file is missing or corrupt at the moment transcribe_meeting runs, When the transcription pipeline runs, Then it still finishes with plain, speaker-less segments and a blocking modal popup with a short status message and an "OK" button is shown. S-5 Settings persistence failure reverts the selection -- Given the user selects a new active diarization model in Settings, When persisting the active_model.diarization setting fails, Then the radio selection reverts to its prior value and an error is shown. S-6 Undownloaded model is not selectable -- Given TitaNet-large has not been downloaded yet, When the user views the diarization row in Settings, Then the TitaNet-large radio option is disabled until it is downloaded.
 
-  Case-derivation evidence: Not applicable -- child tasks own exhaustive
-  derivation.
+  Case-derivation evidence: Not applicable -- child tasks own exhaustive derivation.
 
-  Child-task breakdown: Restructure models.rs's diarization CATALOG entry
-  to support multiple selectable embedding variants (id, label, recommended
-  flag, independent per-variant downloaded state), and update
-  list_task_models/TaskModel accordingly. Update diarize.rs's
-  resolve_diarization_models to match the embedding asset by id/filename
-  instead of file extension, and thread an active-variant parameter through
-  diarize_samples/DiarizationModelPaths. Add the active_model.diarization
-  settings key, Settings struct field, and validation in settings.rs,
-  mirroring the existing active_model.transcription pattern. Thread the
-  active_model.diarization setting from Settings through
-  transcribe_meeting/run_transcription into diarize_samples in lib.rs;
-  implement default-to-None behavior including the
-  delete-active-model-reverts-to-None case. Add the
-  non-fatal-diarization-warning IPC surface (lib.rs + ipc.ts) and the
-  blocking modal popup component (frontend) for the missing/corrupt-active-
-  model case. Build the three-way radio group UI in the Settings AI-models
-  screen (size display, "Recommended" badge, disabled-when-undownloaded
-  state) and wire it to the new setting.
+  Child-task breakdown: Restructure models.rs''s diarization CATALOG entry to support multiple selectable embedding variants (id, label, recommended flag, independent per-variant downloaded state), and update list_task_models/TaskModel accordingly. Update diarize.rs''s resolve_diarization_models to match the embedding asset by id/filename instead of file extension, and thread an active-variant parameter through diarize_samples/DiarizationModelPaths. Add the active_model.diarization settings key, Settings struct field, and validation in settings.rs, mirroring the existing active_model.transcription pattern. Thread the active_model.diarization setting from Settings through transcribe_meeting/run_transcription into diarize_samples in lib.rs; implement default-to-None behavior including the delete-active-model-reverts-to-None case. Add the non-fatal-diarization-warning IPC surface (lib.rs + ipc.ts) and the blocking modal popup component (frontend) for the missing/corrupt-active- model case. Build the three-way radio group UI in the Settings AI-models screen (size display, "Recommended" badge, disabled-when-undownloaded state) and wire it to the new setting.
 
-  Child-feature breakdown: Not applicable -- feature altitude.
+  Child-feature breakdown: Not applicable -- feature altitude.'
 dod:
-  - "Settings' AI-models screen shows a three-way radio choice (None / CAM++ / TitaNet-large) for the diarization task; each downloaded option shows its file size; TitaNet-large is labeled Recommended; any option not yet downloaded is disabled (not selectable) until downloaded via the existing download action."
-  - "Selecting a radio option persists it as the active diarization model (a new active_model.diarization setting) and the next transcribe_meeting run uses that model, with no app restart required."
-  - "The default active_model.diarization is None for every user, including users upgrading from before this feature existed (diarization is skipped, plain transcription only, until the user explicitly selects a model) -- a deliberate, confirmed behavior change from today's always-on diarization."
-  - "Deleting the currently-active diarization model while idle (no transcription running) reverts the active selection to None; a subsequent transcription skips diarization and returns plain segments."
-  - "If the active model's file is missing or corrupt at transcription time, the pipeline still finishes and returns plain, speaker-less segments (fail-open preserved), and a blocking modal popup (short status message, OK button) is shown, blocking the app until dismissed."
-  - "If persisting the active_model.diarization setting fails, the radio selection reverts and an error is shown, matching the existing set_setting failure pattern used for theme/language."
-  - "diarize.rs's resolve_diarization_models matches the embedding asset by id/filename instead of file extension, since two .onnx embedding assets now coexist in the diarization catalog entry."
-  - "Existing diarize.rs, meetings.rs, models.rs, and settings.rs test suites pass unchanged in intent; new/updated tests cover the new catalog shape, the active_model.diarization setting, and the id/filename-based resolution logic."
+- Settings' AI-models screen shows a three-way radio choice (None / CAM++ / TitaNet-large) for the diarization task; each downloaded option shows its file size; TitaNet-large is labeled Recommended; any option not yet downloaded is disabled (not selectable) until downloaded via the existing download action.
+- Selecting a radio option persists it as the active diarization model (a new active_model.diarization setting) and the next transcribe_meeting run uses that model, with no app restart required.
+- The default active_model.diarization is None for every user, including users upgrading from before this feature existed (diarization is skipped, plain transcription only, until the user explicitly selects a model) -- a deliberate, confirmed behavior change from today's always-on diarization.
+- Deleting the currently-active diarization model while idle (no transcription running) reverts the active selection to None; a subsequent transcription skips diarization and returns plain segments.
+- If the active model's file is missing or corrupt at transcription time, the pipeline still finishes and returns plain, speaker-less segments (fail-open preserved), and a blocking modal popup (short status message, OK button) is shown, blocking the app until dismissed.
+- If persisting the active_model.diarization setting fails, the radio selection reverts and an error is shown, matching the existing set_setting failure pattern used for theme/language.
+- diarize.rs's resolve_diarization_models matches the embedding asset by id/filename instead of file extension, since two .onnx embedding assets now coexist in the diarization catalog entry.
+- Existing diarize.rs, meetings.rs, models.rs, and settings.rs test suites pass unchanged in intent; new/updated tests cover the new catalog shape, the active_model.diarization setting, and the id/filename-based resolution logic.

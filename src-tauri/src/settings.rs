@@ -16,6 +16,12 @@ const KEY_UI_LANGUAGE: &str = "ui_language";
 // future task-scoped key (e.g. `active_model.diarization`) would not map
 // cleanly to a single Rust field.
 const KEY_ACTIVE_MODEL_TRANSCRIPTION: &str = "active_model.transcription";
+const KEY_ACTIVE_MODEL_DIARIZATION: &str = "active_model.diarization";
+const NONE_DIARIZATION_MODEL: &str = "none";
+
+fn default_active_model_diarization() -> String {
+    NONE_DIARIZATION_MODEL.to_string()
+}
 
 /// All persisted settings, always fully populated with defaults for unset keys.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -24,6 +30,8 @@ pub struct Settings {
     pub ui_language: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_model_transcription: Option<String>,
+    #[serde(default = "default_active_model_diarization")]
+    pub active_model_diarization: String,
 }
 
 impl Default for Settings {
@@ -32,6 +40,7 @@ impl Default for Settings {
             theme: "system".to_string(),
             ui_language: "en".to_string(),
             active_model_transcription: None,
+            active_model_diarization: default_active_model_diarization(),
         }
     }
 }
@@ -83,6 +92,20 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 )));
             }
             settings.active_model_transcription = Some(value.to_string());
+        }
+        KEY_ACTIVE_MODEL_DIARIZATION => {
+            let is_known_variant = value == NONE_DIARIZATION_MODEL
+                || CATALOG.iter().any(|e| {
+                    e.assets
+                        .iter()
+                        .any(|a| a.variant_id == Some(value))
+                });
+            if !is_known_variant {
+                return Err(AppError::InvalidSetting(format!(
+                    "unknown diarization model id: {value}",
+                )));
+            }
+            settings.active_model_diarization = value.to_string();
         }
         other => {
             return Err(AppError::InvalidSetting(format!(
@@ -216,5 +239,48 @@ mod tests {
             get_settings(dir.path()).active_model_transcription,
             Some("transcription".to_string())
         );
+    }
+
+    #[test]
+    fn get_settings_defaults_active_model_diarization_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let settings = get_settings(dir.path());
+
+        assert_eq!(settings.active_model_diarization, "none");
+    }
+
+    #[test]
+    fn set_setting_persists_active_model_diarization_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "campplus").unwrap();
+
+        let settings = set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "none").unwrap();
+
+        assert_eq!(settings.active_model_diarization, "none");
+    }
+
+    #[test]
+    fn set_setting_persists_active_model_diarization_as_a_known_variant() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let settings =
+            set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "titanet-large").unwrap();
+
+        assert_eq!(settings.active_model_diarization, "titanet-large");
+    }
+
+    #[test]
+    fn set_setting_rejects_active_model_diarization_value_not_a_known_variant_and_leaves_store_unchanged(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "campplus").unwrap();
+
+        let err =
+            set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "not-a-real-variant")
+                .unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidSetting(_)));
+        assert_eq!(get_settings(dir.path()).active_model_diarization, "campplus");
     }
 }

@@ -21,27 +21,51 @@ const SEGMENTATION_ARCHIVE_ENTRY: &str = "model.onnx";
 
 /// Resolve the embedding model and segmentation model paths from the
 /// diarization assets WP-39/WP-40 already downloaded into `app_support_dir`.
-/// The embedding model is used as-is; the segmentation model is extracted
-/// (once) from its tar.bz2 archive into a stable, idempotent path.
-pub fn resolve_diarization_models(app_support_dir: &Path) -> Result<DiarizationModelPaths> {
+/// `active_variant` selects which downloaded embedding asset to use (e.g.
+/// "campplus" or "titanet-large") — matched by id, not file extension, since
+/// the diarization catalog entry now bundles more than one `.onnx` embedding
+/// asset. The embedding model is used as-is; the shared segmentation model is
+/// extracted (once) from its tar.bz2 archive into a stable, idempotent path.
+pub fn resolve_diarization_models(
+    app_support_dir: &Path,
+    active_variant: &str,
+) -> Result<DiarizationModelPaths> {
+    let entry = models::CATALOG
+        .iter()
+        .find(|e| e.id == "diarization")
+        .ok_or_else(|| {
+            AppError::DiarizationAsset("diarization catalog entry not found".to_string())
+        })?;
     let paths = models::asset_paths(app_support_dir, "diarization").ok_or_else(|| {
         AppError::DiarizationAsset("diarization catalog entry not found".to_string())
     })?;
 
-    // Match by extension rather than catalog position, so a future reordering
-    // of the "diarization" entry's assets can't silently swap which file is
-    // treated as the archive vs. the plain embedding model.
-    let has_ext = |p: &Path, ext: &str| p.extension().and_then(|e| e.to_str()) == Some(ext);
-    let archive_path = paths.iter().find(|p| has_ext(p, "bz2")).ok_or_else(|| {
+    let mut archive_path = None;
+    let mut embedding_path = None;
+    for (asset, path) in entry.assets.iter().zip(paths.iter()) {
+        match asset.variant_id {
+            None => archive_path = Some(path),
+            Some(variant_id) if variant_id == active_variant => embedding_path = Some(path),
+            _ => {}
+        }
+    }
+
+    let archive_path = archive_path.ok_or_else(|| {
         AppError::DiarizationAsset(
-            "diarization catalog entry is missing its segmentation archive (.tar.bz2) asset"
+            "diarization catalog entry is missing its shared segmentation archive asset"
                 .to_string(),
         )
     })?;
-    let embedding_model = paths.iter().find(|p| has_ext(p, "onnx")).ok_or_else(|| {
-        AppError::DiarizationAsset(
-            "diarization catalog entry is missing its embedding (.onnx) asset".to_string(),
-        )
+    if archive_path.extension().and_then(|e| e.to_str()) != Some("bz2") {
+        return Err(AppError::DiarizationAsset(
+            "diarization catalog entry's shared asset is not a segmentation archive (.tar.bz2)"
+                .to_string(),
+        ));
+    }
+    let embedding_model = embedding_path.ok_or_else(|| {
+        AppError::DiarizationAsset(format!(
+            "diarization catalog entry has no embedding asset for variant '{active_variant}'"
+        ))
     })?;
 
     let segmentation_model = extract_segmentation_model(archive_path)?;
@@ -189,8 +213,9 @@ pub fn diarize_samples(
     app_support_dir: &Path,
     samples: Vec<f32>,
     speaker_count: Option<i32>,
+    active_variant: &str,
 ) -> Result<Vec<SpeakerTurn>> {
-    let models = resolve_diarization_models(app_support_dir)?;
+    let models = resolve_diarization_models(app_support_dir, active_variant)?;
     let config = build_config(speaker_count);
     let engine =
         sherpa_rs::diarize::Diarize::new(models.segmentation_model, models.embedding_model, config)
@@ -320,11 +345,20 @@ pub fn assign_speaker_ids(segments: &mut [transcribe::Segment], turns: &[Speaker
 pub fn apply_diarization_outcome(
     segments: &mut [transcribe::Segment],
     outcome: std::result::Result<Result<Vec<SpeakerTurn>>, tokio::task::JoinError>,
-) {
+) -> Option<String> {
     match outcome {
-        Ok(Ok(turns)) => assign_speaker_ids(segments, &turns),
-        Ok(Err(e)) => log::warn!("diarization unavailable, returning speaker-less segments: {e}"),
-        Err(e) => log::warn!("diarization task failed, returning speaker-less segments: {e}"),
+        Ok(Ok(turns)) => {
+            assign_speaker_ids(segments, &turns);
+            None
+        }
+        Ok(Err(e)) => {
+            log::warn!("diarization unavailable, returning speaker-less segments: {e}");
+            Some(format!("Speaker identification is unavailable: {e}"))
+        }
+        Err(e) => {
+            log::warn!("diarization task failed, returning speaker-less segments: {e}");
+            Some(format!("Speaker identification failed: {e}"))
+        }
     }
 }
 
@@ -367,40 +401,68 @@ mod tests {
         encoder.finish().unwrap();
     }
 
-    fn write_embedding_fixture(dir: &Path) -> Vec<u8> {
+    /// Writes fixture bytes for the diarization entry's shared segmentation
+    /// archive plus BOTH embedding variants (paths[1] = campplus, paths[2] =
+    /// titanet-large per the restructured 3-asset entry), returning the
+    /// requested variant's expected on-disk bytes.
+    fn write_embedding_fixtures(dir: &Path) -> (Vec<u8>, Vec<u8>) {
         let paths = models::asset_paths(dir, "diarization").unwrap();
-        let embedding_bytes = b"fake embedding model bytes".to_vec();
+        let campplus_bytes = b"fake campplus embedding model bytes".to_vec();
+        let titanet_bytes = b"fake titanet-large embedding model bytes".to_vec();
         std::fs::create_dir_all(paths[1].parent().unwrap()).unwrap();
-        std::fs::write(&paths[1], &embedding_bytes).unwrap();
-        embedding_bytes
+        std::fs::write(&paths[1], &campplus_bytes).unwrap();
+        std::fs::write(&paths[2], &titanet_bytes).unwrap();
+        (campplus_bytes, titanet_bytes)
     }
 
     #[test]
-    fn resolve_diarization_models_extracts_segmentation_and_returns_embedding_as_is() {
+    fn resolve_diarization_models_extracts_segmentation_and_returns_the_active_variants_embedding_as_is(
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let paths = models::asset_paths(dir.path(), "diarization").unwrap();
         std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
         let model_bytes = b"the real segmentation model bytes";
         build_fixture_archive(&paths[0], model_bytes);
-        let embedding_bytes = write_embedding_fixture(dir.path());
+        let (campplus_bytes, titanet_bytes) = write_embedding_fixtures(dir.path());
 
-        let resolved = resolve_diarization_models(dir.path()).unwrap();
+        let resolved_campplus = resolve_diarization_models(dir.path(), "campplus").unwrap();
+        let resolved_titanet = resolve_diarization_models(dir.path(), "titanet-large").unwrap();
 
-        assert_eq!(resolved.embedding_model, paths[1]);
+        assert_eq!(resolved_campplus.embedding_model, paths[1]);
         assert_eq!(
-            std::fs::read(&resolved.embedding_model).unwrap(),
-            embedding_bytes
+            std::fs::read(&resolved_campplus.embedding_model).unwrap(),
+            campplus_bytes
         );
-        let extracted = std::fs::read(&resolved.segmentation_model).unwrap();
-        assert_eq!(extracted, model_bytes);
-        assert!(resolved
-            .segmentation_model
-            .to_string_lossy()
-            .ends_with("model.onnx"));
-        assert!(!resolved
-            .segmentation_model
-            .to_string_lossy()
-            .ends_with("model.int8.onnx"));
+        assert_eq!(resolved_titanet.embedding_model, paths[2]);
+        assert_eq!(
+            std::fs::read(&resolved_titanet.embedding_model).unwrap(),
+            titanet_bytes
+        );
+        for resolved in [&resolved_campplus, &resolved_titanet] {
+            let extracted = std::fs::read(&resolved.segmentation_model).unwrap();
+            assert_eq!(extracted, model_bytes);
+            assert!(resolved
+                .segmentation_model
+                .to_string_lossy()
+                .ends_with("model.onnx"));
+            assert!(!resolved
+                .segmentation_model
+                .to_string_lossy()
+                .ends_with("model.int8.onnx"));
+        }
+    }
+
+    #[test]
+    fn resolve_diarization_models_fails_closed_for_an_unknown_active_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = models::asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        build_fixture_archive(&paths[0], b"segmentation model bytes");
+        write_embedding_fixtures(dir.path());
+
+        let err = resolve_diarization_models(dir.path(), "not-a-real-variant").unwrap_err();
+
+        assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
 
     #[test]
@@ -409,15 +471,15 @@ mod tests {
         let paths = models::asset_paths(dir.path(), "diarization").unwrap();
         std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
         build_fixture_archive(&paths[0], b"segmentation model v1");
-        write_embedding_fixture(dir.path());
+        write_embedding_fixtures(dir.path());
 
-        let first = resolve_diarization_models(dir.path()).unwrap();
+        let first = resolve_diarization_models(dir.path(), "campplus").unwrap();
         // Overwrite the archive with different bytes; a correctly idempotent
         // implementation must not re-read it, so the previously extracted
         // file's content must be unchanged.
         build_fixture_archive(&paths[0], b"segmentation model v2 (should be ignored)");
 
-        let second = resolve_diarization_models(dir.path()).unwrap();
+        let second = resolve_diarization_models(dir.path(), "campplus").unwrap();
 
         assert_eq!(first.segmentation_model, second.segmentation_model);
         let content = std::fs::read(&second.segmentation_model).unwrap();
@@ -427,10 +489,10 @@ mod tests {
     #[test]
     fn resolve_diarization_models_fails_closed_when_archive_missing() {
         let dir = tempfile::tempdir().unwrap();
-        write_embedding_fixture(dir.path());
+        write_embedding_fixtures(dir.path());
         // No archive written at paths[0].
 
-        let err = resolve_diarization_models(dir.path()).unwrap_err();
+        let err = resolve_diarization_models(dir.path(), "campplus").unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
@@ -441,9 +503,9 @@ mod tests {
         let paths = models::asset_paths(dir.path(), "diarization").unwrap();
         std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
         std::fs::write(&paths[0], b"not a real bzip2 tar archive at all").unwrap();
-        write_embedding_fixture(dir.path());
+        write_embedding_fixtures(dir.path());
 
-        let err = resolve_diarization_models(dir.path()).unwrap_err();
+        let err = resolve_diarization_models(dir.path(), "campplus").unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
         let target = paths[0]
@@ -550,7 +612,22 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // No diarization assets written under `dir` at all.
 
-        let err = diarize_samples(dir.path(), vec![0.0; 16_000], None).unwrap_err();
+        let err =
+            diarize_samples(dir.path(), vec![0.0; 16_000], None, "campplus").unwrap_err();
+
+        assert!(matches!(err, AppError::DiarizationAsset(_)));
+    }
+
+    #[test]
+    fn diarize_samples_propagates_asset_error_for_an_unknown_active_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = models::asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        build_fixture_archive(&paths[0], b"segmentation model bytes");
+        write_embedding_fixtures(dir.path());
+
+        let err = diarize_samples(dir.path(), vec![0.0; 16_000], None, "not-a-real-variant")
+            .unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
@@ -712,20 +789,22 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn apply_diarization_outcome_assigns_speakers_on_success() {
+    async fn apply_diarization_outcome_assigns_speakers_and_returns_no_warning_on_success() {
         let mut segments = [transcript_segment(0, 1_000)];
         let turns = vec![speaker_turn(0, 1_000, 3)];
 
-        apply_diarization_outcome(&mut segments, Ok(Ok(turns)));
+        let warning = apply_diarization_outcome(&mut segments, Ok(Ok(turns)));
 
         assert_eq!(segments[0].speaker_id, Some(3));
+        assert_eq!(warning, None);
     }
 
     #[tokio::test]
-    async fn apply_diarization_outcome_leaves_segments_untouched_on_diarization_asset_error() {
+    async fn apply_diarization_outcome_leaves_segments_untouched_and_returns_a_warning_on_diarization_asset_error(
+    ) {
         let mut segments = [transcript_segment(0, 1_000)];
 
-        apply_diarization_outcome(
+        let warning = apply_diarization_outcome(
             &mut segments,
             Ok(Err(AppError::DiarizationAsset(
                 "models not downloaded".to_string(),
@@ -733,22 +812,26 @@ mod tests {
         );
 
         assert_eq!(segments[0].speaker_id, None);
+        assert!(warning.is_some());
     }
 
     #[tokio::test]
-    async fn apply_diarization_outcome_leaves_segments_untouched_on_engine_error() {
+    async fn apply_diarization_outcome_leaves_segments_untouched_and_returns_a_warning_on_engine_error(
+    ) {
         let mut segments = [transcript_segment(0, 1_000)];
 
-        apply_diarization_outcome(
+        let warning = apply_diarization_outcome(
             &mut segments,
             Ok(Err(AppError::Diarization("engine exploded".to_string()))),
         );
 
         assert_eq!(segments[0].speaker_id, None);
+        assert!(warning.is_some());
     }
 
     #[tokio::test]
-    async fn apply_diarization_outcome_leaves_segments_untouched_when_the_task_panics() {
+    async fn apply_diarization_outcome_leaves_segments_untouched_and_returns_a_warning_when_the_task_panics(
+    ) {
         let mut segments = [transcript_segment(0, 1_000)];
 
         let join_result = tokio::task::spawn_blocking(|| {
@@ -757,8 +840,9 @@ mod tests {
         .await;
         let err = join_result.expect_err("spawned task was made to panic");
 
-        apply_diarization_outcome(&mut segments, Err(err));
+        let warning = apply_diarization_outcome(&mut segments, Err(err));
 
         assert_eq!(segments[0].speaker_id, None);
+        assert!(warning.is_some());
     }
 }

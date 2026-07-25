@@ -14,12 +14,21 @@ use std::sync::Arc;
 /// Reports bytes downloaded so far for one asset.
 type ProgressCb = Box<dyn Fn(u64) + Send + Sync>;
 
-/// One downloadable file belonging to a catalog entry.
+/// One downloadable file belonging to a catalog entry. `variant_id` is `None`
+/// for an asset shared by every selectable choice in its entry (e.g. the
+/// diarization segmentation model) and `Some(id)` for one user-selectable
+/// choice among several sharing the same entry (e.g. a diarization embedding
+/// model) — `variant_label`/`recommended` are meaningful only when
+/// `variant_id` is `Some`.
+#[derive(Debug, PartialEq)]
 pub struct ModelAsset {
     pub url: &'static str,
     pub sha256: &'static str,
     pub size_bytes: u64,
     pub file_name: &'static str,
+    pub variant_id: Option<&'static str>,
+    pub variant_label: Option<&'static str>,
+    pub recommended: bool,
 }
 
 /// One row in the AI models section: a task and the asset(s) it needs.
@@ -44,30 +53,53 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
             sha256: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
             size_bytes: 874_188_075,
             file_name: "ggml-large-v3-turbo-q8_0.bin",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
         }],
     },
     ModelCatalogEntry {
         id: "diarization",
         task: "diarization",
-        label: "Speaker diarization (pyannote + 3D-Speaker)",
+        label: "Speaker diarization (pyannote segmentation + selectable embedding)",
         assets: &[
             ModelAsset {
                 url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models/sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
                 sha256: "24615ee884c897d9d2ba09bb4d30da6bb1b15e685065962db5b02e76e4996488",
                 size_bytes: 6_958_444,
                 file_name: "sherpa-onnx-pyannote-segmentation-3-0.tar.bz2",
+                variant_id: None,
+                variant_label: None,
+                recommended: false,
             },
+            // Independently verified 3 ways (GitHub release API asset
+            // metadata, the release's checksum.txt, and a direct
+            // download+hash) during the now-superseded WP-51 experiment.
             ModelAsset {
                 url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
                 sha256: "357a834f702b80161e5b981182c038e18553c1f2ca752ed6cec2052365d4129b",
                 size_bytes: 29_596_978,
                 file_name: "3dspeaker_speech_campplus_sv_en_voxceleb_16k.onnx",
+                variant_id: Some("campplus"),
+                variant_label: Some("CAM++"),
+                recommended: false,
+            },
+            ModelAsset {
+                url: "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models/nemo_en_titanet_large.onnx",
+                sha256: "d51abcf31717ef28162f26acb9d44dd4127c3d44c9b8624f699f3425daca8e77",
+                size_bytes: 101_405_493,
+                file_name: "nemo_en_titanet_large.onnx",
+                variant_id: Some("titanet-large"),
+                variant_label: Some("TitaNet-large"),
+                recommended: true,
             },
         ],
     },
 ];
 
-/// Per-task view returned to the frontend.
+/// Per-task view returned to the frontend. For an entry with selectable
+/// variants (diarization), one `TaskModel` row is emitted per variant rather
+/// than one row for the whole entry.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct TaskModel {
     pub id: String,
@@ -75,6 +107,7 @@ pub struct TaskModel {
     pub label: String,
     pub downloaded: bool,
     pub size_bytes: u64,
+    pub recommended: bool,
 }
 
 fn models_dir(app_support_dir: &Path) -> PathBuf {
@@ -98,29 +131,124 @@ fn entry_downloaded(app_support_dir: &Path, entry: &ModelCatalogEntry) -> bool {
         .all(|a| is_asset_downloaded(app_support_dir, a))
 }
 
-/// List every catalog entry with its current downloaded state.
+/// The assets to operate on for one download/delete-addressable id: either a
+/// whole catalog entry with no selectable variants (e.g. "transcription"), or
+/// one variant within an entry that has several (e.g.
+/// "diarization-titanet-large").
+pub enum ResolvedTarget<'a> {
+    Entry(&'a ModelCatalogEntry),
+    Variant {
+        shared: Vec<&'a ModelAsset>,
+        own: &'a ModelAsset,
+    },
+}
+
+impl<'a> ResolvedTarget<'a> {
+    /// Assets that must be present for this target to count as downloaded —
+    /// for a variant, the shared assets plus its own asset.
+    pub fn download_assets(&self) -> Vec<&'a ModelAsset> {
+        match self {
+            ResolvedTarget::Entry(entry) => entry.assets.iter().collect(),
+            ResolvedTarget::Variant { shared, own } => {
+                let mut assets = shared.clone();
+                assets.push(own);
+                assets
+            }
+        }
+    }
+
+    /// Assets to remove on delete — for a variant, only its own asset, never
+    /// a shared asset another variant may still need.
+    pub fn delete_assets(&self) -> Vec<&'a ModelAsset> {
+        match self {
+            ResolvedTarget::Entry(entry) => entry.assets.iter().collect(),
+            ResolvedTarget::Variant { own, .. } => vec![own],
+        }
+    }
+}
+
+/// Resolve a download/delete-addressable id to its target assets. A bare
+/// catalog entry id (e.g. "transcription") matches the whole entry; a
+/// synthetic `"{entry_id}-{variant_id}"` id (e.g. "diarization-campplus")
+/// matches one variant within an entry that has several.
+pub fn resolve_catalog_target(id: &str) -> Option<ResolvedTarget<'_>> {
+    if let Some(entry) = CATALOG.iter().find(|e| e.id == id) {
+        return Some(ResolvedTarget::Entry(entry));
+    }
+    for entry in CATALOG {
+        for asset in entry.assets {
+            if let Some(variant_id) = asset.variant_id {
+                if id == format!("{}-{variant_id}", entry.id) {
+                    let shared = entry
+                        .assets
+                        .iter()
+                        .filter(|a| a.variant_id.is_none())
+                        .collect();
+                    return Some(ResolvedTarget::Variant {
+                        shared,
+                        own: asset,
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
+/// List every catalog entry with its current downloaded state. An entry with
+/// selectable variants (diarization) yields one row per variant instead of
+/// one row for the whole entry.
 pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
     CATALOG
         .iter()
-        .map(|entry| TaskModel {
-            id: entry.id.to_string(),
-            task: entry.task.to_string(),
-            label: entry.label.to_string(),
-            downloaded: entry_downloaded(app_support_dir, entry),
-            size_bytes: entry.assets.iter().map(|a| a.size_bytes).sum(),
+        .flat_map(|entry| {
+            let variants: Vec<&ModelAsset> = entry
+                .assets
+                .iter()
+                .filter(|a| a.variant_id.is_some())
+                .collect();
+            if variants.is_empty() {
+                vec![TaskModel {
+                    id: entry.id.to_string(),
+                    task: entry.task.to_string(),
+                    label: entry.label.to_string(),
+                    downloaded: entry_downloaded(app_support_dir, entry),
+                    size_bytes: entry.assets.iter().map(|a| a.size_bytes).sum(),
+                    recommended: false,
+                }]
+            } else {
+                let shared: Vec<&ModelAsset> = entry
+                    .assets
+                    .iter()
+                    .filter(|a| a.variant_id.is_none())
+                    .collect();
+                let shared_downloaded = shared.iter().all(|a| is_asset_downloaded(app_support_dir, a));
+                let shared_size: u64 = shared.iter().map(|a| a.size_bytes).sum();
+                variants
+                    .into_iter()
+                    .map(|asset| TaskModel {
+                        id: format!("{}-{}", entry.id, asset.variant_id.unwrap()),
+                        task: entry.task.to_string(),
+                        label: asset.variant_label.unwrap_or(entry.label).to_string(),
+                        downloaded: shared_downloaded && is_asset_downloaded(app_support_dir, asset),
+                        size_bytes: shared_size + asset.size_bytes,
+                        recommended: asset.recommended,
+                    })
+                    .collect()
+            }
         })
         .collect()
 }
 
-/// Delete every asset file of catalog entry `id`. Idempotent: a file that is
-/// already missing is not an error. An unknown id is.
+/// Delete the file(s) targeted by download/delete-addressable id `id`.
+/// Idempotent: a file that is already missing is not an error. An unknown id
+/// is. For a variant id, only that variant's own asset is removed — the
+/// shared segmentation asset and any sibling variant's asset are untouched.
 pub fn delete_model(app_support_dir: &Path, id: &str) -> Result<()> {
-    let entry = CATALOG
-        .iter()
-        .find(|e| e.id == id)
+    let target = resolve_catalog_target(id)
         .ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
 
-    for asset in entry.assets {
+    for asset in target.delete_assets() {
         match std::fs::remove_file(asset_path(app_support_dir, asset)) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -164,14 +292,18 @@ async fn hash_file(path: &Path) -> Result<String> {
     .map_err(|e| AppError::ModelDownload(e.to_string()))?
 }
 
-/// Download every asset of `entry`, verify each against its known SHA-256,
-/// and only then rename it into place. `fetch` is injected so tests never
-/// hit the real network: it must write the bytes it fetched to `dest` and
-/// call `on_progress(downloaded, total)` as they arrive.
+/// Download every asset in `assets` that is not already present, verify each
+/// against its known SHA-256, and only then rename it into place. An asset
+/// already downloaded (matching size on disk) is skipped without a network
+/// call — this lets a variant download share an already-fetched shared asset
+/// (e.g. the diarization segmentation model) with a sibling variant. `fetch`
+/// is injected so tests never hit the real network: it must write the bytes
+/// it fetched to `dest` and call `on_progress(downloaded, total)` as they
+/// arrive.
 async fn download_entry<F, Fut>(
     fetch: F,
     app_support_dir: &Path,
-    entry: &ModelCatalogEntry,
+    assets: &[&ModelAsset],
     on_progress: impl Fn(f64) + Send + Sync + 'static,
 ) -> Result<()>
 where
@@ -181,16 +313,19 @@ where
     let dir = models_dir(app_support_dir);
     tokio::fs::create_dir_all(&dir).await?;
 
-    let total: u64 = entry
-        .assets
-        .iter()
-        .map(|a| a.size_bytes)
-        .sum::<u64>()
-        .max(1);
+    let total: u64 = assets.iter().map(|a| a.size_bytes).sum::<u64>().max(1);
     let done_before = Arc::new(AtomicU64::new(0));
     let on_progress = Arc::new(on_progress);
 
-    for asset in entry.assets {
+    for asset in assets {
+        if is_asset_downloaded(app_support_dir, asset) {
+            done_before.fetch_add(asset.size_bytes, Ordering::Relaxed);
+            on_progress(
+                (done_before.load(Ordering::Relaxed) as f64 / total as f64).min(1.0),
+            );
+            continue;
+        }
+
         let final_path = asset_path(app_support_dir, asset);
         let temp_path = dir.join(format!("{}.part", asset.file_name));
 
@@ -246,17 +381,23 @@ async fn http_fetch(url: &'static str, dest: PathBuf, on_progress: ProgressCb) -
     Ok(())
 }
 
-/// Download the catalog entry `id` for real, over HTTPS.
+/// Download the target `id` resolves to for real, over HTTPS. For a variant
+/// id, this fetches whichever of the shared asset or the variant's own asset
+/// is not already present.
 pub async fn download_model(
     app_support_dir: &Path,
     id: &str,
     on_progress: impl Fn(f64) + Send + Sync + 'static,
 ) -> Result<()> {
-    let entry = CATALOG
-        .iter()
-        .find(|e| e.id == id)
-        .ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
-    download_entry(http_fetch, app_support_dir, entry, on_progress).await
+    let target =
+        resolve_catalog_target(id).ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
+    download_entry(
+        http_fetch,
+        app_support_dir,
+        &target.download_assets(),
+        on_progress,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -269,7 +410,14 @@ mod tests {
             sha256,
             size_bytes,
             file_name: "test-model.bin",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
         }
+    }
+
+    fn assets_of(entry: &ModelCatalogEntry) -> Vec<&ModelAsset> {
+        entry.assets.iter().collect()
     }
 
     fn sha256_hex(bytes: &[u8]) -> String {
@@ -322,15 +470,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_task_models_reports_both_beta_tasks_not_downloaded_by_default() {
+    async fn list_task_models_reports_transcription_and_both_diarization_variants_not_downloaded_by_default(
+    ) {
         let dir = tempfile::tempdir().unwrap();
 
         let models = list_task_models(dir.path());
 
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"transcription"));
-        assert!(ids.contains(&"diarization"));
+        assert!(ids.contains(&"diarization-campplus"));
+        assert!(ids.contains(&"diarization-titanet-large"));
         assert!(models.iter().all(|m| !m.downloaded));
+    }
+
+    #[tokio::test]
+    async fn list_task_models_emits_one_row_per_diarization_variant_with_recommended_flag() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let models = list_task_models(dir.path());
+
+        let campplus = models
+            .iter()
+            .find(|m| m.id == "diarization-campplus")
+            .expect("campplus variant row");
+        let titanet = models
+            .iter()
+            .find(|m| m.id == "diarization-titanet-large")
+            .expect("titanet-large variant row");
+        assert_eq!(campplus.task, "diarization");
+        assert_eq!(titanet.task, "diarization");
+        assert!(!campplus.recommended);
+        assert!(titanet.recommended);
+    }
+
+    #[tokio::test]
+    async fn list_task_models_diarization_variant_downloaded_requires_both_shared_segmentation_and_its_own_embedding(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = asset_paths(dir.path(), "diarization").unwrap();
+        // paths[0] = segmentation archive (shared), paths[1] = campplus embedding,
+        // paths[2] = titanet-large embedding, per the restructured 3-asset entry.
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
+        write_sized_placeholder(&paths[1], CATALOG[1].assets[1].size_bytes);
+        // titanet-large's own embedding (paths[2]) intentionally left missing.
+
+        let models = list_task_models(dir.path());
+
+        let campplus = models
+            .iter()
+            .find(|m| m.id == "diarization-campplus")
+            .unwrap();
+        let titanet = models
+            .iter()
+            .find(|m| m.id == "diarization-titanet-large")
+            .unwrap();
+        assert!(
+            campplus.downloaded,
+            "campplus variant should be downloaded once the shared segmentation model and its own embedding are both present"
+        );
+        assert!(
+            !titanet.downloaded,
+            "titanet-large variant should not be downloaded while its own embedding is missing, even though the shared segmentation model is present"
+        );
+    }
+
+    fn write_sized_placeholder(path: &Path, size_bytes: u64) {
+        std::fs::write(path, vec![0u8; size_bytes as usize]).unwrap();
     }
 
     #[tokio::test]
@@ -346,9 +552,14 @@ mod tests {
             assets: Box::leak(vec![asset].into_boxed_slice()),
         };
 
-        download_entry(fetch_writing(content.clone()), dir.path(), &entry, |_| {})
-            .await
-            .unwrap();
+        download_entry(
+            fetch_writing(content.clone()),
+            dir.path(),
+            &assets_of(&entry),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
         let final_path = asset_path(dir.path(), &entry.assets[0]);
         let on_disk = tokio::fs::read(&final_path).await.unwrap();
@@ -373,7 +584,7 @@ mod tests {
             ),
         };
 
-        let err = download_entry(fetch_writing(content), dir.path(), &entry, |_| {})
+        let err = download_entry(fetch_writing(content), dir.path(), &assets_of(&entry), |_| {})
             .await
             .unwrap_err();
 
@@ -398,12 +609,61 @@ mod tests {
             assets: Box::leak(vec![test_asset("irrelevant", 10)].into_boxed_slice()),
         };
 
-        let err = download_entry(fetch_failing(), dir.path(), &entry, |_| {})
+        let err = download_entry(fetch_failing(), dir.path(), &assets_of(&entry), |_| {})
             .await
             .unwrap_err();
 
         assert!(matches!(err, AppError::ModelDownload(_)));
         assert!(!entry_downloaded(dir.path(), &entry));
+    }
+
+    #[tokio::test]
+    async fn download_entry_skips_an_asset_that_is_already_downloaded() {
+        let dir = tempfile::tempdir().unwrap();
+        let already_present = test_asset("irrelevant-since-skipped", 5);
+        std::fs::create_dir_all(models_dir(dir.path())).unwrap();
+        std::fs::write(asset_path(dir.path(), &already_present), b"aaaaa").unwrap();
+        let missing_content = b"the missing one".to_vec();
+        let missing = ModelAsset {
+            url: "https://test.invalid/missing.bin",
+            sha256: Box::leak(sha256_hex(&missing_content).into_boxed_str()),
+            size_bytes: missing_content.len() as u64,
+            file_name: "missing.bin",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
+        };
+
+        // A fetch that errors if invoked for the already-downloaded asset,
+        // proving it was skipped rather than re-fetched.
+        let missing_content_cl = missing_content.clone();
+        let fetch = move |url: &'static str, dest: PathBuf, on_progress: ProgressCb| {
+            let missing_content = missing_content_cl.clone();
+            Box::pin(async move {
+                if url.ends_with("model.bin") {
+                    panic!("already-downloaded asset must not be re-fetched");
+                }
+                tokio::fs::write(&dest, &missing_content).await?;
+                on_progress(missing_content.len() as u64);
+                Ok(())
+            }) as FetchFuture
+        };
+
+        download_entry(
+            fetch,
+            dir.path(),
+            &[&already_present, &missing],
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            std::fs::read(asset_path(dir.path(), &already_present)).unwrap(),
+            b"aaaaa",
+            "the already-downloaded asset's bytes must be untouched"
+        );
+        assert!(is_asset_downloaded(dir.path(), &missing));
     }
 
     #[tokio::test]
@@ -429,12 +689,18 @@ mod tests {
             sha256: Box::leak(hash_a.into_boxed_str()),
             size_bytes: content_a.len() as u64,
             file_name: "a.bin",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
         };
         let asset_b = ModelAsset {
             url: "https://test.invalid/b.bin",
             sha256: Box::leak(hash_b.into_boxed_str()),
             size_bytes: content_b.len() as u64,
             file_name: "b.bin",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
         };
         let entry = ModelCatalogEntry {
             id: "bundle",
@@ -462,7 +728,7 @@ mod tests {
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let fractions_cl = Arc::clone(&fractions);
 
-        download_entry(fetch, dir.path(), &entry, move |f| {
+        download_entry(fetch, dir.path(), &assets_of(&entry), move |f| {
             fractions_cl.lock().unwrap().push(f);
         })
         .await
@@ -505,6 +771,101 @@ mod tests {
         let err = delete_model(dir.path(), "not-a-real-model").unwrap_err();
 
         assert!(matches!(err, AppError::ModelCatalogNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_model_rejects_unknown_diarization_variant_id() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = delete_model(dir.path(), "diarization-not-a-real-variant").unwrap_err();
+
+        assert!(matches!(err, AppError::ModelCatalogNotFound(_)));
+    }
+
+    #[tokio::test]
+    async fn delete_model_removes_only_the_targeted_variants_embedding_leaving_shared_segmentation_and_sibling_variant_untouched(
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
+        write_sized_placeholder(&paths[1], CATALOG[1].assets[1].size_bytes);
+        write_sized_placeholder(&paths[2], CATALOG[1].assets[2].size_bytes);
+
+        delete_model(dir.path(), "diarization-titanet-large").unwrap();
+
+        assert!(
+            paths[0].exists(),
+            "shared segmentation model must survive deleting one variant"
+        );
+        assert!(
+            paths[1].exists(),
+            "the sibling (campplus) variant's embedding must survive"
+        );
+        assert!(
+            !paths[2].exists(),
+            "the targeted (titanet-large) variant's own embedding must be removed"
+        );
+        let models = list_task_models(dir.path());
+        assert!(
+            models
+                .iter()
+                .find(|m| m.id == "diarization-campplus")
+                .unwrap()
+                .downloaded
+        );
+        assert!(
+            !models
+                .iter()
+                .find(|m| m.id == "diarization-titanet-large")
+                .unwrap()
+                .downloaded
+        );
+    }
+
+    #[tokio::test]
+    async fn download_model_rejects_unknown_diarization_variant_id() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = download_model(dir.path(), "diarization-not-a-real-variant", |_| {})
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, AppError::ModelCatalogNotFound(_)));
+    }
+
+    #[test]
+    fn resolve_catalog_target_for_a_variant_id_includes_the_shared_asset_and_only_its_own_embedding(
+    ) {
+        let target = resolve_catalog_target("diarization-titanet-large")
+            .expect("known variant id must resolve");
+        let download_assets = target.download_assets();
+
+        assert_eq!(download_assets.len(), 2);
+        assert!(download_assets
+            .iter()
+            .any(|a| a.variant_id.is_none() && a.file_name.ends_with(".tar.bz2")));
+        assert!(download_assets
+            .iter()
+            .any(|a| a.variant_id == Some("titanet-large")));
+        assert!(!download_assets
+            .iter()
+            .any(|a| a.variant_id == Some("campplus")));
+        assert_eq!(target.delete_assets(), vec![&CATALOG[1].assets[2]]);
+    }
+
+    #[test]
+    fn resolve_catalog_target_for_a_whole_entry_id_returns_every_asset() {
+        let target =
+            resolve_catalog_target("transcription").expect("known entry id must resolve");
+
+        assert_eq!(target.download_assets(), vec![&CATALOG[0].assets[0]]);
+        assert_eq!(target.delete_assets(), vec![&CATALOG[0].assets[0]]);
+    }
+
+    #[test]
+    fn resolve_catalog_target_returns_none_for_an_unknown_id() {
+        assert!(resolve_catalog_target("not-a-real-id").is_none());
     }
 
     #[test]

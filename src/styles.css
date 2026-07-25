@@ -1108,6 +1108,24 @@ body {
   font-size: var(--wp-font-size-sm);
 }
 
+.model-row input[type="radio"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+}
+
+.model-badge {
+  margin-left: var(--wp-space-sm);
+  padding: 1px 6px;
+  border-radius: var(--wp-radius-sm);
+  background: var(--accent);
+  color: var(--accent-contrast, #fff);
+  font-size: var(--wp-font-size-xs, 0.75rem);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
 .model-actions {
   display: flex;
   align-items: center;

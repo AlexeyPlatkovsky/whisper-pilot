@@ -60,9 +60,21 @@ export function setMeetingSource(
   return invoke<Meeting>("set_meeting_source", { id, path });
 }
 
-/** Transcribe the meeting's attached file and persist the result. */
-export function transcribeMeeting(id: number): Promise<Meeting> {
-  return invoke<Meeting>("transcribe_meeting", { id });
+export interface TranscribeMeetingResult {
+  meeting: Meeting;
+  diarization_warning?: string;
+}
+
+/**
+ * Transcribe the meeting's attached file and persist the result. When
+ * diarization was attempted but its active model was missing or corrupt, the
+ * transcription still succeeds with plain, speaker-less segments and
+ * `diarization_warning` carries a short message to show the user.
+ */
+export function transcribeMeeting(
+  id: number,
+): Promise<TranscribeMeetingResult> {
+  return invoke<TranscribeMeetingResult>("transcribe_meeting", { id });
 }
 
 export function saveTextDialog(
@@ -76,6 +88,7 @@ export interface Settings {
   theme: string;
   ui_language: string;
   active_model_transcription?: string;
+  active_model_diarization?: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -92,6 +105,7 @@ export interface TaskModel {
   label: string;
   downloaded: boolean;
   size_bytes: number;
+  recommended: boolean;
 }
 
 export interface ModelDownloadProgress {

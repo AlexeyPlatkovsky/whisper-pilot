@@ -85,6 +85,9 @@ export function App() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
+  const [diarizationWarning, setDiarizationWarning] = useState<string | null>(
+    null,
+  );
   // The meeting currently being transcribed, or null. Kept outside `status`
   // and outside `activeMeeting` so that opening a different meeting cannot
   // discard a run that is still going.
@@ -219,13 +222,15 @@ export function App() {
       setStatus({ kind: "idle" });
       setSegments([]);
       setSpeakerLabels({});
-      const meeting = await transcribeMeeting(id);
+      const { meeting, diarization_warning } = await transcribeMeeting(id);
       upsertSummary(meeting);
       // The user may have opened another meeting while this ran; the result
       // only takes over the workspace if its meeting is still the one on
       // screen. Either way the sidebar summary above is refreshed.
-      if (activeMeetingIdRef.current === meeting.id)
+      if (activeMeetingIdRef.current === meeting.id) {
         applyActiveMeeting(meeting);
+        if (diarization_warning) setDiarizationWarning(diarization_warning);
+      }
     } catch (e) {
       // The same rule on the way out: a failure belongs to the meeting that
       // was transcribing. Reporting it against whatever the user has opened
@@ -771,6 +776,33 @@ export function App() {
               </button>
               <button type="button" onClick={() => void handleDelete()}>
                 Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {diarizationWarning && (
+        <div className="modal-overlay">
+          <div
+            className="modal-panel confirm-modal"
+            role="alertdialog"
+            aria-modal="true"
+            aria-label="Speaker identification issue"
+            onKeyDown={(event) => {
+              if (event.key === "Escape") setDiarizationWarning(null);
+            }}
+          >
+            <div className="modal-header">
+              <span className="modal-title">Speaker identification issue</span>
+            </div>
+            <p className="confirm-warning">{diarizationWarning}</p>
+            <div className="confirm-actions">
+              <button
+                type="button"
+                autoFocus
+                onClick={() => setDiarizationWarning(null)}
+              >
+                OK
               </button>
             </div>
           </div>

@@ -13,6 +13,7 @@ pub mod transcribe;
 use error::{AppError, Result};
 use meetings::{MeetingDto, MeetingSummaryDto};
 use models::TaskModel;
+use serde::{Deserialize, Serialize};
 use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -20,6 +21,27 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 use whisper_rs::WhisperContext;
+
+/// `transcribe_meeting`'s result: the persisted meeting plus a non-fatal
+/// warning when diarization was requested but degraded (its active model's
+/// file was missing or corrupt) — the transcription itself always succeeds
+/// with plain, speaker-less segments in that case.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TranscribeMeetingResult {
+    pub meeting: MeetingDto,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diarization_warning: Option<String>,
+}
+
+/// The persisted `active_model.diarization` setting names the embedding
+/// variant to run, or the literal `"none"` to skip diarization entirely.
+fn diarization_variant_to_run(setting: &str) -> Option<&str> {
+    if setting == "none" {
+        None
+    } else {
+        Some(setting)
+    }
+}
 
 fn app_data_dir(app: &tauri::AppHandle) -> Result<PathBuf> {
     app.path()
@@ -82,15 +104,18 @@ async fn open_file_dialog() -> Option<String> {
     .flatten()
 }
 
-/// Decode, transcribe, and diarize the file at `path`. Diarization runs
-/// automatically after transcription; any failure there (models missing,
-/// engine error, or the task panicking) degrades to plain speaker-less
-/// segments rather than failing the transcription.
+/// Decode, transcribe, and (when `active_diarization_variant` names a model)
+/// diarize the file at `path`. A `None` variant skips diarization entirely.
+/// Any diarization failure (models missing, engine error, or the task
+/// panicking) degrades to plain speaker-less segments rather than failing
+/// the transcription, and is reported back as a short warning message rather
+/// than only logged.
 async fn run_transcription(
     app_support_dir: PathBuf,
     ctx: Arc<WhisperContext>,
     path: String,
-) -> Result<transcribe::Transcription> {
+    active_diarization_variant: Option<String>,
+) -> Result<(transcribe::Transcription, Option<String>)> {
     let input = PathBuf::from(&path);
 
     // Decode once (off the reactor); both transcription and diarization run
@@ -98,19 +123,25 @@ async fn run_transcription(
     let samples = tokio::task::spawn_blocking(move || audio::load_samples(&input))
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
-    let samples_for_diarize = samples.clone();
-    let mut transcription =
+    let mut transcription = {
+        let samples = samples.clone();
         tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples))
             .await
-            .map_err(|e| AppError::Transcribe(e.to_string()))??;
+            .map_err(|e| AppError::Transcribe(e.to_string()))??
+    };
+
+    let Some(variant) = active_diarization_variant else {
+        return Ok((transcription, None));
+    };
 
     let diarize_outcome = tokio::task::spawn_blocking(move || {
-        diarize::diarize_samples(&app_support_dir, samples_for_diarize, None)
+        diarize::diarize_samples(&app_support_dir, samples, None, &variant)
     })
     .await;
-    diarize::apply_diarization_outcome(&mut transcription.segments, diarize_outcome);
+    let diarization_warning =
+        diarize::apply_diarization_outcome(&mut transcription.segments, diarize_outcome);
 
-    Ok(transcription)
+    Ok((transcription, diarization_warning))
 }
 
 /// Attach (or clear, when `path` is `None`) the source file of a meeting.
@@ -129,15 +160,26 @@ async fn transcribe_meeting(
     app: tauri::AppHandle,
     id: i64,
     state: State<'_, AppState>,
-) -> Result<MeetingDto> {
+) -> Result<TranscribeMeetingResult> {
     let app_support_dir = app_data_dir(&app)?;
     let meeting = meetings::open_meeting(&app_support_dir, id)?;
     let path = meeting.source_path.ok_or_else(|| {
         AppError::Transcribe("meeting has no source file to transcribe".to_string())
     })?;
 
+    let active_diarization_variant = diarization_variant_to_run(
+        &settings::get_settings(&app_support_dir).active_model_diarization,
+    )
+    .map(str::to_string);
+
     let ctx = state.model(app_support_dir.clone()).await?;
-    let transcription = run_transcription(app_support_dir.clone(), ctx, path).await?;
+    let (transcription, diarization_warning) = run_transcription(
+        app_support_dir.clone(),
+        ctx,
+        path,
+        active_diarization_variant,
+    )
+    .await?;
 
     let duration_ms = transcription
         .segments
@@ -154,13 +196,18 @@ async fn transcribe_meeting(
         })
         .collect();
 
-    meetings::save_transcript(
+    let meeting = meetings::save_transcript(
         &app_support_dir,
         id,
         dtos,
         duration_ms,
         transcription.language,
-    )
+    )?;
+
+    Ok(TranscribeMeetingResult {
+        meeting,
+        diarization_warning,
+    })
 }
 
 /// Save `content` to a user-chosen destination; return the path written.
@@ -284,4 +331,65 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // EP: "none" is the sole class that skips diarization; every other
+    // string (however it got there) names a variant to run.
+    #[test]
+    fn diarization_variant_to_run_skips_when_setting_is_none() {
+        assert_eq!(diarization_variant_to_run("none"), None);
+    }
+
+    #[test]
+    fn diarization_variant_to_run_passes_through_a_real_variant() {
+        assert_eq!(diarization_variant_to_run("campplus"), Some("campplus"));
+        assert_eq!(
+            diarization_variant_to_run("titanet-large"),
+            Some("titanet-large")
+        );
+    }
+
+    fn sample_meeting_dto() -> MeetingDto {
+        MeetingDto {
+            id: 1,
+            title: "Test Meeting".to_string(),
+            source_path: None,
+            source_name: None,
+            created_at_ms: 0,
+            duration_ms: None,
+            language: "en".to_string(),
+            status: "transcribed".to_string(),
+            segments: Vec::new(),
+            notes: None,
+        }
+    }
+
+    #[test]
+    fn transcribe_meeting_result_round_trips_with_a_diarization_warning() {
+        let original = TranscribeMeetingResult {
+            meeting: sample_meeting_dto(),
+            diarization_warning: Some("active diarization model is missing".to_string()),
+        };
+
+        let json = serde_json::to_value(&original).unwrap();
+        let round_tripped: TranscribeMeetingResult = serde_json::from_value(json).unwrap();
+
+        assert_eq!(round_tripped, original);
+    }
+
+    #[test]
+    fn transcribe_meeting_result_omits_diarization_warning_key_when_none() {
+        let original = TranscribeMeetingResult {
+            meeting: sample_meeting_dto(),
+            diarization_warning: None,
+        };
+
+        let json = serde_json::to_value(&original).unwrap();
+
+        assert!(json.get("diarization_warning").is_none());
+    }
 }

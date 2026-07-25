@@ -2,12 +2,16 @@ import { useEffect, useState } from "react";
 import {
   deleteModel,
   downloadModel,
+  getSettings,
   listTaskModels,
   onModelDownloadProgress,
+  setSetting,
   type TaskModel,
 } from "./ipc";
 import { Icon } from "./Icon";
 import { formatClock } from "./format";
+
+const NONE_DIARIZATION_MODEL = "none";
 
 type RowState =
   | { kind: "downloading"; fraction: number }
@@ -37,6 +41,10 @@ export function AiModelsSection() {
   const [downloadModalId, setDownloadModalId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [diarizationModel, setDiarizationModel] = useState<string | null>(null);
+  const [diarizationSelectError, setDiarizationSelectError] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -46,6 +54,25 @@ export function AiModelsSection() {
       })
       .catch((e) => {
         if (!cancelled) setLoadError(String(e));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    getSettings()
+      .then((s) => {
+        if (!cancelled)
+          setDiarizationModel(
+            s.active_model_diarization ?? NONE_DIARIZATION_MODEL,
+          );
+      })
+      .catch(() => {
+        // Load failure here only disables the radio group's initial
+        // selection; listTaskModels's own load error already surfaces to
+        // the user above.
       });
     return () => {
       cancelled = true;
@@ -101,6 +128,18 @@ export function AiModelsSection() {
     }
   }
 
+  async function handleSelectDiarizationModel(value: string) {
+    const previous = diarizationModel;
+    setDiarizationSelectError(null);
+    setDiarizationModel(value);
+    try {
+      await setSetting("active_model.diarization", value);
+    } catch (e) {
+      setDiarizationModel(previous);
+      setDiarizationSelectError(String(e));
+    }
+  }
+
   async function handleDelete(id: string) {
     setConfirmDeleteId(null);
     try {
@@ -148,17 +187,58 @@ export function AiModelsSection() {
                 <p className="section-subtitle">{heading.subtitle}</p>
               </div>
             )}
-            <ul className="model-list">
+            <ul
+              className="model-list"
+              role={task === "diarization" ? "radiogroup" : undefined}
+              aria-label={
+                task === "diarization" ? "Diarization model" : undefined
+              }
+            >
+              {task === "diarization" && (
+                <li className="model-row">
+                  <input
+                    type="radio"
+                    name="diarization-model"
+                    aria-label="None"
+                    checked={diarizationModel === NONE_DIARIZATION_MODEL}
+                    onChange={() =>
+                      handleSelectDiarizationModel(NONE_DIARIZATION_MODEL)
+                    }
+                  />
+                  <span className="model-label">None</span>
+                  <span className="model-row-spacer" />
+                </li>
+              )}
               {rows.map((m) => {
                 const state = rowState[m.id];
                 const isDownloading = state?.kind === "downloading";
+                const variantValue =
+                  task === "diarization" ? m.id.slice(`${task}-`.length) : null;
                 return (
                   <li key={m.id} className="model-row">
-                    <span
-                      className={`model-radio${m.downloaded ? " is-selected" : ""}`}
-                      aria-hidden="true"
-                    />
-                    <span className="model-label">{m.label}</span>
+                    {variantValue !== null ? (
+                      <input
+                        type="radio"
+                        name="diarization-model"
+                        aria-label={m.label}
+                        checked={diarizationModel === variantValue}
+                        disabled={!m.downloaded}
+                        onChange={() =>
+                          handleSelectDiarizationModel(variantValue)
+                        }
+                      />
+                    ) : (
+                      <span
+                        className={`model-radio${m.downloaded ? " is-selected" : ""}`}
+                        aria-hidden="true"
+                      />
+                    )}
+                    <span className="model-label">
+                      {m.label}
+                      {m.recommended && (
+                        <span className="model-badge">Recommended</span>
+                      )}
+                    </span>
                     <span className="model-row-spacer" />
                     {state?.kind === "error" && (
                       <span className="model-row-error" role="alert">
@@ -207,6 +287,11 @@ export function AiModelsSection() {
                 );
               })}
             </ul>
+            {task === "diarization" && diarizationSelectError && (
+              <p className="model-row-error" role="alert">
+                {diarizationSelectError}
+              </p>
+            )}
           </section>
         );
       })}

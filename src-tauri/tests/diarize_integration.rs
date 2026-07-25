@@ -70,7 +70,7 @@ fn diarizes_real_two_speaker_audio_into_ordered_non_overlapping_turns() {
     // documents diarization quality as "good but below pyannote's best");
     // two short, acoustically-similar synthesized voices are a harder case
     // for auto-detect than typical real multi-speaker meeting audio.
-    let turns = whisperpilot_lib::diarize::diarize_samples(&dir, samples, Some(2))
+    let turns = whisperpilot_lib::diarize::diarize_samples(&dir, samples, Some(2), "campplus")
         .expect("diarization should succeed against real models and audio");
 
     eprintln!("turns: {turns:?}");

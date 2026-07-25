@@ -3,7 +3,7 @@ import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
-import type { Meeting, Segment } from "./ipc";
+import type { Meeting, Segment, TranscribeMeetingResult } from "./ipc";
 import { resolveMeetingStatus } from "./meetingStatus";
 
 const TRANSCRIPTION_DOWNLOADED = {
@@ -12,6 +12,7 @@ const TRANSCRIPTION_DOWNLOADED = {
   label: "Whisper large-v3-turbo (Q8)",
   downloaded: true,
   size_bytes: 874_188_075,
+  recommended: false,
 };
 
 const TRANSCRIPTION_NOT_DOWNLOADED = {
@@ -46,6 +47,13 @@ function transcribedMeeting(segments: Segment[]): Meeting {
     duration_ms: segments.at(-1)?.end_ms ?? 0,
     segments,
   };
+}
+
+function transcribeResult(
+  meeting: Meeting,
+  diarizationWarning?: string,
+): TranscribeMeetingResult {
+  return { meeting, diarization_warning: diarizationWarning };
 }
 
 const HELLO_SEGMENT: Segment = { start_ms: 0, end_ms: 1000, text: "Hello" };
@@ -96,7 +104,7 @@ beforeEach(() => {
     path === null ? { ...EMPTY_MEETING } : { ...ATTACHED_MEETING },
   );
   vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-    transcribedMeeting([HELLO_SEGMENT]),
+    transcribeResult(transcribedMeeting([HELLO_SEGMENT])),
   );
   vi.mocked(ipc.saveTextDialog).mockResolvedValue(null);
   vi.mocked(ipc.listMeetings).mockResolvedValue([]);
@@ -106,6 +114,7 @@ beforeEach(() => {
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
+    active_model_diarization: "none",
   });
   delete document.documentElement.dataset.theme;
 });
@@ -237,7 +246,7 @@ describe("App — English strings", () => {
 
   it("shows a compact transcribing status — label plus a ticking timer, no filename or blurb", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    let resolveTranscribe: (meeting: Meeting) => void = () => {};
+    let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
       new Promise((resolve) => {
         resolveTranscribe = resolve;
@@ -276,7 +285,7 @@ describe("App — English strings", () => {
         "00:02",
       );
 
-      resolveTranscribe(transcribedMeeting([HELLO_SEGMENT]));
+      resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
       await screen.findByDisplayValue("Hello");
     } finally {
       vi.useRealTimers();
@@ -290,6 +299,7 @@ describe("App — theme application", () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "dark",
       ui_language: "en",
+      active_model_diarization: "none",
     });
 
     render(<App />);
@@ -811,11 +821,13 @@ describe("App — speaker rendering", () => {
     // fake (e.g. i % N) would instead print three different labels here,
     // so this fails against position-driven labeling, not just no labeling.
     vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-      transcribedMeeting([
-        { start_ms: 0, end_ms: 1000, text: "A", speaker_id: 5 },
-        { start_ms: 1000, end_ms: 2000, text: "B", speaker_id: 5 },
-        { start_ms: 2000, end_ms: 3000, text: "C", speaker_id: 2 },
-      ]),
+      transcribeResult(
+        transcribedMeeting([
+          { start_ms: 0, end_ms: 1000, text: "A", speaker_id: 5 },
+          { start_ms: 1000, end_ms: 2000, text: "B", speaker_id: 5 },
+          { start_ms: 2000, end_ms: 3000, text: "C", speaker_id: 2 },
+        ]),
+      ),
     );
     const user = userEvent.setup();
     render(<App />);
@@ -848,7 +860,9 @@ describe("App — speaker rendering", () => {
   it("renders no speaker label when segments carry no speaker_id, and stays editable", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-      transcribedMeeting([{ start_ms: 0, end_ms: 1000, text: "Hello" }]),
+      transcribeResult(
+        transcribedMeeting([{ start_ms: 0, end_ms: 1000, text: "Hello" }]),
+      ),
     );
     const user = userEvent.setup();
     render(<App />);
@@ -867,11 +881,13 @@ describe("App — speaker rendering", () => {
 describe("App — speaker rename", () => {
   function mockThreeSpeakerSegments() {
     vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-      transcribedMeeting([
-        { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
-        { start_ms: 1000, end_ms: 2000, text: "There", speaker_id: 3 },
-        { start_ms: 2000, end_ms: 3000, text: "Yo", speaker_id: 1 },
-      ]),
+      transcribeResult(
+        transcribedMeeting([
+          { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
+          { start_ms: 1000, end_ms: 2000, text: "There", speaker_id: 3 },
+          { start_ms: 2000, end_ms: 3000, text: "Yo", speaker_id: 1 },
+        ]),
+      ),
     );
   }
 
@@ -900,10 +916,12 @@ describe("App — speaker rename", () => {
   it("includes the renamed label in the saved transcript, and leaves speaker-less segments bare", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-      transcribedMeeting([
-        { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
-        { start_ms: 1000, end_ms: 2000, text: "No speaker here" },
-      ]),
+      transcribeResult(
+        transcribedMeeting([
+          { start_ms: 0, end_ms: 1000, text: "Hi", speaker_id: 3 },
+          { start_ms: 1000, end_ms: 2000, text: "No speaker here" },
+        ]),
+      ),
     );
     const user = userEvent.setup();
     render(<App />);
@@ -1015,9 +1033,11 @@ describe("App — speaker rename", () => {
     // label, not the previous transcript's "Alice" rename.
     await user.click(screen.getByRole("button", { name: "Remove file" }));
     vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
-      transcribedMeeting([
-        { start_ms: 0, end_ms: 1000, text: "Fresh", speaker_id: 3 },
-      ]),
+      transcribeResult(
+        transcribedMeeting([
+          { start_ms: 0, end_ms: 1000, text: "Fresh", speaker_id: 3 },
+        ]),
+      ),
     );
     await chooseAndTranscribe(user);
     await screen.findByDisplayValue("Fresh");
@@ -1106,14 +1126,14 @@ describe("App — meeting status consistency", () => {
 
   /** Hold a transcription open so the in-flight UI can be inspected. */
   function deferTranscription() {
-    let resolveTranscribe: (meeting: Meeting) => void = () => {};
+    let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise<Meeting>((resolve) => {
+      new Promise<TranscribeMeetingResult>((resolve) => {
         resolveTranscribe = resolve;
       }),
     );
     return (meeting: Meeting = { ...ACTIVE_FINISHED }) =>
-      resolveTranscribe(meeting);
+      resolveTranscribe(transcribeResult(meeting));
   }
 
   async function startTranscribing(user: ReturnType<typeof userEvent.setup>) {
@@ -1425,9 +1445,9 @@ describe("App — a run that ends after the user has moved on", () => {
 
   it("does not pull the workspace back when the run succeeds elsewhere", async () => {
     arrange();
-    let resolveTranscribe: (meeting: Meeting) => void = () => {};
+    let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise<Meeting>((resolve) => {
+      new Promise<TranscribeMeetingResult>((resolve) => {
         resolveTranscribe = resolve;
       }),
     );
@@ -1435,7 +1455,7 @@ describe("App — a run that ends after the user has moved on", () => {
     render(<App />);
 
     await startRunThenLeave(user);
-    resolveTranscribe({ ...RUNNER_FINISHED });
+    resolveTranscribe(transcribeResult({ ...RUNNER_FINISHED }));
 
     // The sidebar summary still updates — only the workspace is left alone.
     await waitFor(() =>
@@ -1457,7 +1477,7 @@ describe("App — a run that ends after the user has moved on", () => {
     arrange();
     let rejectTranscribe: (reason: Error) => void = () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise<Meeting>((_resolve, reject) => {
+      new Promise<TranscribeMeetingResult>((_resolve, reject) => {
         rejectTranscribe = reject;
       }),
     );
@@ -1522,7 +1542,7 @@ describe("App — controls unrelated to the running meeting", () => {
       id === DONE.id ? { ...DONE } : { ...RUNNER },
     );
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise<Meeting>(() => {}),
+      new Promise<TranscribeMeetingResult>(() => {}),
     );
     const user = userEvent.setup();
     render(<App />);
