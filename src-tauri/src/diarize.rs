@@ -159,42 +159,23 @@ trait SpeakerDiarizer {
     fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>>;
 }
 
-/// WP-50: the crate's own defaults (threshold 0.5, min_duration_on/off 0.0)
-/// badly over-cluster real recordings — a real 2-speaker, 14.4-minute
-/// conversation produced 22 distinct speaker ids. Sweeping threshold from 0.5
-/// to 0.99 against that recording found a floor around 5 clusters by
-/// threshold 0.95, with no further reduction at 0.97/0.99. **0.95 was
-/// rejected**, though: bisecting against a second, shorter (92s) real
-/// recording found sherpa-onnx's native fast-clustering crashes the whole
-/// process (SIGBUS) at threshold 0.94 and above on that recording, while 0.93
-/// and below complete cleanly — i.e. very high thresholds are a real,
-/// input-dependent crash risk in the vendored C++ clustering code, not just a
-/// diminishing-returns tradeoff. `0.9` was chosen for a real safety margin
-/// below that observed crash boundary (not just below the diminishing-returns
-/// floor), and confirmed crash-free plus meaningfully cluster-reducing
-/// against 3 real recordings of different lengths (861.5s: 22→7 clusters,
-/// 92.4s: 3→1, 240s: 14→6) — the largest cluster(s) stayed dominant over the
-/// small residual ones in each case, i.e. real speakers were not merged away.
+/// Tuned empirically against real recordings, including a discovered native
+/// crash risk at high threshold values — see docs/architecture.md's Speaker
+/// Diarization section and WP-50's TaskPilot comments for the investigation.
 const AUTO_DETECT_THRESHOLD: f32 = 0.9;
 const AUTO_DETECT_MIN_DURATION_ON: f32 = 1.0;
 const AUTO_DETECT_MIN_DURATION_OFF: f32 = 1.0;
 
 /// Translate a caller-provided speaker count into sherpa-onnx's clustering
 /// config. `num_clusters < 1` means "auto-detect via the threshold instead"
-/// (verified against sherpa-onnx's own `fast-clustering-config.cc`) — the
-/// crate's own `DiarizeConfig::default()` sets `num_clusters: Some(4)`, which
-/// is a fixed count, not auto-detect, so this must be set explicitly.
+/// (per sherpa-onnx's `fast-clustering-config.cc`); the crate's own default
+/// is a fixed `num_clusters: Some(4)`, so this must be set explicitly.
 ///
-/// The tuned `threshold` is set unconditionally: it only feeds sherpa-onnx's
-/// distance-based cut, which an explicit count bypasses entirely (it cuts the
-/// dendrogram at that count directly), so it's inert — but harmless — on the
-/// explicit-count path. `min_duration_on`/`min_duration_off` are different:
-/// they filter/merge segments *after* clustering regardless of how the
-/// cluster count was chosen (sherpa-onnx's `ComputeResult`/`MergeSegments`),
-/// so they are NOT inert on the explicit-count path. WP-50 tuned them only
-/// for the auto-detect over-clustering case it investigated; the
-/// explicit-count path (WP-49, not yet built) keeps the crate's original
-/// defaults until WP-49 does its own tuning against that path.
+/// `min_duration_on`/`min_duration_off` are gated to the auto-detect branch
+/// only — unlike `threshold`, they still apply after clustering regardless
+/// of how the count was chosen, so setting them unconditionally would
+/// silently affect WP-49's not-yet-built explicit-count path. See
+/// docs/architecture.md's Speaker Diarization section for the full rationale.
 fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig {
     let is_auto_detect = speaker_count.filter(|&n| n > 0).is_none();
     let num_clusters = speaker_count.filter(|&n| n > 0).unwrap_or(0);
@@ -628,9 +609,6 @@ mod tests {
         assert_eq!(build_config(Some(-1)).num_clusters, Some(0));
     }
 
-    // WP-50: tuned threshold/min_duration values (empirically justified
-    // against a real recording, see build_config's doc comment) replace the
-    // crate's over-clustering-prone defaults (0.5 / 0.0 / 0.0).
     #[test]
     fn build_config_auto_detect_sets_the_tuned_threshold_and_min_durations() {
         let config = build_config(None);
@@ -639,15 +617,8 @@ mod tests {
         assert_eq!(config.min_duration_off, Some(1.0));
     }
 
-    // threshold only feeds sherpa-onnx's distance-based cut (bypassed when an
-    // explicit count is given, per fast-clustering.cc), so it's harmless to
-    // set unconditionally. min_duration_on/off are NOT clustering-scoped —
-    // they filter/merge segments post-clustering regardless of how the
-    // cluster count was chosen (offline-speaker-diarization-pyannote-impl.h's
-    // ComputeResult/MergeSegments) — so tuning them only for the
-    // over-clustering case this task investigated must not silently change
-    // WP-49's not-yet-built explicit-count path; that path keeps the crate's
-    // original untuned defaults until WP-49 does its own tuning.
+    // See build_config's doc comment for why min_duration (unlike threshold)
+    // must not carry over to the explicit-count path.
     #[test]
     fn build_config_sets_the_tuned_threshold_but_crate_default_min_durations_for_an_explicit_count(
     ) {
