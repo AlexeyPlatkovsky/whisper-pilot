@@ -1,0 +1,49 @@
+schema_version: 1
+id: WP-53
+title: Isolate native diarization engine from crashing the whole app
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-25T14:27:12Z'
+updated_at: '2026-07-25T14:27:16Z'
+parent_id: WP-2
+description: >-
+  Discovered during WP-50 (tuning diarization auto-detect threshold/
+  min-duration): sherpa-onnx's native fast-clustering C++ code (vendored
+  under sherpa-rs-sys, called via sherpa_rs::diarize::Diarize::compute)
+  crashes the whole process with SIGBUS at very high clustering threshold
+  values on some real recordings — bisected against one real 92-second
+  recording: threshold >= 0.94 crashed, 0.93 and below did not. WP-50 chose
+  threshold=0.9 for a safety margin below this observed boundary, but that
+  boundary was only established against one recording; a different,
+  as-yet-untested real recording could in principle hit an unknown lower
+  crash threshold even at today's tuned value.
+
+  This matters because a SIGBUS is a fatal OS signal, not a catchable Rust
+  panic or Result::Err — it is invisible to `apply_diarization_outcome`'s
+  existing fail-open contract (diarize.rs: "a diarization failure must never
+  be treated as a transcription failure... log a warning and leave segments
+  speaker-less"), which only handles a returned Err or a panicking
+  tokio::task::JoinError. A native crash instead kills the entire app
+  process mid-transcription, losing whatever meeting/session state was in
+  memory, not just degrading diarization for that run.
+
+  Scope: investigate isolating the native diarize_samples call (or just the
+  sherpa_rs::diarize::Diarize::compute call within it) so a crash there
+  degrades to the existing fail-open warning behavior instead of taking down
+  the whole app. Candidate approaches to evaluate: running the call in a
+  separate OS process (subprocess boundary catches a SIGBUS in the child,
+  parent reports failure) vs. a signal handler around the call (fragile,
+  signal handlers can't safely unwind arbitrary C++ state) vs. upstreaming a
+  fix to sherpa-onnx itself (slower, out of this project's control). No
+  implementation approach is pre-selected; this needs its own investigation
+  and design decision.
+
+  Out of scope: re-tuning the threshold/min_duration values themselves
+  (WP-50's own concern, already done); the auto-detect clustering algorithm
+  itself (WP-49/50's territory); anything to do with the transcription
+  (Whisper) pipeline, which is unaffected by this crash mode.
+dod:
+  - "The root cause of the SIGBUS is understood well enough to state which specific sherpa-onnx clustering configuration(s)/input characteristics trigger it, not just an empirically bisected threshold range on one recording."
+  - "A chosen isolation approach (subprocess, signal handling, or another candidate) is implemented so that a native diarization crash degrades to the existing fail-open warning behavior (transcription still succeeds with plain segments) instead of terminating the whole app process."
+  - "A regression test reproduces a crash-triggering configuration/input and demonstrates the app survives it (existing behavior: crash; new behavior: graceful fail-open warning)."

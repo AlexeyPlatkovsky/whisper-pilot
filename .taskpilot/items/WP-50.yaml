@@ -3,51 +3,29 @@ id: WP-50
 title: Tune diarization auto-detect (threshold / min-duration) for unknown-speaker-count meetings
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-24T13:56:57Z'
-updated_at: '2026-07-24T13:57:00Z'
+updated_at: '2026-07-25T14:32:35Z'
 parent_id: WP-2
-description: >-
-  sherpa_rs::diarize::DiarizeConfig exposes threshold (default 0.5, the
-  cosine-distance cut point for the auto-detect path), min_duration_on, and
-  min_duration_off (both default 0.0, no micro-segment/gap suppression) but
-  whisper-pilot's build_config in diarize.rs only ever sets num_clusters,
-  leaving the rest at crate defaults via ..Default::default() — never
-  tuned or exposed. Real-world over-clustering (roughly 44 clusters for a
-  real 2-speaker recording) was observed at the default threshold.
+description: 'sherpa_rs::diarize::DiarizeConfig exposes threshold (default 0.5, the cosine-distance cut point for the auto-detect path), min_duration_on, and min_duration_off (both default 0.0, no micro-segment/gap suppression) but whisper-pilot''s build_config in diarize.rs only ever sets num_clusters, leaving the rest at crate defaults via ..Default::default() — never tuned or exposed. Real-world over-clustering (roughly 44 clusters for a real 2-speaker recording) was observed at the default threshold.
 
-  Investigated whether a custom AHC/eigengap/VBx re-clustering layer in
-  Rust would help instead: no. sherpa-onnx's built-in fast-clustering
-  (fast-clustering.cc, vendored under sherpa-rs-sys) already implements
-  complete-linkage AHC over cosine distance via the fastcluster library
-  (hclust_fast plus cutree_cdist/cutree_k), so reimplementing AHC
-  ourselves would re-solve an already-solved step. A smarter auto-threshold
-  (e.g. eigengap on the merge-height dendrogram) is not reachable through
-  sherpa_rs's current Diarize API, which is a black box that returns only
-  final speaker-labeled segments — no access to intermediate embeddings,
-  the pairwise distance matrix, or the AHC merge/height arrays needed to
-  re-cut it ourselves. Reaching that would require forking the vendored
-  C++ or reimplementing segmentation, embedding, and clustering from raw
-  ONNX models, and full VBx (EM over a Bayesian HMM plus PLDA scoring) is a
-  substantially larger, separate undertaking.
+  Investigated whether a custom AHC/eigengap/VBx re-clustering layer in Rust would help instead: no. sherpa-onnx''s built-in fast-clustering (fast-clustering.cc, vendored under sherpa-rs-sys) already implements complete-linkage AHC over cosine distance via the fastcluster library (hclust_fast plus cutree_cdist/cutree_k), so reimplementing AHC ourselves would re-solve an already-solved step. A smarter auto-threshold (e.g. eigengap on the merge-height dendrogram) is not reachable through sherpa_rs''s current Diarize API, which is a black box that returns only final speaker-labeled segments — no access to intermediate embeddings, the pairwise distance matrix, or the AHC merge/height arrays needed to re-cut it ourselves. Reaching that would require forking the vendored C++ or reimplementing segmentation, embedding, and clustering from raw ONNX models, and full VBx (EM over a Bayesian HMM plus PLDA scoring) is a substantially larger, separate undertaking.
 
-  Recommended, lower-effort path: empirically tune threshold upward from
-  0.5 and set non-zero min_duration_on/min_duration_off (both
-  already-plumbed DiarizeConfig fields), verified against a range of real
-  recordings with unknown or multi speaker counts, before considering any
-  bigger clustering-algorithm investment.
+  Recommended, lower-effort path: empirically tune threshold upward from 0.5 and set non-zero min_duration_on/min_duration_off (both already-plumbed DiarizeConfig fields), verified against a range of real recordings with unknown or multi speaker counts, before considering any bigger clustering-algorithm investment.
 
-  Scope: empirically tune and set threshold/min_duration_on/min_duration_off
-  in build_config's auto-detect path; verify against real multi-speaker
-  recordings (not just synthesized voices), per the existing ADR-005 and
-  architecture.md caveat that auto-detect quality is input-dependent.
+  Scope: empirically tune and set threshold/min_duration_on/min_duration_off in build_config''s auto-detect path; verify against real multi-speaker recordings (not just synthesized voices), per the existing ADR-005 and architecture.md caveat that auto-detect quality is input-dependent.
 
-  Out of scope: any new clustering algorithm (custom AHC, eigengap re-cut,
-  VBx) — investigated above and not worth pursuing without first
-  exhausting the cheap threshold/min-duration tuning, and blocked on
-  sherpa_rs API access to intermediate clustering data even if pursued
-  later.
+  Primary failure mode: if threshold/min_duration are tuned too aggressively, distinct speakers may be merged into one cluster (under-clustering) — the inverse failure of the over-clustering this task fixes. DoD-2''s regression comparison exists specifically to catch this. A second, more severe failure mode was discovered empirically during this task: sherpa-onnx''s native fast-clustering C++ code crashes the whole process (SIGBUS) at very high threshold values on some real recordings (observed: threshold >= 0.94 crashed on a real 92s recording, 0.93 and below did not) — a fatal OS signal, not a catchable Rust panic or Result::Err, so it bypasses apply_diarization_outcome''s fail-open guarantee and takes down the entire app, not just the diarization step. The chosen tuned values (threshold=0.9) keep a safety margin below this observed crash boundary, but that boundary was only bisected against one recording — an as-yet-untested recording could in principle hit an unknown lower crash threshold even at 0.9. This residual risk is not eliminated by this task, only mitigated.
+
+  Edge cases: near-threshold recordings where speaker turns are short or acoustically similar; single-speaker recordings must not be split into false extra clusters (not yet verified against a confirmed single-speaker real recording — no such fixture was available this session); very short recordings with too little audio for reliable embeddings.
+
+  Constraints: pure parameter/config value change in build_config, no new I/O, network, security, or UI surface; no performance impact (same clustering algorithm, different threshold input). One constraint discovered during implementation: very high threshold values are a real native-library crash risk (see Primary failure mode above) — the chosen values stay at an empirically safety-margined distance from the observed crash boundary, but this is a mitigation, not a proof of safety across all recordings.
+
+  Out of scope: any new clustering algorithm (custom AHC, eigengap re-cut, VBx) — investigated above and not worth pursuing without first exhausting the cheap threshold/min-duration tuning, and blocked on sherpa_rs API access to intermediate clustering data even if pursued later.'
 dod:
-  - "build_config's auto-detect path (speaker_count absent or non-positive) sets a tuned threshold and non-zero min_duration_on/min_duration_off instead of crate defaults, with the specific values justified against real test recordings, not guessed."
-  - "A regression comparison (before and after, on the same real recording or recordings) demonstrates fewer spurious clusters without merging genuinely distinct speakers."
-  - "Existing diarize.rs unit tests continue to pass; new tests cover the tuned config's values explicitly, mirroring the existing build_config test style."
+- build_config's auto-detect path (speaker_count absent or non-positive) sets a tuned threshold and non-zero min_duration_on/min_duration_off instead of crate defaults, with the specific values justified against real test recordings, not guessed.
+- A regression comparison (before and after, on the same real recording or recordings) demonstrates fewer spurious clusters without merging genuinely distinct speakers.
+- Existing diarize.rs unit tests continue to pass; new tests cover the tuned config's values explicitly, mirroring the existing build_config test style.
+links:
+  relates_to:
+  - WP-53

@@ -124,6 +124,35 @@ separate two short, acoustically-similar synthesized voices in one such run),
 so the explicit speaker-count override matters in practice, not just as a
 nice-to-have.
 
+**Auto-detect's threshold and min-duration are tuned, not left at crate
+defaults** (WP-50): the crate's own defaults (threshold 0.5, min_duration_on/
+off 0.0) badly over-clustered real recordings — a real 2-speaker,
+14.4-minute conversation produced 22 distinct speaker ids. Sweeping threshold
+against that recording found a floor around 5 clusters by threshold 0.95,
+with no further reduction at 0.97/0.99 — but **0.95 was rejected**: bisecting
+against a second, shorter (92s) real recording found sherpa-onnx's native
+fast-clustering crashes the whole process (SIGBUS) at threshold 0.94 and
+above on that recording, while 0.93 and below complete cleanly. Very high
+thresholds are therefore a real, input-dependent *crash* risk in the vendored
+C++ clustering code, not merely a diminishing-returns tradeoff. `threshold
+0.9` / `min_duration_on/off 1.0s` were chosen instead, for a real safety
+margin below that crash boundary, and confirmed crash-free plus meaningfully
+cluster-reducing against 3 real recordings of different lengths (861.5s:
+22→7 clusters, 92.4s: 3→1, 240s: 14→6). On the known-2-speaker recording the
+2 dominant clusters stayed clearly separated (not merged); the other two
+recordings' true speaker counts are unknown, so they serve as crash-safety
+and over-clustering-reduction evidence only, not merge-quality evidence. This
+meaningfully reduces but does not eliminate over-clustering, consistent with
+ADR-005's input-dependent-quality caveat above. Further reduction would need
+a different clustering approach (explicitly out of this task's scope; see
+ADR-005's alternatives). `min_duration_on`/`min_duration_off` are gated to
+the auto-detect branch only — unlike `threshold`, they are not inert when an
+explicit speaker count is given (they filter/merge segments after clustering
+regardless of how the count was chosen), so leaving them tuned
+unconditionally would have silently affected WP-49's not-yet-built
+explicit-count override; that path keeps the crate's original defaults until
+WP-49 tunes it separately.
+
 `diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
 maximally overlap it, deterministically tie-broken (lowest speaker id) and
