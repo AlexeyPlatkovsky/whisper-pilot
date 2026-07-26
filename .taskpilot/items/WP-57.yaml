@@ -3,9 +3,9 @@ id: WP-57
 title: Fall back to the other embedding model when diarization crashes
 priority: normal
 type: task
-status: backlog
+status: in_progress
 created_at: '2026-07-26T11:28:12Z'
-updated_at: '2026-07-26T11:28:12Z'
+updated_at: '2026-07-26T15:05:54Z'
 parent_id: WP-2
 description: 'Split out of WP-53 (user decision, 2026-07-26) so the process isolation can land and ship on its own. This item owns the recovery behavior that sits ON TOP of that isolation; it is not implementable before WP-53 exists, because it needs a survivable child-process crash to react to.
 
@@ -38,12 +38,12 @@ description: 'Split out of WP-53 (user decision, 2026-07-26) so the process isol
 
 
   Out of scope: the isolation mechanism itself, its supervision, and its child-outcome handling (all WP-53); threshold tuning (WP-50, staying at 0.9); recording label provenance (deferred above).'
-created_by: Aleksei_Platkovskii
 dod:
-  - "On a child-process diarization crash the run retries exactly once with the other embedding model and then fails open; a test proves it never retries the same model and that the chain terminates."
-  - "The fallback attempt runs under the same process isolation as the first attempt, so a crash in the fallback also degrades rather than killing the app - covered by a test."
-  - "When the other embedding model is not downloaded, the run fails open with the error and performs no automated retry - covered by a test."
-  - "A successful fallback is announced through `diarization_warning` with a message distinct from the failed-entirely message; both strings are asserted."
-  - "A timeout kill does not trigger the fallback, unlike a crash - covered by a test."
-  - "Verified against the real reproducer: the recording that crashes titanet-large at threshold 0.9 comes back with speakers via campplus instead of speaker-less segments."
-  - "Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate."
+- On a child-process diarization crash the run retries exactly once with the other embedding model and then fails open; a test proves it never retries the same model and that the chain terminates.
+- The fallback attempt runs under the same process isolation as the first attempt, so a crash in the fallback also degrades rather than killing the app - covered by a test.
+- When the other embedding model is not downloaded, the run fails open with the error and performs no automated retry - covered by a test.
+- A successful fallback is announced through `diarization_warning` with a message distinct from the failed-entirely message; both strings are asserted.
+- A timeout kill does not trigger the fallback, unlike a crash - covered by a test.
+- 'Verified against the real reproducer: the recording that crashes titanet-large at threshold 0.9 comes back with speakers via campplus instead of speaker-less segments.'
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate.'
+created_by: Aleksei_Platkovskii

@@ -616,6 +616,80 @@ fn read_samples(path: &Path) -> Result<Vec<f32>> {
         .collect())
 }
 
+// --- Fallback: one-hop retry on crash (WP-57) ---------------------------
+
+/// Return the other known embedding variant, or `None` when `active` is
+/// not a recognised variant (no fallback possible).
+fn fallback_variant_for(active: &str) -> Option<&'static str> {
+    match active {
+        "titanet-large" => Some("campplus"),
+        "campplus" => Some("titanet-large"),
+        _ => None,
+    }
+}
+
+/// A crash is the only child outcome worth retrying: it is deterministic per
+/// input + model, so the same model would just crash again, but the *other*
+/// model may survive. A timeout means the time budget is spent; an engine
+/// error is a real failure — neither justifies a retry.
+fn should_retry_diarization(outcome: &ChildOutcome) -> bool {
+    matches!(outcome, ChildOutcome::Crashed { .. })
+}
+
+/// Human-readable label for a variant id so diarization warnings name the
+/// model the user sees in Settings, not the internal id.
+fn variant_display_name(variant: &str) -> &str {
+    match variant {
+        "titanet-large" => "TitaNet-large",
+        "campplus" => "CAM++",
+        other => other,
+    }
+}
+
+/// Run diarization isolated, retrying once with the other embedding model on
+/// a native crash. Returns the turns plus an optional warning — `None` on a
+/// clean first-attempt success, `Some` when the fallback was used (successful
+/// or not).
+///
+/// The fallback attempt itself runs under the same process isolation as the
+/// first. `samples` are cloned so the retry has its own copy; on a typical
+/// recording (~6 MB) this is acceptable even on the common non-crash path.
+pub fn diarize_with_fallback(
+    app_support_dir: &Path,
+    samples: Vec<f32>,
+    speaker_count: Option<i32>,
+    active_variant: &str,
+) -> (Result<Vec<SpeakerTurn>>, Option<String>) {
+    let first = diarize_isolated(app_support_dir, samples.clone(), speaker_count, active_variant);
+
+    if !should_retry_diarization(&first) {
+        return (first.into_result(), None);
+    }
+
+    let fallback_variant = match fallback_variant_for(active_variant) {
+        Some(v) => v,
+        None => return (first.into_result(), None),
+    };
+
+    if !crate::models::is_diarization_variant_downloaded(app_support_dir, fallback_variant) {
+        return (first.into_result(), None);
+    }
+
+    let second = diarize_isolated(app_support_dir, samples, speaker_count, fallback_variant);
+
+    match second {
+        ChildOutcome::Completed(turns) => {
+            let warning = format!(
+                "used {} because {} failed on this recording",
+                variant_display_name(fallback_variant),
+                variant_display_name(active_variant),
+            );
+            (Ok(turns), Some(warning))
+        }
+        other => (other.into_result(), None),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1143,5 +1217,65 @@ mod tests {
             ChildOutcome::Completed(turns.clone()).into_result().unwrap(),
             turns
         );
+    }
+
+    // --- DoD C-1, C-5: fallback decision helpers ---------------------------
+
+    #[test]
+    fn fallback_variant_for_returns_campplus_for_titanet_large() {
+        assert_eq!(super::fallback_variant_for("titanet-large"), Some("campplus"));
+    }
+
+    #[test]
+    fn fallback_variant_for_returns_titanet_large_for_campplus() {
+        assert_eq!(super::fallback_variant_for("campplus"), Some("titanet-large"));
+    }
+
+    #[test]
+    fn fallback_variant_for_returns_none_for_unknown_variant() {
+        assert_eq!(super::fallback_variant_for("unknown-model"), None);
+    }
+
+    #[test]
+    fn should_retry_diarization_is_true_for_crashed() {
+        assert!(super::should_retry_diarization(&ChildOutcome::Crashed {
+            signal: 10
+        }));
+    }
+
+    #[test]
+    fn should_retry_diarization_is_false_for_timed_out() {
+        assert!(!super::should_retry_diarization(&ChildOutcome::TimedOut));
+    }
+
+    #[test]
+    fn should_retry_diarization_is_false_for_failed() {
+        assert!(!super::should_retry_diarization(&ChildOutcome::Failed {
+            code: Some(3),
+            detail: "engine error".to_string(),
+        }));
+    }
+
+    #[test]
+    fn should_retry_diarization_is_false_for_completed() {
+        let turns = vec![crate::diarize::SpeakerTurn {
+            start_ms: 0,
+            end_ms: 100,
+            speaker: 0,
+        }];
+        assert!(!super::should_retry_diarization(&ChildOutcome::Completed(
+            turns
+        )));
+    }
+
+    #[test]
+    fn variant_display_name_returns_label_for_known_variants() {
+        assert_eq!(super::variant_display_name("titanet-large"), "TitaNet-large");
+        assert_eq!(super::variant_display_name("campplus"), "CAM++");
+    }
+
+    #[test]
+    fn variant_display_name_returns_raw_id_for_unknown() {
+        assert_eq!(super::variant_display_name("unknown"), "unknown");
     }
 }

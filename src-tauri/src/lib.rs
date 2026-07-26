@@ -116,10 +116,12 @@ async fn open_file_dialog() -> Option<String> {
     .flatten()
 }
 
-/// What a spawned diarization task hands back: the engine's own result, or the
-/// `JoinError` from the blocking task panicking or being cancelled.
+/// What a spawned diarization task hands back: the engine's own result and an
+/// optional fallback warning (set when the other embedding model was retried
+/// after a crash on this recording), or the `JoinError` from the blocking task
+/// panicking or being cancelled.
 type DiarizationOutcome =
-    std::result::Result<Result<Vec<diarize::SpeakerTurn>>, tokio::task::JoinError>;
+    std::result::Result<(Result<Vec<diarize::SpeakerTurn>>, Option<String>), tokio::task::JoinError>;
 
 /// A not-yet-started diarization pass. Boxed rather than generic so the
 /// "no active model" case is a plain `None` at every call site, and deferred so
@@ -186,8 +188,9 @@ async fn persist_transcript_then_diarize(
     };
 
     let outcome = diarization.await;
+    let speakers_assigned = matches!(&outcome, Ok((Ok(_), _)));
     let warning = diarize::apply_diarization_outcome(&mut transcription.segments, outcome);
-    if warning.is_some() {
+    if !speakers_assigned {
         // Nothing was assigned, so the first save already holds the final state.
         return Ok((meeting, warning));
     }
@@ -202,7 +205,7 @@ async fn persist_transcript_then_diarize(
         duration_ms,
         language,
     ) {
-        Ok(meeting) => Ok((meeting, None)),
+        Ok(meeting) => Ok((meeting, warning)),
         Err(e) => {
             log::warn!("could not persist speaker ids, transcript kept as-is: {e}");
             Ok((
@@ -275,12 +278,12 @@ async fn transcribe_meeting(
             // Runs in a child process: the native engine can abort outright,
             // and a fatal signal is not something `spawn_blocking` or any Rust
             // error path can catch. Isolating it turns that abort into an
-            // ordinary error the fail-open contract below can handle. See
-            // `diarize_process` and docs/architecture.md's Speaker Diarization
-            // section.
+            // ordinary error. When the crash is a known native fault of one
+            // embedding model, the call retries once with the other model
+            // before failing open — see `diarize_process::diarize_with_fallback`
+            // and docs/architecture.md's Speaker Diarization section.
             tokio::task::spawn_blocking(move || {
-                diarize_process::diarize_isolated(&app_support_dir, samples, None, &variant)
-                    .into_result()
+                diarize_process::diarize_with_fallback(&app_support_dir, samples, None, &variant)
             })
             .await
         }) as PendingDiarization
@@ -541,7 +544,7 @@ mod tests {
             Some(Box::pin(async move {
                 // Reads the store from inside the diarization pass itself.
                 *seen.lock().unwrap() = Some(meetings::open_meeting(&path, id).unwrap());
-                Ok(Ok(Vec::new()))
+                Ok((Ok(Vec::new()), None))
             })),
         )
         .await
@@ -572,7 +575,7 @@ mod tests {
             dir.path().to_path_buf(),
             id,
             transcription(vec![segment(0, 1_000, "hello"), segment(2_000, 3_000, "world")]),
-            diarization(Ok(Err(AppError::Diarization("engine exploded".to_string())))),
+            diarization(Ok((Err(AppError::Diarization("engine exploded".to_string())), None))),
         )
         .await
         .unwrap();
@@ -607,7 +610,7 @@ mod tests {
             dir.path().to_path_buf(),
             id,
             transcription(vec![segment(0, 1_000, "hello"), segment(2_000, 3_000, "world")]),
-            diarization(Ok(Ok(turns))),
+            diarization(Ok((Ok(turns), None))),
         )
         .await
         .unwrap();
@@ -660,11 +663,11 @@ mod tests {
                 // The meeting disappears after the transcript was persisted but
                 // before the speaker ids can be written back to it.
                 meetings::delete_meeting(&path, id).unwrap();
-                Ok(Ok(vec![diarize::SpeakerTurn {
+                Ok((Ok(vec![diarize::SpeakerTurn {
                     start_ms: 0,
                     end_ms: 1_000,
                     speaker: 1,
-                }]))
+                }]), None))
             })),
         )
         .await
@@ -689,7 +692,7 @@ mod tests {
             transcription(vec![segment(0, 1_000, "hello")]),
             Some(Box::pin(async move {
                 flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok(Ok(Vec::new()))
+                Ok((Ok(Vec::new()), None))
             })),
         )
         .await

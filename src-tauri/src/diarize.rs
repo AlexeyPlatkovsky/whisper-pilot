@@ -401,16 +401,23 @@ pub fn assign_speaker_ids(segments: &mut [transcribe::Segment], turns: &[Speaker
 /// itself erroring, or the blocking task panicking/being cancelled — log a
 /// warning and leave `segments` exactly as they were (speaker-less). A
 /// diarization failure must never be treated as a transcription failure.
+///
+/// When the outcome carries a fallback warning (the other embedding model
+/// was retried after a crash), speakers are still assigned — the warning
+/// is informational, not a failure signal.
 pub fn apply_diarization_outcome(
     segments: &mut [transcribe::Segment],
-    outcome: std::result::Result<Result<Vec<SpeakerTurn>>, tokio::task::JoinError>,
+    outcome: std::result::Result<
+        (Result<Vec<SpeakerTurn>>, Option<String>),
+        tokio::task::JoinError,
+    >,
 ) -> Option<String> {
     match outcome {
-        Ok(Ok(turns)) => {
+        Ok((Ok(turns), fallback_warning)) => {
             assign_speaker_ids(segments, &turns);
-            None
+            fallback_warning
         }
-        Ok(Err(e)) => {
+        Ok((Err(e), _fallback_warning)) => {
             log::warn!("diarization unavailable, returning speaker-less segments: {e}");
             Some(format!("Speaker identification is unavailable: {e}"))
         }
@@ -871,10 +878,22 @@ mod tests {
         let mut segments = [transcript_segment(0, 1_000)];
         let turns = vec![speaker_turn(0, 1_000, 3)];
 
-        let warning = apply_diarization_outcome(&mut segments, Ok(Ok(turns)));
+        let warning = apply_diarization_outcome(&mut segments, Ok((Ok(turns), None)));
 
         assert_eq!(segments[0].speaker_id, Some(3));
         assert_eq!(warning, None);
+    }
+
+    #[tokio::test]
+    async fn apply_diarization_outcome_assigns_speakers_and_returns_the_fallback_warning() {
+        let mut segments = [transcript_segment(0, 1_000)];
+        let turns = vec![speaker_turn(0, 1_000, 3)];
+        let fallback = "used CAM++ because TitaNet-large failed on this recording".to_string();
+
+        let warning = apply_diarization_outcome(&mut segments, Ok((Ok(turns.clone()), Some(fallback.clone()))));
+
+        assert_eq!(segments[0].speaker_id, Some(3));
+        assert_eq!(warning, Some(fallback));
     }
 
     #[tokio::test]
@@ -884,9 +903,9 @@ mod tests {
 
         let warning = apply_diarization_outcome(
             &mut segments,
-            Ok(Err(AppError::DiarizationAsset(
+            Ok((Err(AppError::DiarizationAsset(
                 "models not downloaded".to_string(),
-            ))),
+            )), None)),
         );
 
         assert_eq!(segments[0].speaker_id, None);
@@ -900,7 +919,7 @@ mod tests {
 
         let warning = apply_diarization_outcome(
             &mut segments,
-            Ok(Err(AppError::Diarization("engine exploded".to_string()))),
+            Ok((Err(AppError::Diarization("engine exploded".to_string())), None)),
         );
 
         assert_eq!(segments[0].speaker_id, None);

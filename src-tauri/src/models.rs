@@ -284,6 +284,25 @@ pub fn primary_asset_path(app_support_dir: &Path, id: &str) -> Option<PathBuf> {
     entry.assets.first().map(|a| asset_path(app_support_dir, a))
 }
 
+/// Whether a specific diarization embedding variant has both the shared
+/// segmentation model and its own embedding on disk, so a fallback retry
+/// can run it without failing on a missing asset.
+pub fn is_diarization_variant_downloaded(app_support_dir: &Path, variant_id: &str) -> bool {
+    let Some(entry) = CATALOG.iter().find(|e| e.id == "diarization") else {
+        return false;
+    };
+    let shared_ok = entry
+        .assets
+        .iter()
+        .filter(|a| a.variant_id.is_none())
+        .all(|a| is_asset_downloaded(app_support_dir, a));
+    let variant_ok = entry
+        .assets
+        .iter()
+        .any(|a| a.variant_id == Some(variant_id) && is_asset_downloaded(app_support_dir, a));
+    shared_ok && variant_ok
+}
+
 /// Raw downloaded asset paths for catalog entry `id`, in catalog order.
 /// Used by diarize.rs to locate the diarization entry's two assets (the
 /// segmentation archive and the embedding model) without duplicating
@@ -946,5 +965,47 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
 
         assert!(primary_asset_path(dir.path(), "not-a-real-model").is_none());
+    }
+
+    // --- DoD C-3: variant downloaded check for the fallback ---------------
+
+    #[test]
+    fn is_diarization_variant_downloaded_false_when_no_asset_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(!is_diarization_variant_downloaded(dir.path(), "campplus"));
+    }
+
+    #[test]
+    fn is_diarization_variant_downloaded_false_when_only_shared_segmentation_is_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
+
+        assert!(!is_diarization_variant_downloaded(dir.path(), "campplus"));
+    }
+
+    #[test]
+    fn is_diarization_variant_downloaded_true_when_both_shared_and_variant_asset_are_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        // paths[0] = segmentation (shared), paths[1] = campplus, paths[2] = titanet-large
+        write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
+        write_sized_placeholder(&paths[1], CATALOG[1].assets[1].size_bytes);
+
+        assert!(is_diarization_variant_downloaded(dir.path(), "campplus"));
+        assert!(!is_diarization_variant_downloaded(dir.path(), "titanet-large"));
+    }
+
+    #[test]
+    fn is_diarization_variant_downloaded_false_for_unknown_variant() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = asset_paths(dir.path(), "diarization").unwrap();
+        std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
+        write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
+
+        assert!(!is_diarization_variant_downloaded(dir.path(), "not-a-variant"));
     }
 }

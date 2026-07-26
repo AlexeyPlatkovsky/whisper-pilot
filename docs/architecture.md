@@ -182,12 +182,15 @@ about the IPC contract, the UI, or the stored schema changes.
 The parent classifies four distinct child outcomes — clean exit with a
 readable payload, exit by signal (the native crash), non-zero exit (a real
 engine error such as a missing asset), and an inactivity kill. They stay
-separate rather than collapsing into one error because WP-57's planned
-embedding-model fallback retries a crash but must not retry a timeout.
+separate rather than collapsing into one error because the embedding-model
+fallback (`diarize_with_fallback`, WP-57) retries a crash exactly once with
+the other model but must not retry a timeout.
 `ChildOutcome::into_result` maps every failure onto the existing
-`AppError::Diarization` fail-open path, so a contained crash degrades to
+`AppError::Diarization` fail-open path, so an unretryable failure degrades to
 speaker-less segments plus a `diarization_warning`, exactly as an ordinary
-engine error already did.
+engine error already did. A successful fallback returns speakers with a
+distinct `diarization_warning` naming which model was used instead; no column
+records model provenance after the run completes.
 
 Three supervision details are load-bearing. Samples (~55MB for the longest
 test recording) cross as a raw `f32` file under `<app-support>/cache/diarize`
