@@ -1,0 +1,49 @@
+schema_version: 1
+id: WP-57
+title: Fall back to the other embedding model when diarization crashes
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-26T11:28:12Z'
+updated_at: '2026-07-26T11:28:12Z'
+parent_id: WP-2
+description: 'Split out of WP-53 (user decision, 2026-07-26) so the process isolation can land and ship on its own. This item owns the recovery behavior that sits ON TOP of that isolation; it is not implementable before WP-53 exists, because it needs a survivable child-process crash to react to.
+
+
+  Context: sherpa-onnx''s native clustering aborts the process with SIGBUS on some real recording + embedding-model + threshold combinations. WP-53 contains the crash so it degrades instead of killing the app. That containment alone leaves the user with speaker-less segments. This item takes the extra step of retrying with the other embedding model, which the 2026-07-26 triage showed actually works: the 92.4s recording that reliably kills titanet-large at threshold 0.9 completes cleanly under campplus at the same threshold. So on the one input known to break, the fallback produces a real answer rather than no speakers at all.
+
+
+  Approved design (user, 2026-07-26 - decisions 3, 4 and 5 of Option D, moved here from WP-53):
+
+
+  1. On a child crash, retry EXACTLY ONCE with the other embedding model, then fail open. Never retry the same model: the crash is deterministic per input, so an identical retry just crashes again. The chain must terminate - titanet-large -> campplus -> speaker-less warning, and no further.
+
+
+  2. The fallback attempt must itself run isolated, exactly as the first attempt does. campplus is not proven safe; its own observed crash boundary on that same recording was 0.94, only 0.04 above the threshold both models run at. A fallback that crashes unisolated would defeat WP-53.
+
+
+  3. If the other embedding model is not downloaded, show the error and perform no automated re-run. models.rs already exposes the downloaded check, and delete_model lets a user end up with only one variant, so this is a real state rather than a hypothetical one.
+
+
+  4. Announce a successful fallback through the existing diarization_warning channel, with a message distinct from the failed-entirely one - ''used CAM++ because TitaNet-large failed on this recording'' versus ''speaker identification is unavailable''. They mean different things to the user and must not share a string.
+
+
+  5. Do NOT retry after a timeout kill (as opposed to a crash): the time budget is already spent and a hang is as likely in the second model.
+
+
+  Accepted consequence, deferred by the user: no provenance column records which model produced a meeting''s labels. diarization_warning is transient - returned by the command, shown once, gone on reload - so after a fallback run and a restart nothing anywhere shows the labels came from a model other than the one in Settings. Revisit only if it starts to matter.
+
+
+  Depends on: WP-53 (process isolation) - blocking, not merely related.
+
+
+  Out of scope: the isolation mechanism itself, its supervision, and its child-outcome handling (all WP-53); threshold tuning (WP-50, staying at 0.9); recording label provenance (deferred above).'
+created_by: Aleksei_Platkovskii
+dod:
+  - "On a child-process diarization crash the run retries exactly once with the other embedding model and then fails open; a test proves it never retries the same model and that the chain terminates."
+  - "The fallback attempt runs under the same process isolation as the first attempt, so a crash in the fallback also degrades rather than killing the app - covered by a test."
+  - "When the other embedding model is not downloaded, the run fails open with the error and performs no automated retry - covered by a test."
+  - "A successful fallback is announced through `diarization_warning` with a message distinct from the failed-entirely message; both strings are asserted."
+  - "A timeout kill does not trigger the fallback, unlike a crash - covered by a test."
+  - "Verified against the real reproducer: the recording that crashes titanet-large at threshold 0.9 comes back with speakers via campplus instead of speaker-less segments."
+  - "Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate."

@@ -5,7 +5,7 @@ priority: normal
 type: task
 status: backlog
 created_at: '2026-07-25T14:27:12Z'
-updated_at: '2026-07-26T11:13:42Z'
+updated_at: '2026-07-26T11:28:59Z'
 parent_id: WP-2
 description: 'sherpa-onnx''s native clustering code, vendored under sherpa-rs-sys and reached via sherpa_rs::diarize::Diarize::compute, can abort the whole process with SIGBUS on some real recordings. A SIGBUS is a fatal OS signal, not a catchable Rust panic or Result::Err, so it is invisible to apply_diarization_outcome''s fail-open contract (a diarization failure must never be treated as a transcription failure) and instead kills the app mid-run.
 
@@ -25,17 +25,17 @@ description: 'sherpa-onnx''s native clustering code, vendored under sherpa-rs-sy
 
   2. Run the diarization call in a child process. Re-exec the same binary with a hidden argv mode rather than a Tauri sidecar, so there is one binary and one code signature. The parent maps exit-by-signal to AppError::Diarization and reuses the existing fail-open path; no IPC contract, UI, or schema change.
 
-  3. On a child crash, retry ONCE with the other embedding model, then fail open. Never retry the same model - the crash is deterministic per input. campplus is not proven safe either (its own boundary on that recording was 0.94), so the fallback attempt must itself be isolated and the chain must terminate.
+  3. MOVED TO WP-57 (user decision, 2026-07-26): the one-hop retry with the other embedding model, its not-downloaded handling, and its warning strings are a separate observable behavior layered on this isolation, so they are owned by WP-57 and are NOT in this item''s scope or DoD. What stays here is the requirement that a crashed child is reported as a distinguishable outcome, which is what gives WP-57 something to react to. Note for whoever builds this: WP-57''s fallback attempt must be able to run under the same isolation, so do not design the child interface to permit only one attempt per run.
 
-  4. If the second model is not downloaded, show the error - no automated re-run.
+  4. MOVED TO WP-57: not-downloaded handling for the fallback model.
 
-  5. Announce a fallback through the existing diarization_warning channel, with two distinct strings: degraded-but-succeeded (''used CAM++ because TitaNet-large failed on this recording'') versus failed-entirely.
+  5. MOVED TO WP-57: the fallback''s diarization_warning strings. This item still uses that channel for its own fail-open warning, which is existing behavior and unchanged.
 
-  6. No provenance column recording which model produced a meeting''s labels - explicitly deferred by the user as too complicated for the UI. Consequence accepted: diarization_warning is transient, so after a fallback run and a reload nothing records that the labels came from a model other than the one in Settings.
+  6. No provenance column recording which model produced a meeting''s labels - explicitly deferred by the user as too complicated for the UI. The consequence only bites once WP-57 can silently switch models, so WP-57 carries it; nothing in this item alone changes which model runs.
 
   7. Supervise with a heartbeat and an INACTIVITY timeout, not a total wall-clock timeout, so it is independent of recording length. Diarize::compute already accepts an optional progress callback (Box<dyn Fn(i32,i32) -> i32 + Send>) that this code passes as None today; the vendored C++ fires it once per embedding chunk. Two verified caveats: clustering runs after that loop with NO callbacks, so the inactivity window must tolerate a silent tail (milliseconds for ~91 embeddings), and sherpa-onnx IGNORES the callback''s return value, so it cannot cancel - killing the child is the only cancellation mechanism, which this design gains for free.
 
-  8. Distinguish four child outcomes: clean exit with valid payload = success; exit by signal = crash, trigger the one-hop fallback; non-zero exit = real engine error (missing model, bad asset), no fallback; timeout kill = fail open without falling back.
+  8. Distinguish four child outcomes and report them distinguishably, because WP-57''s fallback keys off exactly this: clean exit with valid payload = success; exit by signal = crash; non-zero exit = real engine error (missing model, bad asset); timeout kill. This item fails open on all three failure outcomes; which of them WP-57 later retries is WP-57''s decision, so do not collapse them into one error.
 
 
   Known implementation hazard: the binary has NO LC_RPATH yet links @rpath/libonnxruntime.1.17.1.dylib and @rpath/libsherpa-onnx-c-api.dylib. It resolves in dev only because tauri-cli/cargo sets DYLD_FALLBACK_LIBRARY_PATH at launch. A re-exec''d child inherits the parent environment so it works, but by accident - make it explicit. Separately, tauri.conf.json has no bundle.macOS.frameworks entry, so how those dylibs reach a packaged .app is an already-open question this work inherits rather than creates.
@@ -49,14 +49,14 @@ description: 'sherpa-onnx''s native clustering code, vendored under sherpa-rs-sy
 
   Out of scope: re-tuning threshold/min_duration (WP-50, staying at 0.9); the clustering algorithm itself (WP-49/WP-50); upstreaming a fix to sherpa-onnx (worth filing separately, but it does not help this release).'
 dod:
-- "SATISFIED BY TRIAGE 2026-07-26, restated for the record: the trigger is stated as a configuration, not a threshold range - clustering threshold interacts with the embedding model and the input, and the shipped 0.9 is above the crash boundary for the recommended titanet-large model on at least one real recording (crashes at 0.8/0.85/0.9, completes at 0.7/0.5) while campplus completes at 0.9 on the same input."
-- "The diarization call runs in a child process, and a native crash there degrades to the existing fail-open warning - transcription still succeeds with speaker-less segments - instead of terminating the app."
-- "A regression test runs the known crash-triggering input (2026-07-21 12-07-19.mp4 + titanet-large + threshold 0.9) through the real code path and asserts the app survives it: previously SIGBUS, now a warning. Ignored-by-default if it needs downloaded models or user media, following the existing diarize_integration.rs / wp50_tuning_regression.rs convention."
-- "On a child crash the run retries exactly once with the other embedding model and then fails open; a test proves it does not retry the same model and the chain terminates."
-- "When the second embedding model is not downloaded, the run fails open with the error and performs no automated retry - covered by a test."
-- "A successful fallback is announced through diarization_warning with a message distinct from the failed-entirely message; both strings are asserted."
-- "A child that stops making progress is killed on an inactivity timeout (not a total wall-clock timeout) and fails open, leaving no orphaned process holding the models."
-- "The four child outcomes are distinguished and tested: clean exit with payload, exit by signal, non-zero exit, and timeout kill."
-- "The dylib resolution path for the child process is explicit rather than inherited by accident from the launcher's DYLD_FALLBACK_LIBRARY_PATH."
-- "Threshold stays 0.9 and diarize.rs::build_config is unchanged, with the reason recorded where a future reader will see it."
-- "Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate."
+- 'SATISFIED BY TRIAGE 2026-07-26, restated for the record: the trigger is stated as a configuration, not a threshold range - clustering threshold interacts with the embedding model and the input, and the shipped 0.9 is above the crash boundary for the recommended titanet-large model on at least one real recording (crashes at 0.8/0.85/0.9, completes at 0.7/0.5) while campplus completes at 0.9 on the same input.'
+- The diarization call runs in a child process, and a native crash there degrades to the existing fail-open warning - transcription still succeeds with speaker-less segments - instead of terminating the app.
+- 'A regression test runs the known crash-triggering input (2026-07-21 12-07-19.mp4 + titanet-large + threshold 0.9) through the real code path and asserts the app survives it: previously SIGBUS, now a warning. Ignored-by-default if it needs downloaded models or user media, following the existing diarize_integration.rs / wp50_tuning_regression.rs convention.'
+- A child that stops making progress is killed on an inactivity timeout (not a total wall-clock timeout) and fails open, leaving no orphaned process holding the models.
+- 'The four child outcomes are distinguished and tested: clean exit with payload, exit by signal, non-zero exit, and timeout kill.'
+- The dylib resolution path for the child process is explicit rather than inherited by accident from the launcher's DYLD_FALLBACK_LIBRARY_PATH.
+- Threshold stays 0.9 and diarize.rs::build_config is unchanged, with the reason recorded where a future reader will see it.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate.'
+links:
+  blocks:
+  - WP-57
