@@ -1,0 +1,32 @@
+schema_version: 1
+id: WP-55
+title: 'Make docs/INDEX.md rebuildable: generated markers with key-preserving sync'
+priority: normal
+type: task
+status: done
+created_at: '2026-07-26T08:47:27Z'
+updated_at: '2026-07-26T09:39:50Z'
+description: 'sdd-index-sync''s update mode may replace only sections delimited by unique generated markers, but neither docs/INDEX.md nor its template .claude/sdd/templates/docs/INDEX.md contains any. The skill is therefore unsatisfiable in update mode: every pipeline that triggers its conditional index-sync substep blocks. Found on 2026-07-26 while WP-54 changed docs/architecture.md; WP-54 is parked mid-pipeline on exactly this.
+
+
+  Full-file regeneration is not an acceptable workaround. The live index carries curated content the template has no notion of - the Documents table''s Owns and Read-when prose, and the Feature Registry''s Milestone and TaskPilot columns - so a naive rebuild would destroy the index''s most useful content.
+
+
+  Approved design (user, 2026-07-26): markers wrap each of the three tables (Documents, Feature Registry, Decision Log), and sdd-index-sync gains a key-preserving row merge - rows are regenerated from the docs tree, but each existing row''s curated cells are preserved by matching on its stable key (filename, feature ID, ADR ID), with an explicit placeholder emitted only for a genuinely new row. One source table, no duplicated inventory, idempotent across runs.
+
+
+  Also in scope, because the sync will surface them the moment it can run: docs/designbook.md and docs/plans/ exist but are unregistered in docs/INDEX.md, which .claude/conventions/sdd-doc-set.md requires (''Add a doc outside this list only when none fits; record it in INDEX.md so it is discoverable'').
+
+
+  Out of scope: the separate finding that this TaskPilot CLI rejects the ''blocked'' status that .claude/skills/taskpilot-work/SKILL.md documents; any change to what the index means or to routing/gates (INDEX.md is a lookup aid only per the doc-set convention); WP-54''s own scope.'
+dod:
+- docs/INDEX.md and .claude/sdd/templates/docs/INDEX.md each carry unique generated markers delimiting the Documents, Feature Registry, and Decision Log tables.
+- 'sdd-index-sync''s procedure specifies the key-preserving row merge explicitly: rows regenerate from the docs tree, an existing row''s curated cells are preserved by matching its stable key (filename, feature ID, ADR ID), and a genuinely new row gets an explicit placeholder.'
+- 'Running sdd-index-sync in update mode against the current docs tree returns `Status: completed` and leaves every pre-existing row''s curated cells (Owns, Read when, Milestone, TaskPilot) byte-identical.'
+- docs/designbook.md and docs/plans/ are registered in docs/INDEX.md, per .claude/conventions/sdd-doc-set.md's requirement that a doc outside the standard list be recorded there.
+- Each changed AI-governance artifact (.claude/skills/sdd-index-sync/SKILL.md, .claude/sdd/templates/docs/INDEX.md) passes an isolated instruction-evaluator review.
+- WP-54's blocked sdd-index-sync substep can be re-run to completion, unblocking its closure.
+links:
+  blocks:
+  - WP-54
+created_by: Aleksei_Platkovskii

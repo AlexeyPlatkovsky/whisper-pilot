@@ -4,11 +4,19 @@ Live map of the docs tree, feature registry, and decision log. Lookup aid only �
 no routing, gates, or behavioral rules. Rebuilt by `sdd-index-sync` after any
 doc/feature change.
 
+The three tables below sit inside generated `begin`/`end` marker comments. The
+sync owns which rows exist — keyed by filename, feature ID, and ADR ID — and
+re-derives the key cell plus the feature ID-range cells. Every other cell is
+hand-written and carried across a rebuild byte-identically, and text outside the
+markers is never touched. Full contract:
+`.claude/skills/sdd-index-sync/SKILL.md`.
+
 **Tier:** Standard
 **Docs root:** `docs/`
 
 ## Documents
 
+<!-- sdd-index-sync:begin documents -->
 | Document | Owns | Read when |
 | --- | --- | --- |
 | `idea.md` | Problem, users, value, scope, non-goals, principles, success signals | You need project intent or scope boundaries |
@@ -18,13 +26,17 @@ doc/feature change.
 | `roadmap.md` | Milestones M1–M3, sequencing, non-goals over time | You need the release plan or priorities |
 | `glossary.md` | Domain vocabulary (meeting, library, MFU section, diarization, …) | You hit an unfamiliar term |
 | `development.md` | Developer guide: prerequisites, build/dev/test commands, project layout | You need to build or run WhisperPilot from source |
+| `designbook.md` | UI design contract: design tokens (source of truth `src/tokens.css`), themes, component patterns | You do UI work and need tokens or patterns |
 | `decisions/` | One ADR per significant decision (rationale) | You need why a choice was made |
+| `plans/` | Dated one-off analyses (e.g. testing-pyramid gap analysis); not authoritative for any owned fact | You want the working notes behind a past analysis |
+<!-- sdd-index-sync:end documents -->
 
 ## Feature Registry
 
 Listed in milestone order (feature IDs are stable, not sequential with
 milestones).
 
+<!-- sdd-index-sync:begin features -->
 | ID | Feature | Milestone | Requirements | Tasks | Scenarios | TaskPilot |
 | --- | --- | --- | --- | --- | --- | --- |
 | F001 | Transcription core | M1 (done) | R1–R6 | T1–T6 | S1–S5 | — (as-built) |
@@ -32,9 +44,11 @@ milestones).
 | F002 | Speaker diarization | M2 (next) | R1–R7 | T1–T7 | S1–S6 | epic WP-1 (WP-5…WP-10, WP-31) |
 | F005 | Settings | M2 beta / M3 release | R1–R10 | T1–T10 | S1–S10 | epic WP-33 (WP-34…WP-42); release unscheduled |
 | F003 | Structured meeting notes | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
+<!-- sdd-index-sync:end features -->
 
 ## Decision Log
 
+<!-- sdd-index-sync:begin decisions -->
 | ADR | Title | Status |
 | --- | --- | --- |
 | ADR-001 | Standalone app, separate from VoicePilot | accepted |
@@ -49,6 +63,7 @@ milestones).
 | ADR-010 | Two-pane shell; manual Transcribe/MFU triggers; colored bubbles from M2 | accepted |
 | ADR-011 | Settings: in-app model management, theming, i18n, English-default UI | accepted |
 | ADR-012 | Transcription language is always auto-detected, never chosen (supersedes ADR-007 on the language mechanism) | accepted |
+<!-- sdd-index-sync:end decisions -->
 
 ## Traceability Notes
 
