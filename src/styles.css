@@ -27,6 +27,7 @@
   --tone-diarizing: var(--status-progress);
   --tone-finished: var(--wp-success-text);
   --tone-error: var(--error);
+  --tone-no-model: var(--accent);
   --tone-unknown: var(--muted);
   color-scheme: light dark;
 }
@@ -347,6 +348,10 @@ body {
 }
 .wp-tone--error {
   --tone: var(--tone-error);
+  color: var(--tone);
+}
+.wp-tone--no-model {
+  --tone: var(--tone-no-model);
   color: var(--tone);
 }
 .wp-tone--unknown {
@@ -1069,7 +1074,7 @@ body {
 }
 
 .model-radio.is-selected {
-  border-color: var(--accent);
+  border-color: var(--wp-speaker-0);
 }
 
 .model-label {
@@ -1128,6 +1133,7 @@ body {
   width: 16px;
   height: 16px;
   margin: 0;
+  accent-color: var(--wp-speaker-0);
 }
 
 .model-badge {
