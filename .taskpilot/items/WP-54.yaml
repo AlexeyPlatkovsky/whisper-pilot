@@ -1,0 +1,32 @@
+schema_version: 1
+id: WP-54
+title: Persist the transcript before diarization runs
+priority: normal
+type: task
+status: done
+created_at: '2026-07-26T07:32:20Z'
+updated_at: '2026-07-26T10:01:29Z'
+parent_id: WP-2
+description: '`transcribe_meeting` calls `save_transcript` only after `run_transcription` returns, i.e. after the diarization pass has finished (src-tauri/src/lib.rs). Any diarization failure therefore discards the completed Whisper transcription for that same run. When the failure is a native SIGBUS inside sherpa-onnx (WP-53), the whole process dies and the user loses several minutes of transcription compute with nothing persisted at all.
+
+
+  Scope: reorder the transcribe flow so the Whisper result is persisted as soon as transcription completes, before diarization starts, and speaker ids are written onto the already-persisted transcript as a separate second update once diarization returns. A diarization failure - returned Err, panicking task, or a process-level crash once WP-53 lands - then costs only the speaker labels, never the transcript.
+
+
+  Known interaction to handle: `save_transcript` sets the meeting''s persisted status to `finished`, so saving earlier flips that status while diarization is still running. The front end already overrides the persisted status with its transient ''Diarizing'' activity (src/meetingStatus.ts), so the visible behavior must be verified, not assumed.
+
+
+  This is the C1 step of the agreed Option D remediation for the TitaNet SIGBUS crash found on 2026-07-26: C1 (this item) then WP-53 (subprocess isolation plus one-hop campplus fallback). C1 is independently useful, ships on its own, and does not depend on WP-53.
+
+
+  Out of scope: the subprocess isolation and the campplus fallback themselves (WP-53); diarization threshold/min-duration tuning (WP-50, staying at 0.9); recording which embedding model produced a meeting''s labels (explicitly deferred by the user); any new UI surface beyond the existing diarization_warning channel.'
+dod:
+- The transcript (segments, language, duration) is written to the store before the diarization pass starts, demonstrated by an automated test that observes the persisted state at diarization time rather than only after the whole command returns.
+- On a diarization failure (returned Err or panicking task) `transcribe_meeting` still succeeds, the persisted transcript survives with speaker-less segments, and the existing `diarization_warning` is still returned - automated test.
+- On a successful diarization the persisted transcript carries the speaker ids and `TranscribeMeetingResult`'s shape (meeting DTO plus optional `diarization_warning`) is unchanged from today - automated test.
+- A meeting whose transcript has already been persisted while diarization is still running displays the 'Diarizing' status, not 'Finished' - manual verification selected by the validate skill.
+- 'Local validation passes for the layers this task changes: cargo test, cargo clippy -D warnings, vitest, lint, and typecheck. AMENDED 2026-07-26 (user disposition): the front-end coverage threshold is excluded. This task changed no .ts/.tsx file, and the threshold was already failing at HEAD 1b2946d (94.73% statements, measured in a clean detached worktree) before it began, while the tree including this task measures 94.91% - better, still short. The real gap is owned by WP-56; it is not evidence about this task.'
+links:
+  relates_to:
+  - WP-53
+created_by: Aleksei_Platkovskii

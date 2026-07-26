@@ -1,0 +1,31 @@
+schema_version: 1
+id: WP-56
+title: Restore front-end coverage to the 95% statement threshold
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-26T10:00:44Z'
+updated_at: '2026-07-26T10:01:05Z'
+description: 'The vitest v8 coverage gate established by WP-46 is failing on branch feat/wp-52-dual-diarization-model-selection. Measured 2026-07-26 at commit 1b2946d in a clean detached worktree: statements 94.73% (414/437) against a 95% global threshold, so `npm run test:coverage` exits non-zero and the branch cannot pass its own CI quality gate (WP-45).
+
+
+  The shortfall is pre-existing and was not introduced by WP-54, which changed no .ts/.tsx file at all; the working tree including WP-54 measures 94.91%, i.e. slightly better than HEAD. WP-54''s Definition of Done was therefore narrowed to the layer it actually touched, with this item created to own the real gap.
+
+
+  Where the uncovered statements sit (HEAD measurement): src/App.tsx at 91.66% statements / 87.33% branches is the dominant contributor; src/AiModelsSection.tsx 96.15% statements with 87.17% functions; src/AppLanguageSection.tsx and src/AppearanceSection.tsx are at 100% statements but 75% branches (uncovered lines 12-15 and 20-38 respectively). Branches (88.54%) and functions (94.36%) are also below where WP-46 left them.
+
+
+  Note that some of the uncovered App.tsx surface belongs to the uncommitted WP-52-era front-end work in the tree at the time of measurement; whoever picks this up should re-measure first rather than trusting these exact numbers.
+
+
+  Out of scope: lowering the threshold instead of meeting it (that would need its own decision and would silently weaken WP-46/WP-45); any behavior change to the components under test.'
+dod:
+- '`npm run test:coverage` exits zero against the 95% global statement threshold, measured on a clean tree with no uncommitted work.'
+- Statements, lines, branches, and functions are each at or above the thresholds WP-46 established, so no dimension is left silently below where it started.
+- 'New tests assert real behavior rather than executing lines for the metric: each added test names the user-visible outcome or error path it covers.'
+- The threshold itself is unchanged - the gate is met, not relaxed.
+links:
+  relates_to:
+  - WP-54
+  - WP-46
+created_by: Aleksei_Platkovskii

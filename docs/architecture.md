@@ -93,8 +93,9 @@ configuration as plain data so it can be asserted in a unit test — notably
 immediately after detection when it is set, yielding an empty transcript.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
-+ merge** (M2, `diarize.rs`) which runs automatically before the meeting is
-marked finished. Progress and Stop span both phases; if diarization is
++ merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
+so the meeting is already marked finished while diarization is still running (see
+Speaker Diarization below). Progress and Stop span both phases; if diarization is
 unavailable or fails, the run still finishes with plain (speaker-less) segments.
 Re-running Transcribe on a meeting that already has a transcript replaces it (and
 any notes) after a confirmation.
@@ -200,6 +201,23 @@ this is no longer silent: `transcribe_meeting` returns a
 `{ meeting, diarization_warning }` wrapper (IPC contract below), and the
 frontend shows a blocking modal so the degradation is visible rather than only
 logged server-side.
+
+**The transcript is persisted before diarization starts** (WP-54):
+`transcribe_meeting` decodes and transcribes, saves the transcript, and only
+then awaits the diarization pass, which writes speaker ids back as a second
+save. The ordering is load-bearing rather than incidental — diarization runs
+native sherpa-onnx code that can abort the whole process (see the clustering
+crash risk above and WP-53), and a process abort is invisible to
+`apply_diarization_outcome`'s fail-open contract, so anything unpersisted at
+that moment is lost outright. Saving first bounds the cost of *any* diarization
+failure to the speaker labels: the whisper pass survives. The diarization pass
+is therefore built as a deferred future, so nothing in it — including the
+`transcription_phase` event — can run before the transcript is safe. Two
+consequences follow: the meeting's stored status reads `finished` while
+diarization is still in flight (the front end shows its transient "Diarizing"
+activity instead, so this is not user-visible mid-run), and a failure of the
+second, speaker-id save degrades to the same non-fatal warning as any other
+diarization failure rather than failing an already-persisted transcription.
 
 The transcript renders segments with real per-speaker coloring (WP-9):
 `src/speakerColors.ts` maps a `speaker_id` to one of 10 categorical colors
