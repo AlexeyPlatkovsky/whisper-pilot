@@ -145,7 +145,10 @@ fn extract_segmentation_model(archive_path: &Path) -> Result<PathBuf> {
 }
 
 /// One speaker's contiguous span of speech, in milliseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// Serializable because WP-53 runs the engine in a child process and the turns
+/// come back as a JSON payload; this is not part of the IPC contract.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct SpeakerTurn {
     pub start_ms: u32,
     pub end_ms: u32,
@@ -159,9 +162,13 @@ trait SpeakerDiarizer {
     fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>>;
 }
 
-/// Tuned empirically against real recordings, including a discovered native
-/// crash risk at high threshold values — see docs/architecture.md's Speaker
-/// Diarization section and WP-50's TaskPilot comments for the investigation.
+/// Tuned empirically against real recordings — see docs/architecture.md's
+/// Speaker Diarization section and WP-50's TaskPilot comments.
+///
+/// Quality-optimal, *not* crash-safe: it sits above the native crash boundary
+/// for the recommended embedding model, and `diarize_process`'s isolation is
+/// what makes it affordable (ADR-013). Do not remove that isolation on the
+/// grounds that this value works.
 const AUTO_DETECT_THRESHOLD: f32 = 0.9;
 const AUTO_DETECT_MIN_DURATION_ON: f32 = 1.0;
 const AUTO_DETECT_MIN_DURATION_OFF: f32 = 1.0;
@@ -208,16 +215,25 @@ fn diarize_with(
     Ok(turns)
 }
 
+/// Called once per embedding chunk while the engine works. Two properties of
+/// sherpa-onnx's own callback carry over and matter: clustering runs *after*
+/// the last call with no callbacks at all, and the return value is ignored, so
+/// this cannot cancel anything — it can only report liveness (WP-53).
+pub type ProgressCallback = Box<dyn Fn(i32, i32) -> i32 + Send + 'static>;
+
 /// Adapts the real `sherpa_rs::diarize::Diarize` engine to `SpeakerDiarizer`,
 /// converting its seconds-based `f32` output to our milliseconds-based `u32`
 /// `SpeakerTurn`.
-struct SherpaDiarizer(sherpa_rs::diarize::Diarize);
+struct SherpaDiarizer {
+    engine: sherpa_rs::diarize::Diarize,
+    progress: Option<ProgressCallback>,
+}
 
 impl SpeakerDiarizer for SherpaDiarizer {
     fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
         let segments = self
-            .0
-            .compute(samples, None)
+            .engine
+            .compute(samples, self.progress.take())
             .map_err(|e| AppError::Diarization(e.to_string()))?;
         Ok(segments
             .into_iter()
@@ -233,18 +249,37 @@ impl SpeakerDiarizer for SherpaDiarizer {
 /// Run speaker diarization over `samples` (16kHz mono f32), using the models
 /// WP-5's `resolve_diarization_models` prepares. `speaker_count`: `Some(n)`
 /// with `n > 0` requests exactly `n` speakers; anything else auto-detects.
+///
+/// This runs the engine **in this process**, which the native clustering code
+/// can abort outright (WP-53); `transcribe_meeting` goes through
+/// `diarize_process::diarize_isolated` instead. Retained as the no-progress
+/// form used by `tests/diarize_integration.rs` — the isolating child calls
+/// [`diarize_samples_with_progress`].
 pub fn diarize_samples(
     app_support_dir: &Path,
     samples: Vec<f32>,
     speaker_count: Option<i32>,
     active_variant: &str,
 ) -> Result<Vec<SpeakerTurn>> {
+    diarize_samples_with_progress(app_support_dir, samples, speaker_count, active_variant, None)
+}
+
+/// [`diarize_samples`] with a liveness callback. The isolating child passes one
+/// so its supervising parent can tell a working engine from a hung one; see
+/// `diarize_process`.
+pub fn diarize_samples_with_progress(
+    app_support_dir: &Path,
+    samples: Vec<f32>,
+    speaker_count: Option<i32>,
+    active_variant: &str,
+    progress: Option<ProgressCallback>,
+) -> Result<Vec<SpeakerTurn>> {
     let models = resolve_diarization_models(app_support_dir, active_variant)?;
     let config = build_config(speaker_count);
     let engine =
         sherpa_rs::diarize::Diarize::new(models.segmentation_model, models.embedding_model, config)
             .map_err(|e| AppError::Diarization(format!("failed to initialize diarizer: {e}")))?;
-    let mut adapter = SherpaDiarizer(engine);
+    let mut adapter = SherpaDiarizer { engine, progress };
     diarize_with(&mut adapter, samples)
 }
 

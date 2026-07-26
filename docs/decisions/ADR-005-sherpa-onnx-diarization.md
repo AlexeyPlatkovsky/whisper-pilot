@@ -1,6 +1,6 @@
 # ADR-005: sherpa-onnx for speaker diarization
 
-- **Status:** accepted
+- **Status:** partially superseded (2026-07-26) — engine hosting only by ADR-013; the sherpa-onnx choice stands
 - **Date:** 2026-07-21
 - **Deciders:** Alexey Platkovsky
 
@@ -19,7 +19,9 @@ speaker turns that are then merged onto Whisper segments.
 ## Consequences
 
 - Fully local diarization consistent with the local-first principle; native Rust
-  integration, no process boundary.
+  integration. *(Superseded in part by ADR-013: the engine call now runs in a
+  child process, because its vendored C++ clustering can abort the host process
+  outright. The binding is still native Rust with no runtime dependency.)*
 - Requires downloading and verifying the segmentation and embedding models
   (mirrors the Whisper artifact-verification pattern).
 - Quality is good but below pyannote's best; acceptable for generic,

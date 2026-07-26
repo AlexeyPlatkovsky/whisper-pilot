@@ -136,10 +136,9 @@ fast-clustering crashes the whole process (SIGBUS) at threshold 0.94 and
 above on that recording, while 0.93 and below complete cleanly. Very high
 thresholds are therefore a real, input-dependent *crash* risk in the vendored
 C++ clustering code, not merely a diminishing-returns tradeoff. `threshold
-0.9` / `min_duration_on/off 1.0s` were chosen instead, for a real safety
-margin below that crash boundary, and confirmed crash-free plus meaningfully
-cluster-reducing against 3 real recordings of different lengths (861.5s:
-22→7 clusters, 92.4s: 3→1, 240s: 14→6). On the known-2-speaker recording the
+0.9` / `min_duration_on/off 1.0s` were chosen instead, and confirmed
+meaningfully cluster-reducing against 3 real recordings of different lengths
+(861.5s: 22→7 clusters, 92.4s: 3→1, 240s: 14→6). On the known-2-speaker recording the
 2 dominant clusters stayed clearly separated (not merged); the other two
 recordings' true speaker counts are unknown, so they serve as crash-safety
 and over-clustering-reduction evidence only, not merge-quality evidence. This
@@ -153,6 +152,63 @@ regardless of how the count was chosen), so leaving them tuned
 unconditionally would have silently affected WP-49's not-yet-built
 explicit-count override; that path keeps the crate's original defaults until
 WP-49 tunes it separately.
+
+**That crash boundary is a property of the model, not of the threshold**
+(WP-53, correcting the paragraph above): 0.94 was measured with CAM++ only,
+and a later triage reproduced a SIGBUS at the *shipped* 0.9 using
+TitaNet-large — the catalog's recommended embedding — on the 92.4s recording
+(crashes at 0.8/0.85/0.9, completes at 0.7/0.5, while CAM++ completes at 0.9
+on the same input). 0.9 therefore sits **above** the boundary for the
+recommended model rather than safely below it. Tuning cannot resolve this:
+crash safety on that recording wants < 0.8 while separation quality on the
+known-2-speaker 861.5s recording wants 0.9 (at 0.7 its second real speaker
+splits in two and cluster count rises 7 → 12). 0.9 is kept as the
+quality-optimal value and the crash is *contained* instead — see
+`ADR-013` and Diarization Process Isolation below.
+
+### Diarization Process Isolation (WP-53, `diarize_process.rs`)
+
+A fatal signal is not a catchable Rust `Err` or panic, so the native abort
+above was invisible to `apply_diarization_outcome`'s fail-open contract and
+killed the app outright. The engine call therefore runs in a **child
+process**: `transcribe_meeting` calls `diarize_process::diarize_isolated`,
+which re-executes this same binary with a hidden argv flag
+(`--wp-diarize-worker`) rather than shipping a separate sidecar, so there
+stays one binary and one code signature. The child runs
+`diarize::diarize_samples_with_progress`; the no-progress `diarize_samples`
+wrapper is unchanged and retained for `tests/diarize_integration.rs`. Nothing
+about the IPC contract, the UI, or the stored schema changes.
+
+The parent classifies four distinct child outcomes — clean exit with a
+readable payload, exit by signal (the native crash), non-zero exit (a real
+engine error such as a missing asset), and an inactivity kill. They stay
+separate rather than collapsing into one error because WP-57's planned
+embedding-model fallback retries a crash but must not retry a timeout.
+`ChildOutcome::into_result` maps every failure onto the existing
+`AppError::Diarization` fail-open path, so a contained crash degrades to
+speaker-less segments plus a `diarization_warning`, exactly as an ordinary
+engine error already did.
+
+Three supervision details are load-bearing. Samples (~55MB for the longest
+test recording) cross as a raw `f32` file under `<app-support>/cache/diarize`
+rather than a pipe, which would need concurrent write-and-read handling to
+avoid filling the pipe buffer. The child is killed on an **inactivity**
+budget rather than a total one, driven by sherpa-onnx's per-chunk progress
+callback — that callback's return value is ignored upstream, so killing the
+child is the only cancellation mechanism that exists. And the child watches
+its stdin for EOF: when the app quits mid-run the pipe closes and the worker
+stops, instead of being reparented and left holding the models; transport
+files older than six hours are swept on the next run to cover a parent that
+was killed outright.
+
+The child's dylib search path is set explicitly (`DYLD_FALLBACK_LIBRARY_PATH`
+covering the executable's own directory and the bundle's `Contents/Frameworks`)
+rather than inherited by accident from the launcher — the binary carries no
+`LC_RPATH` yet links `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api`,
+so without this the child aborts at dyld before running. How those dylibs
+reach a packaged `.app` at all remains open: `tauri.conf.json` has no
+`bundle.macOS.frameworks` entry, and a hardened-runtime build strips `DYLD_*`
+unless entitled.
 
 `diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
@@ -206,8 +262,9 @@ logged server-side.
 `transcribe_meeting` decodes and transcribes, saves the transcript, and only
 then awaits the diarization pass, which writes speaker ids back as a second
 save. The ordering is load-bearing rather than incidental — diarization runs
-native sherpa-onnx code that can abort the whole process (see the clustering
-crash risk above and WP-53), and a process abort is invisible to
+native sherpa-onnx code that can abort the process it runs in (see the
+clustering crash risk and Diarization Process Isolation above), and such an
+abort is invisible to
 `apply_diarization_outcome`'s fail-open contract, so anything unpersisted at
 that moment is lost outright. Saving first bounds the cost of *any* diarization
 failure to the speaker labels: the whisper pass survives. The diarization pass

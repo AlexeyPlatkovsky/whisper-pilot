@@ -3,6 +3,7 @@
 
 pub mod audio;
 pub mod diarize;
+pub mod diarize_process;
 pub mod error;
 pub mod meetings;
 pub mod models;
@@ -271,8 +272,15 @@ async fn transcribe_meeting(
                 },
             );
 
+            // Runs in a child process: the native engine can abort outright,
+            // and a fatal signal is not something `spawn_blocking` or any Rust
+            // error path can catch. Isolating it turns that abort into an
+            // ordinary error the fail-open contract below can handle. See
+            // `diarize_process` and docs/architecture.md's Speaker Diarization
+            // section.
             tokio::task::spawn_blocking(move || {
-                diarize::diarize_samples(&app_support_dir, samples, None, &variant)
+                diarize_process::diarize_isolated(&app_support_dir, samples, None, &variant)
+                    .into_result()
             })
             .await
         }) as PendingDiarization
@@ -394,6 +402,13 @@ fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // This same binary is re-executed as a diarization worker (WP-53). That
+    // launch must be recognized before anything else starts: it builds no
+    // window and touches no Tauri state.
+    if let Some(code) = diarize_process::worker_exit_code() {
+        std::process::exit(code);
+    }
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     tauri::Builder::default()

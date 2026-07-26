@@ -4885,6 +4885,7 @@ dependencies = [
  "env_logger",
  "futures-util",
  "hound",
+ "libc",
  "log",
  "reqwest 0.12.28",
  "rfd",

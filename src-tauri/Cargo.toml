@@ -32,6 +32,10 @@ futures-util = "0.3"
 sherpa-rs = { version = "0.6.8", features = ["download-binaries"] }
 tar = "0.4"
 bzip2 = "0.4"
+# Only for `_exit` in the diarization worker's orphan watch (ADR-013): it must
+# terminate without running the native runtime's static destructors underneath
+# a thread still inside inference, and without SIGABRT's crash reports.
+libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # brotli 8.x (via tauri-codegen) requires alloc-no-stdlib ^2, but transitive deps

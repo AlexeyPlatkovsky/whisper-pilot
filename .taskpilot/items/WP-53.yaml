@@ -3,9 +3,9 @@ id: WP-53
 title: Isolate native diarization engine from crashing the whole app
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-25T14:27:12Z'
-updated_at: '2026-07-26T11:28:59Z'
+updated_at: '2026-07-26T13:23:35Z'
 parent_id: WP-2
 description: 'sherpa-onnx''s native clustering code, vendored under sherpa-rs-sys and reached via sherpa_rs::diarize::Diarize::compute, can abort the whole process with SIGBUS on some real recordings. A SIGBUS is a fatal OS signal, not a catchable Rust panic or Result::Err, so it is invisible to apply_diarization_outcome''s fail-open contract (a diarization failure must never be treated as a transcription failure) and instead kills the app mid-run.
 

@@ -55,7 +55,7 @@ milestones).
 | ADR-002 | Offline full-file (batch) transcription, not live streaming | accepted |
 | ADR-003 | Whisper large-v3-turbo on Metal for transcription | accepted |
 | ADR-004 | ffmpeg as the single audio/video ingestion path | accepted |
-| ADR-005 | sherpa-onnx for speaker diarization | accepted |
+| ADR-005 | sherpa-onnx for speaker diarization | partially superseded by ADR-013 (engine hosting only; sherpa-onnx choice stands) |
 | ADR-006 | llama.cpp + Qwen2.5 for local summarization | accepted |
 | ADR-007 | Russian-first, English added later (auto-detect option) | partially superseded by ADR-012 (language mechanism only; Russian-first focus stands) |
 | ADR-008 | Persisted meeting library (SQLite), reference-only audio, auto-save | accepted |
@@ -63,6 +63,7 @@ milestones).
 | ADR-010 | Two-pane shell; manual Transcribe/MFU triggers; colored bubbles from M2 | accepted |
 | ADR-011 | Settings: in-app model management, theming, i18n, English-default UI | accepted |
 | ADR-012 | Transcription language is always auto-detected, never chosen (supersedes ADR-007 on the language mechanism) | accepted |
+| ADR-013 | Isolate the diarization engine in a child process | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability Notes
