@@ -302,6 +302,35 @@ describe("AiModelsSection", () => {
       expect(screen.getByRole("radio", { name: "CAM++" })).toBeChecked();
     });
 
+    // Turning diarization off again is the user's escape hatch when a model
+    // misbehaves on their audio, so it has to persist like any other choice.
+    it("selecting None turns diarization off and persists it", async () => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([CAMPPLUS_DOWNLOADED]);
+      vi.mocked(ipc.getSettings).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_diarization: "campplus",
+      });
+      vi.mocked(ipc.setSetting).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_diarization: "none",
+      });
+      const user = userEvent.setup();
+
+      render(<AiModelsSection />);
+      await waitFor(() =>
+        expect(screen.getByRole("radio", { name: "CAM++" })).toBeChecked(),
+      );
+      await user.click(screen.getByRole("radio", { name: "None" }));
+
+      expect(ipc.setSetting).toHaveBeenCalledWith(
+        "active_model.diarization",
+        "none",
+      );
+      expect(screen.getByRole("radio", { name: "None" })).toBeChecked();
+    });
+
     it("reverts the selection and shows an error when persisting fails", async () => {
       vi.mocked(ipc.listTaskModels).mockResolvedValue([CAMPPLUS_DOWNLOADED]);
       vi.mocked(ipc.setSetting).mockRejectedValue(

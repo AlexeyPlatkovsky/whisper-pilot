@@ -72,6 +72,7 @@ vi.mock("./ipc", () => ({
   downloadModel: vi.fn(),
   deleteModel: vi.fn(),
   onModelDownloadProgress: vi.fn(async () => () => {}),
+  onTranscriptionPhase: vi.fn(async () => () => {}),
   getSettings: vi.fn(async () => ({
     theme: "system",
     ui_language: "en",
@@ -1394,6 +1395,102 @@ describe("App — meeting status consistency", () => {
     );
   });
 
+  it("switches the header and row to Diarizing once the phase event fires, then back on completion", async () => {
+    arrangeLibrary();
+    const finish = deferTranscription();
+    let phaseHandler: (p: {
+      id: number;
+      phase: "diarizing";
+    }) => void = () => {};
+    vi.mocked(ipc.onTranscriptionPhase).mockImplementation(async (handler) => {
+      phaseHandler = handler;
+      return () => {};
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await startTranscribing(user);
+    expect(screen.getByRole("status")).toHaveTextContent("Transcribing");
+    expect(
+      within(row(READY_ACTIVE.title)).getByRole("img", {
+        name: "Transcribing",
+      }),
+    ).toBeInTheDocument();
+
+    phaseHandler({ id: READY_ACTIVE.id, phase: "diarizing" });
+
+    const header = screen.getByRole("status");
+    await waitFor(() => expect(header).toHaveTextContent("Diarizing"));
+    expect(within(header).getByText("Diarizing")).toHaveClass(
+      "wp-tone--diarizing",
+    );
+    expect(
+      within(row(READY_ACTIVE.title)).getByRole("img", {
+        name: "Diarizing",
+      }),
+    ).toBeInTheDocument();
+
+    finish();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Finished"),
+    );
+  });
+
+  it("ignores a phase event that arrives after the run it belongs to has already finished", async () => {
+    // Guards against a delayed `transcription_phase` event outliving its own
+    // run: if it arrived after the meeting's run cleared (`transcribingId`
+    // back to null), it must not resurrect a "Diarizing" tone on a meeting
+    // that has already finished.
+    arrangeLibrary();
+    const finish = deferTranscription();
+    let phaseHandler: (p: {
+      id: number;
+      phase: "diarizing";
+    }) => void = () => {};
+    vi.mocked(ipc.onTranscriptionPhase).mockImplementation(async (handler) => {
+      phaseHandler = handler;
+      return () => {};
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await startTranscribing(user);
+    finish();
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("Finished"),
+    );
+
+    // The stale event, from the run that just ended, arrives late.
+    phaseHandler({ id: READY_ACTIVE.id, phase: "diarizing" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Finished");
+    expect(
+      within(row(READY_ACTIVE.title)).queryByRole("img", {
+        name: "Diarizing",
+      }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("ignores a phase event for a meeting that is not the one running", async () => {
+    arrangeLibrary();
+    deferTranscription();
+    let phaseHandler: (p: {
+      id: number;
+      phase: "diarizing";
+    }) => void = () => {};
+    vi.mocked(ipc.onTranscriptionPhase).mockImplementation(async (handler) => {
+      phaseHandler = handler;
+      return () => {};
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await startTranscribing(user);
+    phaseHandler({ id: READY_OTHER.id, phase: "diarizing" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Transcribing");
+  });
+
   it("reports the error tone and restores the row actions when transcription fails", async () => {
     arrangeLibrary();
     vi.mocked(ipc.transcribeMeeting).mockRejectedValue(
@@ -1621,5 +1718,284 @@ describe("App — controls unrelated to the running meeting", () => {
     expect(
       screen.getByRole("button", { name: "Delete meeting" }),
     ).not.toBeDisabled();
+  });
+});
+
+describe("App — transcript panel while its own meeting is transcribing", () => {
+  // Re-running transcription on a meeting that already has a transcript: the
+  // stale segments come back onto screen if the user leaves and reopens this
+  // meeting before the run finishes (`openMeeting` still returns the old,
+  // not-yet-overwritten record). They must not be left editable underneath
+  // the in-flight run.
+  const RUNNER: Meeting = {
+    id: 1,
+    title: "Runner meeting",
+    created_at_ms: 2_000,
+    language: "ru",
+    status: "finished",
+    duration_ms: 1_000,
+    source_path: "/path/to/meeting.mp3",
+    source_name: "meeting.mp3",
+    segments: [HELLO_SEGMENT],
+  };
+
+  const OTHER: Meeting = {
+    id: 2,
+    title: "Other meeting",
+    created_at_ms: 1_000,
+    language: "ru",
+    status: "no_files",
+    segments: [],
+  };
+
+  it("disables the existing segments and speaker names once the meeting is reopened mid-run", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue(
+      [RUNNER, OTHER].map((m) => ({
+        id: m.id,
+        title: m.title,
+        created_at_ms: m.created_at_ms,
+        duration_ms: m.duration_ms,
+        status: m.status,
+      })),
+    );
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === OTHER.id ? { ...OTHER } : { ...RUNNER },
+    );
+    vi.mocked(ipc.transcribeMeeting).mockReturnValue(
+      new Promise<TranscribeMeetingResult>(() => {}),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByDisplayValue("Hello");
+    const transcribe = screen.getByRole("button", { name: "Transcribe" });
+    await waitFor(() => expect(transcribe).not.toBeDisabled());
+    await user.click(transcribe);
+
+    // Leave, then come back while the run on RUNNER is still going.
+    await user.click(
+      screen.getByRole("button", { name: `Open ${OTHER.title}` }),
+    );
+    await screen.findByRole("heading", { name: OTHER.title });
+    await user.click(
+      screen.getByRole("button", { name: `Open ${RUNNER.title}` }),
+    );
+    await screen.findByRole("heading", { name: RUNNER.title });
+
+    // The stale transcript is back on screen, but locked.
+    expect(await screen.findByDisplayValue("Hello")).toBeDisabled();
+  });
+});
+
+// Every IPC call the workspace makes can fail. None of these failures may lose
+// the workspace: the app reports what went wrong and stays usable.
+describe("App — IPC failures surface as errors without breaking the workspace", () => {
+  const SAVED_MEETING: Meeting = {
+    id: 7,
+    title: "Quarterly planning",
+    created_at_ms: 2_000,
+    language: "ru",
+    status: "finished",
+    segments: [{ start_ms: 0, end_ms: 1_000, text: "Saved transcript" }],
+  };
+
+  function arrangeSavedMeeting() {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: SAVED_MEETING.id,
+        title: SAVED_MEETING.title,
+        created_at_ms: SAVED_MEETING.created_at_ms,
+        status: SAVED_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(SAVED_MEETING);
+  }
+
+  it("reports a library that cannot be read instead of rendering an empty workspace", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockRejectedValue(
+      new Error("library unreadable"),
+    );
+    render(<App />);
+
+    expect(await screen.findByText(/library unreadable/)).toBeInTheDocument();
+  });
+
+  it("reports a failure to attach the chosen file", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.setMeetingSource).mockRejectedValue(
+      new Error("cannot attach that file"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Choose file" }));
+
+    expect(
+      await screen.findByText(/cannot attach that file/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a failure to remove the attached file and keeps the file attached", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    await screen.findByRole("button", { name: "Remove file" });
+
+    vi.mocked(ipc.setMeetingSource).mockRejectedValue(
+      new Error("cannot detach"),
+    );
+    await user.click(screen.getByRole("button", { name: "Remove file" }));
+
+    expect(await screen.findByText(/cannot detach/)).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Remove file" }),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a rename that the store rejects", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.renameMeeting).mockRejectedValue(
+      new Error("rename rejected by store"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
+    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    const input = within(dialog).getByRole("textbox", {
+      name: "Meeting label",
+    });
+    await user.clear(input);
+    await user.type(input, "Renamed");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByText(/rename rejected by store/),
+    ).toBeInTheDocument();
+  });
+
+  it("reports a delete that the store rejects and keeps the meeting", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.deleteMeeting).mockRejectedValue(
+      new Error("delete rejected by store"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(
+      await screen.findByText(/delete rejected by store/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: SAVED_MEETING.title }),
+    ).toBeInTheDocument();
+  });
+
+  // The workspace is always backed by a real meeting, so deleting the last one
+  // must seed a replacement rather than leave the user with nothing to open.
+  it("seeds a fresh meeting when the last remaining one is deleted", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    vi.mocked(ipc.createMeeting).mockResolvedValue({
+      ...EMPTY_MEETING,
+      id: 900,
+      title: "Fresh start",
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "Fresh start" }),
+    ).toBeInTheDocument();
+    expect(ipc.createMeeting).toHaveBeenCalled();
+  });
+
+  it("closes the delete confirmation on Escape without deleting", async () => {
+    arrangeSavedMeeting();
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    const dialog = screen.getByRole("alertdialog");
+    // Escape is handled on the panel, and this dialog does not move focus into
+    // itself when it opens, so it only reaches the handler once focus is inside
+    // — the keyboard path a user actually takes after tabbing in.
+    within(dialog).getByRole("button", { name: "Cancel" }).focus();
+    await user.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument(),
+    );
+    expect(ipc.deleteMeeting).not.toHaveBeenCalled();
+  });
+
+  it("closes the speaker-identification warning on Escape", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribeResult(
+        transcribedMeeting([HELLO_SEGMENT]),
+        "Speaker identification is unavailable: engine exploded",
+      ),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+
+    await chooseAndTranscribe(user);
+    const warning = await screen.findByRole("alertdialog", {
+      name: "Speaker identification issue",
+    });
+    expect(warning).toHaveTextContent(/engine exploded/);
+    await user.keyboard("{Escape}");
+
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("alertdialog", {
+          name: "Speaker identification issue",
+        }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  // Durations cross into hours for real meetings; the sidebar switches format
+  // rather than showing a minute count that keeps growing.
+  it("formats a sidebar duration of an hour or more as hours and minutes", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: SAVED_MEETING.id,
+        title: SAVED_MEETING.title,
+        created_at_ms: SAVED_MEETING.created_at_ms,
+        duration_ms: 3_723_000,
+        status: "finished",
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(SAVED_MEETING);
+    render(<App />);
+
+    expect(await screen.findByText("1h 02m")).toBeInTheDocument();
   });
 });
