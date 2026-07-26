@@ -5,45 +5,58 @@ priority: normal
 type: task
 status: backlog
 created_at: '2026-07-25T14:27:12Z'
-updated_at: '2026-07-25T14:27:16Z'
+updated_at: '2026-07-26T11:13:42Z'
 parent_id: WP-2
-description: >-
-  Discovered during WP-50 (tuning diarization auto-detect threshold/
-  min-duration): sherpa-onnx's native fast-clustering C++ code (vendored
-  under sherpa-rs-sys, called via sherpa_rs::diarize::Diarize::compute)
-  crashes the whole process with SIGBUS at very high clustering threshold
-  values on some real recordings — bisected against one real 92-second
-  recording: threshold >= 0.94 crashed, 0.93 and below did not. WP-50 chose
-  threshold=0.9 for a safety margin below this observed boundary, but that
-  boundary was only established against one recording; a different,
-  as-yet-untested real recording could in principle hit an unknown lower
-  crash threshold even at today's tuned value.
+description: 'sherpa-onnx''s native clustering code, vendored under sherpa-rs-sys and reached via sherpa_rs::diarize::Diarize::compute, can abort the whole process with SIGBUS on some real recordings. A SIGBUS is a fatal OS signal, not a catchable Rust panic or Result::Err, so it is invisible to apply_diarization_outcome''s fail-open contract (a diarization failure must never be treated as a transcription failure) and instead kills the app mid-run.
 
-  This matters because a SIGBUS is a fatal OS signal, not a catchable Rust
-  panic or Result::Err — it is invisible to `apply_diarization_outcome`'s
-  existing fail-open contract (diarize.rs: "a diarization failure must never
-  be treated as a transcription failure... log a warning and leave segments
-  speaker-less"), which only handles a returned Err or a panicking
-  tokio::task::JoinError. A native crash instead kills the entire app
-  process mid-transcription, losing whatever meeting/session state was in
-  memory, not just degrading diarization for that run.
 
-  Scope: investigate isolating the native diarize_samples call (or just the
-  sherpa_rs::diarize::Diarize::compute call within it) so a crash there
-  degrades to the existing fail-open warning behavior instead of taking down
-  the whole app. Candidate approaches to evaluate: running the call in a
-  separate OS process (subprocess boundary catches a SIGBUS in the child,
-  parent reports failure) vs. a signal handler around the call (fragile,
-  signal handlers can't safely unwind arbitrary C++ state) vs. upstreaming a
-  fix to sherpa-onnx itself (slower, out of this project's control). No
-  implementation approach is pre-selected; this needs its own investigation
-  and design decision.
+  SUPERSEDED FINDING (corrected 2026-07-26): this item previously recorded the crash boundary as ''threshold >= 0.94 crashed, 0.93 and below did not'', measured with the campplus embedding model, and treated a lower boundary as hypothetical. It is not hypothetical. Triage on 2026-07-26 reproduced a crash at the SHIPPED threshold of 0.9 using the titanet-large embedding model, which is the catalog''s recommended diarization model. The boundary is embedding-model dependent, not a property of the threshold alone: on the same 92.4s recording titanet-large crashes at 0.8, 0.85 and 0.9 but completes at 0.7 and 0.5, while campplus completes at 0.9. The shipped value therefore sits ABOVE the crash boundary for the recommended model, not safely below it.
 
-  Out of scope: re-tuning the threshold/min_duration values themselves
-  (WP-50's own concern, already done); the auto-detect clustering algorithm
-  itself (WP-49/50's territory); anything to do with the transcription
-  (Whisper) pipeline, which is unaffected by this crash mode.
+
+  Crash is deterministic and reproducible: source /Users/Aleksei_Platkovskii/Documents/OBS/2026-07-21 12-07-19.mp4 (92.4s, meeting 5 ''Some New Meeting'') + titanet-large + threshold 0.9 + min_duration_on/off 1.0 -> SIGBUS every run. Faulting stack: OfflineSpeakerDiarizationPyannoteImpl::Process -> SherpaOnnxOfflineSpeakerDiarizationProcessWithCallback -> sherpa_rs::diarize::Diarize::compute -> whisperpilot_lib::diarize::diarize_samples, on a tokio-rt-worker thread; EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE, byte-read translation fault off a wild negative index in the vendored C++. This gives the regression test a real crash to run against rather than a hypothetical one.
+
+
+  Threshold tuning cannot resolve this. The two constraints point in opposite directions for titanet-large: crash safety on the 92.4s recording needs threshold < 0.8, while separation quality on the known-2-speaker 861.5s recording needs 0.9 (at 0.9 the two dominant clusters hold 786s of 861s, 91% of speech, with five residuals under 8s; at 0.7 the second real speaker splits in two, 294.3s becoming 180.4 + 111.5, and cluster count rises 7 -> 12). No single value satisfies both, which is why containment - not tuning - is the fix.
+
+
+  APPROVED DESIGN (user, 2026-07-26 - Option D):
+
+  1. Threshold stays 0.9 for both embedding models. It is the quality-optimal value, NOT a safe one; containment is what makes it affordable. Do not read 0.9 as safe and remove the isolation.
+
+  2. Run the diarization call in a child process. Re-exec the same binary with a hidden argv mode rather than a Tauri sidecar, so there is one binary and one code signature. The parent maps exit-by-signal to AppError::Diarization and reuses the existing fail-open path; no IPC contract, UI, or schema change.
+
+  3. On a child crash, retry ONCE with the other embedding model, then fail open. Never retry the same model - the crash is deterministic per input. campplus is not proven safe either (its own boundary on that recording was 0.94), so the fallback attempt must itself be isolated and the chain must terminate.
+
+  4. If the second model is not downloaded, show the error - no automated re-run.
+
+  5. Announce a fallback through the existing diarization_warning channel, with two distinct strings: degraded-but-succeeded (''used CAM++ because TitaNet-large failed on this recording'') versus failed-entirely.
+
+  6. No provenance column recording which model produced a meeting''s labels - explicitly deferred by the user as too complicated for the UI. Consequence accepted: diarization_warning is transient, so after a fallback run and a reload nothing records that the labels came from a model other than the one in Settings.
+
+  7. Supervise with a heartbeat and an INACTIVITY timeout, not a total wall-clock timeout, so it is independent of recording length. Diarize::compute already accepts an optional progress callback (Box<dyn Fn(i32,i32) -> i32 + Send>) that this code passes as None today; the vendored C++ fires it once per embedding chunk. Two verified caveats: clustering runs after that loop with NO callbacks, so the inactivity window must tolerate a silent tail (milliseconds for ~91 embeddings), and sherpa-onnx IGNORES the callback''s return value, so it cannot cancel - killing the child is the only cancellation mechanism, which this design gains for free.
+
+  8. Distinguish four child outcomes: clean exit with valid payload = success; exit by signal = crash, trigger the one-hop fallback; non-zero exit = real engine error (missing model, bad asset), no fallback; timeout kill = fail open without falling back.
+
+
+  Known implementation hazard: the binary has NO LC_RPATH yet links @rpath/libonnxruntime.1.17.1.dylib and @rpath/libsherpa-onnx-c-api.dylib. It resolves in dev only because tauri-cli/cargo sets DYLD_FALLBACK_LIBRARY_PATH at launch. A re-exec''d child inherits the parent environment so it works, but by accident - make it explicit. Separately, tauri.conf.json has no bundle.macOS.frameworks entry, so how those dylibs reach a packaged .app is an already-open question this work inherits rather than creates.
+
+
+  No macOS permission is needed: the app is not sandboxed (no entitlements file, no App Sandbox in tauri.conf.json), and the parent already decodes audio to Vec<f32> before diarization, so the child needs only samples plus the models in Application Support and never touches a TCC-protected path. Transport is up to ~55MB for the 861.5s recording; a temp file in the app''s own cache dir avoids the pipe-buffer deadlock a stdin pipe would require handling.
+
+
+  Depends on WP-54 (done): the transcript is now persisted before diarization starts, so a crash already costs only the speaker labels rather than the whole Whisper pass.
+
+
+  Out of scope: re-tuning threshold/min_duration (WP-50, staying at 0.9); the clustering algorithm itself (WP-49/WP-50); upstreaming a fix to sherpa-onnx (worth filing separately, but it does not help this release).'
 dod:
-  - "The root cause of the SIGBUS is understood well enough to state which specific sherpa-onnx clustering configuration(s)/input characteristics trigger it, not just an empirically bisected threshold range on one recording."
-  - "A chosen isolation approach (subprocess, signal handling, or another candidate) is implemented so that a native diarization crash degrades to the existing fail-open warning behavior (transcription still succeeds with plain segments) instead of terminating the whole app process."
-  - "A regression test reproduces a crash-triggering configuration/input and demonstrates the app survives it (existing behavior: crash; new behavior: graceful fail-open warning)."
+- "SATISFIED BY TRIAGE 2026-07-26, restated for the record: the trigger is stated as a configuration, not a threshold range - clustering threshold interacts with the embedding model and the input, and the shipped 0.9 is above the crash boundary for the recommended titanet-large model on at least one real recording (crashes at 0.8/0.85/0.9, completes at 0.7/0.5) while campplus completes at 0.9 on the same input."
+- "The diarization call runs in a child process, and a native crash there degrades to the existing fail-open warning - transcription still succeeds with speaker-less segments - instead of terminating the app."
+- "A regression test runs the known crash-triggering input (2026-07-21 12-07-19.mp4 + titanet-large + threshold 0.9) through the real code path and asserts the app survives it: previously SIGBUS, now a warning. Ignored-by-default if it needs downloaded models or user media, following the existing diarize_integration.rs / wp50_tuning_regression.rs convention."
+- "On a child crash the run retries exactly once with the other embedding model and then fails open; a test proves it does not retry the same model and the chain terminates."
+- "When the second embedding model is not downloaded, the run fails open with the error and performs no automated retry - covered by a test."
+- "A successful fallback is announced through diarization_warning with a message distinct from the failed-entirely message; both strings are asserted."
+- "A child that stops making progress is killed on an inactivity timeout (not a total wall-clock timeout) and fails open, leaving no orphaned process holding the models."
+- "The four child outcomes are distinguished and tested: clean exit with payload, exit by signal, non-zero exit, and timeout kill."
+- "The dylib resolution path for the child process is explicit rather than inherited by accident from the launcher's DYLD_FALLBACK_LIBRARY_PATH."
+- "Threshold stays 0.9 and diarize.rs::build_config is unchanged, with the reason recorded where a future reader will see it."
+- "Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate."
