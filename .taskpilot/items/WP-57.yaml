@@ -3,9 +3,9 @@ id: WP-57
 title: Fall back to the other embedding model when diarization crashes
 priority: normal
 type: task
-status: in_progress
+status: done
 created_at: '2026-07-26T11:28:12Z'
-updated_at: '2026-07-26T15:05:54Z'
+updated_at: '2026-07-26T15:30:56Z'
 parent_id: WP-2
 description: 'Split out of WP-53 (user decision, 2026-07-26) so the process isolation can land and ship on its own. This item owns the recovery behavior that sits ON TOP of that isolation; it is not implementable before WP-53 exists, because it needs a survivable child-process crash to react to.
 
