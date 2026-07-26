@@ -33,6 +33,19 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     });
   });
 
+  it("reports diarizing regardless of the persisted status", () => {
+    // Diarization runs after transcription completes, on the same in-flight
+    // meeting, so it gets its own tone/label distinct from "transcribing".
+    expect(resolveMeetingStatus("ready", "diarizing")).toEqual({
+      tone: "diarizing",
+      label: "Diarizing",
+    });
+    expect(resolveMeetingStatus("finished", "diarizing")).toEqual({
+      tone: "diarizing",
+      label: "Diarizing",
+    });
+  });
+
   it("reports the error tone when the last action on the meeting failed", () => {
     expect(resolveMeetingStatus("ready", "error")).toEqual({
       tone: "error",

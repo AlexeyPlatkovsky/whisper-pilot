@@ -24,6 +24,7 @@
   --tone-no-files: var(--wp-attention);
   --tone-ready: var(--muted);
   --tone-transcribing: var(--status-progress);
+  --tone-diarizing: var(--status-progress);
   --tone-finished: var(--wp-success-text);
   --tone-error: var(--error);
   --tone-unknown: var(--muted);
@@ -334,6 +335,10 @@ body {
 }
 .wp-tone--transcribing {
   --tone: var(--tone-transcribing);
+  color: var(--tone);
+}
+.wp-tone--diarizing {
+  --tone: var(--tone-diarizing);
   color: var(--tone);
 }
 .wp-tone--finished {
@@ -785,8 +790,13 @@ body {
   font-family: inherit;
 }
 
-.wp-speaker-name-button:hover {
+.wp-speaker-name-button:hover:not(:disabled) {
   border-color: var(--border);
+}
+
+.wp-speaker-name-button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .wp-speaker-name-button:focus-visible {
@@ -830,8 +840,13 @@ body {
   field-sizing: content;
 }
 
-.wp-speaker-text:hover {
+.wp-speaker-text:hover:not(:disabled) {
   border-color: var(--border);
+}
+
+.wp-speaker-text:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .wp-speaker-text:focus {

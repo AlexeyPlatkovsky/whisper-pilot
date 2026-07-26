@@ -5,16 +5,22 @@
  * now resolve through this single function.
  *
  * The store only ever persists `no_files`, `ready`, and `finished` (see
- * `src-tauri/src/meetings.rs`). "Transcribing" and "error" are transient,
- * front-end-only states that outlive no reload, so they arrive as an explicit
- * activity override rather than as a stored value.
+ * `src-tauri/src/meetings.rs`). "Transcribing", "diarizing", and "error" are
+ * transient, front-end-only states that outlive no reload, so they arrive as
+ * an explicit activity override rather than as a stored value.
  */
 
 export type MeetingStatusTone =
-  "no-files" | "ready" | "transcribing" | "finished" | "error" | "unknown";
+  | "no-files"
+  | "ready"
+  | "transcribing"
+  | "diarizing"
+  | "finished"
+  | "error"
+  | "unknown";
 
 /** A transient, front-end-only state that overrides the persisted status. */
-export type MeetingActivity = "none" | "transcribing" | "error";
+export type MeetingActivity = "none" | "transcribing" | "diarizing" | "error";
 
 export interface MeetingStatusView {
   /** Drives the `wp-tone--*` colour class on every surface. */
@@ -34,6 +40,7 @@ const PERSISTED = new Map<string, MeetingStatusView>([
 
 const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
   ["transcribing", { tone: "transcribing", label: "Transcribing" }],
+  ["diarizing", { tone: "diarizing", label: "Diarizing" }],
   ["error", { tone: "error", label: "Error" }],
 ]);
 

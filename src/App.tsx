@@ -9,6 +9,7 @@ import {
   openFileDialog,
   setMeetingSource,
   transcribeMeeting,
+  onTranscriptionPhase,
   saveTextDialog,
   renameMeeting,
   type Meeting as PersistedMeeting,
@@ -92,9 +93,33 @@ export function App() {
   // and outside `activeMeeting` so that opening a different meeting cannot
   // discard a run that is still going.
   const [transcribingId, setTranscribingId] = useState<number | null>(null);
+  // Which pass of the in-flight run is showing. Diarization runs after
+  // transcription completes, on the same run, so this is reset per run rather
+  // than tracked alongside `transcribingId`.
+  const [transcribingPhase, setTranscribingPhase] = useState<
+    "transcribing" | "diarizing"
+  >("transcribing");
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
+  // Mirrors `transcribingId` for the phase-change listener below, which is
+  // registered once and would otherwise close over a stale id.
+  const transcribingIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    transcribingIdRef.current = transcribingId;
+  }, [transcribingId]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onTranscriptionPhase((event) => {
+      if (event.id === transcribingIdRef.current) {
+        setTranscribingPhase(event.phase);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
 
   // Tick a once-per-second elapsed clock while a transcription is running.
   useEffect(() => {
@@ -219,6 +244,7 @@ export function App() {
     const id = activeMeeting.id;
     try {
       setTranscribingId(id);
+      setTranscribingPhase("transcribing");
       setStatus({ kind: "idle" });
       setSegments([]);
       setSpeakerLabels({});
@@ -365,12 +391,12 @@ export function App() {
   // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
     if (activeIsTranscribing)
-      return resolveMeetingStatus(undefined, "transcribing");
+      return resolveMeetingStatus(undefined, transcribingPhase);
     if (status.kind === "error")
       return resolveMeetingStatus(activeMeeting?.status, "error");
     if (!activeMeeting) return null;
     return resolveMeetingStatus(activeMeeting.status);
-  }, [activeIsTranscribing, status, activeMeeting]);
+  }, [activeIsTranscribing, transcribingPhase, status, activeMeeting]);
 
   if (isSettingsOpen) {
     return (
@@ -606,7 +632,9 @@ export function App() {
                     }
                     status={resolveMeetingStatus(
                       meeting.status,
-                      transcribingId === meeting.id ? "transcribing" : "none",
+                      transcribingId === meeting.id
+                        ? transcribingPhase
+                        : "none",
                     )}
                     selected={activeMeeting?.id === meeting.id}
                     onSelect={() => void handleOpenMeeting(meeting.id)}
@@ -652,7 +680,11 @@ export function App() {
 
               {activeIsTranscribing && (
                 <div className="wp-empty">
-                  <p>Transcribing…</p>
+                  <p>
+                    {transcribingPhase === "diarizing"
+                      ? "Diarizing…"
+                      : "Transcribing…"}
+                  </p>
                 </div>
               )}
 
@@ -679,6 +711,7 @@ export function App() {
                               speakerId={seg.speaker_id!}
                               label={resolveSpeakerLabel(seg.speaker_id!)}
                               onRename={renameSpeaker}
+                              disabled={activeIsTranscribing}
                             />
                           )}
                           <span className="wp-speaker-time">
@@ -690,6 +723,7 @@ export function App() {
                           value={seg.text}
                           rows={1}
                           onChange={(e) => editSegment(i, e.target.value)}
+                          disabled={activeIsTranscribing}
                         />
                       </div>
                     </div>
@@ -855,7 +889,7 @@ function MeetingRow({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const transcribing = status.tone === "transcribing";
+  const running = status.tone === "transcribing" || status.tone === "diarizing";
   return (
     <li
       className={`wp-meeting-row${selected ? " is-selected" : ""}`}
@@ -890,12 +924,13 @@ function MeetingRow({
         </div>
       </button>
       <span className="wp-meeting-actions">
-        {transcribing ? (
-          // While this meeting is transcribing, the spinner takes the action
-          // group's place — renaming or deleting a running meeting is not
-          // something we want to offer mid-run. It is hidden from assistive
-          // tech because the dot beside it already announces "Transcribing";
-          // exposing both would name the same status twice per row.
+        {running ? (
+          // While this meeting is transcribing or diarizing, the spinner
+          // takes the action group's place — renaming or deleting a running
+          // meeting is not something we want to offer mid-run. It is hidden
+          // from assistive tech because the dot beside it already announces
+          // the current phase; exposing both would name the same status
+          // twice per row.
           <span className="wp-meeting-busy" aria-hidden="true">
             <Icon
               name="refresh-cw"

@@ -132,3 +132,17 @@ export function onModelDownloadProgress(
     handler(event.payload),
   );
 }
+
+export interface TranscriptionPhase {
+  id: number;
+  phase: "diarizing";
+}
+
+/** Fired once a run moves from transcribing into diarizing its samples. */
+export function onTranscriptionPhase(
+  handler: (phase: TranscriptionPhase) => void,
+): Promise<UnlistenFn> {
+  return listen<TranscriptionPhase>("transcription_phase", (event) =>
+    handler(event.payload),
+  );
+}
