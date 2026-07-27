@@ -35,8 +35,14 @@ that — local AI-generated meeting notes.
 ## Requirements
 
 - macOS on Apple Silicon (macOS 13 or later)
-- [`ffmpeg`](https://ffmpeg.org/) installed and available on your `PATH`
-  (`brew install ffmpeg`)
+- [`ffmpeg`](https://ffmpeg.org/) installed and available on your `PATH`: 
+```
+brew install ffmpeg
+```
+- add app to verified list:
+```
+xattr -dr com.apple.quarantine /Applications/WhisperPilot.app
+```
 
 ## Running WhisperPilot
 
