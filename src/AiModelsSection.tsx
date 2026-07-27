@@ -6,6 +6,7 @@ import {
   listTaskModels,
   onModelDownloadProgress,
   setSetting,
+  type ModelDownloadStage,
   type TaskModel,
 } from "./ipc";
 import { Icon } from "./Icon";
@@ -14,8 +15,13 @@ import { formatClock } from "./format";
 const NONE_DIARIZATION_MODEL = "none";
 
 type RowState =
-  | { kind: "downloading"; fraction: number }
+  | { kind: "downloading"; fraction: number; stage: ModelDownloadStage }
   | { kind: "error"; message: string };
+
+const STAGE_LABELS: Record<ModelDownloadStage, string> = {
+  downloading: "Downloading...",
+  verifying: "Verifying...",
+};
 
 const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   transcription: {
@@ -80,10 +86,10 @@ export function AiModelsSection() {
   }, []);
 
   useEffect(() => {
-    const unlisten = onModelDownloadProgress(({ id, fraction }) => {
+    const unlisten = onModelDownloadProgress(({ id, fraction, stage }) => {
       setRowState((prev) => ({
         ...prev,
-        [id]: { kind: "downloading", fraction },
+        [id]: { kind: "downloading", fraction, stage },
       }));
     });
     return () => {
@@ -110,7 +116,7 @@ export function AiModelsSection() {
     setDownloadModalId(id);
     setRowState((prev) => ({
       ...prev,
-      [id]: { kind: "downloading", fraction: 0 },
+      [id]: { kind: "downloading", fraction: 0, stage: "downloading" },
     }));
     try {
       await downloadModel(id);
@@ -196,10 +202,8 @@ export function AiModelsSection() {
             )}
             <ul
               className="model-list"
-              role={task === "diarization" ? "radiogroup" : undefined}
-              aria-label={
-                task === "diarization" ? "Diarization model" : undefined
-              }
+              role="radiogroup"
+              aria-label={heading ? heading.title : task}
             >
               {task === "diarization" && (
                 <li className="model-row">
@@ -235,9 +239,17 @@ export function AiModelsSection() {
                         }
                       />
                     ) : (
-                      <span
-                        className={`model-radio${m.downloaded ? " is-selected" : ""}`}
-                        aria-hidden="true"
+                      // A task with no selectable variants still shows the
+                      // model in use as a checked option, so "selected" looks
+                      // the same in every section. Nothing to switch to, hence
+                      // no handler; disabled until it is on disk.
+                      <input
+                        type="radio"
+                        name={`${task}-model`}
+                        aria-label={m.label}
+                        checked={m.downloaded}
+                        disabled={!m.downloaded}
+                        readOnly
                       />
                     )}
                     <span className="model-label">
@@ -250,6 +262,15 @@ export function AiModelsSection() {
                     {state?.kind === "error" && (
                       <span className="model-row-error" role="alert">
                         {state.message}
+                      </span>
+                    )}
+                    {/* Closing the modal dismisses only the modal, so the row
+                        has to say what its spinner is still waiting for. */}
+                    {isDownloading && (
+                      <span className="model-row-status">
+                        {state.stage === "downloading"
+                          ? `${Math.round(state.fraction * 100)}%`
+                          : STAGE_LABELS.verifying}
                       </span>
                     )}
                     <span className="model-size">
@@ -334,7 +355,7 @@ export function AiModelsSection() {
             <div className="modal-bottom">
               <span className="modal-status">
                 <Icon name="refresh-cw" size={14} className="wp-spin" />
-                Downloading...
+                {STAGE_LABELS[downloadState.stage]}
               </span>
               <span className="modal-timer">{formatClock(elapsed)}</span>
             </div>

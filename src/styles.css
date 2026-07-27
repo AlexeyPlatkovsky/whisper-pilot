@@ -1064,19 +1064,6 @@ body {
   border-bottom: none;
 }
 
-.model-radio {
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  border-radius: 50%;
-  border: 1.5px solid var(--border);
-  background: transparent;
-}
-
-.model-radio.is-selected {
-  border-color: var(--wp-speaker-0);
-}
-
 .model-label {
   color: var(--text);
   font-size: var(--wp-font-size-md);
@@ -1090,6 +1077,12 @@ body {
 .model-size {
   color: var(--muted);
   font-size: var(--wp-font-size-sm);
+}
+
+.model-row-status {
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+  font-variant-numeric: tabular-nums;
 }
 
 .model-icon-slot {

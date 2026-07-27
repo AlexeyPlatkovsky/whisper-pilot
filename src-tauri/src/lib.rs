@@ -372,16 +372,17 @@ fn list_task_models(app: tauri::AppHandle) -> Result<Vec<TaskModel>> {
 }
 
 /// Download the catalog entry `id`, verifying SHA-256 before marking it
-/// ready. Emits `model_download_progress { id, fraction }` as bytes arrive.
+/// ready. Emits `model_download_progress { id, fraction, stage }` as bytes
+/// arrive and again when the fetched bytes move on to hash verification.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
     let dir = app_data_dir(&app)?;
     let progress_app = app.clone();
     let progress_id = id.clone();
-    models::download_model(&dir, &id, move |fraction| {
+    models::download_model(&dir, &id, move |fraction, stage| {
         let _ = progress_app.emit(
             "model_download_progress",
-            serde_json::json!({ "id": progress_id, "fraction": fraction }),
+            serde_json::json!({ "id": progress_id, "fraction": fraction, "stage": stage }),
         );
     })
     .await

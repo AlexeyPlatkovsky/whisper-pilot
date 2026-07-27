@@ -14,6 +14,16 @@ use std::sync::Arc;
 /// Reports bytes downloaded so far for one asset.
 type ProgressCb = Box<dyn Fn(u64) + Send + Sync>;
 
+/// Which part of a download the reported fraction belongs to. Hashing a
+/// multi-hundred-megabyte model runs long after its last byte arrives, so the
+/// two phases are reported separately rather than as one "downloading" span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum DownloadStage {
+    Downloading,
+    Verifying,
+}
+
 /// One downloadable file belonging to a catalog entry. `variant_id` is `None`
 /// for an asset shared by every selectable choice in its entry (e.g. the
 /// diarization segmentation model) and `Some(id)` for one user-selectable
@@ -342,7 +352,7 @@ async fn download_entry<F, Fut>(
     fetch: F,
     app_support_dir: &Path,
     assets: &[&ModelAsset],
-    on_progress: impl Fn(f64) + Send + Sync + 'static,
+    on_progress: impl Fn(f64, DownloadStage) + Send + Sync + 'static,
 ) -> Result<()>
 where
     F: Fn(&'static str, PathBuf, ProgressCb) -> Fut,
@@ -360,6 +370,7 @@ where
             done_before.fetch_add(asset.size_bytes, Ordering::Relaxed);
             on_progress(
                 (done_before.load(Ordering::Relaxed) as f64 / total as f64).min(1.0),
+                DownloadStage::Downloading,
             );
             continue;
         }
@@ -373,13 +384,19 @@ where
         let progress_cb: ProgressCb = Box::new(move |downloaded| {
             let base = done_before_cl.load(Ordering::Relaxed);
             let fraction = (base + downloaded.min(asset_size)) as f64 / total as f64;
-            on_progress_cl(fraction.min(1.0));
+            on_progress_cl(fraction.min(1.0), DownloadStage::Downloading);
         });
 
         if let Err(e) = fetch(asset.url, temp_path.clone(), progress_cb).await {
             let _ = tokio::fs::remove_file(&temp_path).await;
             return Err(e);
         }
+
+        let fetched = done_before.load(Ordering::Relaxed) + asset.size_bytes;
+        on_progress(
+            (fetched as f64 / total as f64).min(1.0),
+            DownloadStage::Verifying,
+        );
 
         let hash = hash_file(&temp_path).await?;
         if hash != asset.sha256 {
@@ -419,13 +436,34 @@ async fn http_fetch(url: &'static str, dest: PathBuf, on_progress: ProgressCb) -
     Ok(())
 }
 
+/// Forward a progress update only when it tells the caller something new: a
+/// stage change, or at least half a percent of transfer since the last one. A
+/// near-gigabyte download arrives in tens of thousands of network chunks, and
+/// relaying every one of them floods whatever sink is on the other side.
+fn throttled(
+    sink: impl Fn(f64, DownloadStage) + Send + Sync + 'static,
+) -> impl Fn(f64, DownloadStage) + Send + Sync + 'static {
+    const MIN_PERMILLE_STEP: u64 = 5;
+    let last_permille = AtomicU64::new(u64::MAX);
+    move |fraction, stage| {
+        let permille = (fraction * 1000.0).round() as u64;
+        if stage == DownloadStage::Downloading
+            && permille.abs_diff(last_permille.load(Ordering::Relaxed)) < MIN_PERMILLE_STEP
+        {
+            return;
+        }
+        last_permille.store(permille, Ordering::Relaxed);
+        sink(fraction, stage);
+    }
+}
+
 /// Download the target `id` resolves to for real, over HTTPS. For a variant
 /// id, this fetches whichever of the shared asset or the variant's own asset
 /// is not already present.
 pub async fn download_model(
     app_support_dir: &Path,
     id: &str,
-    on_progress: impl Fn(f64) + Send + Sync + 'static,
+    on_progress: impl Fn(f64, DownloadStage) + Send + Sync + 'static,
 ) -> Result<()> {
     let target =
         resolve_catalog_target(id).ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
@@ -433,7 +471,7 @@ pub async fn download_model(
         http_fetch,
         app_support_dir,
         &target.download_assets(),
-        on_progress,
+        throttled(on_progress),
     )
     .await
 }
@@ -594,7 +632,7 @@ mod tests {
             fetch_writing(content.clone()),
             dir.path(),
             &assets_of(&entry),
-            |_| {},
+            |_, _| {},
         )
         .await
         .unwrap();
@@ -622,7 +660,7 @@ mod tests {
             ),
         };
 
-        let err = download_entry(fetch_writing(content), dir.path(), &assets_of(&entry), |_| {})
+        let err = download_entry(fetch_writing(content), dir.path(), &assets_of(&entry), |_, _| {})
             .await
             .unwrap_err();
 
@@ -647,7 +685,7 @@ mod tests {
             assets: Box::leak(vec![test_asset("irrelevant", 10)].into_boxed_slice()),
         };
 
-        let err = download_entry(fetch_failing(), dir.path(), &assets_of(&entry), |_| {})
+        let err = download_entry(fetch_failing(), dir.path(), &assets_of(&entry), |_, _| {})
             .await
             .unwrap_err();
 
@@ -687,14 +725,9 @@ mod tests {
             }) as FetchFuture
         };
 
-        download_entry(
-            fetch,
-            dir.path(),
-            &[&already_present, &missing],
-            |_| {},
-        )
-        .await
-        .unwrap();
+        download_entry(fetch, dir.path(), &[&already_present, &missing], |_, _| {})
+            .await
+            .unwrap();
 
         assert_eq!(
             std::fs::read(asset_path(dir.path(), &already_present)).unwrap(),
@@ -708,7 +741,7 @@ mod tests {
     async fn download_model_rejects_unknown_id() {
         let dir = tempfile::tempdir().unwrap();
 
-        let err = download_model(dir.path(), "not-a-real-model", |_| {})
+        let err = download_model(dir.path(), "not-a-real-model", |_, _| {})
             .await
             .unwrap_err();
 
@@ -766,8 +799,10 @@ mod tests {
             Arc::new(std::sync::Mutex::new(Vec::new()));
         let fractions_cl = Arc::clone(&fractions);
 
-        download_entry(fetch, dir.path(), &assets_of(&entry), move |f| {
-            fractions_cl.lock().unwrap().push(f);
+        download_entry(fetch, dir.path(), &assets_of(&entry), move |f, stage| {
+            if stage == DownloadStage::Downloading {
+                fractions_cl.lock().unwrap().push(f);
+            }
         })
         .await
         .unwrap();
@@ -776,6 +811,94 @@ mod tests {
         // 10/40, then asset b (30 bytes) completing reports (10+30)/40 = 1.0.
         let observed = fractions.lock().unwrap().clone();
         assert_eq!(observed, vec![0.25, 1.0]);
+    }
+
+    // Hashing a multi-hundred-megabyte model takes long enough after the last
+    // byte lands that the UI has to be able to tell the two apart.
+    #[tokio::test]
+    async fn download_entry_reports_a_verifying_stage_once_an_assets_bytes_are_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = b"a real whisper model, honest".to_vec();
+        let hash = sha256_hex(&content);
+        let entry = ModelCatalogEntry {
+            id: "test",
+            task: "test",
+            label: "Test",
+            assets: Box::leak(
+                vec![test_asset(
+                    Box::leak(hash.into_boxed_str()),
+                    content.len() as u64,
+                )]
+                .into_boxed_slice(),
+            ),
+        };
+
+        let observed: Arc<std::sync::Mutex<Vec<(f64, DownloadStage)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_cl = Arc::clone(&observed);
+
+        download_entry(
+            fetch_writing(content),
+            dir.path(),
+            &assets_of(&entry),
+            move |fraction, stage| {
+                observed_cl.lock().unwrap().push((fraction, stage));
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            observed.lock().unwrap().clone(),
+            vec![
+                (1.0, DownloadStage::Downloading),
+                (1.0, DownloadStage::Verifying),
+            ]
+        );
+    }
+
+    #[test]
+    fn throttled_coalesces_intermediate_download_updates() {
+        let observed: Arc<std::sync::Mutex<Vec<(f64, DownloadStage)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_cl = Arc::clone(&observed);
+        let sink = throttled(move |fraction, stage| {
+            observed_cl.lock().unwrap().push((fraction, stage));
+        });
+
+        // 0.001 apart: only the first crosses the emit threshold from nothing.
+        for step in 0..=6 {
+            sink(f64::from(step) / 1000.0, DownloadStage::Downloading);
+        }
+
+        assert_eq!(
+            observed.lock().unwrap().clone(),
+            vec![
+                (0.0, DownloadStage::Downloading),
+                (0.005, DownloadStage::Downloading),
+            ]
+        );
+    }
+
+    #[test]
+    fn throttled_always_forwards_the_verifying_stage() {
+        let observed: Arc<std::sync::Mutex<Vec<(f64, DownloadStage)>>> =
+            Arc::new(std::sync::Mutex::new(Vec::new()));
+        let observed_cl = Arc::clone(&observed);
+        let sink = throttled(move |fraction, stage| {
+            observed_cl.lock().unwrap().push((fraction, stage));
+        });
+
+        sink(0.999, DownloadStage::Downloading);
+        sink(1.0, DownloadStage::Verifying);
+
+        assert_eq!(
+            observed.lock().unwrap().clone(),
+            vec![
+                (0.999, DownloadStage::Downloading),
+                (1.0, DownloadStage::Verifying),
+            ]
+        );
     }
 
     #[tokio::test]
@@ -865,7 +988,7 @@ mod tests {
     async fn download_model_rejects_unknown_diarization_variant_id() {
         let dir = tempfile::tempdir().unwrap();
 
-        let err = download_model(dir.path(), "diarization-not-a-real-variant", |_| {})
+        let err = download_model(dir.path(), "diarization-not-a-real-variant", |_, _| {})
             .await
             .unwrap_err();
 

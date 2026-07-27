@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AiModelsSection } from "./AiModelsSection";
 import * as ipc from "./ipc";
@@ -44,6 +44,16 @@ const TITANET_NOT_DOWNLOADED = {
   size_bytes: 108_363_937,
   recommended: true,
 };
+
+/** Hand back the progress callback the component registered on mount. */
+function captureProgressHandler(): (p: ipc.ModelDownloadProgress) => void {
+  let handler: (p: ipc.ModelDownloadProgress) => void = () => {};
+  vi.mocked(ipc.onModelDownloadProgress).mockImplementation(async (h) => {
+    handler = h;
+    return () => {};
+  });
+  return (p) => handler(p);
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -158,16 +168,7 @@ describe("AiModelsSection", () => {
     vi.mocked(ipc.listTaskModels)
       .mockResolvedValueOnce([TRANSCRIPTION_NOT_DOWNLOADED])
       .mockResolvedValueOnce([TRANSCRIPTION_DOWNLOADED]);
-    let progressHandler: (p: {
-      id: string;
-      fraction: number;
-    }) => void = () => {};
-    vi.mocked(ipc.onModelDownloadProgress).mockImplementation(
-      async (handler) => {
-        progressHandler = handler;
-        return () => {};
-      },
-    );
+    const progressHandler = captureProgressHandler();
     let resolveDownload: () => void = () => {};
     vi.mocked(ipc.downloadModel).mockReturnValue(
       new Promise<void>((resolve) => {
@@ -183,13 +184,74 @@ describe("AiModelsSection", () => {
       }),
     );
 
-    progressHandler({ id: "transcription", fraction: 0.5 });
+    progressHandler({
+      id: "transcription",
+      fraction: 0.5,
+      stage: "downloading",
+    });
     await waitFor(() =>
       expect(screen.getByRole("progressbar")).toHaveAttribute("value", "0.5"),
     );
 
     resolveDownload();
     expect(await screen.findByText("Ready")).toBeInTheDocument();
+  });
+
+  // The bytes landing is not the end of the job: the backend still hashes the
+  // whole file before the model counts as ready. Showing "Downloading" at a
+  // full bar for that stretch reads as a hung download.
+  it("shows Verifying instead of Downloading once the transfer moves to hash verification", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
+    const progressHandler = captureProgressHandler();
+    vi.mocked(ipc.downloadModel).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+
+    render(<AiModelsSection />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
+    );
+    progressHandler({ id: "transcription", fraction: 1, stage: "verifying" });
+
+    const dialog = await screen.findByRole("dialog");
+    expect(await within(dialog).findByText("Verifying...")).toBeInTheDocument();
+    expect(
+      within(dialog).queryByText("Downloading..."),
+    ).not.toBeInTheDocument();
+  });
+
+  // Closing the modal only dismisses the modal — the download keeps running,
+  // so the row's spinner has to say what it is still waiting for.
+  it("reports download progress and verification in the model row after the modal is closed", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_NOT_DOWNLOADED,
+    ]);
+    const progressHandler = captureProgressHandler();
+    vi.mocked(ipc.downloadModel).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+
+    render(<AiModelsSection />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
+    );
+    progressHandler({
+      id: "transcription",
+      fraction: 0.42,
+      stage: "downloading",
+    });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(await screen.findByText("42%")).toBeInTheDocument();
+
+    progressHandler({ id: "transcription", fraction: 1, stage: "verifying" });
+
+    expect(await screen.findByText("Verifying...")).toBeInTheDocument();
   });
 
   it("shows an error message when the download fails", async () => {
@@ -244,6 +306,38 @@ describe("AiModelsSection", () => {
     await user.click(screen.getByRole("button", { name: "Close" }));
 
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  // Both sections have to use the same native control, or "selected" renders
+  // as two visibly different things in one Settings screen.
+  describe("transcription model selection", () => {
+    it("marks the downloaded transcription model with a checked radio", async () => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([
+        TRANSCRIPTION_DOWNLOADED,
+      ]);
+
+      render(<AiModelsSection />);
+
+      expect(
+        await screen.findByRole("radio", {
+          name: "Whisper large-v3-turbo (Q8)",
+        }),
+      ).toBeChecked();
+    });
+
+    it("leaves the transcription radio unchecked and disabled until it is downloaded", async () => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([
+        TRANSCRIPTION_NOT_DOWNLOADED,
+      ]);
+
+      render(<AiModelsSection />);
+
+      const radio = await screen.findByRole("radio", {
+        name: "Whisper large-v3-turbo (Q8)",
+      });
+      expect(radio).not.toBeChecked();
+      expect(radio).toBeDisabled();
+    });
   });
 
   describe("diarization model selection", () => {
