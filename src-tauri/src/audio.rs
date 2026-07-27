@@ -7,7 +7,7 @@
 
 use crate::error::{AppError, Result};
 use std::io::Cursor;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// Whisper's required input rate.
@@ -39,10 +39,39 @@ fn wav_header(pcm_len: u32) -> [u8; 44] {
     h
 }
 
+/// Resolve the ffmpeg binary, searching PATH first, then common Homebrew
+/// locations.  GUI apps on macOS inherit a minimal PATH that doesn't include
+/// Homebrew's prefix, so a bare `Command::new("ffmpeg")` fails despite ffmpeg
+/// being installed.
+fn resolve_ffmpeg() -> PathBuf {
+    let name = "ffmpeg";
+
+    // Walk PATH manually (no dependency on the `which` crate).
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            let candidate = dir.join(name);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    // Homebrew prefixes (Apple Silicon → Intel order).
+    for candidate in ["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"] {
+        let p = PathBuf::from(candidate);
+        if p.is_file() {
+            return p;
+        }
+    }
+
+    // Fall back to bare name so Command::new produces a clear NotFound error.
+    PathBuf::from(name)
+}
+
 /// Run ffmpeg to produce 16 kHz mono raw PCM in memory from `input`.
 /// Returns raw s16le bytes — caller prepends a WAV header for hound.
 pub fn normalize_to_memory(input: &Path) -> Result<Vec<u8>> {
-    let output = Command::new("ffmpeg")
+    let output = Command::new(resolve_ffmpeg())
         .args(["-i"])
         .arg(input)
         .args([
