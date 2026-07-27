@@ -1,0 +1,42 @@
+schema_version: 1
+id: WP-61
+title: 'Local engine quality: own clustering, WeSpeaker embeddings, more Whisper sizes'
+priority: normal
+type: epic
+status: backlog
+created_at: '2026-07-27T17:03:59Z'
+updated_at: '2026-07-27T17:03:59Z'
+created_by: Aleksei_Platkovskii
+description: |-
+  Raise diarization accuracy and stability, and give the transcription task more
+  than one model, within the existing engine stack.
+
+  SHARED MEASUREMENT BASIS: the reference recording set and the quality metric
+  are fixed once by the first diarization child and reused unchanged by the
+  others. Diarization changes in this epic are accepted on measured before/after
+  numbers against that set, not on inspection.
+
+  MILESTONE — OPEN. The diarization work is M2 (F002). The catalog work touches
+  what roadmap.md assigns to M3 release scope ("Active model choice among 3-4
+  models per task"). The epic does not decide this; the catalog child carries it
+  as its own DoR item.
+
+  OUT OF SCOPE: replacing the pyannote segmentation-3.0 model; removing the
+  ADR-013 child-process isolation (a separate decision with its own evidence);
+  word-level timestamps and splitting segments at speaker boundaries; the
+  speaker-count override (WP-49); user-authored catalog entries (roadmap non-goal
+  — the model list stays fixed and app-defined).
+dod:
+- Every child is `done` against its own DoD.
+- 'Diarization quality is measurably better than the pre-epic baseline on the
+  shared reference set, measured the same way before and after, with the numbers
+  recorded on the children.'
+- 'ADR-005 and ADR-013 are updated (or superseded by a new ADR) to record what
+  replaced the vendored clustering and what that means for the isolation
+  requirement.'
+- A roll-up completion comment links the child evidence.
+dor:
+- 'The milestone question above is answered: whether the catalog work lands in M2
+  or waits for M3 release scope.'
+- The shared reference recording set and quality metric are agreed before any
+  diarization child starts.

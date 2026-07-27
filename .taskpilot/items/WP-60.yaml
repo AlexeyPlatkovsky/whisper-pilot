@@ -3,9 +3,9 @@ id: WP-60
 title: Bundle sherpa-onnx/onnxruntime dylibs into the .app and add LC_RPATH
 priority: normal
 type: task
-status: in_progress
+status: done
 created_at: '2026-07-27T09:01:10Z'
-updated_at: '2026-07-27T09:02:31Z'
+updated_at: '2026-07-27T17:12:40Z'
 description: "A DMG-installed build aborts at launch. dyld termination (crash report\n2026-07-27 11:53:50, /Applications/WhisperPilot.app): \"Library not loaded:\n@rpath/libonnxruntime.1.17.1.dylib ... Reason: no LC_RPATH's found\". macOS\npresents this as the generic \"check with the developer ... works with this\nversion of macOS\" dialog, which is misleading - it is a packaging defect, not\nan OS-compatibility one.\n\nTwo independent causes, both already predicted in docs/architecture.md\n(Diarization, \"How those dylibs reach a packaged .app at all remains open\")\nand in WP-53's implementation-hazard note:\n\n1. tauri.conf.json has no bundle.macOS.frameworks entry, so\n   libsherpa-onnx-c-api.dylib and libonnxruntime.1.17.1.dylib - which\n   sherpa-rs-sys (download-binaries) drops into src-tauri/target/<profile>/ -\n   never reach the bundle. The installed .app has no Contents/Frameworks at all.\n2. The executable links @rpath/libonnxruntime.1.17.1.dylib and\n   @rpath/libsherpa-onnx-c-api.dylib but carries zero LC_RPATH entries, in both\n   debug and release. Dev works only because cargo/tauri-cli puts the target dir\n   on dyld's fallback search path.\n\nFix verified by hand on a throwaway copy before this item was opened: copying\nboth dylibs into Contents/Frameworks and adding @executable_path/../Frameworks\nas an rpath makes the packaged app launch and stay running.\n\nNote for the implementer: diarize_process.rs already sets\nDYLD_FALLBACK_LIBRARY_PATH for the re-exec'd child covering the executable's\nown directory and Contents/Frameworks (ADR-013). That path must keep working;\na real LC_RPATH makes it a belt-and-braces fallback rather than the only\nmechanism.\n\nOut of scope: Developer ID signing and notarization of the bundled dylibs (an\nad-hoc codesign of the fixed bundle reports them as unsigned subcomponents),\nand hardened-runtime entitlements. Track separately if distribution beyond\nlocal builds is wanted."
 dod:
 - The bundled .app contains Contents/Frameworks with libsherpa-onnx-c-api.dylib and libonnxruntime.1.17.1.dylib.

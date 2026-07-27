@@ -1,0 +1,120 @@
+schema_version: 1
+id: WP-64
+title: Add Whisper medium and small (multilingual only) to the transcription catalog
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-27T17:04:05Z'
+updated_at: '2026-07-27T17:06:43Z'
+parent_id: WP-61
+created_by: Aleksei_Platkovskii
+description: |-
+  Give the transcription task more than one model. Today the `transcription`
+  catalog entry is a single 874MB asset — Whisper large-v3-turbo (Q8) — with
+  `variant_id: None`. Add Whisper medium and Whisper small as selectable
+  variants, so a user on a slower machine, a smaller disk, or a rough first pass
+  is not forced to download and run the largest model.
+
+  MULTILINGUAL ONLY — HARD CONSTRAINT. Add only the multilingual builds. The
+  English-only `.en` variants (ggml-medium.en, ggml-small.en) must NOT appear in
+  the catalog. Russian is the primary language the product is tuned and validated
+  for (idea.md, ADR-007) and the transcription language is always auto-detected,
+  never chosen (ADR-012) — an English-only model would silently destroy the
+  product's core promise for its main audience, with no setting anywhere that
+  would explain why. Make this constraint visible in the code, not just here.
+
+  WHAT THIS ACTUALLY REQUIRES. The variant machinery exists (the `diarization`
+  entry already has campplus and titanet-large) but has never been exercised on
+  the transcription entry, and three things assume transcription is single-asset:
+
+  1. transcribe.rs resolves its model with
+     `models::primary_asset_path(app_support_dir, "transcription")`, which
+     returns the FIRST asset of the entry. With variants present that silently
+     becomes "whichever variant happens to be listed first" rather than the one
+     the user selected. It has to resolve the ACTIVE variant instead.
+  2. `resolve_catalog_target("transcription")` matches the WHOLE entry, and a
+     whole-entry target's `download_assets()` returns every asset. Left alone,
+     one Download click would fetch all three Whisper models — several gigabytes.
+     Download and delete must become per-variant, exactly as they are for
+     diarization.
+  3. settings.rs already has `active_model.transcription`
+     (KEY_ACTIVE_MODEL_TRANSCRIPTION) typed as `Option<String>` with no default,
+     and it currently only rejects the empty string. With real variants it must
+     validate against the catalog the way `active_model.diarization` does, and
+     the unset/missing/deleted-variant cases need defined behavior.
+
+  EXISTING USERS. The large-v3-turbo file name does not change, so an already
+  downloaded model stays downloaded on disk. What changes is how it is addressed:
+  it acquires a `variant_id` where it previously had none, and
+  `active_model.transcription` may be unset or hold the old whole-entry id
+  "transcription" (settings.rs's own test sets exactly that value). Both cases
+  must resolve to something sensible rather than erroring or silently
+  re-downloading.
+
+  RELATED, NOT OWNED: WP-27 specifies the meeting-header model switcher
+  ("default large; hidden + warning if none"). That switcher becomes useful once
+  this lands, but its UI stays WP-27's. This item owns the catalog, the
+  resolution logic, the settings validation, and whatever Settings already
+  renders for variants — not a new header control.
+
+  ASSET VERIFICATION. models.rs's catalog comment states that every URL, SHA-256
+  and size was verified against the publishing source, "not guessed". That binds
+  this item: download each artifact, hash it, and cross-check against Hugging
+  Face CDN headers. No values from memory, documentation, or a prior
+  conversation.
+
+  OUT OF SCOPE: anything diarization; the header model switcher (WP-27); adding
+  large-v3 non-turbo or any distilled variant beyond the three named here.
+dod:
+- 'Whisper medium and Whisper small MULTILINGUAL builds are added as variants of
+  the `transcription` catalog entry, with `variant_id`, `variant_label`, and
+  URL/SHA-256/size verified by download-and-hash plus the publisher''s own
+  headers; the verification method is recorded on the item.'
+- 'No `.en` model is present in the catalog, and a test asserts that no
+  transcription asset is an English-only build so the constraint cannot be
+  reintroduced silently.'
+- 'Transcription resolves the ACTIVE transcription variant rather than the
+  entry''s first asset — covered by a test that would fail under the current
+  `primary_asset_path` behavior.'
+- Download and delete operate per transcription variant; a test proves that
+  choosing one variant does not fetch the others.
+- '`active_model.transcription` is validated against the catalog like
+  `active_model.diarization` is, and the unset, unknown-value, legacy
+  "transcription" value, and deleted-active-variant cases each have defined,
+  tested behavior — no panic, no silent re-download, no wrong-model
+  transcription.'
+- A user who already has large-v3-turbo on disk still shows as downloaded after
+  the change and still transcribes with it — covered by a test over the existing
+  file name.
+- Settings lists the three transcription variants with their sizes and downloaded
+  state, and one is selectable as Active; manual verification per the validate
+  skill.
+- 'Exactly one transcription variant carries `recommended: true`, per the DoR
+  decision.'
+- 'Real-audio check: a Russian recording transcribes with each downloaded variant
+  and the language is still auto-detected correctly on all three, so the smaller
+  models do not break ADR-012''s behavior. Quality differences are noted for the
+  user rather than gated on.'
+- 'Docs are updated where the catalog is described, and roadmap.md''s beta "one
+  model per task" statement is reconciled with what actually ships.'
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint,
+  typecheck, and the 95% coverage gate.'
+dor:
+- 'MILESTONE DECISION — the user has confirmed whether this lands now (pulling
+  M3''s per-task Active model choice forward for transcription) or waits for M3.'
+- 'QUANTIZATION DECIDED — which build of medium and small to ship. The existing
+  entry is q8_0, so q8_0 is the consistent default, but the user has not chosen;
+  the ggml repository publishes several quantizations and the choice changes both
+  download size and accuracy. Whether the exact q8_0 files exist for medium and
+  small must be confirmed against the source, not assumed.'
+- 'RECOMMENDED VARIANT DECIDED — which of the three carries `recommended: true`.
+  ADR-003 and idea.md''s "accuracy over speed" principle point at large-v3-turbo,
+  but this is a user-facing default and should be stated rather than inferred.'
+- 'NO-ACTIVE-VARIANT BEHAVIOR DECIDED — what happens when
+  `active_model.transcription` is unset or names a variant that is not
+  downloaded: fall back to any downloaded variant, or refuse and surface the
+  existing no-model warning (WP-29). This is user-visible behavior on a path
+  every existing install will take on first launch after the change.'
+links:
+  relates_to:
+  - WP-27

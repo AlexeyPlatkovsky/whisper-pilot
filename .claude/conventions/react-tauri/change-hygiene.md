@@ -62,9 +62,14 @@ A source doc comment (`///`, `//!`, or a block comment) states the non-obvious
 needs — typically 1–3. It never narrates an investigation — what was tried,
 what was rejected, empirical measurements, before/after numbers, or a
 decision's history — regardless of how few lines it takes to do so. That
-record already belongs somewhere durable (an ADR, `docs/architecture.md`, or
-the TaskPilot item/comments produced for the task); point to it instead of
-duplicating it in the code.
+record already belongs somewhere durable — an ADR, a `docs/architecture.md`
+section, or a TaskPilot comment on the task, never a TaskPilot item
+**description** (`.claude/skills/taskpilot-work/SKILL.md` owns that field and
+excludes decision narrative from it). Point to it instead of duplicating it in
+the code. Choose by durability: a decision with lasting architectural
+consequence goes to an ADR under `docs/decisions/` or `docs/architecture.md`; a
+task-local investigation record (measurements, tuning runs) may live in a
+TaskPilot comment on the task.
 
 - A multi-paragraph or multi-line comment block restating measurements,
   alternatives considered, or a discovery above a constant/function is a
@@ -74,8 +79,10 @@ duplicating it in the code.
   section, a `docs/architecture.md` paragraph, or a TaskPilot comment that is
   actually there. Trimming a comment down to a pointer whose target was never
   written loses the investigation entirely rather than relocating it; if no
-  durable record exists yet, create it (route through `documentation-maintenance`
-  for product-facing docs) before trimming the comment.
+  durable record exists yet, create it before trimming the comment — route
+  product-facing documentation through
+  `.claude/skills/documentation-maintenance/SKILL.md` and any TaskPilot comment
+  through `.claude/skills/taskpilot-work/SKILL.md`.
 
 ---
 

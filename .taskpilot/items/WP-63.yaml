@@ -1,0 +1,93 @@
+schema_version: 1
+id: WP-63
+title: Add WeSpeaker ResNet34 as a third diarization embedding variant
+priority: normal
+type: task
+status: backlog
+created_at: '2026-07-27T17:04:05Z'
+updated_at: '2026-07-27T17:06:44Z'
+parent_id: WP-61
+created_by: Aleksei_Platkovskii
+description: |-
+  Add a WeSpeaker ResNet34 speaker-embedding model as a third selectable variant
+  of the `diarization` catalog entry, alongside the existing campplus and
+  titanet-large.
+
+  WHY THIS MODEL: the segmentation model already in use is pyannote
+  segmentation-3.0, and the reference pyannote 3.1 pipeline pairs that model with
+  a WeSpeaker ResNet34 embedding rather than CAM++ or NeMo TitaNet. Matching that
+  pairing is the cheapest remaining accuracy step that stays inside ONNX/Rust: it
+  drops into machinery that already exists.
+
+  RUN THIS AFTER WP-62. Embedding quality is consumed by clustering, so an A/B
+  between embedding models run against the current clustering measures the
+  clustering's noise rather than the embeddings. Reuse WP-62's reference
+  recordings and metric unchanged so the comparison is meaningful.
+
+  WHAT THIS TOUCHES. The variant machinery already exists and this item should
+  add to it rather than change it: `ModelAsset` carries `variant_id` /
+  `variant_label` / `recommended` (models.rs); `list_task_models` emits one row
+  per variant; `resolve_catalog_target` matches a variant id; settings.rs
+  validates `active_model.diarization`; delete_model and
+  delete_clears_active_diarization_variant already handle a variant going away.
+
+  THE ONE PLACE A THIRD VARIANT BREAKS AN ASSUMPTION: `fallback_variant_for` in
+  diarize_process.rs is a hardcoded two-element swap (titanet-large <->
+  campplus). With three variants it is no longer a total function, and WP-57's
+  contract — retry EXACTLY ONCE with another model, never retry the same one,
+  chain terminates — has to be restated for three members. Do not generalise it
+  into a chain of two retries: WP-57 chose one hop because the crash is
+  deterministic per input, so a longer chain only multiplies time spent crashing.
+  Decide the new mapping explicitly (see DoR) and keep the single-hop guarantee.
+
+  ASSET VERIFICATION. models.rs's catalog comment states that every URL, SHA-256
+  and size was verified directly against the publishing source, "not guessed".
+  That rule binds this item: download the artifact, hash it, and cross-check
+  against the publisher's own checksum listing. No values taken from
+  documentation, a model card, or a prior conversation.
+
+  OUT OF SCOPE: the clustering algorithm (WP-62); removing or replacing the
+  existing campplus or titanet-large variants; any Settings UI redesign — this
+  adds a row to a list that already renders variant rows.
+dod:
+- 'A WeSpeaker ResNet34 ONNX asset is added to the `diarization` catalog entry as
+  a third variant with its own `variant_id` and `variant_label`, and its URL,
+  SHA-256 and size are verified directly against the publishing source by
+  download-and-hash plus the publisher''s checksum listing — the verification
+  method is recorded on the item, not just the values.'
+- 'Download, delete, downloaded-state and active-variant selection all work for
+  the new variant through the existing paths, with no regression to campplus or
+  titanet-large — covered by tests.'
+- '`fallback_variant_for` is redefined for three variants with the mapping agreed
+  in DoR; a test proves the single-hop guarantee still holds (exactly one retry,
+  never the same model twice, chain terminates) and that no input produces a
+  two-hop chain.'
+- Deleting the active variant still clears the active selection correctly with
+  three variants present — covered by a test.
+- 'Diarization quality with the new embedding is measured against campplus and
+  titanet-large on the shared reference set using the shared metric, and the
+  results are recorded on the item.'
+- The `recommended` flag reflects the DoR decision, and exactly one variant
+  carries it.
+- Settings shows the new variant and it is selectable; manual verification per
+  the validate skill.
+- 'ADR-005''s statement that quality is "below pyannote''s best" is revisited and
+  updated to match what was actually measured.'
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint,
+  typecheck, and the 95% coverage gate.'
+dor:
+- WP-62 is `done`. Measuring an embedding model against the vendored clustering
+  measures the wrong thing.
+- 'The exact artifact is chosen and confirmed reachable: which WeSpeaker ResNet34
+  export, from which publisher and release URL. The sherpa-onnx
+  speaker-recognition release set is the natural source since both existing
+  variants come from it, but the specific file has not been picked yet.'
+- The three-variant fallback mapping is decided by the user — which model each of
+  the three falls back to, keeping WP-57's exactly-one-hop guarantee.
+- 'The user has decided which variant carries `recommended: true` after this
+  lands, or has agreed that the decision waits on this item''s own measurements.'
+- The shared reference recording set and quality metric from WP-62 are available
+  and reused unchanged.
+links:
+  relates_to:
+  - WP-57

@@ -38,7 +38,27 @@ to `done` merely because the discovery conversation finished.
 3. Keep the canonical YAML record implementation-ready: a self-contained
    description, objective `dod`, and `dor` when a dependency or approval remains
    unresolved. Use `apply_patch` for `dod` or `dor` because the CLI does not own
-   those fields.
+   those fields. Required description content is owned by
+   `.claude/skills/verify-readiness/SKILL.md` §DoR Criteria. On top of it, two
+   exclusions are absolute, and they bind every create, description edit, and
+   §Persist an Approved Discovery Spec run — including a payload prepared by
+   `record-discovered-spec`. Reject a violating description before mutating and
+   report `blocked`, naming the offending section.
+   - **No decision narrative.** Do not record why an alternative was evaluated
+     and rejected, how a conclusion was reached, or the history behind a
+     constraint. Where an ADR under `docs/decisions/` already records the
+     reasoning, state the constraint in one line and cite it as `See ADR-<id>`;
+     do not reproduce the ADR's argument. This skill never creates or edits an
+     ADR: when reasoning must survive and no durable record exists, report it as
+     a blocker for `documentation-maintenance` rather than deleting it or
+     writing to `docs/`.
+   - **No prose that duplicates a stored relationship.** Parent, children,
+     `blocks`, and `relates_to` are fields; do not narrate a link or roll up the
+     item's own tree in prose. Naming a specific item inside a scope boundary,
+     hazard, or ordering constraint is allowed, because that states an
+     implementation rule the field does not encode. The child breakdowns
+     required by `verify-readiness` DoR criterion 2 and by `record-discovered-spec`
+     are required content, not duplication.
 4. For **every** create, field, relationship, comment, or lifecycle mutation:
    reload the affected records first; validate identity and relationship
    invariants; make one intended mutation; run `taskpilot validate`; reload; and
