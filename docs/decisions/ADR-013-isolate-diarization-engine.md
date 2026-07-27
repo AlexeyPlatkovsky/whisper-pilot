@@ -55,7 +55,9 @@ the child is the only cancellation mechanism available.
   pipe buffer.
 - The child must be told where its dylibs are: the binary carries no `LC_RPATH`,
   so `DYLD_FALLBACK_LIBRARY_PATH` is set explicitly rather than inherited from
-  however the parent happened to be launched.
+  however the parent happened to be launched. *(No longer the only mechanism:
+  WP-60 gave the binary its own rpaths and bundles the dylibs into
+  `Contents/Frameworks`. Setting the fallback explicitly still stands.)*
 - The child watches stdin for EOF so quitting the app stops it, rather than
   leaving it reparented and still running inference. It terminates with
   `libc::_exit` rather than `std::process::exit` (which would run the native

@@ -204,14 +204,14 @@ stops, instead of being reparented and left holding the models; transport
 files older than six hours are swept on the next run to cover a parent that
 was killed outright.
 
-The child's dylib search path is set explicitly (`DYLD_FALLBACK_LIBRARY_PATH`
-covering the executable's own directory and the bundle's `Contents/Frameworks`)
-rather than inherited by accident from the launcher — the binary carries no
-`LC_RPATH` yet links `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api`,
-so without this the child aborts at dyld before running. How those dylibs
-reach a packaged `.app` at all remains open: `tauri.conf.json` has no
-`bundle.macOS.frameworks` entry, and a hardened-runtime build strips `DYLD_*`
-unless entitled.
+The child's dylib search path is still set explicitly
+(`DYLD_FALLBACK_LIBRARY_PATH` covering the executable's own directory and the
+bundle's `Contents/Frameworks`) rather than inherited by accident from the
+launcher. Since WP-60 that is a second line of defence rather than the only
+one: the binary carries its own `LC_RPATH` entries, so parent and child both
+resolve `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api` without help
+from the environment — which matters because a hardened-runtime build strips
+`DYLD_*` unless entitled. See §Build Notes for how the dylibs reach the bundle.
 
 `diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
@@ -383,6 +383,17 @@ directory, downloaded model files, and user-chosen export destinations. No
   binaries fetched at build time); M3 adds llama.cpp — both Metal, local.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
+- Native dylib packaging (WP-60): `sherpa-rs-sys` leaves
+  `libsherpa-onnx-c-api.dylib` and `libonnxruntime.<version>.dylib` in the cargo
+  profile directory, and the linker records them as `@rpath/…`. `build.rs`
+  therefore does two things on macOS — links every binary with
+  `@executable_path/../Frameworks` and `@executable_path` rpaths, and stages
+  both dylibs into the generated `src-tauri/frameworks/` for
+  `bundle.macOS.frameworks` to copy into `Contents/Frameworks`. Without both, a
+  packaged build aborts at dyld before `main` while `cargo run` keeps working,
+  because cargo supplies a fallback search path the `.app` never gets.
+  `src-tauri/tests/packaging.rs` asserts the config, staging, and rpaths.
+  Signing and notarizing the bundled dylibs is not solved.
 - Run: `npm install`, then `npm run tauri:dev`.
 
 ## Ownership

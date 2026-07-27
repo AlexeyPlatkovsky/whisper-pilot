@@ -36,6 +36,20 @@ fn manifest_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
 }
 
+/// The executable that gets bundled into `Contents/MacOS`. Every assertion here
+/// is about that artifact, not about the test harness — `rustc-link-arg` covers
+/// test binaries too, so checking the running executable would pass without
+/// proving anything about what ships.
+fn app_binary() -> PathBuf {
+    let binary = profile_dir().join("whisper-pilot");
+    assert!(
+        binary.is_file(),
+        "{} not found — build the app binary before running this test",
+        binary.display()
+    );
+    binary
+}
+
 /// The `bundle.macOS.frameworks` entries declared in `tauri.conf.json`.
 fn declared_frameworks() -> Vec<String> {
     let path = manifest_dir().join("tauri.conf.json");
@@ -64,12 +78,7 @@ fn declared_frameworks() -> Vec<String> {
 /// the profile directory: that directory also holds this crate's own `cdylib`
 /// output and sherpa's unused C++ API, neither of which belongs in the bundle.
 fn rpath_dependencies_of_app_binary() -> Vec<String> {
-    let binary = profile_dir().join("whisper-pilot");
-    assert!(
-        binary.is_file(),
-        "{} not found — build the app binary before running this test",
-        binary.display()
-    );
+    let binary = app_binary();
     let out = Command::new("otool")
         .arg("-L")
         .arg(&binary)
@@ -180,8 +189,8 @@ fn declared_bundle_frameworks_exist_on_disk() {
 /// resolve `@rpath/…` against `Contents/Frameworks` once installed, with no
 /// help from the launcher's environment.
 #[test]
-fn linked_binaries_carry_bundle_relative_rpath() {
-    let exe = std::env::current_exe().expect("current_exe");
+fn app_binary_carries_bundle_relative_rpath() {
+    let exe = app_binary();
     let rpaths = rpaths_of(&exe);
     assert!(
         rpaths.iter().any(|p| p == "@executable_path/../Frameworks"),
@@ -195,8 +204,8 @@ fn linked_binaries_carry_bundle_relative_rpath() {
 /// rpath set has to cover the plain-executable layout too — otherwise the
 /// build only runs under cargo, which exports a dyld fallback path for it.
 #[test]
-fn linked_binaries_carry_sibling_rpath() {
-    let exe = std::env::current_exe().expect("current_exe");
+fn app_binary_carries_sibling_rpath() {
+    let exe = app_binary();
     let rpaths = rpaths_of(&exe);
     assert!(
         rpaths.iter().any(|p| p == "@executable_path"),
