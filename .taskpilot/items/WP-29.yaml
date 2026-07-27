@@ -3,9 +3,9 @@ id: WP-29
 title: No-model warning + Settings UI consistency
 priority: normal
 type: task
-status: in_progress
+status: done
 created_at: '2026-07-21T11:04:49Z'
-updated_at: '2026-07-26T15:43:20Z'
+updated_at: '2026-07-27T07:45:12Z'
 parent_id: WP-25
 description: 'No-model warning: show a warning in the status bar when no transcription model is available (replace or augment the current inline notice below the transcript header with a visible status-bar indicator). Settings UI consistency: (1) Transcription Models radio buttons use the same blue accent color as Speaker Diarization when selected; (2) Settings header matches main app view header in height and layout (same height, same logo position/size); (3) "Settings" heading aligns with "Meeting" title level; (4) Logo moved from Settings sidebar to Settings header at same position and size as main view; (5) "WhisperPilot" brand label removed from Settings sidebar. Split: progress bar -> WP-58; creating-MFU state -> WP-59. Implements F004-R9 (F004-T13) and F005 settings consistency.'
 created_by: M2 UI planning
