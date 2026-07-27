@@ -42,7 +42,9 @@
       "frameworks": [
         "frameworks/libsherpa-onnx-c-api.dylib",
         "frameworks/libonnxruntime.1.17.1.dylib"
-      ]
+      ],
+      "signingIdentity": "-",
+      "hardenedRuntime": false
     }
   }
 }
