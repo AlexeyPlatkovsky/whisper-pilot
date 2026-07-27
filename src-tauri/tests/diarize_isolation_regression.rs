@@ -137,7 +137,10 @@ fn a_surviving_model_still_returns_real_turns_through_the_child() {
 
     match outcome {
         ChildOutcome::Completed(turns) => {
-            assert!(!turns.is_empty(), "an isolated success must carry its turns");
+            assert!(
+                !turns.is_empty(),
+                "an isolated success must carry its turns"
+            );
             assert!(
                 turns.windows(2).all(|w| w[0].start_ms <= w[1].start_ms),
                 "turns must survive the process boundary still ordered"

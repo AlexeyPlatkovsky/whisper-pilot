@@ -213,10 +213,7 @@ pub fn resolve_catalog_target(id: &str) -> Option<ResolvedTarget<'_>> {
                         .iter()
                         .filter(|a| a.variant_id.is_none())
                         .collect();
-                    return Some(ResolvedTarget::Variant {
-                        shared,
-                        own: asset,
-                    });
+                    return Some(ResolvedTarget::Variant { shared, own: asset });
                 }
             }
         }
@@ -251,7 +248,9 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                     .iter()
                     .filter(|a| a.variant_id.is_none())
                     .collect();
-                let shared_downloaded = shared.iter().all(|a| is_asset_downloaded(app_support_dir, a));
+                let shared_downloaded = shared
+                    .iter()
+                    .all(|a| is_asset_downloaded(app_support_dir, a));
                 let shared_size: u64 = shared.iter().map(|a| a.size_bytes).sum();
                 variants
                     .into_iter()
@@ -259,7 +258,8 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                         id: format!("{}-{}", entry.id, asset.variant_id.unwrap()),
                         task: entry.task.to_string(),
                         label: asset.variant_label.unwrap_or(entry.label).to_string(),
-                        downloaded: shared_downloaded && is_asset_downloaded(app_support_dir, asset),
+                        downloaded: shared_downloaded
+                            && is_asset_downloaded(app_support_dir, asset),
                         size_bytes: shared_size + asset.size_bytes,
                         recommended: asset.recommended,
                     })
@@ -274,8 +274,8 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
 /// is. For a variant id, only that variant's own asset is removed — the
 /// shared segmentation asset and any sibling variant's asset are untouched.
 pub fn delete_model(app_support_dir: &Path, id: &str) -> Result<()> {
-    let target = resolve_catalog_target(id)
-        .ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
+    let target =
+        resolve_catalog_target(id).ok_or_else(|| AppError::ModelCatalogNotFound(id.to_string()))?;
 
     for asset in target.delete_assets() {
         match std::fs::remove_file(asset_path(app_support_dir, asset)) {
@@ -660,9 +660,14 @@ mod tests {
             ),
         };
 
-        let err = download_entry(fetch_writing(content), dir.path(), &assets_of(&entry), |_, _| {})
-            .await
-            .unwrap_err();
+        let err = download_entry(
+            fetch_writing(content),
+            dir.path(),
+            &assets_of(&entry),
+            |_, _| {},
+        )
+        .await
+        .unwrap_err();
 
         assert!(matches!(err, AppError::ModelShaMismatch { .. }));
         assert!(!entry_downloaded(dir.path(), &entry));
@@ -1017,8 +1022,7 @@ mod tests {
 
     #[test]
     fn resolve_catalog_target_for_a_whole_entry_id_returns_every_asset() {
-        let target =
-            resolve_catalog_target("transcription").expect("known entry id must resolve");
+        let target = resolve_catalog_target("transcription").expect("known entry id must resolve");
 
         assert_eq!(target.download_assets(), vec![&CATALOG[0].assets[0]]);
         assert_eq!(target.delete_assets(), vec![&CATALOG[0].assets[0]]);
@@ -1119,7 +1123,10 @@ mod tests {
         write_sized_placeholder(&paths[1], CATALOG[1].assets[1].size_bytes);
 
         assert!(is_diarization_variant_downloaded(dir.path(), "campplus"));
-        assert!(!is_diarization_variant_downloaded(dir.path(), "titanet-large"));
+        assert!(!is_diarization_variant_downloaded(
+            dir.path(),
+            "titanet-large"
+        ));
     }
 
     #[test]
@@ -1129,6 +1136,9 @@ mod tests {
         std::fs::create_dir_all(paths[0].parent().unwrap()).unwrap();
         write_sized_placeholder(&paths[0], CATALOG[1].assets[0].size_bytes);
 
-        assert!(!is_diarization_variant_downloaded(dir.path(), "not-a-variant"));
+        assert!(!is_diarization_variant_downloaded(
+            dir.path(),
+            "not-a-variant"
+        ));
     }
 }

@@ -71,7 +71,7 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
               <h1 className="wp-title">Settings</h1>
             </div>
           </div>
-          
+
           <div className="wp-action-group">
             <button
               type="button"
