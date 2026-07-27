@@ -27,6 +27,13 @@ npm run tauri:dev      # launches the app (compiles whisper.cpp with Metal on fi
 Vite serves the front end on port 1420; Tauri drives the Rust core in
 `src-tauri/`.
 
+`npx tauri build` produces `WhisperPilot.app` and a DMG under
+`src-tauri/target/release/bundle/`. The build also generates
+`src-tauri/frameworks/` — a staging copy of the sherpa-onnx and ONNX Runtime
+dylibs that the bundler puts into `Contents/Frameworks`. It is generated and
+gitignored; do not edit or commit it. See
+[`architecture.md`](architecture.md) §Build Notes for why it exists.
+
 ## Scripts
 
 | Command | Purpose |

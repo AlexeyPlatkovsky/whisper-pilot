@@ -389,11 +389,10 @@ fn prepare_and_supervise(
     let mut command = Command::new(worker_exe);
     command.arg(WORKER_FLAG).arg(request_path);
 
-    // The binary carries no LC_RPATH yet links @rpath/libonnxruntime and
-    // @rpath/libsherpa-onnx-c-api. In dev it resolves only because the launcher
-    // exports DYLD_FALLBACK_LIBRARY_PATH; a re-exec'd child would inherit that
-    // by luck. Set it explicitly so the child does not depend on how the parent
-    // happened to be started.
+    // The binary's own LC_RPATH (WP-60) is what normally resolves
+    // @rpath/libonnxruntime and @rpath/libsherpa-onnx-c-api. Keep setting the
+    // fallback explicitly anyway, so the child does not depend on how the
+    // parent happened to be started, or on the layout it was launched from.
     let exe_dir = worker_exe.parent().unwrap_or_else(|| Path::new("."));
     command.env(
         "DYLD_FALLBACK_LIBRARY_PATH",

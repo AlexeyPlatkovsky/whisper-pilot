@@ -1,6 +1,7 @@
 node_modules
 dist
 src-tauri/target
+src-tauri/frameworks
 coverage
 *.log
 .DS_Store
