@@ -261,7 +261,13 @@ pub fn diarize_samples(
     speaker_count: Option<i32>,
     active_variant: &str,
 ) -> Result<Vec<SpeakerTurn>> {
-    diarize_samples_with_progress(app_support_dir, samples, speaker_count, active_variant, None)
+    diarize_samples_with_progress(
+        app_support_dir,
+        samples,
+        speaker_count,
+        active_variant,
+        None,
+    )
 }
 
 /// [`diarize_samples`] with a liveness callback. The isolating child passes one
@@ -662,8 +668,8 @@ mod tests {
     // See build_config's doc comment for why min_duration (unlike threshold)
     // must not carry over to the explicit-count path.
     #[test]
-    fn build_config_sets_the_tuned_threshold_but_crate_default_min_durations_for_an_explicit_count(
-    ) {
+    fn build_config_sets_the_tuned_threshold_but_crate_default_min_durations_for_an_explicit_count()
+    {
         let config = build_config(Some(2));
         assert_eq!(config.threshold, Some(0.9));
         assert_eq!(config.min_duration_on, Some(0.0));
@@ -697,8 +703,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         // No diarization assets written under `dir` at all.
 
-        let err =
-            diarize_samples(dir.path(), vec![0.0; 16_000], None, "campplus").unwrap_err();
+        let err = diarize_samples(dir.path(), vec![0.0; 16_000], None, "campplus").unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
@@ -711,8 +716,8 @@ mod tests {
         build_fixture_archive(&paths[0], b"segmentation model bytes");
         write_embedding_fixtures(dir.path());
 
-        let err = diarize_samples(dir.path(), vec![0.0; 16_000], None, "not-a-real-variant")
-            .unwrap_err();
+        let err =
+            diarize_samples(dir.path(), vec![0.0; 16_000], None, "not-a-real-variant").unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
     }
@@ -890,7 +895,10 @@ mod tests {
         let turns = vec![speaker_turn(0, 1_000, 3)];
         let fallback = "used CAM++ because TitaNet-large failed on this recording".to_string();
 
-        let warning = apply_diarization_outcome(&mut segments, Ok((Ok(turns.clone()), Some(fallback.clone()))));
+        let warning = apply_diarization_outcome(
+            &mut segments,
+            Ok((Ok(turns.clone()), Some(fallback.clone()))),
+        );
 
         assert_eq!(segments[0].speaker_id, Some(3));
         assert_eq!(warning, Some(fallback));
@@ -903,9 +911,12 @@ mod tests {
 
         let warning = apply_diarization_outcome(
             &mut segments,
-            Ok((Err(AppError::DiarizationAsset(
-                "models not downloaded".to_string(),
-            )), None)),
+            Ok((
+                Err(AppError::DiarizationAsset(
+                    "models not downloaded".to_string(),
+                )),
+                None,
+            )),
         );
 
         assert_eq!(segments[0].speaker_id, None);
@@ -919,7 +930,10 @@ mod tests {
 
         let warning = apply_diarization_outcome(
             &mut segments,
-            Ok((Err(AppError::Diarization("engine exploded".to_string())), None)),
+            Ok((
+                Err(AppError::Diarization("engine exploded".to_string())),
+                None,
+            )),
         );
 
         assert_eq!(segments[0].speaker_id, None);

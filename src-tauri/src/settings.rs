@@ -95,11 +95,9 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
         }
         KEY_ACTIVE_MODEL_DIARIZATION => {
             let is_known_variant = value == NONE_DIARIZATION_MODEL
-                || CATALOG.iter().any(|e| {
-                    e.assets
-                        .iter()
-                        .any(|a| a.variant_id == Some(value))
-                });
+                || CATALOG
+                    .iter()
+                    .any(|e| e.assets.iter().any(|a| a.variant_id == Some(value)));
             if !is_known_variant {
                 return Err(AppError::InvalidSetting(format!(
                     "unknown diarization model id: {value}",
@@ -276,11 +274,17 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "campplus").unwrap();
 
-        let err =
-            set_setting(dir.path(), KEY_ACTIVE_MODEL_DIARIZATION, "not-a-real-variant")
-                .unwrap_err();
+        let err = set_setting(
+            dir.path(),
+            KEY_ACTIVE_MODEL_DIARIZATION,
+            "not-a-real-variant",
+        )
+        .unwrap_err();
 
         assert!(matches!(err, AppError::InvalidSetting(_)));
-        assert_eq!(get_settings(dir.path()).active_model_diarization, "campplus");
+        assert_eq!(
+            get_settings(dir.path()).active_model_diarization,
+            "campplus"
+        );
     }
 }

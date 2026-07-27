@@ -120,8 +120,10 @@ async fn open_file_dialog() -> Option<String> {
 /// optional fallback warning (set when the other embedding model was retried
 /// after a crash on this recording), or the `JoinError` from the blocking task
 /// panicking or being cancelled.
-type DiarizationOutcome =
-    std::result::Result<(Result<Vec<diarize::SpeakerTurn>>, Option<String>), tokio::task::JoinError>;
+type DiarizationOutcome = std::result::Result<
+    (Result<Vec<diarize::SpeakerTurn>>, Option<String>),
+    tokio::task::JoinError,
+>;
 
 /// A not-yet-started diarization pass. Boxed rather than generic so the
 /// "no active model" case is a plain `None` at every call site, and deferred so
@@ -372,16 +374,17 @@ fn list_task_models(app: tauri::AppHandle) -> Result<Vec<TaskModel>> {
 }
 
 /// Download the catalog entry `id`, verifying SHA-256 before marking it
-/// ready. Emits `model_download_progress { id, fraction }` as bytes arrive.
+/// ready. Emits `model_download_progress { id, fraction, stage }` as bytes
+/// arrive and again when the fetched bytes move on to hash verification.
 #[tauri::command]
 async fn download_model(app: tauri::AppHandle, id: String) -> Result<()> {
     let dir = app_data_dir(&app)?;
     let progress_app = app.clone();
     let progress_id = id.clone();
-    models::download_model(&dir, &id, move |fraction| {
+    models::download_model(&dir, &id, move |fraction, stage| {
         let _ = progress_app.emit(
             "model_download_progress",
-            serde_json::json!({ "id": progress_id, "fraction": fraction }),
+            serde_json::json!({ "id": progress_id, "fraction": fraction, "stage": stage }),
         );
     })
     .await
@@ -540,7 +543,10 @@ mod tests {
         let (_meeting, warning) = persist_transcript_then_diarize(
             dir.path().to_path_buf(),
             id,
-            transcription(vec![segment(0, 1_000, "hello"), segment(2_000, 3_000, "world")]),
+            transcription(vec![
+                segment(0, 1_000, "hello"),
+                segment(2_000, 3_000, "world"),
+            ]),
             Some(Box::pin(async move {
                 // Reads the store from inside the diarization pass itself.
                 *seen.lock().unwrap() = Some(meetings::open_meeting(&path, id).unwrap());
@@ -574,8 +580,14 @@ mod tests {
         let (_meeting, warning) = persist_transcript_then_diarize(
             dir.path().to_path_buf(),
             id,
-            transcription(vec![segment(0, 1_000, "hello"), segment(2_000, 3_000, "world")]),
-            diarization(Ok((Err(AppError::Diarization("engine exploded".to_string())), None))),
+            transcription(vec![
+                segment(0, 1_000, "hello"),
+                segment(2_000, 3_000, "world"),
+            ]),
+            diarization(Ok((
+                Err(AppError::Diarization("engine exploded".to_string())),
+                None,
+            ))),
         )
         .await
         .unwrap();
@@ -609,7 +621,10 @@ mod tests {
         let (meeting, warning) = persist_transcript_then_diarize(
             dir.path().to_path_buf(),
             id,
-            transcription(vec![segment(0, 1_000, "hello"), segment(2_000, 3_000, "world")]),
+            transcription(vec![
+                segment(0, 1_000, "hello"),
+                segment(2_000, 3_000, "world"),
+            ]),
             diarization(Ok((Ok(turns), None))),
         )
         .await
@@ -663,18 +678,25 @@ mod tests {
                 // The meeting disappears after the transcript was persisted but
                 // before the speaker ids can be written back to it.
                 meetings::delete_meeting(&path, id).unwrap();
-                Ok((Ok(vec![diarize::SpeakerTurn {
-                    start_ms: 0,
-                    end_ms: 1_000,
-                    speaker: 1,
-                }]), None))
+                Ok((
+                    Ok(vec![diarize::SpeakerTurn {
+                        start_ms: 0,
+                        end_ms: 1_000,
+                        speaker: 1,
+                    }]),
+                    None,
+                ))
             })),
         )
         .await
         .expect("a failed speaker-id write must not fail the transcription");
 
         assert!(warning.is_some(), "the failed write is reported");
-        assert_eq!(meeting.segments.len(), 1, "the transcript is still returned");
+        assert_eq!(
+            meeting.segments.len(),
+            1,
+            "the transcript is still returned"
+        );
     }
 
     // Error path: the first persist is what fails, so diarization must never

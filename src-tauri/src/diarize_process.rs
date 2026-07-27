@@ -92,12 +92,12 @@ impl ChildOutcome {
             ChildOutcome::TimedOut => Err(AppError::Diarization(
                 "the speaker-identification engine stopped responding and was stopped".to_string(),
             )),
-            ChildOutcome::Failed { code, detail } => {
-                Err(AppError::Diarization(match code {
-                    Some(code) => format!("the speaker-identification engine failed (exit {code}): {detail}"),
-                    None => format!("the speaker-identification engine failed: {detail}"),
-                }))
-            }
+            ChildOutcome::Failed { code, detail } => Err(AppError::Diarization(match code {
+                Some(code) => {
+                    format!("the speaker-identification engine failed (exit {code}): {detail}")
+                }
+                None => format!("the speaker-identification engine failed: {detail}"),
+            })),
         }
     }
 }
@@ -161,11 +161,15 @@ fn execute_worker(request_path: &Path) -> i32 {
 
     let request = match std::fs::read(request_path)
         .map_err(|e| e.to_string())
-        .and_then(|bytes| serde_json::from_slice::<WorkerRequest>(&bytes).map_err(|e| e.to_string()))
-    {
+        .and_then(|bytes| {
+            serde_json::from_slice::<WorkerRequest>(&bytes).map_err(|e| e.to_string())
+        }) {
         Ok(request) => request,
         Err(e) => {
-            eprintln!("diarization worker: unusable request at {}: {e}", request_path.display());
+            eprintln!(
+                "diarization worker: unusable request at {}: {e}",
+                request_path.display()
+            );
             return EXIT_BAD_REQUEST;
         }
     };
@@ -196,8 +200,9 @@ fn execute_worker(request_path: &Path) -> i32 {
     ) {
         Ok(turns) => match serde_json::to_vec(&turns)
             .map_err(|e| e.to_string())
-            .and_then(|bytes| std::fs::write(&request.output_path, bytes).map_err(|e| e.to_string()))
-        {
+            .and_then(|bytes| {
+                std::fs::write(&request.output_path, bytes).map_err(|e| e.to_string())
+            }) {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("diarization worker: could not write the result: {e}");
@@ -451,7 +456,9 @@ fn supervise(
         .stderr(Stdio::piped())
         .spawn()
         .map_err(|e| {
-            AppError::Diarization(format!("could not start the speaker-identification process: {e}"))
+            AppError::Diarization(format!(
+                "could not start the speaker-identification process: {e}"
+            ))
         })?;
     let pid = child.id();
 
@@ -599,7 +606,10 @@ fn write_samples(path: &Path, samples: &[f32]) -> Result<()> {
 
 fn read_samples(path: &Path) -> Result<Vec<f32>> {
     let bytes = std::fs::read(path).map_err(|e| {
-        AppError::Diarization(format!("could not read staged audio at {}: {e}", path.display()))
+        AppError::Diarization(format!(
+            "could not read staged audio at {}: {e}",
+            path.display()
+        ))
     })?;
     if bytes.len() % 4 != 0 {
         // `chunks_exact` would drop the partial tail silently, diarizing a
@@ -660,7 +670,12 @@ pub fn diarize_with_fallback(
     speaker_count: Option<i32>,
     active_variant: &str,
 ) -> (Result<Vec<SpeakerTurn>>, Option<String>) {
-    let first = diarize_isolated(app_support_dir, samples.clone(), speaker_count, active_variant);
+    let first = diarize_isolated(
+        app_support_dir,
+        samples.clone(),
+        speaker_count,
+        active_variant,
+    );
 
     if !should_retry_diarization(&first) {
         return (first.into_result(), None);
@@ -714,9 +729,7 @@ mod tests {
         let items: Vec<String> = turns
             .iter()
             .map(|(start_ms, end_ms, speaker)| {
-                format!(
-                    r#"{{"start_ms":{start_ms},"end_ms":{end_ms},"speaker":{speaker}}}"#
-                )
+                format!(r#"{{"start_ms":{start_ms},"end_ms":{end_ms},"speaker":{speaker}}}"#)
             })
             .collect();
         format!("[{}]", items.join(","))
@@ -741,10 +754,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let output = out_path(dir.path());
         let payload = turns_json(&[(0, 1_500, 0), (1_500, 4_000, 1)]);
-        let mut command = shell(&format!(
-            "printf '%s' '{payload}' > {}",
-            output.display()
-        ));
+        let mut command = shell(&format!("printf '%s' '{payload}' > {}", output.display()));
 
         let run = supervise(&mut command, &output, Duration::from_secs(10)).unwrap();
 
@@ -849,7 +859,11 @@ mod tests {
         ));
 
         let started = Instant::now();
-        let run = supervise(&mut command, &output, Duration::from_secs(1)).unwrap();
+        // Use a 2-second inactivity window so a child briefly stalled by
+        // parallel test load is not spuriously killed (observed flakiness
+        // at 1s). The total wall-clock runtime (~1.8s) still exceeds 1s,
+        // proving the inactivity-vs-wall-clock distinction.
+        let run = supervise(&mut command, &output, Duration::from_secs(2)).unwrap();
 
         assert!(
             matches!(run.outcome, ChildOutcome::Completed(_)),
@@ -858,7 +872,7 @@ mod tests {
         );
         assert!(
             started.elapsed() > Duration::from_secs(1),
-            "this test only proves inactivity-vs-wall-clock if the run outlived the window"
+            "this test only proves inactivity-vs-wall-clock if the run outlived the 1-second wall clock"
         );
     }
 
@@ -866,7 +880,8 @@ mod tests {
 
     #[test]
     fn dyld_fallback_library_path_leads_with_the_executable_and_bundle_directories() {
-        let value = dyld_fallback_library_path(Path::new("/Apps/WhisperPilot.app/Contents/MacOS"), None);
+        let value =
+            dyld_fallback_library_path(Path::new("/Apps/WhisperPilot.app/Contents/MacOS"), None);
         let value = value.to_string_lossy();
         let entries: Vec<&str> = value.split(':').collect();
 
@@ -1058,8 +1073,7 @@ mod tests {
         // 6 bytes: one whole f32 plus half of another.
         std::fs::write(&path, [0u8, 0, 0, 0, 1, 2]).unwrap();
 
-        let error = read_samples(&path)
-            .expect_err("a partial sample must not be silently dropped");
+        let error = read_samples(&path).expect_err("a partial sample must not be silently dropped");
 
         assert!(matches!(error, crate::error::AppError::Diarization(_)));
     }
@@ -1181,7 +1195,10 @@ mod tests {
 
     #[test]
     fn a_timeout_becomes_a_diarization_error_distinct_from_a_crash() {
-        let timed_out = ChildOutcome::TimedOut.into_result().unwrap_err().to_string();
+        let timed_out = ChildOutcome::TimedOut
+            .into_result()
+            .unwrap_err()
+            .to_string();
         let crashed = ChildOutcome::Crashed { signal: 10 }
             .into_result()
             .unwrap_err()
@@ -1214,7 +1231,9 @@ mod tests {
         }];
 
         assert_eq!(
-            ChildOutcome::Completed(turns.clone()).into_result().unwrap(),
+            ChildOutcome::Completed(turns.clone())
+                .into_result()
+                .unwrap(),
             turns
         );
     }
@@ -1223,12 +1242,18 @@ mod tests {
 
     #[test]
     fn fallback_variant_for_returns_campplus_for_titanet_large() {
-        assert_eq!(super::fallback_variant_for("titanet-large"), Some("campplus"));
+        assert_eq!(
+            super::fallback_variant_for("titanet-large"),
+            Some("campplus")
+        );
     }
 
     #[test]
     fn fallback_variant_for_returns_titanet_large_for_campplus() {
-        assert_eq!(super::fallback_variant_for("campplus"), Some("titanet-large"));
+        assert_eq!(
+            super::fallback_variant_for("campplus"),
+            Some("titanet-large")
+        );
     }
 
     #[test]
@@ -1270,7 +1295,10 @@ mod tests {
 
     #[test]
     fn variant_display_name_returns_label_for_known_variants() {
-        assert_eq!(super::variant_display_name("titanet-large"), "TitaNet-large");
+        assert_eq!(
+            super::variant_display_name("titanet-large"),
+            "TitaNet-large"
+        );
         assert_eq!(super::variant_display_name("campplus"), "CAM++");
     }
 

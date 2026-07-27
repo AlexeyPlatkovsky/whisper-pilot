@@ -17,10 +17,12 @@ export type MeetingStatusTone =
   | "diarizing"
   | "finished"
   | "error"
+  | "no-model"
   | "unknown";
 
 /** A transient, front-end-only state that overrides the persisted status. */
-export type MeetingActivity = "none" | "transcribing" | "diarizing" | "error";
+export type MeetingActivity =
+  "none" | "transcribing" | "diarizing" | "error" | "no-model";
 
 export interface MeetingStatusView {
   /** Drives the `wp-tone--*` colour class on every surface. */
@@ -42,6 +44,7 @@ const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
   ["transcribing", { tone: "transcribing", label: "Transcribing" }],
   ["diarizing", { tone: "diarizing", label: "Diarizing" }],
   ["error", { tone: "error", label: "Error" }],
+  ["no-model", { tone: "no-model", label: "No model" }],
 ]);
 
 const UNKNOWN: MeetingStatusView = { tone: "unknown", label: "Unknown" };

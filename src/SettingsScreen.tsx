@@ -58,26 +58,38 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
       aria-modal="true"
       aria-label="Settings"
     >
-      <div className="settings-header">
-        <h2>Settings</h2>
-        <button
-          className="close-button"
-          aria-label="Close settings"
-          onClick={onClose}
-        >
-          <Icon name="x" size={18} />
-        </button>
-      </div>
+      <header className="wp-header" data-tauri-drag-region="deep">
+        <div className="wp-header-lead" data-tauri-drag-region="deep">
+          <div className="wp-header-left" data-tauri-drag-region="deep">
+            <span
+              className="wp-traffic-space"
+              aria-hidden="true"
+              data-tauri-drag-region
+            />
+            <AppLogo size={28} />
+            <div className="wp-title-group" data-tauri-drag-region="deep">
+              <h1 className="wp-title">Settings</h1>
+            </div>
+          </div>
+
+          <div className="wp-action-group">
+            <button
+              type="button"
+              className="wp-icon-btn"
+              aria-label="Close settings"
+              onClick={onClose}
+            >
+              <Icon name="x" size={16} />
+            </button>
+          </div>
+        </div>
+      </header>
       <div className="settings-body">
         <div
           className="settings-nav"
           role="tablist"
           aria-label="Settings sections"
         >
-          <div className="settings-brand">
-            <AppLogo size={24} />
-            <span className="settings-brand-name">WhisperPilot</span>
-          </div>
           {SECTIONS.map((s) => (
             <button
               key={s.id}

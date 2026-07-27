@@ -594,7 +594,10 @@ mod tests {
         assert_eq!(stored[1].text, "there");
 
         let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
-        assert_eq!(reopened.segments, vec![dto(0, 2_000, "Hello there", Some(1))]);
+        assert_eq!(
+            reopened.segments,
+            vec![dto(0, 2_000, "Hello there", Some(1))]
+        );
     }
 
     #[test]

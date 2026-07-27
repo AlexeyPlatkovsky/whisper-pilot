@@ -49,8 +49,7 @@ pub fn normalize_to_memory(input: &Path) -> Result<Vec<u8>> {
             "-vn", // drop any video stream
             "-ac", "1", // mono
             "-ar", "16000", // 16 kHz
-            "-f", "s16le",
-            "pipe:1",
+            "-f", "s16le", "pipe:1",
         ])
         .output()
         .map_err(|e| {

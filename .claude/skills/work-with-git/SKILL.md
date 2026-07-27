@@ -41,6 +41,11 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 - Never publish a branch unless the user explicitly requests that push in the current instruction. Branch-creation approval does not authorize an initial `git push -u`, and no pipeline or task lifecycle step may infer push authority.
 - Apply `AGENTS.md` §Git Operation Authority for branch publication and every Git mutation.
 - Preserve user changes and follow the destructive-action rules in `AGENTS.md`.
+- When a branch has a configured upstream, verify the upstream remote branch name
+  matches the local branch name (`origin/<current-branch>`). If the upstream
+  points to a different branch (e.g., `origin/main`), stop and block — the
+  tracking must be corrected before work proceeds. Report the mismatch in the
+  output table as `blocked` with the reason.
 
 ## Commit And Push Rules
 
@@ -70,11 +75,15 @@ Before edits:
 
 1. Confirm the identity decision required by `AGENTS.md` §Task Identity And Tracking.
 2. Inspect `git status --short --branch`.
-3. If a new branch is needed, run `git fetch origin main` before branch creation when network access is available.
-4. If fetching fails but local `origin/main` exists, create the approved branch from local `origin/main` and report the fetch failure in this skill's output.
-5. If `origin/main` is missing, stop and ask the user for the branch base.
-6. Check whether uncommitted changes are present and whether they appear related to the task.
-7. If publication is authorized under `AGENTS.md` and a new branch was created, verify remote tracking. Report any failure in the Remote Published column; otherwise report publication as skipped.
+3. Verify upstream tracking: if the branch has a configured upstream, confirm it
+   points to `origin/<current-branch>` (not `origin/main` or any other branch).
+   If the upstream is missing and a push has not yet been authorized, note it;
+   if the upstream is wrong, block with the mismatch reason per §Branch Rules.
+4. If a new branch is needed, run `git fetch origin main` before branch creation when network access is available.
+5. If fetching fails but local `origin/main` exists, create the approved branch from local `origin/main` and report the fetch failure in this skill's output.
+6. If `origin/main` is missing, stop and ask the user for the branch base.
+7. Check whether uncommitted changes are present and whether they appear related to the task.
+8. If publication is authorized under `AGENTS.md` and a new branch was created, verify remote tracking: confirm the upstream is set to `origin/<branch-name>` and the remote branch exists. Report any failure in the Remote Published column; otherwise report publication as skipped.
 
 After edits:
 

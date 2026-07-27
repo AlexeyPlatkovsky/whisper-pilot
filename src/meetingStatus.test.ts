@@ -46,6 +46,13 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     });
   });
 
+  it("reports the no-model tone when a transcription model is not available", () => {
+    expect(resolveMeetingStatus("ready", "no-model")).toEqual({
+      tone: "no-model",
+      label: "No model",
+    });
+  });
+
   it("reports the error tone when the last action on the meeting failed", () => {
     expect(resolveMeetingStatus("ready", "error")).toEqual({
       tone: "error",

@@ -392,11 +392,19 @@ export function App() {
   const headerStatus: MeetingStatusView | null = useMemo(() => {
     if (activeIsTranscribing)
       return resolveMeetingStatus(undefined, transcribingPhase);
+    if (transcriptionModelReady === false)
+      return resolveMeetingStatus(undefined, "no-model");
     if (status.kind === "error")
       return resolveMeetingStatus(activeMeeting?.status, "error");
     if (!activeMeeting) return null;
     return resolveMeetingStatus(activeMeeting.status);
-  }, [activeIsTranscribing, transcribingPhase, status, activeMeeting]);
+  }, [
+    activeIsTranscribing,
+    transcribingPhase,
+    transcriptionModelReady,
+    status,
+    activeMeeting,
+  ]);
 
   if (isSettingsOpen) {
     return (

@@ -355,7 +355,11 @@ rendering (the header's meeting-label **copy** copies the transcript).
 | `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
 
 Events: `transcription_progress { id, fraction }`, `transcription_done`,
-`transcription_error`, `model_download_progress { id, fraction }`. `Segment` is
+`transcription_error`,
+`model_download_progress { id, fraction, stage }` — where `stage` is
+`downloading` while bytes arrive and `verifying` while the fetched file is
+SHA-hashed, a pass long enough on a large model that the UI must name it rather
+than show a full bar. `Segment` is
 the shared transcript unit
 (`{ id, start_ms, end_ms, text, speaker_id? }`). Errors are `AppError` serialized
 to a human-readable string.

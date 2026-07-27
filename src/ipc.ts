@@ -108,9 +108,17 @@ export interface TaskModel {
   recommended: boolean;
 }
 
+/**
+ * Which part of a download `fraction` describes. Hashing a multi-hundred-
+ * megabyte model runs on well after its last byte arrives, so verification is
+ * reported as its own stage rather than as a still-downloading full bar.
+ */
+export type ModelDownloadStage = "downloading" | "verifying";
+
 export interface ModelDownloadProgress {
   id: string;
   fraction: number;
+  stage: ModelDownloadStage;
 }
 
 export function listTaskModels(): Promise<TaskModel[]> {
