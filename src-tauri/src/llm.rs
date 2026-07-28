@@ -25,17 +25,52 @@ struct NotesJson {
     participants: String,
 }
 
+const ASSISTANT_PREFILL: &str = "{\"summary\":\"";
+
 fn build_prompt(transcript: &str) -> String {
+    let is_russian = transcript.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+
+    let (system_ru, user_ru) = if is_russian {
+        (
+            "Ты — ассистент для создания заметок о встречах. Заполни JSON-шаблон кратким содержанием из расшифровки.\n\
+\n\
+ПРАВИЛА:\n\
+- summary: 2-3 предложения о ключевых темах обсуждения.\n\
+- decisions: 2-3 предложения с принятыми решениями.\n\
+- action_items: 2-3 предложения с дальнейшими шагами.\n\
+- open_questions: 2-3 предложения с нерешёнными вопросами.\n\
+- participants: имена через запятую или пустая строка.\n\
+- Около 100-200 слов на все секции.\n\
+- Экранируй двойные кавычки внутри значений как \\\".\n\
+- Продолжи ТОЧНО с того места, где начинается ответ ассистента.",
+            "Заполни JSON-шаблон.",
+        )
+    } else {
+        (
+            "You are a meeting notes assistant. Fill in the JSON template below with concise notes from the transcript.\n\
+\n\
+RULES:\n\
+- summary: 2-3 sentences covering the key topics discussed.\n\
+- decisions: 2-3 sentences listing conclusions reached.\n\
+- action_items: 2-3 sentences with next steps.\n\
+- open_questions: 2-3 sentences listing unanswered questions.\n\
+- participants: comma-separated names, or empty string if none.\n\
+- Target ~100-200 words total across all sections.\n\
+- Escape any double-quotes inside values as backslash-quote.\n\
+- Continue EXACTLY from where the assistant response starts below.",
+            "Fill the JSON template.",
+        )
+    };
+
     format!(
         "<|im_start|>system\n\
-You are a meeting notes assistant. Given a full meeting transcript, produce structured notes in valid JSON with exactly these keys: summary, decisions, action_items, open_questions, participants. \
-Each value is a plain string, never an array. Use newline characters within strings for lists. \
-Keep each section concise. Respond in the same language as the transcript. Output ONLY the JSON object, no other text.<|im_end|>\n\
+{system_ru}<|im_end|>\n\
 <|im_start|>user\n\
 Transcript:\n{transcript}\n\n\
-Produce the meeting notes JSON.<|im_end|>\n\
+{user_ru}<|im_end|>\n\
 <|im_start|>assistant\n\
- response",
+<think>\n\n</think>\n\n\
+{ASSISTANT_PREFILL}"
     )
 }
 
@@ -52,14 +87,19 @@ fn strip_think_block(raw: &str) -> &str {
 }
 
 fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
-    let json_str = raw.trim();
+    let original = raw.trim();
+    let cleaned = strip_think_block(original);
+    let cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
+    let cleaned = cleaned.strip_prefix('\n').unwrap_or(cleaned);
+    let cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
 
-    let json_str = strip_think_block(json_str);
+    let json_str = if cleaned.trim_start().starts_with('{') {
+        cleaned.to_string()
+    } else {
+        format!("{ASSISTANT_PREFILL}{cleaned}")
+    };
 
-    let json_str = json_str.strip_prefix("```json").unwrap_or(json_str);
-    let json_str = json_str.strip_prefix('\n').unwrap_or(json_str);
-    let json_str = json_str.strip_prefix("```").unwrap_or(json_str);
-    let json_str = json_str.strip_suffix("```").unwrap_or(json_str);
+    let json_str = json_str.strip_suffix("```").unwrap_or(&json_str);
     let json_str = json_str.trim();
 
     if let Ok(parsed) = serde_json::from_str::<NotesJson>(json_str) {
@@ -74,7 +114,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     }
 
     let fallback = NotesJson {
-        summary: json_str.to_string(),
+        summary: cleaned.to_string(),
         decisions: String::new(),
         action_items: String::new(),
         open_questions: String::new(),
@@ -84,10 +124,10 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     Ok(MeetingNotes {
         meeting_id: 0,
         summary: fallback.summary,
-        decisions: fallback.decisions,
-        action_items: fallback.action_items,
-        open_questions: fallback.open_questions,
-        participants: fallback.participants,
+        decisions: String::new(),
+        action_items: String::new(),
+        open_questions: String::new(),
+        participants: String::new(),
     })
 }
 
@@ -227,7 +267,22 @@ mod tests {
         let transcript = "Alex: Hello\nSam: Hi there";
         let prompt = build_prompt(transcript);
         assert!(prompt.contains("Alex: Hello"));
-        assert!(prompt.contains("You are a meeting notes assistant"));
-        assert!(prompt.contains("<|im_start|>assistant\n"));
+        assert!(prompt.contains("meeting notes assistant"));
+        assert!(prompt.ends_with(ASSISTANT_PREFILL));
+    }
+
+    #[test]
+    fn parse_notes_prefills_opening_brace_when_missing() {
+        let raw = "Test summary\", \"decisions\": \"D\", \"action_items\": \"A\", \"open_questions\": \"Q\", \"participants\": \"P\"}";
+        let notes = parse_notes_json(raw).unwrap();
+        assert_eq!(notes.summary, "Test summary");
+        assert_eq!(notes.decisions, "D");
+    }
+
+    #[test]
+    fn parse_notes_handles_full_json_when_model_regenerates_opening() {
+        let raw = "{\"summary\": \"Test.\", \"decisions\": \"D\", \"action_items\": \"A\", \"open_questions\": \"Q\", \"participants\": \"P\"}";
+        let notes = parse_notes_json(raw).unwrap();
+        assert_eq!(notes.summary, "Test.");
     }
 }
