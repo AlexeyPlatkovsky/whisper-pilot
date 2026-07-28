@@ -15,6 +15,7 @@ export type MeetingStatusTone =
   | "ready"
   | "transcribing"
   | "diarizing"
+  | "crafting"
   | "finished"
   | "error"
   | "no-model"
@@ -22,7 +23,7 @@ export type MeetingStatusTone =
 
 /** A transient, front-end-only state that overrides the persisted status. */
 export type MeetingActivity =
-  "none" | "transcribing" | "diarizing" | "error" | "no-model";
+  "none" | "transcribing" | "diarizing" | "crafting" | "error" | "no-model";
 
 export interface MeetingStatusView {
   /** Drives the `wp-tone--*` colour class on every surface. */
@@ -43,6 +44,7 @@ const PERSISTED = new Map<string, MeetingStatusView>([
 const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
   ["transcribing", { tone: "transcribing", label: "Transcribing" }],
   ["diarizing", { tone: "diarizing", label: "Diarizing" }],
+  ["crafting", { tone: "crafting", label: "Crafting notes" }],
   ["error", { tone: "error", label: "Error" }],
   ["no-model", { tone: "no-model", label: "No model" }],
 ]);

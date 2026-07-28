@@ -25,6 +25,7 @@
   --tone-ready: var(--muted);
   --tone-transcribing: var(--status-progress);
   --tone-diarizing: var(--status-progress);
+  --tone-crafting: var(--status-progress);
   --tone-finished: var(--wp-success-text);
   --tone-error: var(--error);
   --tone-no-model: var(--accent);
@@ -340,6 +341,10 @@ body {
 }
 .wp-tone--diarizing {
   --tone: var(--tone-diarizing);
+  color: var(--tone);
+}
+.wp-tone--crafting {
+  --tone: var(--tone-crafting);
   color: var(--tone);
 }
 .wp-tone--finished {

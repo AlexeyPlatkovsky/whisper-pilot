@@ -285,4 +285,25 @@ mod tests {
         let notes = parse_notes_json(raw).unwrap();
         assert_eq!(notes.summary, "Test.");
     }
+
+    #[test]
+    fn build_prompt_uses_english_for_ascii_transcript() {
+        let prompt = build_prompt("Hello, let us talk about Q3 roadmap.");
+        assert!(prompt.contains("meeting notes assistant"));
+        assert!(!prompt.contains("ассистент"));
+    }
+
+    #[test]
+    fn build_prompt_uses_russian_for_cyrillic_transcript() {
+        let prompt = build_prompt("Алексей: Привет\nИван: Здравствуйте");
+        assert!(prompt.contains("ассистент"));
+        assert!(prompt.contains("ПРАВИЛА"));
+        assert!(!prompt.contains("meeting notes assistant"));
+    }
+
+    #[test]
+    fn build_prompt_detects_cyrillic_even_when_mostly_ascii() {
+        let prompt = build_prompt("We should обсуждать the budget.");
+        assert!(prompt.contains("ассистент"));
+    }
 }
