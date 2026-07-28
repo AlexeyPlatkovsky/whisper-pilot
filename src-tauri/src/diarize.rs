@@ -13,7 +13,7 @@ use sherpa_rs::speaker_id::{EmbeddingExtractor, ExtractorConfig};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Usable on-disk paths for direct segmentation and speaker-embedding
 /// inference.
@@ -25,10 +25,15 @@ pub struct DiarizationModelPaths {
 
 const SEGMENTATION_ARCHIVE_ENTRY: &str = "model.onnx";
 const SEGMENTATION_BATCH_SIZE: usize = 32;
+// pyannote segmentation 3.0 advances every inference window by ten percent.
+// This is distinct from `receptive_field_shift`, which timestamps output frames.
+const SEGMENTATION_WINDOW_SHIFT_DIVISOR: usize = 10;
 const MIN_EMBEDDING_FRAMES: usize = 10;
 const AUTOMATIC_CLUSTER_THRESHOLD: f32 = 0.85;
 const ORT_DYLIB_NAME: &str = "libonnxruntime.1.17.1.dylib";
 static ORT_DYLIB_PATH: OnceLock<PathBuf> = OnceLock::new();
+static ORT_ENVIRONMENT: OnceLock<Arc<Environment>> = OnceLock::new();
+static ORT_ENVIRONMENT_INIT: Mutex<()> = Mutex::new(());
 
 /// The stopping rule for Rust-owned speaker clustering.
 ///
@@ -261,6 +266,47 @@ pub fn segmentation_windows(
         .collect())
 }
 
+fn segmentation_window_shift(window_size: usize) -> Result<usize> {
+    let window_shift = window_size / SEGMENTATION_WINDOW_SHIFT_DIVISOR;
+    if window_shift == 0 {
+        return Err(AppError::Diarization(
+            "segmentation metadata window size is too small for the model sliding-window ratio"
+                .to_string(),
+        ));
+    }
+    Ok(window_shift)
+}
+
+fn segmentation_progress_units(
+    completed_windows: usize,
+    total_windows: usize,
+) -> Result<(i32, i32)> {
+    diarization_progress_units(completed_windows, total_windows, 0)
+}
+
+fn embedding_progress_units(completed_windows: usize, total_windows: usize) -> Result<(i32, i32)> {
+    diarization_progress_units(completed_windows, total_windows, total_windows)
+}
+
+fn diarization_progress_units(
+    completed_windows: usize,
+    total_windows: usize,
+    offset: usize,
+) -> Result<(i32, i32)> {
+    let total = total_windows.checked_mul(2).ok_or_else(|| {
+        AppError::Diarization("diarization progress total overflowed".to_string())
+    })?;
+    let completed = offset
+        .checked_add(completed_windows.min(total_windows))
+        .ok_or_else(|| AppError::Diarization("diarization progress overflowed".to_string()))?;
+    Ok((
+        i32::try_from(completed)
+            .map_err(|_| AppError::Diarization("diarization progress exceeds i32".to_string()))?,
+        i32::try_from(total)
+            .map_err(|_| AppError::Diarization("diarization progress exceeds i32".to_string()))?,
+    ))
+}
+
 #[derive(Debug, Clone)]
 struct SegmentationMetadata {
     sample_rate: u32,
@@ -284,14 +330,7 @@ struct DirectSegmentationModel {
 
 impl DirectSegmentationModel {
     fn load(path: &Path) -> Result<Self> {
-        configure_ort_dylib()?;
-        let environment = Environment::builder()
-            .with_name("whisperpilot-diarization")
-            .build()
-            .map_err(|error| {
-                AppError::Diarization(format!("could not create ONNX environment: {error}"))
-            })?
-            .into_arc();
+        let environment = ort_environment()?;
         let session = SessionBuilder::new(&environment)
             .map_err(|error| {
                 AppError::Diarization(format!("could not create ONNX session: {error}"))
@@ -320,7 +359,7 @@ impl DirectSegmentationModel {
         let windows = segmentation_windows(
             samples,
             self.metadata.window_size,
-            self.metadata.window_size / 10,
+            segmentation_window_shift(self.metadata.window_size)?,
         )?;
         let total = windows.len();
         let mut result = Vec::with_capacity(total);
@@ -385,10 +424,9 @@ impl DirectSegmentationModel {
                 });
             }
             if let Some(callback) = progress.as_ref() {
-                callback(
-                    ((batch_index + 1) * SEGMENTATION_BATCH_SIZE).min(total) as i32,
-                    total as i32,
-                );
+                let completed = ((batch_index + 1) * SEGMENTATION_BATCH_SIZE).min(total);
+                let (done, progress_total) = segmentation_progress_units(completed, total)?;
+                callback(done, progress_total);
             }
         }
         Ok(result)
@@ -426,35 +464,67 @@ fn segmentation_metadata(session: &Session) -> Result<SegmentationMetadata> {
 }
 
 fn configure_ort_dylib() -> Result<()> {
-    let path = if let Some(path) = ORT_DYLIB_PATH.get() {
-        path
-    } else {
-        let exe = std::env::current_exe().map_err(|error| {
-            AppError::Diarization(format!(
-                "could not locate current executable for ONNX runtime: {error}"
-            ))
+    if ORT_DYLIB_PATH.get().is_some() {
+        return Ok(());
+    }
+    let exe = std::env::current_exe().map_err(|error| {
+        AppError::Diarization(format!(
+            "could not locate current executable for ONNX runtime: {error}"
+        ))
+    })?;
+    let exe_dir = exe.parent().ok_or_else(|| {
+        AppError::Diarization("current executable has no parent directory".to_string())
+    })?;
+    let mut candidates = vec![exe_dir.join(ORT_DYLIB_NAME)];
+    if let Some(parent) = exe_dir.parent() {
+        candidates.push(parent.join(ORT_DYLIB_NAME));
+        candidates.push(parent.join("Frameworks").join(ORT_DYLIB_NAME));
+    }
+    let path = candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            AppError::Diarization(format!("could not locate bundled {ORT_DYLIB_NAME}"))
         })?;
-        let exe_dir = exe.parent().ok_or_else(|| {
-            AppError::Diarization("current executable has no parent directory".to_string())
-        })?;
-        let mut candidates = vec![exe_dir.join(ORT_DYLIB_NAME)];
-        if let Some(parent) = exe_dir.parent() {
-            candidates.push(parent.join(ORT_DYLIB_NAME));
-            candidates.push(parent.join("Frameworks").join(ORT_DYLIB_NAME));
-        }
-        let path = candidates
-            .into_iter()
-            .find(|candidate| candidate.is_file())
-            .ok_or_else(|| {
-                AppError::Diarization(format!("could not locate bundled {ORT_DYLIB_NAME}"))
-            })?;
-        let _ = ORT_DYLIB_PATH.set(path);
-        ORT_DYLIB_PATH
-            .get()
-            .expect("ONNX runtime path was just initialized")
-    };
-    std::env::set_var("ORT_DYLIB_PATH", path);
+    std::env::set_var("ORT_DYLIB_PATH", &path);
+    let _ = ORT_DYLIB_PATH.set(path);
     Ok(())
+}
+
+fn initialize_once<'cache, T>(
+    cache: &'cache OnceLock<T>,
+    init_lock: &Mutex<()>,
+    initialize: impl FnOnce() -> Result<T>,
+) -> Result<&'cache T> {
+    if let Some(value) = cache.get() {
+        return Ok(value);
+    }
+
+    let _init = init_lock.lock().map_err(|_| {
+        AppError::Diarization("ONNX environment initialization lock was poisoned".to_string())
+    })?;
+    if let Some(value) = cache.get() {
+        return Ok(value);
+    }
+
+    let _ = cache.set(initialize()?);
+    cache.get().ok_or_else(|| {
+        AppError::Diarization("ONNX environment was not retained after initialization".to_string())
+    })
+}
+
+fn ort_environment() -> Result<Arc<Environment>> {
+    let environment = initialize_once(&ORT_ENVIRONMENT, &ORT_ENVIRONMENT_INIT, || {
+        configure_ort_dylib()?;
+        Environment::builder()
+            .with_name("whisperpilot-diarization")
+            .build()
+            .map_err(|error| {
+                AppError::Diarization(format!("could not create ONNX environment: {error}"))
+            })
+            .map(|environment| environment.into_arc())
+    })?;
+    Ok(Arc::clone(environment))
 }
 
 fn diarize_with_rust_clustering(
@@ -517,9 +587,10 @@ fn diarize_with_rust_clustering(
                 })?;
             pairs.push((window_index, local_speaker));
             embeddings.push(embedding);
-            if let Some(callback) = progress.as_ref() {
-                callback(pairs.len() as i32, (pairs.len() + 1) as i32);
-            }
+        }
+        if let Some(callback) = progress.as_ref() {
+            let (done, total) = embedding_progress_units(window_index + 1, windows.len())?;
+            callback(done, total);
         }
     }
     if embeddings.is_empty() {
@@ -1213,8 +1284,93 @@ mod tests {
     }
 
     #[test]
-    fn wp62_uses_the_user_selected_automatic_cluster_threshold() {
-        assert_eq!(AUTOMATIC_CLUSTER_THRESHOLD, 0.85);
+    fn wp66_uses_a_two_phase_monotonic_progress_total() {
+        // Scenario: segmentation and embedding report against one real total.
+        assert_eq!(segmentation_progress_units(3, 5).unwrap(), (3, 10));
+        assert_eq!(embedding_progress_units(1, 5).unwrap(), (6, 10));
+        assert_eq!(embedding_progress_units(5, 5).unwrap(), (10, 10));
+    }
+
+    #[test]
+    fn wp66_environment_initialization_factory_runs_once() {
+        let cache = OnceLock::new();
+        let init_lock = Mutex::new(());
+        let calls = std::sync::atomic::AtomicUsize::new(0);
+
+        let first = initialize_once(&cache, &init_lock, || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(String::from("initialized"))
+        })
+        .unwrap();
+        let second = initialize_once(&cache, &init_lock, || {
+            calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(String::from("must not replace the cached environment"))
+        })
+        .unwrap();
+
+        assert_eq!(first, "initialized");
+        assert_eq!(second, "initialized");
+        assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn wp66_derives_the_model_inference_shift_separately_from_frame_timing() {
+        // BVA: the model's 160,000 sample window advances by 10%.
+        assert_eq!(segmentation_window_shift(160_000).unwrap(), 16_000);
+        assert!(matches!(
+            segmentation_window_shift(0),
+            Err(AppError::Diarization(_))
+        ));
+    }
+
+    #[test]
+    fn wp66_numerical_helpers_reject_invalid_vectors_and_preserve_cosine_bounds() {
+        // EP: non-finite and zero vectors are invalid embedding classes.
+        assert!(matches!(
+            normalize_embedding(&[f32::NAN, 1.0], 0),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(matches!(
+            normalize_embedding(&[0.0, 0.0], 0),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(matches!(
+            weighted_normalized_centroid(&[1.0, 0.0], 1, &[-1.0, 0.0]),
+            Err(AppError::Diarization(_))
+        ));
+
+        // BVA: identical, orthogonal, and opposite unit vectors bound cosine distance.
+        assert_eq!(cosine_distance(&[1.0, 0.0], &[1.0, 0.0]), 0.0);
+        assert_eq!(cosine_distance(&[1.0, 0.0], &[0.0, 1.0]), 1.0);
+        assert_eq!(cosine_distance(&[1.0, 0.0], &[-1.0, 0.0]), 2.0);
+    }
+
+    #[test]
+    fn wp66_segmentation_and_powerset_helpers_cover_zero_and_empty_boundaries() {
+        // EP/BVA: invalid zero metadata and empty audio have distinct outcomes.
+        assert!(matches!(
+            segmentation_windows(&[1.0], 0, 1),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(matches!(
+            segmentation_windows(&[1.0], 1, 0),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(segmentation_windows(&[], 4, 2).unwrap().is_empty());
+
+        // EP: pyannote supports at most two simultaneously-active local speakers.
+        assert!(matches!(
+            powerset_class_to_activity(0, 0, 2),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(matches!(
+            powerset_class_to_activity(0, 3, 0),
+            Err(AppError::Diarization(_))
+        ));
+        assert!(matches!(
+            powerset_class_to_activity(0, 3, 3),
+            Err(AppError::Diarization(_))
+        ));
     }
 
     struct FakeDiarizer {

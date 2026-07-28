@@ -1,0 +1,53 @@
+schema_version: 1
+id: WP-66
+title: Harden direct diarization runtime and clustering helper coverage
+priority: normal
+type: task
+status: done
+created_at: '2026-07-28T09:06:53Z'
+updated_at: '2026-07-28T09:23:39Z'
+parent_id: WP-61
+description: 'Harden the Rust-owned direct diarization path after code-quality review without changing the selected automatic clustering threshold (0.85), model selection, user-visible no-model warning, or child-process isolation.
+
+
+  Happy path: ONNX Runtime uses the packaged dylib and one shared process environment; direct segmentation uses the documented ten-percent model sliding window; embedding-phase progress reports completed work against a real total and reaches completion; numerical helper and input-boundary behavior is covered by focused Rust tests.
+
+
+  Failure behavior: zero or invalid segmentation parameters and invalid numerical inputs return typed errors rather than panicking; no change may bypass the existing child-process error classification or warning fallback.
+
+
+  Scope: `src-tauri/src/diarize.rs`, its Rust tests, and any required architecture documentation. Do not change model catalog assets, threshold selection, clustering semantics, UI, IPC, external process isolation, or fallback policy.
+
+
+  Scenarios (BDD):
+
+
+  Given direct segmentation runs against the packaged ONNX Runtime
+
+  When the diarization worker loads its session
+
+  Then the dylib path is configured once and the process reuses one ONNX Runtime environment.
+
+
+  Given segmentation produces N windows
+
+  When embedding extraction processes every window
+
+  Then progress uses a real N-based denominator, remains monotonic across segmentation and embedding, and finishes at N*2/N*2.
+
+
+  Given zero window parameters, empty samples, invalid embeddings, or maximum-class edge cases
+
+  When the relevant pure helper runs
+
+  Then it returns the expected empty result or typed error and never panics.
+
+
+  Constraints: macOS-only local offline operation; retain Rust 1.80 compatibility and the existing packaged ONNX Runtime dylib. The segmentation model metadata receptive-field shift remains output-frame timing metadata; it is not the inference sliding-window shift. See ADR-013.'
+dod:
+- Direct segmentation names and documents its ten-percent inference-window shift independently from receptive-field output timing, and rejects invalid window inputs without panicking.
+- ONNX Runtime configures the packaged dylib once and reuses one process environment for direct segmentation sessions.
+- Segmentation and embedding progress use a monotonic, real window-derived total and finish at the exact completion value; no fabricated denominator remains.
+- Focused Rust tests cover numerical helper failures, cosine-distance boundaries, segmentation empty and zero-parameter inputs, and powerset maximum-class edges.
+- Rust formatting, tests, clippy with warnings denied, cargo build, frontend checks, documentation maintenance outcome, and code review pass without changing the existing fallback behavior.
+created_by: Aleksei_Platkovskii

@@ -4939,7 +4939,7 @@ dependencies = [
 
 [[package]]
 name = "whisper-pilot"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",

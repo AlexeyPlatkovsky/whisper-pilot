@@ -127,8 +127,12 @@ for WP-49; WP-62 deliberately uses automatic threshold clustering only.
 The ONNX Runtime dylib is not a new bundled native dependency: WP-60 already
 stages `libonnxruntime.1.17.1.dylib` into `Contents/Frameworks` and the direct
 binding resolves that same signed artifact from either the executable directory
-or the framework directory. The implementation pins `ort` v1.16.3 because its
-declared Rust 1.70 minimum is compatible with this project's Rust 1.80 toolchain;
+or the framework directory. It configures that dylib and creates one ONNX
+Runtime environment per worker process before opening segmentation sessions.
+Segmentation advances its 160,000-sample inference window by the model's
+documented 10% stride; `receptive_field_shift` is used separately to timestamp
+output frames. The implementation pins `ort` v1.16.3 because its declared Rust
+1.70 minimum is compatible with this project's Rust 1.80 toolchain;
 the current `ort` 2.x line requires a newer compiler.
 
 Route-A quality is measured rather than inferred. The ordered 0.95 → 0.75
