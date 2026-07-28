@@ -5,12 +5,18 @@
 use crate::error::{AppError, Result};
 use crate::models;
 use crate::transcribe;
+use ndarray::{s, Array3, CowArray};
+use ort::{
+    tensor::OrtOwnedTensor, Environment, GraphOptimizationLevel, Session, SessionBuilder, Value,
+};
+use sherpa_rs::speaker_id::{EmbeddingExtractor, ExtractorConfig};
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
-/// Usable on-disk paths for the two diarization models, ready to hand to
-/// sherpa-onnx's `Diarize::new`.
+/// Usable on-disk paths for direct segmentation and speaker-embedding
+/// inference.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DiarizationModelPaths {
     pub segmentation_model: PathBuf,
@@ -18,6 +24,603 @@ pub struct DiarizationModelPaths {
 }
 
 const SEGMENTATION_ARCHIVE_ENTRY: &str = "model.onnx";
+const SEGMENTATION_BATCH_SIZE: usize = 32;
+const MIN_EMBEDDING_FRAMES: usize = 10;
+const AUTOMATIC_CLUSTER_THRESHOLD: f32 = 0.85;
+const ORT_DYLIB_NAME: &str = "libonnxruntime.1.17.1.dylib";
+static ORT_DYLIB_PATH: OnceLock<PathBuf> = OnceLock::new();
+
+/// The stopping rule for Rust-owned speaker clustering.
+///
+/// WP-62 ships the distance-threshold mode. The fixed-count variant remains
+/// represented here so WP-49 can add its speaker-count override without
+/// redesigning the public clustering contract.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum ClusterStop {
+    /// Stop merging once the nearest pair is farther apart than this cosine
+    /// distance. Valid values are in the inclusive cosine-distance range 0–2.
+    Distance(f32),
+    /// Reserved for WP-49; deliberately not implemented in WP-62.
+    FixedCount(usize),
+}
+
+#[derive(Debug)]
+struct EmbeddingCluster {
+    members: Vec<usize>,
+    centroid: Vec<f32>,
+}
+
+/// Deterministic incremental-centroid threshold clustering for normalized
+/// embeddings. Labels follow first input occurrence; see Speaker Diarization
+/// in `docs/architecture.md` for the production-path constraint.
+pub fn cluster_embeddings(embeddings: &[Vec<f32>], stop: ClusterStop) -> Result<Vec<usize>> {
+    let threshold = match stop {
+        ClusterStop::Distance(value) if value.is_finite() && (0.0..=2.0).contains(&value) => value,
+        ClusterStop::Distance(value) => {
+            return Err(AppError::Diarization(format!(
+                "invalid cosine-distance threshold {value}; expected a finite value from 0 to 2"
+            )));
+        }
+        ClusterStop::FixedCount(_) => {
+            return Err(AppError::Diarization(
+                "fixed-count speaker clustering is reserved for WP-49".to_string(),
+            ));
+        }
+    };
+
+    if embeddings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let dimension = embeddings[0].len();
+    if dimension == 0 {
+        return Err(AppError::Diarization(
+            "speaker embedding must have at least one dimension".to_string(),
+        ));
+    }
+
+    let mut clusters: Vec<EmbeddingCluster> = Vec::new();
+    for (index, embedding) in embeddings.iter().enumerate() {
+        if embedding.len() != dimension {
+            return Err(AppError::Diarization(format!(
+                "speaker embedding {index} has dimension {}; expected {dimension}",
+                embedding.len()
+            )));
+        }
+        let normalized = normalize_embedding(embedding, index)?;
+        let nearest = clusters
+            .iter()
+            .enumerate()
+            .map(|(cluster_index, cluster)| {
+                (
+                    cluster_index,
+                    cosine_distance(&normalized, &cluster.centroid),
+                )
+            })
+            .min_by(|left, right| left.1.total_cmp(&right.1));
+
+        if let Some((cluster_index, distance)) = nearest {
+            if distance <= threshold {
+                let cluster = &mut clusters[cluster_index];
+                cluster.centroid = weighted_normalized_centroid(
+                    &cluster.centroid,
+                    cluster.members.len(),
+                    &normalized,
+                )?;
+                cluster.members.push(index);
+                continue;
+            }
+        }
+
+        clusters.push(EmbeddingCluster {
+            members: vec![index],
+            centroid: normalized,
+        });
+    }
+
+    let mut labels = vec![0; embeddings.len()];
+    for (label, cluster) in clusters.iter().enumerate() {
+        for &member in &cluster.members {
+            labels[member] = label;
+        }
+    }
+    Ok(labels)
+}
+
+fn normalize_embedding(embedding: &[f32], index: usize) -> Result<Vec<f32>> {
+    if embedding.iter().any(|value| !value.is_finite()) {
+        return Err(AppError::Diarization(format!(
+            "speaker embedding {index} contains a non-finite value"
+        )));
+    }
+    let norm_squared: f32 = embedding.iter().map(|value| value * value).sum();
+    if !norm_squared.is_finite() || norm_squared <= f32::EPSILON {
+        return Err(AppError::Diarization(format!(
+            "speaker embedding {index} has zero magnitude"
+        )));
+    }
+    let norm = norm_squared.sqrt();
+    Ok(embedding.iter().map(|value| value / norm).collect())
+}
+
+fn weighted_normalized_centroid(
+    centroid: &[f32],
+    centroid_members: usize,
+    embedding: &[f32],
+) -> Result<Vec<f32>> {
+    let member_count = centroid_members as f32;
+    let mean: Vec<f32> = centroid
+        .iter()
+        .zip(embedding)
+        .map(|(centroid_value, embedding_value)| {
+            (centroid_value * member_count + embedding_value) / (member_count + 1.0)
+        })
+        .collect();
+    normalize_embedding(&mean, 0).map_err(|_| {
+        AppError::Diarization("cannot merge speaker clusters with opposite centroids".to_string())
+    })
+}
+
+fn cosine_distance(left: &[f32], right: &[f32]) -> f32 {
+    let similarity: f32 = left
+        .iter()
+        .zip(right)
+        .map(|(left, right)| left * right)
+        .sum();
+    1.0 - similarity.clamp(-1.0, 1.0)
+}
+
+/// Expand one pyannote powerset class into activity for its local speakers.
+///
+/// Class zero is silence; classes then enumerate singleton combinations before
+/// two-speaker combinations in lexicographic order. The downloaded
+/// segmentation model advertises the dimensions used here as ONNX metadata.
+pub fn powerset_class_to_activity(
+    class: usize,
+    num_speakers: usize,
+    powerset_max_classes: usize,
+) -> Result<Vec<bool>> {
+    if num_speakers == 0 {
+        return Err(AppError::Diarization(
+            "segmentation metadata declares zero local speakers".to_string(),
+        ));
+    }
+    if powerset_max_classes == 0 || powerset_max_classes > 2 {
+        return Err(AppError::Diarization(format!(
+            "unsupported pyannote powerset size {powerset_max_classes}; expected 1 or 2"
+        )));
+    }
+
+    if class == 0 {
+        return Ok(vec![false; num_speakers]);
+    }
+
+    let mut remaining = class - 1;
+    if remaining < num_speakers {
+        let mut activity = vec![false; num_speakers];
+        activity[remaining] = true;
+        return Ok(activity);
+    }
+    remaining -= num_speakers;
+
+    if powerset_max_classes == 2 {
+        for left in 0..num_speakers {
+            for right in left + 1..num_speakers {
+                if remaining == 0 {
+                    let mut activity = vec![false; num_speakers];
+                    activity[left] = true;
+                    activity[right] = true;
+                    return Ok(activity);
+                }
+                remaining -= 1;
+            }
+        }
+    }
+
+    Err(AppError::Diarization(format!(
+        "segmentation output class {class} is outside the declared powerset"
+    )))
+}
+
+/// Split mono samples into pyannote's fixed-size, overlapping inference
+/// windows. The final partial window is retained with zero padding so the end
+/// of the recording cannot silently lose speaker activity.
+pub fn segmentation_windows(
+    samples: &[f32],
+    window_size: usize,
+    window_shift: usize,
+) -> Result<Vec<(usize, Vec<f32>)>> {
+    if window_size == 0 || window_shift == 0 {
+        return Err(AppError::Diarization(
+            "segmentation metadata has a zero window size or shift".to_string(),
+        ));
+    }
+    if samples.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut starts = Vec::new();
+    if samples.len() <= window_size {
+        starts.push(0);
+    } else {
+        let full_count = (samples.len() - window_size) / window_shift + 1;
+        starts.extend((0..full_count).map(|index| index * window_shift));
+        if (samples.len() - window_size) % window_shift != 0 {
+            starts.push(full_count * window_shift);
+        }
+    }
+
+    Ok(starts
+        .into_iter()
+        .map(|start| {
+            let mut window = vec![0.0; window_size];
+            let available = samples.len().saturating_sub(start).min(window_size);
+            window[..available].copy_from_slice(&samples[start..start + available]);
+            (start, window)
+        })
+        .collect())
+}
+
+#[derive(Debug, Clone)]
+struct SegmentationMetadata {
+    sample_rate: u32,
+    window_size: usize,
+    receptive_field_shift: usize,
+    num_speakers: usize,
+    powerset_max_classes: usize,
+    num_classes: usize,
+}
+
+#[derive(Debug)]
+struct SegmentationWindow {
+    start_sample: usize,
+    activity: Vec<Vec<bool>>,
+}
+
+struct DirectSegmentationModel {
+    session: Session,
+    metadata: SegmentationMetadata,
+}
+
+impl DirectSegmentationModel {
+    fn load(path: &Path) -> Result<Self> {
+        configure_ort_dylib()?;
+        let environment = Environment::builder()
+            .with_name("whisperpilot-diarization")
+            .build()
+            .map_err(|error| {
+                AppError::Diarization(format!("could not create ONNX environment: {error}"))
+            })?
+            .into_arc();
+        let session = SessionBuilder::new(&environment)
+            .map_err(|error| {
+                AppError::Diarization(format!("could not create ONNX session: {error}"))
+            })?
+            .with_optimization_level(GraphOptimizationLevel::Level1)
+            .map_err(|error| {
+                AppError::Diarization(format!("could not configure ONNX session: {error}"))
+            })?
+            .with_intra_threads(1)
+            .map_err(|error| {
+                AppError::Diarization(format!("could not set ONNX thread count: {error}"))
+            })?
+            .with_model_from_file(path)
+            .map_err(|error| {
+                AppError::Diarization(format!("could not load segmentation model: {error}"))
+            })?;
+        let metadata = segmentation_metadata(&session)?;
+        Ok(Self { session, metadata })
+    }
+
+    fn infer(
+        &self,
+        samples: &[f32],
+        progress: &mut Option<ProgressCallback>,
+    ) -> Result<Vec<SegmentationWindow>> {
+        let windows = segmentation_windows(
+            samples,
+            self.metadata.window_size,
+            self.metadata.window_size / 10,
+        )?;
+        let total = windows.len();
+        let mut result = Vec::with_capacity(total);
+
+        for (batch_index, batch) in windows.chunks(SEGMENTATION_BATCH_SIZE).enumerate() {
+            let mut values = Vec::with_capacity(batch.len() * self.metadata.window_size);
+            for (_, window) in batch {
+                values.extend_from_slice(window);
+            }
+            let array = Array3::from_shape_vec((batch.len(), 1, self.metadata.window_size), values)
+                .map_err(|error| {
+                    AppError::Diarization(format!("could not shape segmentation input: {error}"))
+                })?;
+            let input = CowArray::from(array).into_dyn();
+            let input = Value::from_array(self.session.allocator(), &input).map_err(|error| {
+                AppError::Diarization(format!("could not create segmentation tensor: {error}"))
+            })?;
+            let outputs = self.session.run(vec![input]).map_err(|error| {
+                AppError::Diarization(format!("segmentation inference failed: {error}"))
+            })?;
+            let output: OrtOwnedTensor<f32, _> = outputs
+                .first()
+                .ok_or_else(|| {
+                    AppError::Diarization("segmentation model returned no outputs".to_string())
+                })?
+                .try_extract()
+                .map_err(|error| {
+                    AppError::Diarization(format!("could not read segmentation output: {error}"))
+                })?;
+            let output = output.view();
+            let shape = output.shape();
+            if shape.len() != 3 || shape[0] != batch.len() || shape[2] != self.metadata.num_classes
+            {
+                return Err(AppError::Diarization(format!(
+                    "segmentation output shape {:?} does not match batch {} and class count {}",
+                    shape,
+                    batch.len(),
+                    self.metadata.num_classes
+                )));
+            }
+            for (window_index, (start_sample, _)) in batch.iter().enumerate() {
+                let mut activity = Vec::with_capacity(shape[1]);
+                for frame_index in 0..shape[1] {
+                    let logits = output.slice(s![window_index, frame_index, ..]);
+                    let class = logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, left), (_, right)| left.total_cmp(right))
+                        .map(|(class, _)| class)
+                        .ok_or_else(|| {
+                            AppError::Diarization("segmentation frame has no classes".to_string())
+                        })?;
+                    activity.push(powerset_class_to_activity(
+                        class,
+                        self.metadata.num_speakers,
+                        self.metadata.powerset_max_classes,
+                    )?);
+                }
+                result.push(SegmentationWindow {
+                    start_sample: *start_sample,
+                    activity,
+                });
+            }
+            if let Some(callback) = progress.as_ref() {
+                callback(
+                    ((batch_index + 1) * SEGMENTATION_BATCH_SIZE).min(total) as i32,
+                    total as i32,
+                );
+            }
+        }
+        Ok(result)
+    }
+}
+
+fn segmentation_metadata(session: &Session) -> Result<SegmentationMetadata> {
+    let metadata = session.metadata().map_err(|error| {
+        AppError::Diarization(format!("could not read segmentation metadata: {error}"))
+    })?;
+    let value = |key: &str| -> Result<usize> {
+        metadata
+            .custom(key)
+            .map_err(|error| {
+                AppError::Diarization(format!(
+                    "could not read segmentation metadata {key}: {error}"
+                ))
+            })?
+            .ok_or_else(|| {
+                AppError::Diarization(format!("segmentation model lacks metadata key {key}"))
+            })?
+            .parse::<usize>()
+            .map_err(|error| {
+                AppError::Diarization(format!("segmentation metadata {key} is invalid: {error}"))
+            })
+    };
+    Ok(SegmentationMetadata {
+        sample_rate: value("sample_rate")? as u32,
+        window_size: value("window_size")?,
+        receptive_field_shift: value("receptive_field_shift")?,
+        num_speakers: value("num_speakers")?,
+        powerset_max_classes: value("powerset_max_classes")?,
+        num_classes: value("num_classes")?,
+    })
+}
+
+fn configure_ort_dylib() -> Result<()> {
+    let path = if let Some(path) = ORT_DYLIB_PATH.get() {
+        path
+    } else {
+        let exe = std::env::current_exe().map_err(|error| {
+            AppError::Diarization(format!(
+                "could not locate current executable for ONNX runtime: {error}"
+            ))
+        })?;
+        let exe_dir = exe.parent().ok_or_else(|| {
+            AppError::Diarization("current executable has no parent directory".to_string())
+        })?;
+        let mut candidates = vec![exe_dir.join(ORT_DYLIB_NAME)];
+        if let Some(parent) = exe_dir.parent() {
+            candidates.push(parent.join(ORT_DYLIB_NAME));
+            candidates.push(parent.join("Frameworks").join(ORT_DYLIB_NAME));
+        }
+        let path = candidates
+            .into_iter()
+            .find(|candidate| candidate.is_file())
+            .ok_or_else(|| {
+                AppError::Diarization(format!("could not locate bundled {ORT_DYLIB_NAME}"))
+            })?;
+        let _ = ORT_DYLIB_PATH.set(path);
+        ORT_DYLIB_PATH
+            .get()
+            .expect("ONNX runtime path was just initialized")
+    };
+    std::env::set_var("ORT_DYLIB_PATH", path);
+    Ok(())
+}
+
+fn diarize_with_rust_clustering(
+    models: &DiarizationModelPaths,
+    samples: Vec<f32>,
+    speaker_count: Option<i32>,
+    threshold: f32,
+    mut progress: Option<ProgressCallback>,
+) -> Result<Vec<SpeakerTurn>> {
+    if speaker_count.filter(|count| *count > 0).is_some() {
+        return Err(AppError::Diarization(
+            "fixed speaker-count diarization is reserved for WP-49".to_string(),
+        ));
+    }
+
+    let model = DirectSegmentationModel::load(&models.segmentation_model)?;
+    if model.metadata.sample_rate != 16_000 {
+        return Err(AppError::Diarization(format!(
+            "segmentation model expects {} Hz audio, not WhisperPilot's 16000 Hz samples",
+            model.metadata.sample_rate
+        )));
+    }
+    let receptive_field_shift = model.metadata.receptive_field_shift;
+    let windows = model.infer(&samples, &mut progress)?;
+    if windows.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut extractor = EmbeddingExtractor::new(ExtractorConfig {
+        model: models.embedding_model.to_string_lossy().to_string(),
+        num_threads: Some(1),
+        ..Default::default()
+    })
+    .map_err(|error| {
+        AppError::Diarization(format!("could not initialize embedding extractor: {error}"))
+    })?;
+
+    let mut pairs = Vec::new();
+    let mut embeddings = Vec::new();
+    for (window_index, window) in windows.iter().enumerate() {
+        let local_speakers = window.activity.first().map_or(0, Vec::len);
+        for local_speaker in 0..local_speakers {
+            let active_frames = window
+                .activity
+                .iter()
+                .filter(|activity| activity[local_speaker])
+                .count();
+            if active_frames < MIN_EMBEDDING_FRAMES {
+                continue;
+            }
+            let audio =
+                masked_window_audio(&samples, window, local_speaker, model.metadata.window_size);
+            if audio.is_empty() {
+                continue;
+            }
+            let embedding = extractor
+                .compute_speaker_embedding(audio, model.metadata.sample_rate)
+                .map_err(|error| {
+                    AppError::Diarization(format!("could not compute speaker embedding: {error}"))
+                })?;
+            pairs.push((window_index, local_speaker));
+            embeddings.push(embedding);
+            if let Some(callback) = progress.as_ref() {
+                callback(pairs.len() as i32, (pairs.len() + 1) as i32);
+            }
+        }
+    }
+    if embeddings.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let labels = cluster_embeddings(&embeddings, ClusterStop::Distance(threshold))?;
+    let assignments: BTreeMap<(usize, usize), usize> = pairs.into_iter().zip(labels).collect();
+    turns_from_assignments(
+        &windows,
+        &assignments,
+        samples.len(),
+        receptive_field_shift,
+        model.metadata.sample_rate,
+    )
+}
+
+fn masked_window_audio(
+    samples: &[f32],
+    window: &SegmentationWindow,
+    local_speaker: usize,
+    window_size: usize,
+) -> Vec<f32> {
+    let frame_count = window.activity.len();
+    let mut audio = Vec::new();
+    for (frame, activity) in window.activity.iter().enumerate() {
+        if !activity[local_speaker] {
+            continue;
+        }
+        let start = window.start_sample + frame * window_size / frame_count;
+        let end = window.start_sample + (frame + 1) * window_size / frame_count;
+        if start < samples.len() {
+            audio.extend_from_slice(&samples[start..end.min(samples.len())]);
+        }
+    }
+    audio
+}
+
+fn turns_from_assignments(
+    windows: &[SegmentationWindow],
+    assignments: &BTreeMap<(usize, usize), usize>,
+    sample_len: usize,
+    receptive_field_shift: usize,
+    sample_rate: u32,
+) -> Result<Vec<SpeakerTurn>> {
+    if receptive_field_shift == 0 || sample_rate == 0 {
+        return Err(AppError::Diarization(
+            "segmentation metadata has a zero frame shift or sample rate".to_string(),
+        ));
+    }
+    let frames = sample_len.div_ceil(receptive_field_shift);
+    let cluster_count = assignments.values().copied().max().unwrap_or(0) + 1;
+    let mut votes = vec![vec![0u32; cluster_count]; frames];
+    for (window_index, window) in windows.iter().enumerate() {
+        let base = (window.start_sample as f64 / receptive_field_shift as f64).round() as usize;
+        for (frame, activity) in window.activity.iter().enumerate() {
+            let target = base + frame;
+            if target >= votes.len() {
+                break;
+            }
+            for (local_speaker, active) in activity.iter().enumerate() {
+                if *active {
+                    if let Some(cluster) = assignments.get(&(window_index, local_speaker)) {
+                        votes[target][*cluster] += 1;
+                    }
+                }
+            }
+        }
+    }
+
+    let labels: Vec<Option<usize>> = votes
+        .iter()
+        .map(|frame| {
+            frame
+                .iter()
+                .enumerate()
+                .filter(|(_, count)| **count > 0)
+                .max_by_key(|(_, count)| **count)
+                .map(|(label, _)| label)
+        })
+        .collect();
+    let mut turns = Vec::new();
+    let mut start = 0;
+    while start < labels.len() {
+        let Some(label) = labels[start] else {
+            start += 1;
+            continue;
+        };
+        let mut end = start + 1;
+        while end < labels.len() && labels[end] == Some(label) {
+            end += 1;
+        }
+        turns.push(SpeakerTurn {
+            start_ms: ((start * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
+            end_ms: ((end * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
+            speaker: label as i32,
+        });
+        start = end;
+    }
+    Ok(turns)
+}
 
 /// Resolve the embedding model and segmentation model paths from the
 /// diarization assets WP-39/WP-40 already downloaded into `app_support_dir`.
@@ -158,6 +761,7 @@ pub struct SpeakerTurn {
 /// Isolates the real sherpa-onnx engine call so the surrounding logic
 /// (config translation, ordering) is unit-testable without real ONNX
 /// inference.
+#[cfg(test)]
 trait SpeakerDiarizer {
     fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>>;
 }
@@ -169,8 +773,11 @@ trait SpeakerDiarizer {
 /// for the recommended embedding model, and `diarize_process`'s isolation is
 /// what makes it affordable (ADR-013). Do not remove that isolation on the
 /// grounds that this value works.
+#[cfg(test)]
 const AUTO_DETECT_THRESHOLD: f32 = 0.9;
+#[cfg(test)]
 const AUTO_DETECT_MIN_DURATION_ON: f32 = 1.0;
+#[cfg(test)]
 const AUTO_DETECT_MIN_DURATION_OFF: f32 = 1.0;
 
 /// Translate a caller-provided speaker count into sherpa-onnx's clustering
@@ -183,6 +790,7 @@ const AUTO_DETECT_MIN_DURATION_OFF: f32 = 1.0;
 /// of how the count was chosen, so setting them unconditionally would
 /// silently affect WP-49's not-yet-built explicit-count path. See
 /// docs/architecture.md's Speaker Diarization section for the full rationale.
+#[cfg(test)]
 fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig {
     let is_auto_detect = speaker_count.filter(|&n| n > 0).is_none();
     let num_clusters = speaker_count.filter(|&n| n > 0).unwrap_or(0);
@@ -206,6 +814,7 @@ fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig
 /// Run `diarizer` over `samples` and return its turns ordered by start time.
 /// Defensive: sherpa-onnx already returns turns start-time-sorted, but this
 /// does not depend on that undocumented behavior.
+#[cfg(test)]
 fn diarize_with(
     diarizer: &mut impl SpeakerDiarizer,
     samples: Vec<f32>,
@@ -215,43 +824,17 @@ fn diarize_with(
     Ok(turns)
 }
 
-/// Called once per embedding chunk while the engine works. Two properties of
-/// sherpa-onnx's own callback carry over and matter: clustering runs *after*
-/// the last call with no callbacks at all, and the return value is ignored, so
-/// this cannot cancel anything — it can only report liveness (WP-53).
+/// Reports direct segmentation and embedding work to the isolated worker's
+/// inactivity supervisor. The return value is intentionally advisory: it
+/// records liveness but does not cancel native inference.
 pub type ProgressCallback = Box<dyn Fn(i32, i32) -> i32 + Send + 'static>;
 
-/// Adapts the real `sherpa_rs::diarize::Diarize` engine to `SpeakerDiarizer`,
-/// converting its seconds-based `f32` output to our milliseconds-based `u32`
-/// `SpeakerTurn`.
-struct SherpaDiarizer {
-    engine: sherpa_rs::diarize::Diarize,
-    progress: Option<ProgressCallback>,
-}
-
-impl SpeakerDiarizer for SherpaDiarizer {
-    fn compute(&mut self, samples: Vec<f32>) -> Result<Vec<SpeakerTurn>> {
-        let segments = self
-            .engine
-            .compute(samples, self.progress.take())
-            .map_err(|e| AppError::Diarization(e.to_string()))?;
-        Ok(segments
-            .into_iter()
-            .map(|s| SpeakerTurn {
-                start_ms: (s.start * 1000.0).round() as u32,
-                end_ms: (s.end * 1000.0).round() as u32,
-                speaker: s.speaker,
-            })
-            .collect())
-    }
-}
-
 /// Run speaker diarization over `samples` (16kHz mono f32), using the models
-/// WP-5's `resolve_diarization_models` prepares. `speaker_count`: `Some(n)`
-/// with `n > 0` requests exactly `n` speakers; anything else auto-detects.
+/// WP-5's `resolve_diarization_models` prepares. WP-62 supports automatic
+/// threshold clustering only; positive `speaker_count` is rejected until
+/// WP-49 owns fixed-count behavior.
 ///
-/// This runs the engine **in this process**, which the native clustering code
-/// can abort outright (WP-53); `transcribe_meeting` goes through
+/// This runs native inference **in this process**; `transcribe_meeting` goes through
 /// `diarize_process::diarize_isolated` instead. Retained as the no-progress
 /// form used by `tests/diarize_integration.rs` — the isolating child calls
 /// [`diarize_samples_with_progress`].
@@ -281,12 +864,25 @@ pub fn diarize_samples_with_progress(
     progress: Option<ProgressCallback>,
 ) -> Result<Vec<SpeakerTurn>> {
     let models = resolve_diarization_models(app_support_dir, active_variant)?;
-    let config = build_config(speaker_count);
-    let engine =
-        sherpa_rs::diarize::Diarize::new(models.segmentation_model, models.embedding_model, config)
-            .map_err(|e| AppError::Diarization(format!("failed to initialize diarizer: {e}")))?;
-    let mut adapter = SherpaDiarizer { engine, progress };
-    diarize_with(&mut adapter, samples)
+    diarize_with_rust_clustering(
+        &models,
+        samples,
+        speaker_count,
+        AUTOMATIC_CLUSTER_THRESHOLD,
+        progress,
+    )
+}
+
+/// Route-A measurement seam: run the Rust-owned path at a supplied
+/// cosine-distance threshold without changing the production default.
+pub fn diarize_samples_with_cluster_threshold(
+    app_support_dir: &Path,
+    samples: Vec<f32>,
+    active_variant: &str,
+    threshold: f32,
+) -> Result<Vec<SpeakerTurn>> {
+    let models = resolve_diarization_models(app_support_dir, active_variant)?;
+    diarize_with_rust_clustering(&models, samples, None, threshold, None)
 }
 
 /// Overlap duration (ms) between two `[start, end)` spans, or 0 if disjoint.
@@ -614,6 +1210,11 @@ mod tests {
         let err = extract_segmentation_model(&archive_path).unwrap_err();
 
         assert!(matches!(err, AppError::DiarizationAsset(_)));
+    }
+
+    #[test]
+    fn wp62_uses_the_user_selected_automatic_cluster_threshold() {
+        assert_eq!(AUTOMATIC_CLUSTER_THRESHOLD, 0.85);
     }
 
     struct FakeDiarizer {

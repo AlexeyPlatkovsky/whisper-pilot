@@ -62,15 +62,10 @@ fn diarizes_real_two_speaker_audio_into_ordered_non_overlapping_turns() {
     samples.extend(std::iter::repeat(0.0).take(16_000)); // 1s silence gap
     samples.extend(read_raw_f32(&voice_b));
 
-    // speaker_count is an explicit override here (not auto-detect) because
-    // this test's job is to prove the real engine call plumbs through
-    // correctly (real models load, real inference runs, no panic, turns come
-    // back ordered) — NOT to prove clustering quality. Auto-detection's
-    // threshold-based split is inherently input-dependent (ADR-005 already
-    // documents diarization quality as "good but below pyannote's best");
-    // two short, acoustically-similar synthesized voices are a harder case
-    // for auto-detect than typical real multi-speaker meeting audio.
-    let turns = whisperpilot_lib::diarize::diarize_samples(&dir, samples, Some(2), "campplus")
+    // WP-62 owns only automatic threshold clustering. Fixed speaker-count
+    // control remains reserved for WP-49, so this smoke test deliberately
+    // verifies the production automatic path without asserting its quality.
+    let turns = whisperpilot_lib::diarize::diarize_samples(&dir, samples, None, "campplus")
         .expect("diarization should succeed against real models and audio");
 
     eprintln!("turns: {turns:?}");

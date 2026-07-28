@@ -29,6 +29,10 @@ reqwest = { version = "0.12", default-features = false, features = ["stream", "r
 sha2 = "0.10"
 futures-util = "0.3"
 sherpa-rs = { version = "0.6.8", features = ["download-binaries"] }
+# The current ort 2.x line needs Rust 1.88; this pinned 1.16.3 tag declares
+# Rust 1.70 and dynamically loads the ONNX Runtime dylib WP-60 already bundles.
+ort = { git = "https://github.com/pykeio/ort.git", tag = "v1.16.3", default-features = false, features = ["load-dynamic"] }
+ndarray = "0.15"
 tar = "0.4"
 bzip2 = "0.4"
 # Only for `_exit` in the diarization worker's orphan watch (ADR-013): it must
