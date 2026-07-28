@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMeeting,
   deleteMeeting,
+  generateNotes,
   getSettings,
   listMeetings,
   listTaskModels,
@@ -14,6 +15,7 @@ import {
   renameMeeting,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
+  type MeetingNotes,
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
@@ -70,6 +72,8 @@ export function App() {
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
     boolean | null
   >(null);
+  const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
+  const [notes, setNotes] = useState<MeetingNotes | null>(null);
   const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
     {},
   );
@@ -134,8 +138,17 @@ export function App() {
       const models = await listTaskModels();
       const transcription = models.find((m) => m.id === "transcription");
       setTranscriptionModelReady(transcription?.downloaded ?? false);
+      const settings = await getSettings();
+      const llmId = settings.active_model_llm;
+      if (llmId) {
+        const llm = models.find((m) => m.id === llmId);
+        setLlmModelReady(llm?.downloaded ?? false);
+      } else {
+        setLlmModelReady(false);
+      }
     } catch {
       setTranscriptionModelReady(false);
+      setLlmModelReady(false);
     }
   }, []);
 
@@ -156,6 +169,7 @@ export function App() {
     setSegments(meeting.segments);
     setSpeakerLabels({});
     setStatus({ kind: "idle" });
+    setNotes(meeting.notes ?? null);
   }, []);
 
   const upsertSummary = useCallback((meeting: PersistedMeeting) => {
@@ -265,6 +279,20 @@ export function App() {
         setStatus({ kind: "error", message: String(e) });
     } finally {
       setTranscribingId(null);
+    }
+  }
+
+  async function handleGenerateNotes() {
+    if (!activeMeeting) return;
+    const id = activeMeeting.id;
+    try {
+      const meeting = await generateNotes(id);
+      upsertSummary(meeting);
+      if (activeMeetingIdRef.current === meeting.id) {
+        setNotes(meeting.notes ?? null);
+      }
+    } catch (e) {
+      setStatus({ kind: "error", message: String(e) });
     }
   }
 
@@ -544,7 +572,7 @@ export function App() {
             <span className="wp-sep" />
             <ActionIcon icon="square" label="Stop" disabled />
             <span className="wp-sep" />
-            <ActionIcon icon="sparkles" label="Craft notes" accent disabled />
+            <ActionIcon icon="sparkles" label="Craft notes" accent onClick={() => void handleGenerateNotes()} disabled={!hasTranscript || llmModelReady !== true || activeIsTranscribing} />
             <span className="wp-sep" />
             <button
               type="button"
@@ -740,18 +768,52 @@ export function App() {
             </div>
           </div>
 
-          {/* MFU (summary) panel — summarization is not wired in M1; this is a
-              presentational placeholder matching the pencil design. */}
+          {/* MFU (summary) panel */}
           <aside className="wp-mfu">
-            <div className="wp-mfu-placeholder">
-              <div className="wp-mfu-icon-frame">
-                <Icon name="sparkles" size={32} />
+            {notes ? (
+              <div className="wp-mfu-notes">
+                {notes.summary && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Summary</h3>
+                    <p className="wp-mfu-text">{notes.summary}</p>
+                  </section>
+                )}
+                {notes.decisions && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Decisions</h3>
+                    <p className="wp-mfu-text">{notes.decisions}</p>
+                  </section>
+                )}
+                {notes.action_items && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Action Items</h3>
+                    <p className="wp-mfu-text">{notes.action_items}</p>
+                  </section>
+                )}
+                {notes.open_questions && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Open Questions</h3>
+                    <p className="wp-mfu-text">{notes.open_questions}</p>
+                  </section>
+                )}
+                {notes.participants && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Participants</h3>
+                    <p className="wp-mfu-text">{notes.participants}</p>
+                  </section>
+                )}
               </div>
-              <p className="wp-mfu-title">Run MFU Craft</p>
-              <p className="wp-mfu-subtitle">
-                Generate summary, decisions, action items, and open questions.
-              </p>
-            </div>
+            ) : (
+              <div className="wp-mfu-placeholder">
+                <div className="wp-mfu-icon-frame">
+                  <Icon name="sparkles" size={32} />
+                </div>
+                <p className="wp-mfu-title">Run MFU Craft</p>
+                <p className="wp-mfu-subtitle">
+                  Generate summary, decisions, action items, and open questions.
+                </p>
+              </div>
+            )}
           </aside>
         </section>
       </div>
@@ -859,11 +921,13 @@ function ActionIcon({
   label,
   accent,
   disabled,
+  onClick,
 }: {
   icon: IconName;
   label: string;
   accent?: boolean;
   disabled?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
@@ -872,6 +936,7 @@ function ActionIcon({
       aria-label={label}
       title={label}
       disabled={disabled}
+      onClick={onClick}
     >
       <Icon name={icon} size={17} />
     </button>

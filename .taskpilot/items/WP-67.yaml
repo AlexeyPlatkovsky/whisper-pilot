@@ -1,0 +1,58 @@
+schema_version: 1
+id: WP-67
+title: Restore usable automatic diarization turns on the reference recordings
+priority: high
+type: task
+status: in_progress
+created_at: '2026-07-28T10:46:06Z'
+updated_at: '2026-07-28T10:46:54Z'
+parent_id: WP-61
+description: 'Fix the Rust-owned automatic diarization path so both selectable embedding variants produce usable speaker turns for the two supplied known-two-speaker recordings. The production route remains local, automatic, and isolated in the existing child process.
+
+
+  Happy path: with either installed CampPlus or TitaNet-large selected, the 92.47-second and 861.57-second reference recordings produce two distinct speaker labels, ordered stable turns, and no word- or phrase-scale fragmentation.
+
+
+  Failure behavior: unavailable models, native inference errors, and child-process failures retain the existing warning and speaker-less fallback; no silent model substitution is introduced.
+
+
+  Scope: `src-tauri/src/diarize.rs`, real-audio regression coverage, focused diarization architecture and decision documentation, and the existing shared reference recordings. Reconstruct per-frame global labels using the segmentation model’s overlap evidence, apply a minimum-on/off turn cleanup, and replace order-sensitive incremental clustering with a deterministic all-embedding clustering strategy. Measure both CampPlus and TitaNet-large independently before selecting automatic settings.
+
+
+  Out of scope: fixed speaker-count user control (WP-49), model-catalog changes (WP-63), UI changes, transcription behavior, removing ADR-013 isolation, or changing no-model warning behavior.
+
+
+  Scenarios (BDD):
+
+
+  Given either supported embedding variant and a supplied known-two-speaker recording
+
+  When automatic diarization runs in the existing worker
+
+  Then it emits exactly two speaker labels with stable ordered turns
+
+  And every retained turn is at least 300 milliseconds after cleanup.
+
+
+  Given overlapping segmentation windows and local speaker activity
+
+  When global speaker turns are reconstructed
+
+  Then the reconstruction honors the model-derived speaker count per frame and does not collapse overlapping evidence to one arbitrary label.
+
+
+  Given models or native inference fail
+
+  When diarization is attempted
+
+  Then the existing child outcome classification and speaker-less warning remain unchanged.
+
+
+  Constraints: macOS local-only processing, Rust 1.80 compatibility, the existing packaged ONNX Runtime, active-variant semantics, and ADR-013 child-process isolation remain unchanged.'
+dod:
+- Both supplied known-two-speaker recordings are measured with CampPlus and TitaNet-large, and every variant-recording result has exactly two labels after automatic diarization.
+- Turn reconstruction uses overlap-derived speaker count and applies a 300-millisecond minimum-on/off cleanup; a real-audio regression proves no retained turn is shorter than 300 milliseconds.
+- Clustering uses a deterministic all-embedding strategy rather than input-order-sensitive assignment, with focused Rust tests for ordering invariance and threshold boundaries.
+- The existing child-process outcomes, active-variant semantics, no-model warning, and speaker-less fallback remain covered without a silent model substitution.
+- Rust and frontend validation, code review, architecture/decision documentation maintenance, and the 95% coverage gate pass.
+created_by: Aleksei_Platkovskii

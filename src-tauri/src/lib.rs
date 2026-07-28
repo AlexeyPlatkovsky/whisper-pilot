@@ -5,6 +5,7 @@ pub mod audio;
 pub mod diarize;
 pub mod diarize_process;
 pub mod error;
+pub mod llm;
 pub mod meetings;
 pub mod models;
 pub mod settings;
@@ -399,11 +400,76 @@ fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
     let dir = app_data_dir(&app)?;
     models::delete_model(&dir, &id)?;
 
-    let active = settings::get_settings(&dir).active_model_diarization;
-    if models::delete_clears_active_diarization_variant(&id, &active) {
+    let settings = settings::get_settings(&dir);
+    if models::delete_clears_active_diarization_variant(&id, &settings.active_model_diarization) {
         settings::set_setting(&dir, "active_model.diarization", "none")?;
     }
+    if settings.active_model_llm.as_deref() == Some(&id) {
+        settings::set_setting(&dir, "active_model.llm", "")?;
+    }
     Ok(())
+}
+
+/// Generate structured meeting notes (summary, decisions, action items, open
+/// questions, participants) from the current transcript using the active LLM
+/// model. Requires an LLM model to be downloaded and selected in Settings.
+#[tauri::command]
+async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let settings = settings::get_settings(&app_support_dir);
+    let llm_model_id = settings
+        .active_model_llm
+        .as_deref()
+        .ok_or_else(|| AppError::Llm("no LLM model selected in Settings".into()))?;
+
+    let model_path = models::primary_asset_path(&app_support_dir, llm_model_id).ok_or_else(
+        || AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")),
+    )?;
+
+    if !model_path.exists() {
+        return Err(AppError::Llm(format!(
+            "LLM model file not found at {}",
+            model_path.display()
+        )));
+    }
+
+    let store = store::Store::open(&app_support_dir)?;
+    let _meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+
+    let segments = store.list_segments(id)?;
+    if segments.is_empty() {
+        return Err(AppError::Llm(
+            "meeting has no transcript to summarize".into(),
+        ));
+    }
+
+    let transcript: String = segments
+        .iter()
+        .map(|seg| {
+            if let Some(sid) = seg.speaker_id {
+                format!("Speaker {}: {}", sid, seg.text)
+            } else {
+                seg.text.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    let app_support_dir_clone = app_support_dir.clone();
+    let model_path_clone = model_path.clone();
+    let transcript_clone = transcript.clone();
+    let mut notes = tokio::task::spawn_blocking(move || {
+        llm::generate_notes(&model_path_clone, &transcript_clone)
+    })
+    .await
+    .map_err(|e| AppError::Llm(e.to_string()))??;
+
+    notes.meeting_id = id;
+    store.upsert_notes(&notes)?;
+
+    meetings::open_meeting(&app_support_dir_clone, id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -433,7 +499,8 @@ pub fn run() {
             set_setting,
             list_task_models,
             download_model,
-            delete_model
+            delete_model,
+            generate_notes
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

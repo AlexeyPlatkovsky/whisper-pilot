@@ -29,7 +29,9 @@ const SEGMENTATION_BATCH_SIZE: usize = 32;
 // This is distinct from `receptive_field_shift`, which timestamps output frames.
 const SEGMENTATION_WINDOW_SHIFT_DIVISOR: usize = 10;
 const MIN_EMBEDDING_FRAMES: usize = 10;
-const AUTOMATIC_CLUSTER_THRESHOLD: f32 = 0.85;
+const MIN_TURN_DURATION_MS: u32 = 300;
+const MAX_SPEAKER_GAP_MS: u32 = 500;
+const AUTOMATIC_CLUSTER_THRESHOLD: f32 = 0.8;
 const ORT_DYLIB_NAME: &str = "libonnxruntime.1.17.1.dylib";
 static ORT_DYLIB_PATH: OnceLock<PathBuf> = OnceLock::new();
 static ORT_ENVIRONMENT: OnceLock<Arc<Environment>> = OnceLock::new();
@@ -641,9 +643,14 @@ fn turns_from_assignments(
             "segmentation metadata has a zero frame shift or sample rate".to_string(),
         ));
     }
+    if assignments.is_empty() {
+        return Ok(Vec::new());
+    }
     let frames = sample_len.div_ceil(receptive_field_shift);
     let cluster_count = assignments.values().copied().max().unwrap_or(0) + 1;
     let mut votes = vec![vec![0u32; cluster_count]; frames];
+    let mut local_speaker_counts = vec![0usize; frames];
+    let mut window_counts = vec![0usize; frames];
     for (window_index, window) in windows.iter().enumerate() {
         let base = (window.start_sample as f64 / receptive_field_shift as f64).round() as usize;
         for (frame, activity) in window.activity.iter().enumerate() {
@@ -651,6 +658,8 @@ fn turns_from_assignments(
             if target >= votes.len() {
                 break;
             }
+            local_speaker_counts[target] += activity.iter().filter(|active| **active).count();
+            window_counts[target] += 1;
             for (local_speaker, active) in activity.iter().enumerate() {
                 if *active {
                     if let Some(cluster) = assignments.get(&(window_index, local_speaker)) {
@@ -661,36 +670,83 @@ fn turns_from_assignments(
         }
     }
 
-    let labels: Vec<Option<usize>> = votes
-        .iter()
-        .map(|frame| {
-            frame
-                .iter()
-                .enumerate()
-                .filter(|(_, count)| **count > 0)
-                .max_by_key(|(_, count)| **count)
-                .map(|(label, _)| label)
-        })
-        .collect();
-    let mut turns = Vec::new();
-    let mut start = 0;
-    while start < labels.len() {
-        let Some(label) = labels[start] else {
-            start += 1;
+    let mut activity_by_cluster = vec![vec![false; frames]; cluster_count];
+    for frame in 0..frames {
+        let window_count = window_counts[frame];
+        if window_count == 0 {
             continue;
-        };
-        let mut end = start + 1;
-        while end < labels.len() && labels[end] == Some(label) {
-            end += 1;
         }
-        turns.push(SpeakerTurn {
-            start_ms: ((start * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
-            end_ms: ((end * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
-            speaker: label as i32,
-        });
-        start = end;
+        let speaker_count = (local_speaker_counts[frame] * 2 + window_count) / (window_count * 2);
+        let mut ranked: Vec<(usize, u32)> = votes[frame]
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, count)| *count > 0)
+            .collect();
+        ranked.sort_by(|left, right| right.1.cmp(&left.1).then_with(|| left.0.cmp(&right.0)));
+        for (cluster, _) in ranked.into_iter().take(speaker_count) {
+            activity_by_cluster[cluster][frame] = true;
+        }
     }
+
+    let mut turns = Vec::new();
+    for (speaker, activity) in activity_by_cluster.iter_mut().enumerate() {
+        smooth_speaker_activity(activity, receptive_field_shift, sample_rate);
+        let mut start = 0;
+        while start < activity.len() {
+            if !activity[start] {
+                start += 1;
+                continue;
+            }
+            let mut end = start + 1;
+            while end < activity.len() && activity[end] {
+                end += 1;
+            }
+            turns.push(SpeakerTurn {
+                start_ms: ((start * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
+                end_ms: ((end * receptive_field_shift * 1_000) / sample_rate as usize) as u32,
+                speaker: speaker as i32,
+            });
+            start = end;
+        }
+    }
+    turns.sort_by_key(|turn| turn.start_ms);
     Ok(turns)
+}
+
+fn smooth_speaker_activity(activity: &mut [bool], receptive_field_shift: usize, sample_rate: u32) {
+    let duration_ms = |frames: usize| -> u32 {
+        ((frames * receptive_field_shift * 1_000) / sample_rate as usize) as u32
+    };
+    let mut index = 0;
+    while index < activity.len() {
+        if activity[index] {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < activity.len() && !activity[index] {
+            index += 1;
+        }
+        if start > 0 && index < activity.len() && duration_ms(index - start) <= MAX_SPEAKER_GAP_MS {
+            activity[start..index].fill(true);
+        }
+    }
+
+    let mut index = 0;
+    while index < activity.len() {
+        if !activity[index] {
+            index += 1;
+            continue;
+        }
+        let start = index;
+        while index < activity.len() && activity[index] {
+            index += 1;
+        }
+        if duration_ms(index - start) < MIN_TURN_DURATION_MS {
+            activity[start..index].fill(false);
+        }
+    }
 }
 
 /// Resolve the embedding model and segmentation model paths from the
@@ -1371,6 +1427,62 @@ mod tests {
             powerset_class_to_activity(0, 3, 3),
             Err(AppError::Diarization(_))
         ));
+    }
+
+    #[test]
+    fn wp67_turn_reconstruction_merges_short_gaps_and_drops_short_runs() {
+        // BVA: a 200ms gap must merge; a 200ms competing run must be dropped.
+        let windows = [SegmentationWindow {
+            start_sample: 0,
+            activity: vec![
+                vec![true, false],
+                vec![true, false],
+                vec![false, true],
+                vec![false, true],
+                vec![true, false],
+                vec![true, false],
+                vec![true, false],
+                vec![true, false],
+                vec![true, false],
+                vec![true, false],
+            ],
+        }];
+        let assignments = BTreeMap::from([((0, 0), 0), ((0, 1), 1)]);
+
+        assert_eq!(
+            turns_from_assignments(&windows, &assignments, 1_000, 100, 1_000).unwrap(),
+            vec![SpeakerTurn {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker: 0,
+            }]
+        );
+    }
+
+    #[test]
+    fn wp67_turn_reconstruction_keeps_overlapping_speakers() {
+        // EP: a frame with two local speakers must retain both global labels.
+        let windows = [SegmentationWindow {
+            start_sample: 0,
+            activity: vec![vec![true, true]; 5],
+        }];
+        let assignments = BTreeMap::from([((0, 0), 0), ((0, 1), 1)]);
+
+        assert_eq!(
+            turns_from_assignments(&windows, &assignments, 500, 100, 1_000).unwrap(),
+            vec![
+                SpeakerTurn {
+                    start_ms: 0,
+                    end_ms: 500,
+                    speaker: 0,
+                },
+                SpeakerTurn {
+                    start_ms: 0,
+                    end_ms: 500,
+                    speaker: 1,
+                },
+            ]
+        );
     }
 
     struct FakeDiarizer {

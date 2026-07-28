@@ -13,6 +13,8 @@ use std::path::PathBuf;
 use sherpa_rs::diarize::{Diarize, DiarizeConfig};
 
 const SWEEP: [f32; 5] = [0.95, 0.90, 0.85, 0.80, 0.75];
+const AUTOMATIC_THRESHOLD: f32 = 0.80;
+const EMBEDDING_VARIANTS: [&str; 2] = ["campplus", "titanet-large"];
 
 fn samples(name: &str) -> Option<Vec<f32>> {
     let path = std::env::var(name).ok()?;
@@ -114,5 +116,115 @@ fn s4_route_a_records_the_ordered_two_speaker_threshold_sweep() {
             );
             assert!(!turns.is_empty(), "Route A must return turns for {name}");
         }
+    }
+}
+
+#[test]
+#[ignore]
+fn wp67_automatic_diarization_keeps_two_speakers_and_smooth_turns_for_every_variant() {
+    let Some(models_dir) = std::env::var("WHISPERPILOT_TEST_DIARIZE_MODELS_DIR")
+        .ok()
+        .map(PathBuf::from)
+    else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_MODELS_DIR");
+        return;
+    };
+    let Some(short) = samples("WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_A") else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_A");
+        return;
+    };
+    let Some(long) = samples("WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_B") else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_B");
+        return;
+    };
+
+    for (name, reference) in [("92.47s", short), ("861.57s", long)] {
+        for variant in EMBEDDING_VARIANTS {
+            let turns = whisperpilot_lib::diarize::diarize_samples_with_cluster_threshold(
+                &models_dir,
+                reference.clone(),
+                variant,
+                AUTOMATIC_THRESHOLD,
+            )
+            .unwrap_or_else(|error| {
+                panic!("{name} {variant} automatic diarization failed: {error}")
+            });
+            let (clusters, dominant_two_share) = metrics(&turns);
+            eprintln!(
+                "{name} {variant} automatic threshold={AUTOMATIC_THRESHOLD:.2}: clusters={clusters}; dominant_two_share={dominant_two_share:.4}; turns={}",
+                turns.len()
+            );
+            assert_eq!(clusters, 2, "{name} {variant} must retain two speakers");
+            assert!(
+                turns.iter().all(|turn| turn.end_ms - turn.start_ms >= 300),
+                "{name} {variant} must not retain a sub-300ms turn"
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn wp67_measures_short_recording_thresholds_for_every_variant() {
+    let Some(models_dir) = std::env::var("WHISPERPILOT_TEST_DIARIZE_MODELS_DIR")
+        .ok()
+        .map(PathBuf::from)
+    else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_MODELS_DIR");
+        return;
+    };
+    let Some(short) = samples("WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_A") else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_A");
+        return;
+    };
+
+    for variant in EMBEDDING_VARIANTS {
+        for threshold in [0.85, 0.75, 0.65, 0.55, 0.45] {
+            let turns = whisperpilot_lib::diarize::diarize_samples_with_cluster_threshold(
+                &models_dir,
+                short.clone(),
+                variant,
+                threshold,
+            )
+            .unwrap_or_else(|error| panic!("{variant} threshold {threshold:.2} failed: {error}"));
+            let (clusters, dominant_two_share) = metrics(&turns);
+            eprintln!(
+                "92.47s {variant} threshold={threshold:.2}: clusters={clusters}; dominant_two_share={dominant_two_share:.4}; turns={}",
+                turns.len()
+            );
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn wp67_measures_long_recording_at_080_for_every_variant() {
+    let Some(models_dir) = std::env::var("WHISPERPILOT_TEST_DIARIZE_MODELS_DIR")
+        .ok()
+        .map(PathBuf::from)
+    else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_MODELS_DIR");
+        return;
+    };
+    let Some(long) = samples("WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_B") else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_DIARIZE_REAL_AUDIO_B");
+        return;
+    };
+
+    for variant in EMBEDDING_VARIANTS {
+        let turns = whisperpilot_lib::diarize::diarize_samples_with_cluster_threshold(
+            &models_dir,
+            long.clone(),
+            variant,
+            AUTOMATIC_THRESHOLD,
+        )
+        .unwrap_or_else(|error| {
+            panic!("{variant} threshold {AUTOMATIC_THRESHOLD:.2} failed: {error}")
+        });
+        let (clusters, dominant_two_share) = metrics(&turns);
+        eprintln!(
+            "861.57s {variant} threshold={AUTOMATIC_THRESHOLD:.2}: clusters={clusters}; dominant_two_share={dominant_two_share:.4}; turns={}",
+            turns.len()
+        );
     }
 }

@@ -16,6 +16,15 @@ export interface MeetingSummary {
   status: string;
 }
 
+export interface MeetingNotes {
+  meeting_id: number;
+  summary: string;
+  decisions: string;
+  action_items: string;
+  open_questions: string;
+  participants: string;
+}
+
 export interface Meeting {
   id: number;
   title: string;
@@ -26,6 +35,7 @@ export interface Meeting {
   language: string;
   status: string;
   segments: Segment[];
+  notes?: MeetingNotes;
 }
 
 export function createMeeting(): Promise<Meeting> {
@@ -77,6 +87,10 @@ export function transcribeMeeting(
   return invoke<TranscribeMeetingResult>("transcribe_meeting", { id });
 }
 
+export function generateNotes(id: number): Promise<Meeting> {
+  return invoke<Meeting>("generate_notes", { id });
+}
+
 export function saveTextDialog(
   content: string,
   defaultName: string,
@@ -89,6 +103,7 @@ export interface Settings {
   ui_language: string;
   active_model_transcription?: string;
   active_model_diarization: string;
+  active_model_llm?: string;
 }
 
 export function getSettings(): Promise<Settings> {

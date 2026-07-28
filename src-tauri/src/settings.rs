@@ -17,6 +17,7 @@ const KEY_UI_LANGUAGE: &str = "ui_language";
 // cleanly to a single Rust field.
 const KEY_ACTIVE_MODEL_TRANSCRIPTION: &str = "active_model.transcription";
 const KEY_ACTIVE_MODEL_DIARIZATION: &str = "active_model.diarization";
+const KEY_ACTIVE_MODEL_LLM: &str = "active_model.llm";
 const NONE_DIARIZATION_MODEL: &str = "none";
 
 fn default_active_model_diarization() -> String {
@@ -32,6 +33,8 @@ pub struct Settings {
     pub active_model_transcription: Option<String>,
     #[serde(default = "default_active_model_diarization")]
     pub active_model_diarization: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_model_llm: Option<String>,
 }
 
 impl Default for Settings {
@@ -41,6 +44,7 @@ impl Default for Settings {
             ui_language: "en".to_string(),
             active_model_transcription: None,
             active_model_diarization: default_active_model_diarization(),
+            active_model_llm: None,
         }
     }
 }
@@ -104,6 +108,17 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 )));
             }
             settings.active_model_diarization = value.to_string();
+        }
+        KEY_ACTIVE_MODEL_LLM => {
+            if value.trim().is_empty() {
+                settings.active_model_llm = None;
+            } else if !CATALOG.iter().any(|e| e.id == value) {
+                return Err(AppError::InvalidSetting(format!(
+                    "unknown model id: {value}",
+                )));
+            } else {
+                settings.active_model_llm = Some(value.to_string());
+            }
         }
         other => {
             return Err(AppError::InvalidSetting(format!(
