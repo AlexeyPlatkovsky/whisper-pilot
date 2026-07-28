@@ -1,0 +1,21 @@
+schema_version: 1
+id: WP-65
+title: Version bump script and AI instruction
+priority: normal
+type: task
+status: done
+created_at: '2026-07-28T08:13:00Z'
+updated_at: '2026-07-28T08:15:55Z'
+description: 'Create a version bump script (scripts/bump-version.sh) that updates version in both src-tauri/Cargo.toml and src-tauri/tauri.conf.json, with three modes:
+
+  - patch: bump PATCH (0.1.0 → 0.1.1) — for fixes
+
+  - major: bump MINOR (0.1.0 → 0.2.0) — for new tasks/features/epics, called "major update" per user terminology
+
+  - release: bump MAJOR to 1.0.0 or accept explicit version — when user asks
+
+
+  Update AGENTS.md with a Version Management section instructing AI to run the script before every commit with the appropriate bump type.
+
+
+  Draft everything on current branch (task/wp-61-local-engine-quality) per user instruction.'

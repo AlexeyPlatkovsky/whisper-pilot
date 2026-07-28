@@ -222,6 +222,25 @@ each entry's own file is its sole behavioral authority.
 
 ---
 
+## Version Management
+
+Before every commit, run `scripts/bump-version.sh` with the appropriate bump
+type for the work being committed:
+
+| Bump type | When to use |
+|---|---|
+| `patch` | Bug fix, refactor, chore, or any change that does not add a user-facing feature |
+| `major` | New task, feature, or epic that adds user-facing functionality |
+| `release` | Only when the user explicitly asks for a release version bump |
+
+The script updates the version in both `src-tauri/Cargo.toml` and
+`src-tauri/tauri.conf.json`. Run it before staging; the version change becomes
+part of the same commit as the feature or fix it describes. If multiple
+uncommitted changes of different bump types are present, use the highest
+applicable bump type among them.
+
+---
+
 ## Spec-Driven Development
 
 The project adopts the **Standard** SDD tier. The authoritative spec lives in
