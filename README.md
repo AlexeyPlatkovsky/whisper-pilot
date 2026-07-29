@@ -39,10 +39,6 @@ that — local AI-generated meeting notes.
 ```
 brew install ffmpeg
 ```
-- add app to verified list:
-```
-xattr -dr com.apple.quarantine /Applications/WhisperPilot.app
-```
 
 ## Running WhisperPilot
 
@@ -57,6 +53,18 @@ npm run tauri:dev
 The first run compiles the local Whisper engine (Metal-accelerated), so it
 takes longer than subsequent launches. See
 [`docs/development.md`](docs/development.md) for the full developer guide.
+
+## Build the app
+```
+npx tauri build
+```
+
+The output goes to `src-tauri/target/release/bundle/dmg/`
+
+To be able to run the app in any Macbook, add app to verified list:
+```
+xattr -dr com.apple.quarantine /Applications/WhisperPilot.app
+```
 
 ## License
 
