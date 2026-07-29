@@ -32,6 +32,10 @@ const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
     title: "Speaker Diarization",
     subtitle: "Identify individual speakers in your recordings.",
   },
+  llm: {
+    title: "MFU Models",
+    subtitle: "Choose the language model used to generate meeting notes.",
+  },
 };
 
 function formatSize(bytes: number): string {
@@ -51,6 +55,8 @@ export function AiModelsSection() {
   const [diarizationSelectError, setDiarizationSelectError] = useState<
     string | null
   >(null);
+  const [llmModel, setLlmModel] = useState<string | null>(null);
+  const [llmSelectError, setLlmSelectError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -70,10 +76,12 @@ export function AiModelsSection() {
     let cancelled = false;
     getSettings()
       .then((s) => {
-        if (!cancelled)
+        if (!cancelled) {
           setDiarizationModel(
             s.active_model_diarization ?? NONE_DIARIZATION_MODEL,
           );
+          setLlmModel(s.active_model_llm ?? null);
+        }
       })
       .catch(() => {
         // Load failure here only disables the radio group's initial
@@ -125,7 +133,13 @@ export function AiModelsSection() {
         delete next[id];
         return next;
       });
-      setModels(await listTaskModels());
+      const updated = await listTaskModels();
+      setModels(updated);
+
+      const downloadedModel = updated.find((m) => m.id === id);
+      if (downloadedModel?.task === "llm" && !llmModel) {
+        await handleSelectLlmModel(id);
+      }
     } catch (e) {
       setRowState((prev) => ({
         ...prev,
@@ -146,6 +160,18 @@ export function AiModelsSection() {
     }
   }
 
+  async function handleSelectLlmModel(value: string) {
+    const previous = llmModel;
+    setLlmSelectError(null);
+    setLlmModel(value);
+    try {
+      await setSetting("active_model.llm", value);
+    } catch (e) {
+      setLlmModel(previous);
+      setLlmSelectError(String(e));
+    }
+  }
+
   async function handleDelete(id: string) {
     setConfirmDeleteId(null);
     try {
@@ -158,6 +184,7 @@ export function AiModelsSection() {
       setDiarizationModel(
         settings.active_model_diarization ?? NONE_DIARIZATION_MODEL,
       );
+      setLlmModel(settings.active_model_llm ?? null);
     } catch (e) {
       setRowState((prev) => ({
         ...prev,
@@ -225,6 +252,7 @@ export function AiModelsSection() {
                 const isDownloading = state?.kind === "downloading";
                 const variantValue =
                   task === "diarization" ? m.id.slice(`${task}-`.length) : null;
+                const isLlm = task === "llm";
                 return (
                   <li key={m.id} className="model-row">
                     {variantValue !== null ? (
@@ -237,6 +265,15 @@ export function AiModelsSection() {
                         onChange={() =>
                           handleSelectDiarizationModel(variantValue)
                         }
+                      />
+                    ) : isLlm ? (
+                      <input
+                        type="radio"
+                        name="llm-model"
+                        aria-label={m.label}
+                        checked={llmModel === m.id}
+                        disabled={!m.downloaded}
+                        onChange={() => handleSelectLlmModel(m.id)}
                       />
                     ) : (
                       // A task with no selectable variants still shows the
@@ -318,6 +355,11 @@ export function AiModelsSection() {
             {task === "diarization" && diarizationSelectError && (
               <p className="model-row-error" role="alert">
                 {diarizationSelectError}
+              </p>
+            )}
+            {task === "llm" && llmSelectError && (
+              <p className="model-row-error" role="alert">
+                {llmSelectError}
               </p>
             )}
           </section>

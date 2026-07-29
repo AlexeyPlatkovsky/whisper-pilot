@@ -105,6 +105,34 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
             },
         ],
     },
+    ModelCatalogEntry {
+        id: "qwen2.5-3b-q3km",
+        task: "llm",
+        label: "Qwen2.5 3B Instruct (Q3_K_M)",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q3_K_M.gguf",
+            sha256: "8eff4e0eb51a8148abdaa9849f14f187e5ac6cd7d795610caf996a287277c59d",
+            size_bytes: 1_590_475_936,
+            file_name: "Qwen2.5-3B-Instruct-Q3_K_M.gguf",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
+        }],
+    },
+    ModelCatalogEntry {
+        id: "qwen3-4b-q3kl",
+        task: "llm",
+        label: "Qwen3 4B (Q3_K_L)",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/lmstudio-community/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q3_K_L.gguf",
+            sha256: "90d5ab273b85a69e5b1cdd03dfcda82c1295fec63b3a00a35228e403b9388d1c",
+            size_bytes: 2_239_785_664,
+            file_name: "Qwen3-4B-Q3_K_L.gguf",
+            variant_id: None,
+            variant_label: None,
+            recommended: true,
+        }],
+    },
 ];
 
 /// Per-task view returned to the frontend. For an entry with selectable

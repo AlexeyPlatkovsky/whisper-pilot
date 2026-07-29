@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMeeting,
   deleteMeeting,
+  generateNotes,
   getSettings,
   listMeetings,
   listTaskModels,
@@ -14,6 +15,7 @@ import {
   renameMeeting,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
+  type MeetingNotes,
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
@@ -70,6 +72,8 @@ export function App() {
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
     boolean | null
   >(null);
+  const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
+  const [notes, setNotes] = useState<MeetingNotes | null>(null);
   const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
     {},
   );
@@ -99,6 +103,8 @@ export function App() {
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
+  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(null);
+  const isGeneratingNotes = generatingNotesId !== null;
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
@@ -121,21 +127,30 @@ export function App() {
     return () => unlisten?.();
   }, []);
 
-  // Tick a once-per-second elapsed clock while a transcription is running.
+  // Tick a once-per-second elapsed clock while a run is in flight.
   useEffect(() => {
-    if (transcribingId === null) return;
+    if (transcribingId === null && generatingNotesId === null) return;
     setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [transcribingId]);
+  }, [transcribingId, generatingNotesId]);
 
   const refreshModelAvailability = useCallback(async () => {
     try {
       const models = await listTaskModels();
       const transcription = models.find((m) => m.id === "transcription");
       setTranscriptionModelReady(transcription?.downloaded ?? false);
+      const settings = await getSettings();
+      const llmId = settings.active_model_llm;
+      if (llmId) {
+        const llm = models.find((m) => m.id === llmId);
+        setLlmModelReady(llm?.downloaded ?? false);
+      } else {
+        setLlmModelReady(false);
+      }
     } catch {
       setTranscriptionModelReady(false);
+      setLlmModelReady(false);
     }
   }, []);
 
@@ -156,6 +171,7 @@ export function App() {
     setSegments(meeting.segments);
     setSpeakerLabels({});
     setStatus({ kind: "idle" });
+    setNotes(meeting.notes ?? null);
   }, []);
 
   const upsertSummary = useCallback((meeting: PersistedMeeting) => {
@@ -265,6 +281,25 @@ export function App() {
         setStatus({ kind: "error", message: String(e) });
     } finally {
       setTranscribingId(null);
+    }
+  }
+
+  async function handleGenerateNotes() {
+    if (!activeMeeting) return;
+    const id = activeMeeting.id;
+    try {
+      setGeneratingNotesId(id);
+      setStatus({ kind: "idle" });
+      const meeting = await generateNotes(id);
+      upsertSummary(meeting);
+      if (activeMeetingIdRef.current === meeting.id) {
+        setNotes(meeting.notes ?? null);
+      }
+    } catch (e) {
+      if (activeMeetingIdRef.current === id)
+        setStatus({ kind: "error", message: String(e) });
+    } finally {
+      setGeneratingNotesId(null);
     }
   }
 
@@ -381,15 +416,18 @@ export function App() {
   // actions that belong to whichever meeting is on screen — those use
   // `activeIsTranscribing`, so exporting an unrelated finished transcript or
   // attaching a file to an idle meeting still works while a run is going.
-  const busy = transcribingId !== null;
+  const busy = transcribingId !== null || isGeneratingNotes;
   const activeIsTranscribing =
     activeMeeting !== null && transcribingId === activeMeeting.id;
+  const activeIsGeneratingNotes =
+    activeMeeting !== null && generatingNotesId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
   const meetingTitle = activeMeeting?.title ?? "New Meeting";
 
   // The header describes the meeting the user is looking at, through the same
   // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
+    if (activeIsGeneratingNotes) return resolveMeetingStatus(undefined, "crafting");
     if (activeIsTranscribing)
       return resolveMeetingStatus(undefined, transcribingPhase);
     if (transcriptionModelReady === false)
@@ -399,6 +437,7 @@ export function App() {
     if (!activeMeeting) return null;
     return resolveMeetingStatus(activeMeeting.status);
   }, [
+    activeIsGeneratingNotes,
     activeIsTranscribing,
     transcribingPhase,
     transcriptionModelReady,
@@ -474,7 +513,7 @@ export function App() {
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
               onClick={() => activeMeeting && openRename(activeMeeting)}
-              disabled={!activeMeeting || activeIsTranscribing}
+              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -492,7 +531,7 @@ export function App() {
                   status: activeMeeting.status,
                 })
               }
-              disabled={!activeMeeting || activeIsTranscribing}
+              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -503,7 +542,7 @@ export function App() {
           <div className="wp-status" role="status">
             {headerStatus && (
               <>
-                {activeIsTranscribing && (
+                {(activeIsTranscribing || activeIsGeneratingNotes) && (
                   <Icon
                     name="refresh-cw"
                     size={14}
@@ -515,7 +554,7 @@ export function App() {
                 >
                   {headerStatus.label}
                 </span>
-                {activeIsTranscribing && (
+                {(activeIsTranscribing || activeIsGeneratingNotes) && (
                   <span className="wp-status-timer">
                     {formatClock(elapsed)}
                   </span>
@@ -544,7 +583,7 @@ export function App() {
             <span className="wp-sep" />
             <ActionIcon icon="square" label="Stop" disabled />
             <span className="wp-sep" />
-            <ActionIcon icon="sparkles" label="Craft notes" accent disabled />
+            <ActionIcon icon="sparkles" label="Craft notes" accent onClick={() => void handleGenerateNotes()} disabled={!hasTranscript || llmModelReady !== true || activeIsTranscribing || isGeneratingNotes} />
             <span className="wp-sep" />
             <button
               type="button"
@@ -574,6 +613,7 @@ export function App() {
             onClick={handleChooseFile}
             disabled={
               activeIsTranscribing ||
+              isGeneratingNotes ||
               !activeMeeting ||
               transcriptionModelReady !== true
             }
@@ -588,6 +628,7 @@ export function App() {
                 className="wp-icon-btn wp-icon-btn--tiny"
                 aria-label="Remove file"
                 onClick={handleRemoveFile}
+                disabled={activeIsTranscribing || isGeneratingNotes}
               >
                 <Icon name="x" size={12} />
               </button>
@@ -642,7 +683,9 @@ export function App() {
                       meeting.status,
                       transcribingId === meeting.id
                         ? transcribingPhase
-                        : "none",
+                        : generatingNotesId === meeting.id
+                          ? "crafting"
+                          : "none",
                     )}
                     selected={activeMeeting?.id === meeting.id}
                     onSelect={() => void handleOpenMeeting(meeting.id)}
@@ -719,7 +762,7 @@ export function App() {
                               speakerId={seg.speaker_id!}
                               label={resolveSpeakerLabel(seg.speaker_id!)}
                               onRename={renameSpeaker}
-                              disabled={activeIsTranscribing}
+                              disabled={activeIsTranscribing || isGeneratingNotes}
                             />
                           )}
                           <span className="wp-speaker-time">
@@ -731,7 +774,7 @@ export function App() {
                           value={seg.text}
                           rows={1}
                           onChange={(e) => editSegment(i, e.target.value)}
-                          disabled={activeIsTranscribing}
+                          disabled={activeIsTranscribing || isGeneratingNotes}
                         />
                       </div>
                     </div>
@@ -740,18 +783,52 @@ export function App() {
             </div>
           </div>
 
-          {/* MFU (summary) panel — summarization is not wired in M1; this is a
-              presentational placeholder matching the pencil design. */}
+          {/* MFU (summary) panel */}
           <aside className="wp-mfu">
-            <div className="wp-mfu-placeholder">
-              <div className="wp-mfu-icon-frame">
-                <Icon name="sparkles" size={32} />
+            {notes ? (
+              <div className="wp-mfu-notes">
+                {notes.summary && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Summary</h3>
+                    <p className="wp-mfu-text">{notes.summary}</p>
+                  </section>
+                )}
+                {notes.decisions && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Decisions</h3>
+                    <p className="wp-mfu-text">{notes.decisions}</p>
+                  </section>
+                )}
+                {notes.action_items && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Action Items</h3>
+                    <p className="wp-mfu-text">{notes.action_items}</p>
+                  </section>
+                )}
+                {notes.open_questions && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Open Questions</h3>
+                    <p className="wp-mfu-text">{notes.open_questions}</p>
+                  </section>
+                )}
+                {notes.participants && (
+                  <section className="wp-mfu-section">
+                    <h3 className="wp-mfu-heading">Participants</h3>
+                    <p className="wp-mfu-text">{notes.participants}</p>
+                  </section>
+                )}
               </div>
-              <p className="wp-mfu-title">Run MFU Craft</p>
-              <p className="wp-mfu-subtitle">
-                Generate summary, decisions, action items, and open questions.
-              </p>
-            </div>
+            ) : (
+              <div className="wp-mfu-placeholder">
+                <div className="wp-mfu-icon-frame">
+                  <Icon name="sparkles" size={32} />
+                </div>
+                <p className="wp-mfu-title">Run MFU Craft</p>
+                <p className="wp-mfu-subtitle">
+                  Generate summary, decisions, action items, and open questions.
+                </p>
+              </div>
+            )}
           </aside>
         </section>
       </div>
@@ -859,11 +936,13 @@ function ActionIcon({
   label,
   accent,
   disabled,
+  onClick,
 }: {
   icon: IconName;
   label: string;
   accent?: boolean;
   disabled?: boolean;
+  onClick?: () => void;
 }) {
   return (
     <button
@@ -872,6 +951,7 @@ function ActionIcon({
       aria-label={label}
       title={label}
       disabled={disabled}
+      onClick={onClick}
     >
       <Icon name={icon} size={17} />
     </button>
@@ -897,7 +977,7 @@ function MeetingRow({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const running = status.tone === "transcribing" || status.tone === "diarizing";
+  const running = status.tone === "transcribing" || status.tone === "diarizing" || status.tone === "crafting";
   return (
     <li
       className={`wp-meeting-row${selected ? " is-selected" : ""}`}

@@ -1,6 +1,6 @@
 [package]
 name = "whisper-pilot"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.80"
 
@@ -29,6 +29,10 @@ reqwest = { version = "0.12", default-features = false, features = ["stream", "r
 sha2 = "0.10"
 futures-util = "0.3"
 sherpa-rs = { version = "0.6.8", features = ["download-binaries"] }
+# The current ort 2.x line needs Rust 1.88; this pinned 1.16.3 tag declares
+# Rust 1.70 and dynamically loads the ONNX Runtime dylib WP-60 already bundles.
+ort = { git = "https://github.com/pykeio/ort.git", tag = "v1.16.3", default-features = false, features = ["load-dynamic"] }
+ndarray = "0.15"
 tar = "0.4"
 bzip2 = "0.4"
 # Only for `_exit` in the diarization worker's orphan watch (ADR-013): it must
@@ -36,13 +40,16 @@ bzip2 = "0.4"
 # a thread still inside inference, and without SIGABRT's crash reports.
 libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
+encoding_rs = "0.8"
 
 # Metal GPU acceleration is macOS-only; CI runs on Linux so the feature must be
 # conditional. Cargo target-specific dependency sections handle this correctly.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal"] }
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16" }
+llama-cpp-2 = { version = "0.1", default-features = false }
 
 # brotli 8.x (via tauri-codegen) requires alloc-no-stdlib ^2, but transitive deps
 # allow >=2.0.4,<4 and Cargo otherwise picks 3.0.0, splitting the type identity.

@@ -1,6 +1,6 @@
 # ADR-005: sherpa-onnx for speaker diarization
 
-- **Status:** partially superseded (2026-07-26) — engine hosting only by ADR-013; the sherpa-onnx choice stands
+- **Status:** partially superseded by ADR-013 (child-process isolation) and WP-62 (direct segmentation and Rust clustering; sherpa embedding extraction remains)
 - **Date:** 2026-07-21
 - **Deciders:** Alexey Platkovsky
 
@@ -12,16 +12,20 @@ Rust/Tauri app without a heavy runtime.
 
 ## Decision
 
-Use **sherpa-onnx** speaker segmentation + embedding models (via its Rust
-binding) for diarization in M2. It runs locally on ONNX with no Python, produces
-speaker turns that are then merged onto Whisper segments.
+Use local pyannote segmentation and speaker-embedding models for diarization
+in M2. WP-62 supersedes the original all-in-one sherpa-onnx execution choice:
+the application runs the shipped segmentation ONNX model through Rust's `ort`
+binding, post-processes powerset output and clusters embeddings in Rust, while
+retaining sherpa-rs only for its public embedding-extractor boundary. It runs
+locally with no Python and produces speaker turns that are then merged onto
+Whisper segments.
 
 ## Consequences
 
-- Fully local diarization consistent with the local-first principle; native Rust
-  integration. *(Superseded in part by ADR-013: the engine call now runs in a
-  child process, because its vendored C++ clustering can abort the host process
-  outright. The binding is still native Rust with no runtime dependency.)*
+- Fully local diarization consistent with the local-first principle. The direct
+  path reuses the app's packaged ONNX Runtime dylib and avoids the vendored
+  fast-clustering implementation. *(The native engine call remains isolated in
+  a child process by ADR-013.)*
 - Requires downloading and verifying the segmentation and embedding models
   (mirrors the Whisper artifact-verification pattern).
 - Quality is good but below pyannote's best; acceptable for generic,

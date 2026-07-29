@@ -110,7 +110,11 @@ branch without the user's explicit approval; approval of a TaskPilot item is
 never approval of a Git operation. Without branch approval, trivial work
 remains on the current branch; for non-trivial work, stop and ask before
 editing. Never discard, overwrite, or history-rewrite uncommitted user
-changes; any destructive Git operation requires explicit user approval.
+changes; any destructive Git operation requires explicit user approval. User
+approval to create a new task branch also authorizes exactly one immediate
+`git push -u origin <branch>` after that branch is actually created,
+establishing the matching `origin/<branch>` upstream. That initial publication
+does not authorize any subsequent push.
 `.claude/skills/work-with-git/SKILL.md` owns branch selection and reporting.
 
 ---
@@ -147,9 +151,11 @@ These apply to all non-trivial work and may not be skipped:
 
 ## Commit And Push Boundary
 
-- Never push unless the user explicitly requests a push in the current
-  instruction. This is unconditional: branch creation, pipeline execution,
-  review cycles, validation runs, and task completion never authorize a push.
+- Except for the one initial publication authorized by §Git Operation
+  Authority for an actually newly created task branch, never push unless the
+  user explicitly requests a push in the current instruction. Pipeline
+  execution, review cycles, validation runs, and task completion never
+  authorize a push.
 - A tracked task's code and its related TaskPilot records belong in one
   atomic task-scoped local commit. AI-governance maintenance commits only on
   an explicit user request.
@@ -213,6 +219,25 @@ each entry's own file is its sole behavioral authority.
 | `sdd-gap-analyzer` | SDD adoption or expansion needs a docs-versus-code gap inventory |
 | `sdd-spec-reviewer` | An SDD docs tree needs a completeness and traceability review |
 | `test-runner` | Routed work needs build, test, or manual validation executed and reported |
+
+---
+
+## Version Management
+
+Before every commit, run `scripts/bump-version.sh` with the appropriate bump
+type for the work being committed:
+
+| Bump type | When to use |
+|---|---|
+| `patch` | Bug fix, refactor, chore, or any change that does not add a user-facing feature |
+| `major` | New task, feature, or epic that adds user-facing functionality |
+| `release` | Only when the user explicitly asks for a release version bump |
+
+The script updates the version in both `src-tauri/Cargo.toml` and
+`src-tauri/tauri.conf.json`. Run it before staging; the version change becomes
+part of the same commit as the feature or fix it describes. If multiple
+uncommitted changes of different bump types are present, use the highest
+applicable bump type among them.
 
 ---
 

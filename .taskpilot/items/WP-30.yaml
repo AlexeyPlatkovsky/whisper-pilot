@@ -3,9 +3,9 @@ id: WP-30
 title: 'Transcript render: plain timestamped (m:ss) editable segments'
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T11:04:50Z'
-updated_at: '2026-07-21T11:04:50Z'
+updated_at: '2026-07-29T05:31:06Z'
 parent_id: WP-25
 description: Center transcript as one column of m:ss-prefixed auto-sizing editable segments (no speaker bubbles in M2; F002/M3 adds them). Implements F004-R11 (F004-T14).
 created_by: M2 UI planning

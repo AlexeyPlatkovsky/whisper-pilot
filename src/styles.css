@@ -25,6 +25,7 @@
   --tone-ready: var(--muted);
   --tone-transcribing: var(--status-progress);
   --tone-diarizing: var(--status-progress);
+  --tone-crafting: var(--status-progress);
   --tone-finished: var(--wp-success-text);
   --tone-error: var(--error);
   --tone-no-model: var(--accent);
@@ -340,6 +341,10 @@ body {
 }
 .wp-tone--diarizing {
   --tone: var(--tone-diarizing);
+  color: var(--tone);
+}
+.wp-tone--crafting {
+  --tone: var(--tone-crafting);
   color: var(--tone);
 }
 .wp-tone--finished {
@@ -905,6 +910,38 @@ body {
   font-size: var(--wp-font-size-body);
   color: var(--muted);
   line-height: 1.5;
+}
+
+.wp-mfu-notes {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-md);
+  padding-right: 2px;
+}
+
+.wp-mfu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wp-mfu-heading {
+  margin: 0;
+  font-size: var(--wp-font-size-sm);
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.wp-mfu-text {
+  margin: 0;
+  font-size: var(--wp-font-size-body);
+  color: var(--text);
+  line-height: 1.55;
+  white-space: pre-wrap;
 }
 
 /* ==========================================================================

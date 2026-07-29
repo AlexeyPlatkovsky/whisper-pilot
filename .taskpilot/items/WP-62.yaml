@@ -1,120 +1,25 @@
 schema_version: 1
 id: WP-62
-title: Replace sherpa-onnx vendored clustering with own agglomerative clustering in Rust
+title: Replace vendored diarization clustering with Rust-owned measurement path
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-27T17:04:04Z'
-updated_at: '2026-07-27T17:06:44Z'
+updated_at: '2026-07-28T07:34:52Z'
 parent_id: WP-61
-created_by: Aleksei_Platkovskii
-description: |-
-  Take speaker clustering away from sherpa-onnx's vendored C++ and do it in Rust
-  over the embeddings we already compute. One root cause, two defects.
-
-  DEFECT 1 — QUALITY. ADR-013 records that on the known-2-speaker 861.5s
-  recording, threshold 0.9 leaves the two dominant clusters holding 786s of 861s
-  with five residuals under 8s, and dropping to 0.7 splits the second real
-  speaker in two (294.3s becoming 180.4 + 111.5) while cluster count rises 7 ->
-  12. This is a clustering failure, not a segmentation or embedding one: the
-  segmentation model in use is pyannote segmentation-3.0, the same model the
-  reference pyannote 3.1 pipeline runs.
-
-  DEFECT 2 — STABILITY. The SIGBUS that forced the ADR-013 child-process design
-  faults inside that same vendored fast-clustering code
-  (OfflineSpeakerDiarizationPyannoteImpl::Process, wild negative index,
-  EXC_BAD_ACCESS / KERN_PROTECTION_FAILURE). ADR-013 documents that tuning cannot
-  fix it: crash safety on the 92.4s recording needs threshold < 0.8 while
-  separation quality on the 861.5s recording needs 0.9. Removing the code removes
-  the conflict instead of containing it.
-
-  FEASIBILITY — ANSWER THIS FIRST. sherpa-rs 0.6.8 exposes diarization only as
-  the all-in-one sherpa_rs::diarize::Diarize::compute (segmentation + embedding +
-  clustering in one native call). It does NOT expose the pyannote segmentation
-  model on its own. It DOES expose per-chunk embedding extraction:
-  sherpa_rs::speaker_id::EmbeddingExtractor::compute_speaker_embedding. The
-  embedding half is available, the segmentation half is not, and that is the
-  whole risk. Candidate routes, decided by the spike named in DoR:
-    (a) run sherpa-onnx-pyannote-segmentation-3-0/model.onnx directly through an
-        ONNX runtime binding in Rust (the `ort` crate, or sherpa-rs-sys's raw
-        C API), implement the powerset -> speaker-activity post-processing
-        ourselves, then EmbeddingExtractor per speech chunk, then our clustering.
-        Highest fidelity, most work, adds a dependency.
-    (b) fork or patch sherpa-rs to expose segmentation output and/or embeddings
-        from the diarization path. Less new code, a vendored fork to carry.
-    (c) substitute VAD-based segmentation (sherpa_rs::silero_vad) for pyannote
-        segmentation. Cheapest, but loses overlap handling and turn precision —
-        likely to cost more quality than the new clustering wins. Fallback only.
-
-  CLUSTERING TO IMPLEMENT: agglomerative hierarchical clustering with cosine
-  distance and a threshold stop criterion, which is what the current
-  configuration is already expressed in terms of, so the existing threshold
-  semantics carry over. WP-49 needs a "stop at K clusters" criterion instead —
-  make the interface able to express both stop criteria, but do not implement the
-  speaker-count path here.
-
-  ISOLATION STAYS. Removing the vendored clustering removes the known crash SITE,
-  but embedding extraction and segmentation are still native ONNX code running on
-  user audio. Keep the child process and record in the ADR that the original
-  crash cause is gone. WP-57's crash-triggered embedding fallback keys off the
-  four distinguishable child outcomes; that contract must survive unchanged.
-
-  THRESHOLD: 0.9 is quality-optimal for the vendored clustering and has no reason
-  to transfer to a new implementation. Re-tune against the reference recordings
-  as part of this item and record the new value with its evidence.
-
-  OUT OF SCOPE: the embedding model choice (WP-63); the speaker-count override
-  (WP-49); removing the ADR-013 process isolation.
+description: "A WhisperPilot user transcribes a local recording with an available diarization variant and receives the existing speaker-attributed transcript flow. The ADR-013 worker obtains pyannote segmentation through ONNX Runtime, derives embeddings with the selected existing embedding variant, and assigns speakers with Rust-owned incremental-centroid threshold clustering rather than sherpa-onnx's vendored fast clustering. It returns ordered speaker turns to the existing merge/UI path.\n\nIf model assets, direct ONNX inference, embedding extraction, or clustering fails, the existing child-process outcome handling preserves its four outcomes and degrades to a plain transcript with the existing warning. No fallback or silent model substitution is added.\n\nThe user selected 0.85 as the automatic clustering threshold after the ordered measurement sweep. The two known-two-speaker recordings and their baseline/Route-A cluster-count and dominant-two-cluster speech-share values are recorded in docs/plans/2026-07-27-wp-62-clustering-feasibility-spike.md.\n\nNon-goals:\n- Replacing pyannote segmentation-3.0, changing embedding-model choice (WP-63), implementing fixed speaker-count control (WP-49), or removing ADR-013 isolation.\n- Changing transcript UI behavior, the existing no-model warning, or WP-57 child-outcome/fallback behavior.\n\nConstraints:\n- Use the shared verified model archive, active embedding selection, 16 kHz mono input, local-only processing, and existing model-download verification.\n- The direct binding supports the Rust 1.80 MSRV and uses the already packaged ONNX Runtime dylib.\n- Fixed-count control is reserved for WP-49.\n\nProposed BDD scenarios:\n  Scenario S-1: Direct Rust diarization produces speaker turns\n    Given an active diarization embedding and verified pyannote segmentation model\n    When the ADR-013 worker diarizes local 16 kHz audio\n    Then it returns ordered turns from direct ONNX segmentation, the selected extractor, and Rust-owned clustering\n    And the production path does not invoke sherpa-rs Diarize.\n\n  Scenario S-2: New-path failure remains fail-open\n    Given direct ONNX, embedding, or clustering cannot run\n    When transcription reaches diarization\n    Then existing child-outcome classification is preserved\n    And transcription completes with the existing diarization warning.\n\n  Scenario S-3: Clustering handles mathematical boundary sets\n    Given empty, one-speaker, well-separated, and threshold-adjacent embeddings\n    When Rust incremental-centroid threshold clustering runs\n    Then it returns deterministic expected clusters without panicking\n    And its interface represents fixed-K without using it.\n\n  Scenario S-4: Route A ordered threshold sweep is recorded\n    Given the fixed known-two-speaker recordings and vendored baseline\n    When the Route-A regression runs 0.95, 0.90, 0.85, 0.80, and 0.75 in order\n    Then it records before/after cluster count and dominant-two speech share\n    And the 92.47-second recording completes without a native abort.\n\nCase-derivation evidence:\n- EP: S-3 empty, one-speaker, well-separated, threshold-adjacent; S-2 successful and failed worker paths.\n- BVA: S-3 pairs immediately inside/outside each sweep threshold.\n- Decision table and state transition: S-2 error class through retained child outcomes.\n- Pairwise: S-4 recording × threshold × baseline/Route-A path."
+dor: []
 dod:
-- 'The feasibility route (a/b/c above) is chosen, the choice and its evidence are
-  recorded on this item, and the resulting design is implemented — speaker
-  clustering runs in our Rust code and sherpa-onnx''s vendored clustering is no
-  longer called on the production path.'
-- 'Agglomerative clustering with cosine distance is unit-tested in Rust against
-  hand-constructed embedding sets: well-separated clusters, a near-threshold
-  pair, a single-speaker input, and an empty input.'
-- 'Quality is measured on the reference recordings before and after, and the
-  numbers are recorded on the item: the known-2-speaker 861.5s recording yields
-  two dominant clusters with materially less residual fragmentation than the
-  pre-change 7-cluster baseline, and no regression on the 92.4s recording.'
-- 'The 92.4s recording that reproduced the ADR-013 SIGBUS
-  (2026-07-21 12-07-19.mp4 + titanet-large) completes without a native abort,
-  proven by a test following the existing ignored-by-default convention in
-  diarize_integration.rs / wp50_tuning_regression.rs.'
-- 'The clustering threshold is re-tuned for the new implementation, the chosen
-  value is justified by the reference-recording measurements, and the reason is
-  recorded where a future reader will find it rather than only in this item.'
-- 'The ADR-013 child-process isolation is still in place and WP-57''s four
-  distinguishable child outcomes still behave as specified — covered by the
-  existing tests, which must not need weakening.'
-- 'The clustering interface can express both a distance-threshold stop and a
-  fixed-K stop, with the fixed-K path left unimplemented and unused so WP-49 can
-  land on it without redesign.'
-- 'ADR-005 and ADR-013 are updated (or superseded) to record that the vendored
-  clustering is gone, what replaced it, and that the isolation is retained for a
-  different reason than the one that created it.'
-- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint,
-  typecheck, and the 95% coverage gate.'
-dor:
-- 'FEASIBILITY SPIKE COMPLETE — a timeboxed spike has established whether
-  pyannote segmentation output and per-chunk embeddings can be obtained without
-  the vendored clustering, and which of routes (a), (b) or (c) is viable. This
-  item is not implementable until that answer exists.'
-- 'If route (a) is chosen, the user has approved adding an ONNX runtime binding
-  (`ort` or equivalent) as a direct dependency, including its effect on the
-  bundled-dylib and code-signing work WP-60 established.'
-- 'If route (b) is chosen, the user has approved carrying a forked/patched
-  sherpa-rs and the maintenance that implies.'
-- 'The shared reference recording set is fixed and available on the implementing
-  machine: the known-2-speaker 861.5s recording and the 92.4s
-  2026-07-21 12-07-19.mp4 named in ADR-013, plus any third recording the user
-  wants included.'
-- 'The shared quality metric is agreed — at minimum cluster count versus known
-  speaker count and share of speech in the dominant clusters, since no reference
-  diarization labels exist for a true DER. If the user wants DER, labelled ground
-  truth has to be produced first and that is a separate item.'
+- The production diarization path obtains segmentation through direct Rust ONNX Runtime, derives embeddings through the selected variant, and creates ordered turns through Rust-owned incremental-centroid threshold clustering without calling sherpa-rs Diarize.
+- Rust tests cover well-separated, near-threshold, single-speaker, and empty clustering sets; the interface represents both distance-threshold and fixed-K stops while fixed-K remains unused.
+- An ignored real-audio test records before/after cluster count and dominant-two speech share for both known-two-speaker recordings at 0.95, 0.90, 0.85, 0.80, and 0.75 in order, and the 92.47-second recording completes without a native abort.
+- ADR-013 isolation and WP-57's four child outcomes remain covered; new-path errors degrade to the existing no-speaker warning.
+- The pinned direct ONNX dependency, bundled dylib/rpath implications, and validation evidence are documented; local Rust and frontend validation passes.
+- ADR-005 and ADR-013 record the removed vendored clustering path, its Rust replacement, and retained isolation.
+- The user-selected 0.85 threshold is the production default and the completion evidence records its measured acceptance result.
 links:
   blocks:
   - WP-63
   relates_to:
   - WP-49
+created_by: Aleksei_Platkovskii

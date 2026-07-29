@@ -6,9 +6,11 @@
 
 ## Context
 
-sherpa-onnx's vendored C++ fast-clustering aborts the whole process with SIGBUS
-on some real recording + embedding-model + threshold combinations. A fatal OS
-signal is not a catchable Rust `Err` or panic, so it bypasses
+sherpa-onnx's vendored C++ fast-clustering previously aborted the whole
+process with SIGBUS on some real recording + embedding-model + threshold
+combinations. WP-62 removes that clustering implementation from the production
+path, but diarization still invokes native ONNX Runtime and embedding-extractor
+code. A fatal OS signal is not a catchable Rust `Err` or panic, so it can bypass
 `apply_diarization_outcome`'s fail-open contract entirely — the app dies
 mid-run rather than degrading to speaker-less segments.
 
@@ -27,8 +29,9 @@ its *stability* is too.
 
 ## Decision
 
-Run the diarization engine call in a **child process**, and keep threshold at
-0.9.
+Run the diarization engine call in a **child process**. WP-62 preserves this
+containment after replacing vendored clustering; the user selected the measured
+0.85 automatic clustering threshold.
 
 The child is this same binary re-executed with a hidden argv flag
 (`--wp-diarize-worker`), not a separate sidecar binary, so the app keeps one
@@ -37,17 +40,17 @@ clean exit with payload, exit by signal, non-zero exit, inactivity kill — and
 maps every failure onto the existing `AppError::Diarization` fail-open path.
 
 Supervision uses an **inactivity** budget rather than a total wall-clock one,
-driven by sherpa-onnx's per-chunk progress callback, so it does not scale with
-recording length. That callback's return value is ignored upstream, so killing
-the child is the only cancellation mechanism available.
+driven by direct segmentation-batch and embedding-extraction progress, so it
+does not scale with recording length. Killing the child remains the only
+cancellation mechanism available.
 
 ## Consequences
 
 - A native abort now costs the speaker labels instead of the whole app; combined
   with WP-54's persist-before-diarize ordering, the transcript is already safe.
-- 0.9 is retained as the quality-optimal value. It is **not** a safe value —
-  containment is what makes it affordable, so the isolation must not be removed
-  on the grounds that 0.9 "works".
+- Removing the known clustering abort does not make native inference failures
+  catchable, so the isolation must not be removed on the grounds that the
+  replacement path completed the initial recordings.
 - A second process holds its own copy of the samples (~55MB for the longest test
   recording) and its own loaded models for the duration of the pass.
 - Samples cross as a file under `<app-support>/cache/diarize` rather than a

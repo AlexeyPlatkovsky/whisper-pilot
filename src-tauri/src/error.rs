@@ -43,6 +43,9 @@ pub enum AppError {
     #[error("meeting store failed: {0}")]
     Store(String),
 
+    #[error("note generation failed: {0}")]
+    Llm(String),
+
     #[error("{0}")]
     Io(String),
 }

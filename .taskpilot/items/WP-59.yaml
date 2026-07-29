@@ -3,8 +3,8 @@ id: WP-59
 title: Creating-MFU status bar state (spinner + timer)
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-26T15:43:34Z'
-updated_at: '2026-07-26T15:43:39Z'
+updated_at: '2026-07-29T05:30:15Z'
 parent_id: WP-25
 description: 'Show a Creating-MFU state in the status bar when an MFU (Meeting Follow-Up) craft is running: a UI-blocking spinner with a per-second elapsed timer. This is a status-bar display only; the actual MFU generation belongs to F003 (M3). The state should be visually distinct from the transcribing state. Split from WP-29.'

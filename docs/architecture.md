@@ -113,64 +113,44 @@ English per ADR-011) and user-renamed within the current session. The
 transcript renders as a per-speaker chat of colored bubbles (10 shades).
 Reassigning or merging speakers is out of scope for M2.
 
-`diarize.rs` currently (WP-5/WP-6) prepares the sherpa-onnx model files and
-runs the engine: `diarize_samples` resolves the models, then produces ordered
-`SpeakerTurn`s from raw samples via the real sherpa-onnx engine (`sherpa-rs`),
-auto-detecting the speaker count or honoring an explicit override. Verified
-end-to-end against real downloaded models and real audio via a manual,
-ignored-by-default integration test (`tests/diarize_integration.rs`) — that
-run also confirmed in practice what ADR-005 already documents: auto-detect's
-threshold-based clustering quality is input-dependent (it did not reliably
-separate two short, acoustically-similar synthesized voices in one such run),
-so the explicit speaker-count override matters in practice, not just as a
-nice-to-have.
+`diarize.rs` resolves the configured model artifacts, then produces ordered
+`SpeakerTurn`s from raw 16 kHz samples. Since WP-62, the production route is
+owned in Rust: `ort` v1.16.3 dynamically loads the packaged ONNX Runtime 1.17.1
+dylib and runs the downloaded pyannote segmentation model directly. Rust
+expands the model's powerset output to local-speaker activity, requests the
+existing sherpa embedding extractor for active local windows, and assigns those
+embeddings with deterministic incremental-centroid threshold clustering.
+`sherpa-rs::diarize::Diarize` and its vendored fast-clustering implementation
+are not on the production path. Fixed speaker-count control remains reserved
+for WP-49; WP-62 deliberately uses automatic threshold clustering only.
 
-**Auto-detect's threshold and min-duration are tuned, not left at crate
-defaults** (WP-50): the crate's own defaults (threshold 0.5, min_duration_on/
-off 0.0) badly over-clustered real recordings — a real 2-speaker,
-14.4-minute conversation produced 22 distinct speaker ids. Sweeping threshold
-against that recording found a floor around 5 clusters by threshold 0.95,
-with no further reduction at 0.97/0.99 — but **0.95 was rejected**: bisecting
-against a second, shorter (92s) real recording found sherpa-onnx's native
-fast-clustering crashes the whole process (SIGBUS) at threshold 0.94 and
-above on that recording, while 0.93 and below complete cleanly. Very high
-thresholds are therefore a real, input-dependent *crash* risk in the vendored
-C++ clustering code, not merely a diminishing-returns tradeoff. `threshold
-0.9` / `min_duration_on/off 1.0s` were chosen instead, and confirmed
-meaningfully cluster-reducing against 3 real recordings of different lengths
-(861.5s: 22→7 clusters, 92.4s: 3→1, 240s: 14→6). On the known-2-speaker recording the
-2 dominant clusters stayed clearly separated (not merged); the other two
-recordings' true speaker counts are unknown, so they serve as crash-safety
-and over-clustering-reduction evidence only, not merge-quality evidence. This
-meaningfully reduces but does not eliminate over-clustering, consistent with
-ADR-005's input-dependent-quality caveat above. Further reduction would need
-a different clustering approach (explicitly out of this task's scope; see
-ADR-005's alternatives). `min_duration_on`/`min_duration_off` are gated to
-the auto-detect branch only — unlike `threshold`, they are not inert when an
-explicit speaker count is given (they filter/merge segments after clustering
-regardless of how the count was chosen), so leaving them tuned
-unconditionally would have silently affected WP-49's not-yet-built
-explicit-count override; that path keeps the crate's original defaults until
-WP-49 tunes it separately.
+The ONNX Runtime dylib is not a new bundled native dependency: WP-60 already
+stages `libonnxruntime.1.17.1.dylib` into `Contents/Frameworks` and the direct
+binding resolves that same signed artifact from either the executable directory
+or the framework directory. It configures that dylib and creates one ONNX
+Runtime environment per worker process before opening segmentation sessions.
+Segmentation advances its 160,000-sample inference window by the model's
+documented 10% stride; `receptive_field_shift` is used separately to timestamp
+output frames. The implementation pins `ort` v1.16.3 because its declared Rust
+1.70 minimum is compatible with this project's Rust 1.80 toolchain;
+the current `ort` 2.x line requires a newer compiler.
 
-**That crash boundary is a property of the model, not of the threshold**
-(WP-53, correcting the paragraph above): 0.94 was measured with CAM++ only,
-and a later triage reproduced a SIGBUS at the *shipped* 0.9 using
-TitaNet-large — the catalog's recommended embedding — on the 92.4s recording
-(crashes at 0.8/0.85/0.9, completes at 0.7/0.5, while CAM++ completes at 0.9
-on the same input). 0.9 therefore sits **above** the boundary for the
-recommended model rather than safely below it. Tuning cannot resolve this:
-crash safety on that recording wants < 0.8 while separation quality on the
-known-2-speaker 861.5s recording wants 0.9 (at 0.7 its second real speaker
-splits in two and cluster count rises 7 → 12). 0.9 is kept as the
-quality-optimal value and the crash is *contained* instead — see
-`ADR-013` and Diarization Process Isolation below.
+Route-A quality is measured rather than inferred. The ordered 0.95 → 0.75
+sweep over the two known-two-speaker reference recordings completed without a
+native abort: the 861.57-second recording reaches two clusters at 0.85 and
+0.80, while 0.75 produces three; the 92.47-second recording still merges to one
+cluster throughout the approved range. The user selected 0.85 as the accepted
+automatic clustering threshold; it reaches the long recording's known count
+without the 0.75 over-clustering outcome.
+The full evidence and metric definition are in
+`plans/2026-07-27-wp-62-clustering-feasibility-spike.md`.
 
 ### Diarization Process Isolation (WP-53, `diarize_process.rs`)
 
-A fatal signal is not a catchable Rust `Err` or panic, so the native abort
-above was invisible to `apply_diarization_outcome`'s fail-open contract and
-killed the app outright. The engine call therefore runs in a **child
+A fatal signal is not a catchable Rust `Err` or panic. Although WP-62 removes
+the known vendored fast-clustering abort from the production route, inference
+and embedding extraction still execute native ONNX code. The engine call
+therefore remains in a **child
 process**: `transcribe_meeting` calls `diarize_process::diarize_isolated`,
 which re-executes this same binary with a hidden argv flag
 (`--wp-diarize-worker`) rather than shipping a separate sidecar, so there
@@ -196,9 +176,8 @@ Three supervision details are load-bearing. Samples (~55MB for the longest
 test recording) cross as a raw `f32` file under `<app-support>/cache/diarize`
 rather than a pipe, which would need concurrent write-and-read handling to
 avoid filling the pipe buffer. The child is killed on an **inactivity**
-budget rather than a total one, driven by sherpa-onnx's per-chunk progress
-callback — that callback's return value is ignored upstream, so killing the
-child is the only cancellation mechanism that exists. And the child watches
+budget rather than a total one, driven by progress reported during direct
+segmentation batches and embedding extraction. And the child watches
 its stdin for EOF: when the app quits mid-run the pipe closes and the worker
 stops, instead of being reparented and left holding the models; transport
 files older than six hours are swept on the next run to cover a parent that
