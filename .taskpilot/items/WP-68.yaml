@@ -1,0 +1,75 @@
+schema_version: 1
+id: WP-68
+title: Streaming — near-real-time multi-language audio transcription
+priority: normal
+type: epic
+status: in_progress
+created_at: '2026-08-06T17:03:08Z'
+updated_at: '2026-08-06T18:57:02Z'
+description: 'Description: WhisperPilot''s Meeting mode transcribes a pre-existing local audio/video file in one full-file batch pass, prioritizing accuracy over speed and never touching live audio (a standing product non-goal). This epic adds a second, first-class capture mode, "Streaming": a user starts a session, the app captures a mix of microphone and macOS system audio (loopback), and near-real-time text appears via the already-bundled large-v3-turbo Whisper model, decoded on rolling ~5-10s windows with per-window language re-detection so mixed-language speech (e.g. English/Russian/Turkish in one session) is handled without a language selector. No speaker diarization or role labels are produced — output is plain running text. Quality/precision is the primary priority for Streaming, with the 5-10s latency budget as a secondary priority (it must stay low but not at accuracy''s expense). A session is manually started and stopped, is incrementally persisted as it decodes (protecting against app crash/quit) to a new streaming_sessions entity separate from the meetings table, and once at least some text exists the user can one-click copy the transcript or export it to Markdown, reusing existing export.rs rendering conventions. A single decode-window failure is handled fail-open (skip that window, keep the session running); if system-audio permission is unavailable/denied but the microphone is available, the session still runs in mic-only mode. Streaming is mutually exclusive with an active Meeting file transcription for v1, since both share the one cached Whisper context in AppState. No raw audio is retained once a window is decoded — only the text persists, so a finished session cannot later be re-transcribed with a different model. Building this requires reversing a currently-documented product non-goal ("WhisperPilot will not become a real-time transcriber" / "Live... capture... is out of scope, a different product" in docs/idea.md, echoed in docs/roadmap.md); that scope amendment plus a new ADR explaining the coexistence of Meeting''s batch-accuracy identity and Streaming''s near-real-time identity is a required, sequenced-first child feature of this epic. A later, explicitly separate follow-on child feature ("Prettify") will let the user run a finished transcript through the same local LLM infrastructure already planned for Meeting''s structured notes (M3, llama.cpp + Qwen2.5-Instruct) with a cleanup prompt — removing filler words/interjections/duplication and polishing grammar — but is not required for this epic''s core deliverable to be considered done.
+
+
+  Non-goals:
+
+  - Speaker diarization / roles / speaker labels for Streaming output.
+
+  - Translation between languages.
+
+  - Real-name speaker identification (not applicable — no diarization at all).
+
+  - In-app playback of captured audio (no raw audio is retained).
+
+  - Running more than one Streaming session concurrently.
+
+  - Running Streaming concurrently with a Meeting file transcription (mutually exclusive for v1).
+
+  - Re-transcription of a past Streaming session with a different model/settings (audio not retained, by design).
+
+  - Prettify/polish as part of this epic''s core deliverable (explicit follow-on child feature, not required for this epic to be done).
+
+  - A maximum/capped session duration (sessions run unbounded until the user stops them).
+
+
+  Constraints / design notes: Quality/precision is prioritized over latency (explicit user-stated priority order) — the 5-10s figure is a target ceiling, not a figure to optimize below at the cost of accuracy. Requires new macOS permissions not previously used by this app: microphone access and a system-audio-loopback/ScreenCaptureKit-class permission, with associated Info.plist/entitlement additions. The local-first stance carries over unmodified: no network calls for capture, decode, or persistence; only model downloads remain networked. A feasibility spike on rolling-window decode latency for large-v3-turbo across supported Mac hardware is required before the latency DoD criterion can be validated (precedent: WP-62''s clustering feasibility spike).
+
+
+  Dependencies / integration: No parent (new epic). Integrates with, but must not modify the existing behavior of: transcribe.rs''s cached Whisper AppState context (shared under mutual exclusion), export.rs Markdown/plain-text + clipboard conventions (reused), settings.rs/models.rs model management (large-v3-turbo is already managed there; no new catalog entry required for the core epic). The Prettify follow-on child feature depends on M3''s notes.rs llama.cpp/Qwen2.5-Instruct infrastructure landing (or landing alongside it). External prerequisite: the scope-amendment child feature (docs/idea.md, docs/roadmap.md, new ADR) must be approved before any other child feature''s implementation begins, per WP-68''s dor.
+
+
+  Target surfaces: A new Rust capture module (mic + system-audio loopback mixing); a new rolling-window decode path alongside (not replacing) transcribe.rs''s full-file path; a new streaming_sessions store parallel to store.rs''s meeting tables; new Tauri IPC commands/events for start/stop/live-append (naming TBD per child feature, mirroring create_transcription/transcription_progress conventions); a new top-level React "Streaming" tab/route; docs/idea.md, docs/roadmap.md, and a new docs/decisions/ ADR entry. Exact file names to be identified during child-feature implementation.
+
+
+  Proposed BDD scenarios: Not applicable — epic altitude.
+
+
+  Case-derivation evidence: Not applicable — lower altitude.
+
+
+  Child-task breakdown: Not applicable — epic altitude.
+
+
+  Child-feature breakdown:
+
+  - Scope amendment & ADR: amend docs/idea.md Scope/Non-Goals and docs/roadmap.md''s echoed non-goal, author a new ADR explaining Streaming''s coexistence with Meeting''s batch-accuracy identity. Sequenced first; blocks all other child features (WP-68 dor).
+
+  - Audio capture: microphone + system-audio (loopback) capture and mixing, macOS permission handling, mic-only degradation when system-audio is unavailable/denied.
+
+  - Streaming decode/session pipeline: rolling ~5-10s window decode reusing large-v3-turbo, per-window language re-detection, fail-open per-window error handling, mutual exclusion with Meeting transcription via the shared AppState Whisper context, and the required latency feasibility spike.
+
+  - Streaming persistence: new streaming_sessions store, incremental per-window save for crash/quit recovery, reopen/rename/delete of past sessions.
+
+  - Streaming UI: new top-level "Streaming" tab, live scrolling transcript view, Start/Stop controls, past-sessions list, active-audio-source indicator.
+
+  - Streaming export & copy: one-click transcript copy and Markdown export, reusing export.rs conventions.
+
+  - Prettify (follow-on): local-LLM cleanup pass (filler/interjection/duplication removal, grammar polish) over a finished transcript, reusing M3''s llama.cpp/Qwen2.5-Instruct infrastructure with a dedicated prompt; sequenced after the six child features above.'
+dor:
+- SCOPE AMENDMENT APPROVED — docs/idea.md Scope/Non-Goals section reflects Streaming as in-scope, backed by a new ADR, before implementation begins.
+dod:
+- docs/idea.md Scope/Non-Goals (and docs/roadmap.md's echoed non-goal) are amended and an approved ADR documents Streaming's coexistence with Meeting, landed before any other child feature begins implementation.
+- A user can start a Streaming session and see mixed mic+system-audio speech (including a mix of at least two of English/Russian/Turkish across a session) appear as plain, unattributed running text; the measurable latency threshold and its measurement methodology are defined and owned by the "Streaming decode/session pipeline" child feature's own DoD, established from that child's required feasibility spike.
+- A Streaming session survives an app crash/force-quit with only the last in-flight window's text lost (all previously-decoded windows are recoverable).
+- A finished or in-progress Streaming session's transcript can be copied with one click and exported to Markdown via the existing export path.
+- A Streaming session list (parallel to the Meetings list) allows past sessions to be reopened, renamed, and deleted.
+- Denial/unavailability of system-audio permission does not block Streaming from starting; the session runs mic-only with a visible indicator of which source(s) are active.
+- Starting a Streaming session while a Meeting transcription is active (or vice versa) is blocked with an explanatory message rather than silently corrupting or contending for the shared Whisper context.
