@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-72
+title: Streaming persistence (streaming_sessions store)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:51Z'
+updated_at: '2026-08-06T19:27:22Z'
+parent_id: WP-68
+description: New streaming_sessions store (parallel to store.rs's meeting tables, not an extension of them) with incremental per-window save so a crash/quit loses at most the last in-flight window. Supports reopen/rename/delete of past sessions, mirroring the Meetings list pattern. No raw audio is retained, only decoded text.

@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-70
+title: Streaming audio capture (mic + system-audio loopback)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:50Z'
+updated_at: '2026-08-06T19:27:20Z'
+parent_id: WP-68
+description: Capture and mix microphone and macOS system audio (loopback, ScreenCaptureKit-class) for a Streaming session. Handles the new mic/system-audio permission prompts this app has not previously needed, and degrades to mic-only when system-audio is unavailable or denied rather than blocking Start.

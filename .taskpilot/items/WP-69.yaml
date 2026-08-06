@@ -1,0 +1,17 @@
+schema_version: 1
+id: WP-69
+title: Streaming scope amendment & ADR (docs/idea.md, docs/roadmap.md)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:49Z'
+updated_at: '2026-08-06T19:27:35Z'
+parent_id: WP-68
+description: 'Amend docs/idea.md Scope/Non-Goals and docs/roadmap.md''s echoed non-goal to make Streaming a documented in-scope capability, and author a new ADR explaining the coexistence of Meeting''s batch-accuracy-first identity and Streaming''s near-real-time identity. Sequenced first: blocks every other Streaming child feature per WP-68''s dor. Routes through sdd-doc-author (docs/idea.md, docs/roadmap.md, new ADR) plus sdd-index-sync.'
+links:
+  blocks:
+  - WP-70
+  - WP-71
+  - WP-72
+  - WP-73
+  - WP-74

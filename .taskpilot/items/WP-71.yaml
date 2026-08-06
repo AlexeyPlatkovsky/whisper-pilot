@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-71
+title: Streaming decode/session pipeline (rolling-window Whisper)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:50Z'
+updated_at: '2026-08-06T19:27:21Z'
+parent_id: WP-68
+description: Decode a live Streaming session on rolling ~5-10s windows reusing the bundled large-v3-turbo Whisper model, re-detecting language per window to support mixed-language input. Fails open per window on a decode error (skip and continue). Mutually exclusive with an active Meeting file transcription for v1 since both share the one cached Whisper AppState context. Requires a feasibility spike measuring window decode latency on supported Mac hardware before its own DoD's latency threshold can be finalized.

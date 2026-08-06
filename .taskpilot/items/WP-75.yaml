@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-75
+title: Streaming transcript Prettify (follow-on)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:54Z'
+updated_at: '2026-08-06T19:27:24Z'
+parent_id: WP-68
+description: 'Explicit follow-on, not required for WP-68''s core deliverable: a Prettify button that runs a finished Streaming transcript through the same local llama.cpp + Qwen2.5-Instruct infrastructure planned for Meeting''s structured notes (M3, notes.rs), using a dedicated cleanup prompt to remove filler words/interjections/duplication and polish grammar. Depends on M3''s notes.rs infrastructure landing (or landing alongside it), not directly on WP-69.'

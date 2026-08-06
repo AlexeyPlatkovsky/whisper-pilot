@@ -1,0 +1,10 @@
+schema_version: 1
+id: WP-73
+title: Streaming UI (tab, live transcript, controls)
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-06T19:26:52Z'
+updated_at: '2026-08-06T19:27:23Z'
+parent_id: WP-68
+description: 'New top-level Streaming tab/route: Start/Stop controls, a live scrolling transcript view with no speaker labels, a past-sessions list, and a visible indicator of which audio source(s) (mic/system-audio) are currently active.'
