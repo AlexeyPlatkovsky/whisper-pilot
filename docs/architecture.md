@@ -20,6 +20,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
                                    models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
+                                   [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
 ```
 
 The Rust core does all heavy work and owns persistence; the React layer is a
@@ -271,6 +272,44 @@ never leaks into an unrelated transcript — with no persistence across app
 restarts (that requires the meeting entity, F004/WP-11, not yet built). This
 completes epic WP-1 (M2 speaker-attributed transcription).
 
+## Streaming Audio Capture (WP-68/WP-70, `streaming_audio.rs`) — in progress
+
+Streaming (ADR-014) is a second, separate capture mode from Meeting: near-
+real-time transcription of live audio rather than a finished file. This
+section covers only its capture/mixing layer (WP-70); the rolling-window
+decode pipeline that consumes this module's output is WP-71, not yet built.
+
+`streaming_audio.rs` hands its consumer a continuous, unbounded stream of
+16 kHz mono f32 chunks (`crate::audio::SAMPLE_RATE`) via a plain
+`std::sync::mpsc::Sender`/`Receiver` pair — mixing granularity (`MIX_TICK`,
+100ms) is independent of WP-71's own 5-10s decode window. Its pure logic
+(`downmix_to_mono`, `resample_linear`, `mix_mono`) is unit-tested; the two
+platform capture sources are:
+
+- **Microphone (`cpal`, macOS-only target dependency)** — implemented. Opens
+  the default input device, downmixes to mono and resamples to 16 kHz per
+  callback using the pure functions above.
+- **System-audio loopback (ScreenCaptureKit)** — **not yet implemented**.
+  `SystemAudioCapture::start` always returns an error today, so every session
+  currently runs mic-only via the mic-only degradation path (WP-68 decision:
+  a single-source capture failure degrades rather than fails the session).
+  Two approaches were evaluated and neither reached a verifiable
+  implementation in this environment:
+  - the ergonomic `screencapturekit` crate compiles, but its mandatory
+    `apple-metal` dependency needs Swift compatibility libraries that need a
+    full Xcode.app install to link — a dylib/toolchain bundling problem of
+    the same shape as WP-60's sherpa-onnx/onnxruntime work, not a quick fix;
+  - the raw `objc2-screen-capture-kit` binding avoids Swift entirely (same
+    Objective-C-runtime approach already used elsewhere in this dependency
+    tree, e.g. `objc2-app-kit` via Tauri/muda), but correctly extracting PCM
+    audio out of a `CMSampleBuffer` requires calling CoreMedia's raw C
+    audio-buffer-list API, whose exact behavior could not be confirmed
+    without running real captured audio through it.
+
+Mutual exclusion with an active Meeting transcription (both would share the
+one cached Whisper `AppState` context) is WP-71's concern, not implemented
+here — this module only captures and mixes audio, it does not decode it.
+
 ## Structured Notes (M3, `notes.rs`) — planned
 
 llama.cpp running quantized Qwen2.5-Instruct on Metal generates **structured
@@ -360,6 +399,11 @@ directory, downloaded model files, and user-chosen export destinations. No
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
 - ffmpeg on PATH. M2 adds sherpa-onnx (via the `sherpa-rs` crate, prebuilt
   binaries fetched at build time); M3 adds llama.cpp — both Metal, local.
+- Streaming (WP-70) adds `cpal` for microphone capture, macOS-only-target
+  dependency like `whisper-rs`'s `metal` feature — its default Linux backend
+  (`alsa-sys`) needs ALSA dev headers CI does not install. System-audio
+  loopback has no dependency yet (not implemented — see Streaming Audio
+  Capture above).
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
 - Native dylib packaging (WP-60): `sherpa-rs-sys` leaves

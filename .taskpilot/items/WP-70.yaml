@@ -3,8 +3,13 @@ id: WP-70
 title: Streaming audio capture (mic + system-audio loopback)
 priority: normal
 type: feature
-status: backlog
+status: in_progress
 created_at: '2026-08-06T19:26:50Z'
-updated_at: '2026-08-06T19:27:20Z'
+updated_at: '2026-08-06T20:04:16Z'
 parent_id: WP-68
-description: Capture and mix microphone and macOS system audio (loopback, ScreenCaptureKit-class) for a Streaming session. Handles the new mic/system-audio permission prompts this app has not previously needed, and degrades to mic-only when system-audio is unavailable or denied rather than blocking Start.
+description: 'Capture and mix microphone and macOS system audio (loopback, ScreenCaptureKit-class) for a Streaming session. Handles the new mic/system-audio permission prompts this app has not previously needed, and degrades to mic-only when system-audio is unavailable or denied rather than blocking Start.
+
+
+  Current state: microphone capture (cpal) is implemented and real (opens default input device, downmixes/resamples to 16kHz mono). System-audio loopback (ScreenCaptureKit) is NOT yet implemented -- SystemAudioCapture::start always returns an error, so every session runs mic-only via the degradation path today. See src-tauri/src/streaming_audio.rs''s SystemAudioCapture doc comment and docs/architecture.md''s Streaming Audio Capture section for what was tried (screencapturekit crate: blocked on Swift-compatibility-library linking needing full Xcode.app; objc2-screen-capture-kit: blocked on unverifiable raw CoreMedia audio-buffer extraction) and why.'
+dor:
+- SYSTEM-AUDIO IMPLEMENTATION DECIDED -- either (a) continue with the raw objc2-screen-capture-kit CoreMedia audio-buffer-list extraction with further verification, (b) require full Xcode.app on the dev/build machine and use the ergonomic screencapturekit crate instead, or (c) accept a different approach entirely. The user has not chosen.

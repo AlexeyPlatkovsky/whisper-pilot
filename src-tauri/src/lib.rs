@@ -10,6 +10,7 @@ pub mod meetings;
 pub mod models;
 pub mod settings;
 pub mod store;
+pub mod streaming_audio;
 pub mod transcribe;
 
 use error::{AppError, Result};
