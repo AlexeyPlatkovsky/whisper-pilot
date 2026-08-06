@@ -63,8 +63,7 @@ description: 'Description: WhisperPilot''s Meeting mode transcribes a pre-existi
   - Streaming export & copy: one-click transcript copy and Markdown export, reusing export.rs conventions.
 
   - Prettify (follow-on): local-LLM cleanup pass (filler/interjection/duplication removal, grammar polish) over a finished transcript, reusing M3''s llama.cpp/Qwen2.5-Instruct infrastructure with a dedicated prompt; sequenced after the six child features above.'
-dor:
-- SCOPE AMENDMENT APPROVED — docs/idea.md Scope/Non-Goals section reflects Streaming as in-scope, backed by a new ADR, before implementation begins.
+dor: []
 dod:
 - docs/idea.md Scope/Non-Goals (and docs/roadmap.md's echoed non-goal) are amended and an approved ADR documents Streaming's coexistence with Meeting, landed before any other child feature begins implementation.
 - A user can start a Streaming session and see mixed mic+system-audio speech (including a mix of at least two of English/Russian/Turkish across a session) appear as plain, unattributed running text; the measurable latency threshold and its measurement methodology are defined and owned by the "Streaming decode/session pipeline" child feature's own DoD, established from that child's required feasibility spike.

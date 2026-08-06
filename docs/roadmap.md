@@ -78,8 +78,13 @@ being rewritten. No public distribution or notarization in the current horizon.
 
 ## Non-Goals (Over Time)
 
-- Live capture — never; a different product (`idea.md` non-goals).
-- Cloud transcription/summarization/storage — never; local-first stance.
+- Meeting becoming a real-time transcriber — never; its accuracy comes from
+  full-file batch processing (ADR-002), unchanged. Streaming (ADR-014) is a
+  separate, additive capability with its own quality-over-latency priority;
+  see `idea.md` for its scope. Streaming's own phase/milestone placement is
+  not yet decided — its epic (WP-68) is tracked in TaskPilot pending that.
+- Cloud transcription/summarization/storage — never; local-first stance
+  (applies to Meeting and Streaming alike).
 - Real-name speaker identification (voice enrollment) — deferred beyond M2.
 - Speaker reassignment / merge — deferred beyond M2; misattributed segments stay
   as attributed.

@@ -1,6 +1,8 @@
 # ADR-002: Offline full-file (batch) transcription, not live streaming
 
-- **Status:** accepted
+- **Status:** partially superseded (2026-08-06) — the app-wide "not live
+  streaming" scope boundary is replaced by ADR-014; the full-file batch
+  decision and its accuracy rationale for Meeting still stand
 - **Date:** 2026-07-21
 - **Deciders:** Alexey Platkovsky
 
@@ -17,6 +19,13 @@ constraint exists.
 Transcribe the **entire file in one pass** with no VAD, no streaming, and no
 provisional/commit cycle. Use beam search and the model's own fallbacks, giving
 Whisper the full file as context.
+
+> **Partially superseded by [ADR-014](ADR-014-streaming-mode-coexists-with-batch-meeting.md)
+> (2026-08-06)** on the app-wide scope boundary only. WhisperPilot now also
+> offers **Streaming**, a separate near-real-time capture mode for live audio.
+> This decision's actual content — full-file batch decoding as *Meeting's*
+> mechanism, chosen for its accuracy — is unchanged; only the earlier implicit
+> claim that the app as a whole would never do anything live is superseded.
 
 ## Consequences
 
