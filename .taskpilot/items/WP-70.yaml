@@ -3,13 +3,21 @@ id: WP-70
 title: Streaming audio capture (mic + system-audio loopback)
 priority: normal
 type: feature
-status: in_progress
+status: done
 created_at: '2026-08-06T19:26:50Z'
-updated_at: '2026-08-06T20:04:16Z'
+updated_at: '2026-08-07T06:20:30Z'
 parent_id: WP-68
-description: 'Capture and mix microphone and macOS system audio (loopback, ScreenCaptureKit-class) for a Streaming session. Handles the new mic/system-audio permission prompts this app has not previously needed, and degrades to mic-only when system-audio is unavailable or denied rather than blocking Start.
+description: 'Capture and mix microphone and macOS system audio (loopback, ScreenCaptureKit) for a Streaming session, handing WP-71''s decode pipeline a continuous 16kHz mono f32 sample stream. Handles the mic/system-audio permission prompts this app has not previously needed, and degrades to mic-only when system-audio is unavailable or denied rather than blocking Start.
 
 
-  Current state: microphone capture (cpal) is implemented and real (opens default input device, downmixes/resamples to 16kHz mono). System-audio loopback (ScreenCaptureKit) is NOT yet implemented -- SystemAudioCapture::start always returns an error, so every session runs mic-only via the degradation path today. See src-tauri/src/streaming_audio.rs''s SystemAudioCapture doc comment and docs/architecture.md''s Streaming Audio Capture section for what was tried (screencapturekit crate: blocked on Swift-compatibility-library linking needing full Xcode.app; objc2-screen-capture-kit: blocked on unverifiable raw CoreMedia audio-buffer extraction) and why.'
-dor:
-- SYSTEM-AUDIO IMPLEMENTATION DECIDED -- either (a) continue with the raw objc2-screen-capture-kit CoreMedia audio-buffer-list extraction with further verification, (b) require full Xcode.app on the dev/build machine and use the ergonomic screencapturekit crate instead, or (c) accept a different approach entirely. The user has not chosen.
+  Implementation: microphone via cpal (downmix + linear resample to 16kHz mono); system audio via the screencapturekit crate, requesting 16kHz mono directly (a natively supported ScreenCaptureKit rate/channel pair, no resampling needed). A background mixer thread drains both sources every ~100ms and sums+clamps them (or passes one through unmixed) into the output stream. Pure mixing/resample/downmix logic is unit-tested (12 tests); the OS-level capture wrappers are compiled and linked but not runtime-verified (no way to grant real mic/screen-recording permissions or run the packaged .app from this environment).
+
+
+  Required a build.rs fix: screencapturekit''s apple-metal dependency links libswift_Concurrency.dylib (OS-provided, dyld-shared-cache only, no bundling needed) via @rpath, which needs an explicit -Wl,-rpath,/usr/lib/swift link arg or the binary aborts at launch. The existing packaging.rs regression test (WP-60) was extended with an explicit OS_PROVIDED_DYLIBS exemption plus its own rpath assertion, rather than either loosening the original check or leaving it failing.'
+dor: []
+dod:
+- src-tauri/src/streaming_audio.rs implements both MicCapture (cpal) and SystemAudioCapture (screencapturekit), each degrading gracefully on failure per StreamingSession's fail-open contract; only both failing is a hard error.
+- Pure mixing/downmix/resample logic has unit test coverage (cargo test streaming_audio) and all tests pass.
+- cargo check/test/clippy (-D warnings)/fmt --check all pass with zero regressions across the full existing suite.
+- The WP-60 packaging regression test (tests/packaging.rs) passes, including its new OS-provided-dylib rpath assertion for screencapturekit's Swift runtime dependency.
+- docs/architecture.md documents the Streaming Audio Capture module, its dependencies, and the verification limitation (no runtime/permission testing possible in this environment).

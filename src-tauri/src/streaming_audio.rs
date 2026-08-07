@@ -13,10 +13,14 @@
 //! (diarization, ADR-013) rather than treating a partial capture failure as
 //! fatal.
 //!
-//! **Current state:** microphone capture (`cpal`) is real. System-audio
-//! loopback (`SystemAudioCapture`) always returns an error today, so every
-//! session currently runs mic-only via the degradation path above — see that
-//! type's doc comment for why, and what was tried.
+//! System-audio loopback uses the `screencapturekit` crate. An earlier
+//! attempt at this module used the lower-level `objc2-screen-capture-kit`
+//! binding specifically to avoid `screencapturekit`'s mandatory `apple-metal`
+//! dependency, which needs a full Xcode.app (not just Command Line Tools) to
+//! link its Swift compatibility libraries — that constraint no longer
+//! applies once Xcode.app is installed, and the ergonomic crate is
+//! materially lower-risk than hand-written CoreMedia buffer extraction for a
+//! feature whose stated top priority is quality/precision.
 
 use crate::audio::SAMPLE_RATE;
 use crate::error::{AppError, Result};
@@ -144,15 +148,15 @@ fn run_mixer(
     }
 }
 
-/// Everything platform-specific (cpal for the microphone; ScreenCaptureKit
-/// for system-audio loopback, not yet implemented — see `SystemAudioCapture`)
-/// lives behind this cfg — WhisperPilot is macOS-only (AGENTS.md), and cpal
-/// is not available to a Linux CI build in the configuration this project
-/// uses it in (see the Cargo.toml comment where it is pinned to the
+/// Everything platform-specific (cpal for the microphone, ScreenCaptureKit
+/// for system-audio loopback) lives behind this cfg — WhisperPilot is
+/// macOS-only (AGENTS.md), and neither dependency is available to a Linux CI
+/// build (see the Cargo.toml comment where both are pinned to the
 /// macOS-only target section).
 #[cfg(target_os = "macos")]
 mod platform {
     use super::*;
+    use screencapturekit::prelude::*;
 
     /// Owns a running `cpal` input stream; dropping it stops capture.
     struct MicCapture {
@@ -226,35 +230,86 @@ mod platform {
         }
     }
 
-    /// Owns a running system-audio (loopback) capture; dropping it stops
-    /// capture.
-    ///
-    /// **Not yet implemented** (tracked as a WP-70 follow-up, not silently
-    /// dropped): `start` always returns `Err`, so `StreamingSession` always
-    /// degrades to `ActiveSources::MicOnly` today — exercising the exact
-    /// degradation path this module is built around, per WP-68's decision
-    /// that mic-only degradation is not itself a failure. Two viable
-    /// implementations were evaluated and neither could be completed to a
-    /// verifiable standard in this environment:
-    /// - the ergonomic `screencapturekit` crate: compiles, but its mandatory
-    ///   `apple-metal` dependency needs Swift compatibility libraries this
-    ///   toolchain (Command Line Tools only, no full Xcode.app) cannot link
-    ///   — a bundling problem of the same shape as WP-60's sherpa/onnxruntime
-    ///   dylib work, not a quick fix;
-    /// - the raw `objc2-screen-capture-kit` binding: avoids Swift entirely,
-    ///   but correctly extracting PCM audio out of a `CMSampleBuffer`
-    ///   requires calling CoreMedia's raw C audio-buffer-list API, whose
-    ///   exact struct layout this implementation could not confirm without
-    ///   running real captured audio through it — the kind of unsafe FFI
-    ///   surface that must not ship unverified, especially given quality is
-    ///   this feature's top stated priority.
-    struct SystemAudioCapture;
+    /// Owns a running `SCStream` capturing system audio only (no video);
+    /// dropping it stops capture. Requests 16 kHz mono directly from
+    /// ScreenCaptureKit — a natively supported rate/channel-count pair (see
+    /// `screencapturekit::stream::configuration::audio`) — so unlike the
+    /// microphone path no resampling is needed here.
+    struct SystemAudioCapture {
+        stream: SCStream,
+    }
+
+    /// Receives ScreenCaptureKit's audio callback; holds nothing but the
+    /// shared buffer, so it never needs to leave this module.
+    struct SystemAudioHandler {
+        buf: SharedBuffer,
+    }
+
+    impl SCStreamOutputTrait for SystemAudioHandler {
+        fn did_output_sample_buffer(
+            &self,
+            sample: screencapturekit::cm::CMSampleBuffer,
+            of_type: SCStreamOutputType,
+        ) {
+            if !matches!(of_type, SCStreamOutputType::Audio) {
+                return;
+            }
+            use screencapturekit::cm::CMSampleBufferExt;
+            let Some(list) = sample.audio_buffer_list() else {
+                return;
+            };
+            // Mono capture (requested below) means exactly one buffer,
+            // carrying Float32 PCM — the format ScreenCaptureKit's audio
+            // path documents for this configuration. Reinterpreting raw
+            // bytes as little-endian f32 is the same approach hound takes
+            // for WAV samples in audio.rs.
+            let Some(buffer) = list.get(0) else {
+                return;
+            };
+            let bytes = buffer.data();
+            let samples: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                .collect();
+            push(&self.buf, &samples);
+        }
+    }
 
     impl SystemAudioCapture {
-        fn start(_buf: SharedBuffer) -> Result<Self> {
-            Err(AppError::Capture(
-                "system-audio (loopback) capture is not yet implemented".into(),
-            ))
+        fn start(buf: SharedBuffer) -> Result<Self> {
+            use screencapturekit::stream::configuration::audio::{
+                AudioChannelCount, AudioSampleRate,
+            };
+
+            let content = SCShareableContent::get()
+                .map_err(|e| AppError::Capture(format!("no shareable content: {e}")))?;
+            let display = content.displays().into_iter().next().ok_or_else(|| {
+                AppError::Capture("no display available for system-audio capture".into())
+            })?;
+            let filter = SCContentFilter::create()
+                .with_display(&display)
+                .with_excluding_windows(&[])
+                .build();
+            let config = SCStreamConfiguration::new()
+                .with_captures_audio(true)
+                .with_sample_rate(AudioSampleRate::Rate16000)
+                .with_channel_count(AudioChannelCount::Mono);
+
+            let mut stream = SCStream::new(&filter, &config);
+            stream.add_output_handler(SystemAudioHandler { buf }, SCStreamOutputType::Audio);
+            stream
+                .start_capture()
+                .map_err(|e| AppError::Capture(format!("failed to start system audio: {e}")))?;
+
+            Ok(Self { stream })
+        }
+    }
+
+    impl Drop for SystemAudioCapture {
+        fn drop(&mut self) {
+            if let Err(e) = self.stream.stop_capture() {
+                log::warn!("failed to stop system-audio capture cleanly: {e}");
+            }
         }
     }
 

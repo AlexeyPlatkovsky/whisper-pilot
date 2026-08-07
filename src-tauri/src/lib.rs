@@ -423,9 +423,8 @@ async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
         .as_deref()
         .ok_or_else(|| AppError::Llm("no LLM model selected in Settings".into()))?;
 
-    let model_path = models::primary_asset_path(&app_support_dir, llm_model_id).ok_or_else(
-        || AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")),
-    )?;
+    let model_path = models::primary_asset_path(&app_support_dir, llm_model_id)
+        .ok_or_else(|| AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")))?;
 
     if !model_path.exists() {
         return Err(AppError::Llm(format!(

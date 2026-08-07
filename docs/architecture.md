@@ -272,7 +272,7 @@ never leaks into an unrelated transcript — with no persistence across app
 restarts (that requires the meeting entity, F004/WP-11, not yet built). This
 completes epic WP-1 (M2 speaker-attributed transcription).
 
-## Streaming Audio Capture (WP-68/WP-70, `streaming_audio.rs`) — in progress
+## Streaming Audio Capture (WP-68/WP-70, `streaming_audio.rs`)
 
 Streaming (ADR-014) is a second, separate capture mode from Meeting: near-
 real-time transcription of live audio rather than a finished file. This
@@ -282,29 +282,40 @@ decode pipeline that consumes this module's output is WP-71, not yet built.
 `streaming_audio.rs` hands its consumer a continuous, unbounded stream of
 16 kHz mono f32 chunks (`crate::audio::SAMPLE_RATE`) via a plain
 `std::sync::mpsc::Sender`/`Receiver` pair — mixing granularity (`MIX_TICK`,
-100ms) is independent of WP-71's own 5-10s decode window. Its pure logic
-(`downmix_to_mono`, `resample_linear`, `mix_mono`) is unit-tested; the two
-platform capture sources are:
+100ms) is independent of WP-71's own 5-10s decode window. A background mixer
+thread drains whichever source buffer(s) are active every tick and sums+
+clamps them (`mix_mono`) to `[-1.0, 1.0]`, or passes one source through
+unmixed if only one is active. Pure logic (`downmix_to_mono`,
+`resample_linear`, `mix_mono`) is unit-tested (12 tests); the two platform
+capture sources, both macOS-only target dependencies:
 
-- **Microphone (`cpal`, macOS-only target dependency)** — implemented. Opens
-  the default input device, downmixes to mono and resamples to 16 kHz per
-  callback using the pure functions above.
-- **System-audio loopback (ScreenCaptureKit)** — **not yet implemented**.
-  `SystemAudioCapture::start` always returns an error today, so every session
-  currently runs mic-only via the mic-only degradation path (WP-68 decision:
-  a single-source capture failure degrades rather than fails the session).
-  Two approaches were evaluated and neither reached a verifiable
-  implementation in this environment:
-  - the ergonomic `screencapturekit` crate compiles, but its mandatory
-    `apple-metal` dependency needs Swift compatibility libraries that need a
-    full Xcode.app install to link — a dylib/toolchain bundling problem of
-    the same shape as WP-60's sherpa-onnx/onnxruntime work, not a quick fix;
-  - the raw `objc2-screen-capture-kit` binding avoids Swift entirely (same
-    Objective-C-runtime approach already used elsewhere in this dependency
-    tree, e.g. `objc2-app-kit` via Tauri/muda), but correctly extracting PCM
-    audio out of a `CMSampleBuffer` requires calling CoreMedia's raw C
-    audio-buffer-list API, whose exact behavior could not be confirmed
-    without running real captured audio through it.
+- **Microphone (`cpal`)** — opens the default input device, downmixes to
+  mono and resamples to 16 kHz per callback using the pure functions above
+  (the device's native rate/channel count vary; ScreenCaptureKit does not
+  need this step, see below).
+- **System-audio loopback (`screencapturekit` crate)** — requests 16 kHz
+  mono directly from `SCStreamConfiguration` (a natively supported
+  rate/channel-count pair), so its `SCStreamOutputTrait::did_output_sample_buffer`
+  callback reinterprets `AudioBufferList`'s raw bytes as little-endian f32
+  with no resampling needed. `screencapturekit`'s mandatory `apple-metal`
+  dependency links `libswift_Concurrency.dylib`, an OS-provided Swift
+  runtime library that exists only in the dyld shared cache (no standalone
+  file, unlike the sherpa-onnx/onnxruntime dylibs WP-60 bundles) — `build.rs`
+  adds a fixed `-Wl,-rpath,/usr/lib/swift` link arg so the binary resolves it
+  without bundling, and `tests/packaging.rs`'s WP-60 regression test carries
+  an explicit `OS_PROVIDED_DYLIBS` exemption (plus its own rpath assertion)
+  for this dylib rather than treating it as one to bundle. Building this also
+  requires the full Xcode.app (not just Command Line Tools), for the Swift
+  compatibility libraries `apple-metal` needs at link time.
+
+Mic-only degradation (WP-68 decision: a single-source capture failure
+degrades rather than fails the session) means either source failing to start
+— e.g. system-audio permission denied — falls back to whichever source(s)
+remain; only both failing is a hard error. This path is architecturally real
+but not runtime-verified: granting real microphone/screen-recording
+permissions and running the packaged `.app` is outside what this environment
+can do, so the OS-level capture wrappers are compiled, linked, and reviewed,
+not exercised end-to-end.
 
 Mutual exclusion with an active Meeting transcription (both would share the
 one cached Whisper `AppState` context) is WP-71's concern, not implemented
@@ -399,11 +410,13 @@ directory, downloaded model files, and user-chosen export destinations. No
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
 - ffmpeg on PATH. M2 adds sherpa-onnx (via the `sherpa-rs` crate, prebuilt
   binaries fetched at build time); M3 adds llama.cpp — both Metal, local.
-- Streaming (WP-70) adds `cpal` for microphone capture, macOS-only-target
-  dependency like `whisper-rs`'s `metal` feature — its default Linux backend
-  (`alsa-sys`) needs ALSA dev headers CI does not install. System-audio
-  loopback has no dependency yet (not implemented — see Streaming Audio
-  Capture above).
+- Streaming (WP-70) adds `cpal` (microphone) and `screencapturekit`
+  (system-audio loopback), both macOS-only-target dependencies like
+  `whisper-rs`'s `metal` feature — `cpal`'s default Linux backend
+  (`alsa-sys`) needs ALSA dev headers CI does not install, and
+  ScreenCaptureKit is Apple-only. Building `screencapturekit` needs the full
+  Xcode.app installed (not just Command Line Tools) — see Streaming Audio
+  Capture above.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
 - Native dylib packaging (WP-60): `sherpa-rs-sys` leaves
