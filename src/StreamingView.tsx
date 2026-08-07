@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteStreamingSession,
+  generateStreamingNotes,
   listStreamingSessions,
   onStreamingSessionEnded,
   onStreamingSources,
@@ -10,6 +11,7 @@ import {
   saveTextDialog,
   startStreamingSession,
   stopStreamingSession,
+  type StreamingNotes,
   type StreamingSessionSummary,
   type StreamingWindow,
 } from "./ipc";
@@ -83,22 +85,45 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
+  const [craftingId, setCraftingId] = useState<number | null>(null);
+  const [notes, setNotes] = useState<StreamingNotes | null>(null);
+  const [craftFailed, setCraftFailed] = useState(false);
+  // Read after an await to avoid acting on a stale closure once the user has
+  // switched sessions — plain state would still hold the id captured when
+  // the async handler started.
+  const activeIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    activeIdRef.current = activeId;
+  }, [activeId]);
+
+  // Scoped to the open session, so switching sessions can't paint a stale
+  // crafting state onto the newly opened one.
+  const isCraftingActive = craftingId !== null && craftingId === activeId;
 
   // Derived, not stored, so it can't drift from Start/Stop; isRunning wins
-  // over busy so a Stop request in flight still reads as On Air.
-  const widgetStatus = isRunning ? "on-air" : busy ? "starting" : "ready";
+  // over busy so a Stop-in-flight still reads as On Air.
+  const widgetStatus = isRunning
+    ? "on-air"
+    : busy
+      ? "starting"
+      : isCraftingActive
+        ? "crafting"
+        : craftFailed
+          ? "mfu-failed"
+          : "ready";
 
   // Recomputed from Date.now() each tick, not incremented, so a throttled
-  // setInterval can't drift the displayed value.
+  // setInterval can't drift the displayed value. Shared by On Air and
+  // Crafting — they're mutually exclusive (Craft is disabled while running).
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning && !isCraftingActive) return;
     startTimeRef.current = Date.now();
     setElapsed(0);
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
     }, 1000);
     return () => clearInterval(id);
-  }, [isRunning]);
+  }, [isRunning, isCraftingActive]);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await listStreamingSessions());
@@ -164,6 +189,8 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       setWindows([]);
       setSources(null);
       setCopyStatus("idle");
+      setNotes(null);
+      setCraftFailed(false);
       setIsRunning(true);
       await refreshSessions();
     } catch (e) {
@@ -198,6 +225,8 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       setIsRunning(false);
       setSources(null);
       setCopyStatus("idle");
+      setNotes(session.notes ?? null);
+      setCraftFailed(false);
     } catch (e) {
       setError(String(e));
     }
@@ -226,6 +255,8 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
         setActiveId((current) => {
           if (current !== id) return current;
           setWindows([]);
+          setNotes(null);
+          setCraftFailed(false);
           return null;
         });
         await refreshSessions();
@@ -258,7 +289,34 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
     }
   }, [windows, activeTitle]);
 
+  const handleCraft = useCallback(async () => {
+    if (activeId === null) return;
+    const id = activeId;
+    setError(null);
+    setCraftFailed(false);
+    setCraftingId(id);
+    try {
+      const session = await generateStreamingNotes(id);
+      if (activeIdRef.current === id) {
+        setNotes(session.notes ?? null);
+      }
+    } catch (e) {
+      if (activeIdRef.current === id) {
+        setError(String(e));
+        setCraftFailed(true);
+      }
+    } finally {
+      setCraftingId((current) => (current === id ? null : current));
+    }
+  }, [activeId]);
+
   const hasText = windows.some((w) => windowText(w).length > 0);
+  // Craft needs real decoded content, unlike Copy/Export's hasText — a
+  // session with only fail-open windows has hasText=true (from the
+  // "[unavailable]" placeholder) but nothing for the LLM to summarize.
+  const hasCraftableText = windows.some(
+    (w) => w.outcome_ok && w.text.length > 0,
+  );
 
   return (
     <div className="app streaming-view">
@@ -309,6 +367,33 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
                     timer would spam a screen reader once per second. */}
                 <span className="wp-status-timer" aria-hidden="true">
                   {formatElapsedClock(elapsed)}
+                </span>
+              </>
+            )}
+            {widgetStatus === "crafting" && (
+              <>
+                <Icon
+                  name="refresh-cw"
+                  size={14}
+                  className="wp-spin wp-tone--crafting"
+                />
+                <span className="wp-status-label wp-tone--crafting">
+                  Crafting MFU…
+                </span>
+                <span className="wp-status-timer" aria-hidden="true">
+                  {formatElapsedClock(elapsed)}
+                </span>
+              </>
+            )}
+            {widgetStatus === "mfu-failed" && (
+              <>
+                <Icon
+                  name="alert-circle"
+                  size={14}
+                  className="wp-tone--error"
+                />
+                <span className="wp-status-label wp-tone--error">
+                  MFU Failed
                 </span>
               </>
             )}
@@ -424,6 +509,17 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
               <Icon name="download" size={16} />
               Export
             </button>
+            <button
+              type="button"
+              className="streaming-action-btn"
+              aria-label="Craft MFU notes"
+              title="Craft MFU notes"
+              onClick={() => void handleCraft()}
+              disabled={isRunning || !hasCraftableText || isCraftingActive}
+            >
+              <Icon name="sparkles" size={16} />
+              Craft
+            </button>
           </div>
           {windows.length === 0 ? (
             <p className="streaming-empty">
@@ -449,6 +545,53 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
             </div>
           )}
         </main>
+
+        <aside className="wp-mfu">
+          {notes ? (
+            <div className="wp-mfu-notes">
+              {notes.summary && (
+                <section className="wp-mfu-section">
+                  <h3 className="wp-mfu-heading">Summary</h3>
+                  <p className="wp-mfu-text">{notes.summary}</p>
+                </section>
+              )}
+              {notes.decisions && (
+                <section className="wp-mfu-section">
+                  <h3 className="wp-mfu-heading">Decisions</h3>
+                  <p className="wp-mfu-text">{notes.decisions}</p>
+                </section>
+              )}
+              {notes.action_items && (
+                <section className="wp-mfu-section">
+                  <h3 className="wp-mfu-heading">Action Items</h3>
+                  <p className="wp-mfu-text">{notes.action_items}</p>
+                </section>
+              )}
+              {notes.open_questions && (
+                <section className="wp-mfu-section">
+                  <h3 className="wp-mfu-heading">Open Questions</h3>
+                  <p className="wp-mfu-text">{notes.open_questions}</p>
+                </section>
+              )}
+              {notes.participants && (
+                <section className="wp-mfu-section">
+                  <h3 className="wp-mfu-heading">Participants</h3>
+                  <p className="wp-mfu-text">{notes.participants}</p>
+                </section>
+              )}
+            </div>
+          ) : (
+            <div className="wp-mfu-placeholder">
+              <div className="wp-mfu-icon-frame">
+                <Icon name="sparkles" size={32} />
+              </div>
+              <p className="wp-mfu-title">Run MFU Craft</p>
+              <p className="wp-mfu-subtitle">
+                Generate summary, decisions, action items, and open questions.
+              </p>
+            </div>
+          )}
+        </aside>
       </div>
     </div>
   );

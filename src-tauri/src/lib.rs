@@ -749,19 +749,16 @@ fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
     Ok(())
 }
 
-/// Generate structured meeting notes (summary, decisions, action items, open
-/// questions, participants) from the current transcript using the active LLM
-/// model. Requires an LLM model to be downloaded and selected in Settings.
-#[tauri::command]
-async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
-    let app_support_dir = app_data_dir(&app)?;
-    let settings = settings::get_settings(&app_support_dir);
+/// Shared by both Craft/MFU commands (Meeting and Streaming). Errors name the
+/// exact missing prerequisite rather than a generic failure.
+fn resolve_llm_model_path(app_support_dir: &std::path::Path) -> Result<PathBuf> {
+    let settings = settings::get_settings(app_support_dir);
     let llm_model_id = settings
         .active_model_llm
         .as_deref()
         .ok_or_else(|| AppError::Llm("no LLM model selected in Settings".into()))?;
 
-    let model_path = models::primary_asset_path(&app_support_dir, llm_model_id)
+    let model_path = models::primary_asset_path(app_support_dir, llm_model_id)
         .ok_or_else(|| AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")))?;
 
     if !model_path.exists() {
@@ -770,6 +767,16 @@ async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
             model_path.display()
         )));
     }
+    Ok(model_path)
+}
+
+/// Generate structured meeting notes (summary, decisions, action items, open
+/// questions, participants) from the current transcript using the active LLM
+/// model. Requires an LLM model to be downloaded and selected in Settings.
+#[tauri::command]
+async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
 
     let store = store::Store::open(&app_support_dir)?;
     let _meeting = store
@@ -798,16 +805,54 @@ async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
     let app_support_dir_clone = app_support_dir.clone();
     let model_path_clone = model_path.clone();
     let transcript_clone = transcript.clone();
-    let mut notes = tokio::task::spawn_blocking(move || {
+    let generated = tokio::task::spawn_blocking(move || {
         llm::generate_notes(&model_path_clone, &transcript_clone)
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
 
-    notes.meeting_id = id;
-    store.upsert_notes(&notes)?;
+    store.upsert_notes(&store::MeetingNotes {
+        meeting_id: id,
+        summary: generated.summary,
+        decisions: generated.decisions,
+        action_items: generated.action_items,
+        open_questions: generated.open_questions,
+        participants: generated.participants,
+    })?;
 
     meetings::open_meeting(&app_support_dir_clone, id)
+}
+
+/// Same local model/JSON contract as `generate_notes`, for a Streaming
+/// session — `streaming::build_streaming_transcript` owns its guards.
+#[tauri::command]
+async fn generate_streaming_notes(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
+    let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
+
+    let model_path_clone = model_path.clone();
+    let transcript_clone = transcript.clone();
+    let generated = tokio::task::spawn_blocking(move || {
+        llm::generate_notes(&model_path_clone, &transcript_clone)
+    })
+    .await
+    .map_err(|e| AppError::Llm(e.to_string()))??;
+
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.upsert_notes(&streaming_store::StreamingNotes {
+        session_id: id,
+        summary: generated.summary,
+        decisions: generated.decisions,
+        action_items: generated.action_items,
+        open_questions: generated.open_questions,
+        participants: generated.participants,
+    })?;
+
+    streaming::open_streaming_session(&app_support_dir, id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -844,7 +889,8 @@ pub fn run() {
             list_task_models,
             download_model,
             delete_model,
-            generate_notes
+            generate_notes,
+            generate_streaming_notes
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

@@ -71,6 +71,18 @@ pub struct StoredStreamingWindow {
     pub outcome_ok: bool,
 }
 
+/// Structured MFU/Craft notes for a Streaming session — parallel to
+/// `store::MeetingNotes`, one row per session (upserted on re-Craft).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingNotes {
+    pub session_id: StreamingSessionId,
+    pub summary: String,
+    pub decisions: String,
+    pub action_items: String,
+    pub open_questions: String,
+    pub participants: String,
+}
+
 /// Session lifecycle statuses. Plain strings in the schema (matching
 /// `store.rs`'s `meetings.status` convention), typed at the call site so a
 /// typo can't silently create a fourth status.
@@ -231,6 +243,53 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
+    pub fn upsert_notes(&self, notes: &StreamingNotes) -> Result<()> {
+        self.connection()?
+            .execute(
+                "INSERT INTO streaming_notes
+                    (session_id, summary, decisions, action_items, open_questions, participants)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(session_id) DO UPDATE SET
+                    summary = excluded.summary,
+                    decisions = excluded.decisions,
+                    action_items = excluded.action_items,
+                    open_questions = excluded.open_questions,
+                    participants = excluded.participants",
+                params![
+                    notes.session_id,
+                    notes.summary,
+                    notes.decisions,
+                    notes.action_items,
+                    notes.open_questions,
+                    notes.participants,
+                ],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
+    pub fn get_notes(&self, session_id: StreamingSessionId) -> Result<Option<StreamingNotes>> {
+        self.connection()?
+            .query_row(
+                "SELECT session_id, summary, decisions, action_items, open_questions, participants
+                 FROM streaming_notes WHERE session_id = ?1",
+                params![session_id],
+                notes_from_row,
+            )
+            .optional()
+            .map_err(store_error)
+    }
+
+    pub fn delete_notes(&self, session_id: StreamingSessionId) -> Result<()> {
+        self.connection()?
+            .execute(
+                "DELETE FROM streaming_notes WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
@@ -294,6 +353,17 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
     })
 }
 
+fn notes_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingNotes> {
+    Ok(StreamingNotes {
+        session_id: row.get(0)?,
+        summary: row.get(1)?,
+        decisions: row.get(2)?,
+        action_items: row.get(3)?,
+        open_questions: row.get(4)?,
+        participants: row.get(5)?,
+    })
+}
+
 fn window_from_row(row: &Row<'_>) -> rusqlite::Result<StoredStreamingWindow> {
     Ok(StoredStreamingWindow {
         session_id: row.get(0)?,
@@ -324,6 +394,15 @@ CREATE TABLE IF NOT EXISTS streaming_segments (
     language TEXT NOT NULL,
     outcome_ok INTEGER NOT NULL,
     PRIMARY KEY (session_id, window_index)
+);
+
+CREATE TABLE IF NOT EXISTS streaming_notes (
+    session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+    summary TEXT NOT NULL,
+    decisions TEXT NOT NULL,
+    action_items TEXT NOT NULL,
+    open_questions TEXT NOT NULL,
+    participants TEXT NOT NULL
 );
 "#;
 
@@ -535,5 +614,102 @@ mod tests {
 
         assert_eq!(store.list_windows(a).unwrap().len(), 1);
         assert_eq!(store.list_windows(b).unwrap().len(), 1);
+    }
+
+    fn notes(session_id: StreamingSessionId) -> StreamingNotes {
+        StreamingNotes {
+            session_id,
+            summary: "Discussed Q3 roadmap.".to_string(),
+            decisions: "Ship M1 by Friday.".to_string(),
+            action_items: "Alex: update deck".to_string(),
+            open_questions: "Budget for Q4?".to_string(),
+            participants: "Alex, Sam".to_string(),
+        }
+    }
+
+    #[test]
+    fn given_no_notes_when_getting_then_result_is_none() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+    }
+
+    #[test]
+    fn upserted_notes_round_trip() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        store
+            .upsert_notes(&notes(session_id))
+            .expect("upsert notes");
+
+        assert_eq!(
+            store.get_notes(session_id).expect("get notes"),
+            Some(notes(session_id))
+        );
+    }
+
+    #[test]
+    fn upserting_notes_twice_overwrites_rather_than_duplicates() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_notes(&notes(session_id))
+            .expect("first upsert");
+
+        let mut second = notes(session_id);
+        second.summary = "Revised summary.".to_string();
+        store.upsert_notes(&second).expect("second upsert");
+
+        assert_eq!(
+            store.get_notes(session_id).expect("get notes"),
+            Some(second)
+        );
+    }
+
+    #[test]
+    fn upserting_notes_for_a_nonexistent_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        // The streaming_notes.session_id foreign key rejects this without
+        // any application-level existence check needed.
+        assert!(store.upsert_notes(&notes(999_999)).is_err());
+    }
+
+    #[test]
+    fn deleting_a_session_cascades_its_notes() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_notes(&notes(session_id))
+            .expect("upsert notes");
+
+        store.delete_session(session_id).expect("delete session");
+
+        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+    }
+
+    #[test]
+    fn deleting_notes_directly_leaves_the_session_intact() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_notes(&notes(session_id))
+            .expect("upsert notes");
+
+        store.delete_notes(session_id).expect("delete notes");
+
+        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+        assert!(store
+            .get_session(session_id)
+            .expect("get session")
+            .is_some());
     }
 }

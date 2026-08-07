@@ -450,20 +450,31 @@ mirroring Meeting's), Start/Stop controls, a live transcript that appends
 and ignores events for a session that isn't the open one — stale events
 from a just-stopped session are possible during the transition), the
 `streaming_sources` indicator so mic-only degradation is visible rather
-than silent, and a header status widget (WP-76) cycling Ready → Starting…
-→ On Air (elapsed timer, `h:mm:ss` past one hour) as `isRunning`/`busy`
-change, reusing `App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern. A
-fail-open window renders as `[unavailable]`, not blank space, so a decode
-failure reads differently from genuine silence — same distinction
-`outcome_ok` preserves in storage.
+than silent, a header status widget (WP-76) cycling Ready → Starting…
+→ On Air → Crafting MFU…/MFU Failed (WP-77) (elapsed timer, `h:mm:ss` past
+one hour) as `isRunning`/`busy`/`craftingId`/`craftFailed` change, reusing
+`App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern, and a Craft button
+(WP-77, `.streaming-transcript-actions`) that generates structured notes
+into a `.wp-mfu` panel — see Structured Notes above. A fail-open window
+renders as `[unavailable]`, not blank space, so a decode failure reads
+differently from genuine silence — same distinction `outcome_ok` preserves
+in storage.
 
-## Structured Notes (M3, `notes.rs`) — planned
+## Structured Notes (M3, `llm.rs`)
 
 llama.cpp running quantized Qwen2.5-Instruct on Metal generates **structured
-meeting notes** in Russian from the transcript: summary, key decisions, action
-items (owner + task), open questions, participants. Generation is **manual**
-(the **Create MFU** button, enabled only after transcription finishes) and
-**UI-blocking**; the result is editable (auto-saved), copyable, and clearable.
+notes** from a transcript: summary, key decisions, action items, open
+questions, participants — in Russian or English depending on which the
+transcript itself is in (Cyrillic-character detection in `llm::build_prompt`).
+`llm::generate_notes` returns a domain-agnostic `GeneratedNotes` (no id field);
+each caller attaches its own id before persisting. For Meeting, generation is
+manual (the **Create MFU** button, enabled only after transcription finishes)
+and UI-blocking; the result is copyable, not separately editable or
+clearable. Streaming reuses the same `generate_notes` call (WP-77,
+`generate_streaming_notes`) for a Streaming session's transcript, gated the
+same way (enabled only once the session is stopped) and persisted in its own
+`streaming_notes` table (`streaming_store.rs`), parallel to but independent
+of Meeting's `notes` table.
 
 ## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
 

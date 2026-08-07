@@ -187,6 +187,14 @@ export interface StreamingWindow {
   outcome_ok: boolean;
 }
 
+export interface StreamingNotes {
+  summary: string;
+  decisions: string;
+  action_items: string;
+  open_questions: string;
+  participants: string;
+}
+
 export interface StreamingSession {
   id: number;
   title: string;
@@ -194,6 +202,11 @@ export interface StreamingSession {
   updated_at_ms: number;
   status: string;
   windows: StreamingWindow[];
+  notes?: StreamingNotes;
+}
+
+export function generateStreamingNotes(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("generate_streaming_notes", { id });
 }
 
 export function listStreamingSessions(): Promise<StreamingSessionSummary[]> {

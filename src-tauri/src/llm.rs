@@ -1,5 +1,4 @@
 use crate::error::{AppError, Result};
-use crate::store::MeetingNotes;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
@@ -25,10 +24,23 @@ struct NotesJson {
     participants: String,
 }
 
+/// Structured notes generation output, domain-agnostic — the caller (Meeting
+/// or Streaming) attaches its own id before persisting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedNotes {
+    pub summary: String,
+    pub decisions: String,
+    pub action_items: String,
+    pub open_questions: String,
+    pub participants: String,
+}
+
 const ASSISTANT_PREFILL: &str = "{\"summary\":\"";
 
 fn build_prompt(transcript: &str) -> String {
-    let is_russian = transcript.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let is_russian = transcript
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
 
     let (system_ru, user_ru) = if is_russian {
         (
@@ -86,7 +98,7 @@ fn strip_think_block(raw: &str) -> &str {
     raw
 }
 
-fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
+fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
     let original = raw.trim();
     let cleaned = strip_think_block(original);
     let cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
@@ -103,8 +115,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     let json_str = json_str.trim();
 
     if let Ok(parsed) = serde_json::from_str::<NotesJson>(json_str) {
-        return Ok(MeetingNotes {
-            meeting_id: 0,
+        return Ok(GeneratedNotes {
             summary: parsed.summary,
             decisions: parsed.decisions,
             action_items: parsed.action_items,
@@ -121,8 +132,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
         participants: String::new(),
     };
 
-    Ok(MeetingNotes {
-        meeting_id: 0,
+    Ok(GeneratedNotes {
         summary: fallback.summary,
         decisions: String::new(),
         action_items: String::new(),
@@ -131,7 +141,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     })
 }
 
-pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<MeetingNotes> {
+pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<GeneratedNotes> {
     let prompt = build_prompt(transcript);
     let raw_output = run_inference(model_path, &prompt)?;
     parse_notes_json(&raw_output)

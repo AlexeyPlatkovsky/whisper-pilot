@@ -23,6 +23,7 @@ export type IconName =
   | "cpu"
   | "palette"
   | "info"
+  | "alert-circle"
   | "check";
 
 const PATHS: Record<IconName, ReactElement> = {
@@ -127,6 +128,12 @@ const PATHS: Record<IconName, ReactElement> = {
     <>
       <circle cx="12" cy="12" r="10" />
       <path d="M12 16v-4M12 8h.01" />
+    </>
+  ),
+  "alert-circle": (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M12 8v4M12 16h.01" />
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
