@@ -699,4 +699,176 @@ describe("StreamingView", () => {
 
     expect(await screen.findByText(/disk full/)).toBeInTheDocument();
   });
+
+  describe("status widget", () => {
+    // S-2: first-launch / empty state
+    it("shows Ready with no timer before any session has run", async () => {
+      render(<StreamingView onClose={vi.fn()} />);
+      await screen.findByText(/Start a session, or open one/);
+
+      const status = await screen.findByRole("status");
+      expect(status).toHaveTextContent("Ready");
+      expect(status.querySelector(".wp-status-timer")).toBeNull();
+    });
+
+    // S-1 + S-4: full state cycle, including the Starting transitional state
+    it("cycles Ready -> Starting… -> On Air -> Ready across a full session", async () => {
+      const user = userEvent.setup();
+      let resolveStart!: (v: {
+        id: number;
+        title: string;
+        created_at_ms: number;
+        updated_at_ms: number;
+        status: string;
+      }) => void;
+      vi.mocked(ipc.startStreamingSession).mockReturnValue(
+        new Promise((resolve) => {
+          resolveStart = resolve;
+        }),
+      );
+      render(<StreamingView onClose={vi.fn()} />);
+      const status = await screen.findByRole("status");
+      expect(status).toHaveTextContent("Ready");
+
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+      expect(status).toHaveTextContent("Starting…");
+
+      resolveStart({
+        id: 2,
+        title: "New Streaming Session",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "active",
+      });
+      await waitFor(() => expect(status).toHaveTextContent("On Air"));
+      expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
+        "00:00",
+      );
+
+      vi.mocked(ipc.stopStreamingSession).mockResolvedValue(undefined);
+      await user.click(await screen.findByRole("button", { name: "Stop" }));
+      endedHandler!({ session_id: 2 });
+
+      await waitFor(() => expect(status).toHaveTextContent("Ready"));
+      expect(status.querySelector(".wp-status-timer")).toBeNull();
+    });
+
+    // S-3: the timer switches to h:mm:ss once elapsed time reaches an hour
+    it("switches the timer to h:mm:ss format once elapsed time reaches 60 minutes", async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true });
+      try {
+        const user = userEvent.setup({
+          advanceTimers: vi.advanceTimersByTime.bind(vi),
+        });
+        vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+          id: 2,
+          title: "New Streaming Session",
+          created_at_ms: 200,
+          updated_at_ms: 200,
+          status: "active",
+        });
+        render(<StreamingView onClose={vi.fn()} />);
+        const status = await screen.findByRole("status");
+
+        await user.click(await screen.findByRole("button", { name: "Start" }));
+        await waitFor(() => expect(status).toHaveTextContent("On Air"));
+
+        await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 58 * 1000);
+        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
+          "59:58",
+        );
+
+        await vi.advanceTimersByTimeAsync(3000);
+        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
+          "1:00:01",
+        );
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    // S-5: the session ending on its own (not via manual Stop) still resets the widget
+    it("returns to Ready when the session ends on its own, not only via manual Stop", async () => {
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        id: 2,
+        title: "New Streaming Session",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "active",
+      });
+      const user = userEvent.setup();
+      render(<StreamingView onClose={vi.fn()} />);
+      const status = await screen.findByRole("status");
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+      await waitFor(() => expect(status).toHaveTextContent("On Air"));
+
+      endedHandler!({ session_id: 2 });
+
+      await waitFor(() => expect(status).toHaveTextContent("Ready"));
+    });
+
+    // S-6: opening a past stopped session shows Ready, never On Air
+    it("shows Ready, not On Air, when opening a past stopped session", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(openedSession());
+      render(<StreamingView onClose={vi.fn()} />);
+      const status = await screen.findByRole("status");
+
+      await user.click(await screen.findByText("Standup"));
+
+      await waitFor(() => expect(status).toHaveTextContent("Ready"));
+    });
+
+    // S-7: a Start call that fails before isRunning ever becomes true falls
+    // back to Ready, with the failure shown only in the existing error banner
+    it("falls back to Ready when the Start call fails, showing the error separately", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.startStreamingSession).mockRejectedValue(
+        "a meeting is currently transcribing",
+      );
+      render(<StreamingView onClose={vi.fn()} />);
+      const status = await screen.findByRole("status");
+
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+
+      expect(
+        await screen.findByText(/a meeting is currently transcribing/),
+      ).toBeInTheDocument();
+      await waitFor(() => expect(status).toHaveTextContent("Ready"));
+      expect(status).not.toHaveTextContent(
+        "a meeting is currently transcribing",
+      );
+    });
+
+    // S-8: a Stop request in flight keeps the widget on On Air until
+    // isRunning actually flips false via streaming_session_ended
+    it("stays On Air while a Stop request is in flight", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        id: 2,
+        title: "New Streaming Session",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "active",
+      });
+      let resolveStop!: () => void;
+      vi.mocked(ipc.stopStreamingSession).mockReturnValue(
+        new Promise((resolve) => {
+          resolveStop = resolve;
+        }),
+      );
+      render(<StreamingView onClose={vi.fn()} />);
+      const status = await screen.findByRole("status");
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+      await waitFor(() => expect(status).toHaveTextContent("On Air"));
+
+      await user.click(await screen.findByRole("button", { name: "Stop" }));
+      expect(status).toHaveTextContent("On Air");
+
+      resolveStop();
+      endedHandler!({ session_id: 2 });
+      await waitFor(() => expect(status).toHaveTextContent("Ready"));
+    });
+  });
 });

@@ -448,11 +448,14 @@ mirroring Meeting's), Start/Stop controls, a live transcript that appends
 `streaming_window` events for whichever session is currently open
 (`upsertWindow` replaces rather than duplicates a resent `window_index`,
 and ignores events for a session that isn't the open one — stale events
-from a just-stopped session are possible during the transition), and the
+from a just-stopped session are possible during the transition), the
 `streaming_sources` indicator so mic-only degradation is visible rather
-than silent. A fail-open window renders as `[unavailable]`, not blank
-space, so a decode failure reads differently from genuine silence — same
-distinction `outcome_ok` preserves in storage.
+than silent, and a header status widget (WP-76) cycling Ready → Starting…
+→ On Air (elapsed timer, `h:mm:ss` past one hour) as `isRunning`/`busy`
+change, reusing `App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern. A
+fail-open window renders as `[unavailable]`, not blank space, so a decode
+failure reads differently from genuine silence — same distinction
+`outcome_ok` preserves in storage.
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

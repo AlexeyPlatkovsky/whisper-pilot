@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   deleteStreamingSession,
   listStreamingSessions,
@@ -14,6 +14,7 @@ import {
   type StreamingWindow,
 } from "./ipc";
 import { AppLogo, Icon } from "./Icon";
+import { formatElapsedClock } from "./format";
 
 function formatClockTime(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -80,6 +81,24 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
+  const [elapsed, setElapsed] = useState(0);
+  const startTimeRef = useRef<number | null>(null);
+
+  // Derived, not stored, so it can't drift from Start/Stop; isRunning wins
+  // over busy so a Stop request in flight still reads as On Air.
+  const widgetStatus = isRunning ? "on-air" : busy ? "starting" : "ready";
+
+  // Recomputed from Date.now() each tick, not incremented, so a throttled
+  // setInterval can't drift the displayed value.
+  useEffect(() => {
+    if (!isRunning) return;
+    startTimeRef.current = Date.now();
+    setElapsed(0);
+    const id = setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [isRunning]);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await listStreamingSessions());
@@ -255,6 +274,44 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
           </div>
           <div className="wp-title-group">
             <h1 className="wp-title">Streaming</h1>
+          </div>
+        </div>
+        <div className="wp-header-right">
+          <div className="wp-status" role="status">
+            {widgetStatus === "ready" && (
+              <>
+                <Icon name="check" size={14} className="wp-tone--finished" />
+                <span className="wp-status-label wp-tone--finished">Ready</span>
+              </>
+            )}
+            {widgetStatus === "starting" && (
+              <>
+                <Icon
+                  name="refresh-cw"
+                  size={14}
+                  className="wp-spin wp-tone--unknown"
+                />
+                <span className="wp-status-label wp-tone--unknown">
+                  Starting…
+                </span>
+              </>
+            )}
+            {widgetStatus === "on-air" && (
+              <>
+                <Icon
+                  name="refresh-cw"
+                  size={14}
+                  className="wp-spin wp-tone--error"
+                />
+                <span className="wp-status-label wp-tone--error">On Air</span>
+                {/* aria-hidden: a role="status" live region re-announces on
+                    every accessible-tree change: without this, the ticking
+                    timer would spam a screen reader once per second. */}
+                <span className="wp-status-timer" aria-hidden="true">
+                  {formatElapsedClock(elapsed)}
+                </span>
+              </>
+            )}
           </div>
           <button
             type="button"
