@@ -203,10 +203,23 @@ export interface StreamingSession {
   status: string;
   windows: StreamingWindow[];
   notes?: StreamingNotes;
+  prettified_text?: string;
 }
 
 export function generateStreamingNotes(id: number): Promise<StreamingSession> {
   return invoke<StreamingSession>("generate_streaming_notes", { id });
+}
+
+/** Returns the cleaned text for review — does not persist it. */
+export function generateStreamingPrettify(id: number): Promise<string> {
+  return invoke<string>("generate_streaming_prettify", { id });
+}
+
+export function acceptStreamingPrettify(
+  id: number,
+  text: string,
+): Promise<StreamingSession> {
+  return invoke<StreamingSession>("accept_streaming_prettify", { id, text });
 }
 
 export function listStreamingSessions(): Promise<StreamingSessionSummary[]> {

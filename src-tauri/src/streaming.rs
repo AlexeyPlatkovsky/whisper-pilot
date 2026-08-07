@@ -44,6 +44,7 @@ pub struct StreamingSessionDto {
     pub status: String,
     pub windows: Vec<StreamingWindowDto>,
     pub notes: Option<StreamingNotesDto>,
+    pub prettified_text: Option<String>,
 }
 
 pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSessionSummaryDto>> {
@@ -88,6 +89,7 @@ pub fn open_streaming_session(
         open_questions: n.open_questions,
         participants: n.participants,
     });
+    let prettified_text = store.get_prettified(id)?;
     Ok(StreamingSessionDto {
         id: session.id,
         title: session.title,
@@ -96,6 +98,7 @@ pub fn open_streaming_session(
         status: session.status,
         windows,
         notes,
+        prettified_text,
     })
 }
 
@@ -380,6 +383,30 @@ mod tests {
     }
 
     #[test]
+    fn open_streaming_session_prettified_text_is_none_when_absent() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+
+        assert_eq!(dto.prettified_text, None);
+    }
+
+    #[test]
+    fn open_streaming_session_includes_prettified_text_when_present() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        store
+            .upsert_prettified(id, "Cleaned transcript.")
+            .expect("upsert prettified");
+
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+
+        assert_eq!(dto.prettified_text, Some("Cleaned transcript.".to_string()));
+    }
+
+    #[test]
     fn streaming_session_dto_round_trips_through_the_ipc_json_contract() {
         let original = StreamingSessionDto {
             id: 7,
@@ -402,6 +429,7 @@ mod tests {
                 open_questions: "Questions.".to_string(),
                 participants: "Alex".to_string(),
             }),
+            prettified_text: Some("Cleaned transcript.".to_string()),
         };
 
         let json = serde_json::to_value(&original).expect("serialize streaming session DTO");

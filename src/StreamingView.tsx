@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  acceptStreamingPrettify,
   deleteStreamingSession,
   generateStreamingNotes,
+  generateStreamingPrettify,
   listStreamingSessions,
   onStreamingSessionEnded,
   onStreamingSources,
@@ -17,6 +19,7 @@ import {
 } from "./ipc";
 import { AppLogo, Icon } from "./Icon";
 import { formatElapsedClock } from "./format";
+import { computeWordDiff } from "./diff";
 
 function formatClockTime(ms: number): string {
   const total = Math.floor(ms / 1000);
@@ -61,8 +64,8 @@ function plainTranscript(windows: StreamingWindow[]): string {
   return windows.map(windowText).join(" ").replace(/\s+/g, " ").trim();
 }
 
-function toMarkdown(title: string, windows: StreamingWindow[]): string {
-  return `# ${title}\n\n${plainTranscript(windows)}\n`;
+function toMarkdown(title: string, text: string): string {
+  return `# ${title}\n\n${text}\n`;
 }
 
 function fileNameFor(title: string): string {
@@ -88,6 +91,13 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   const [craftingId, setCraftingId] = useState<number | null>(null);
   const [notes, setNotes] = useState<StreamingNotes | null>(null);
   const [craftFailed, setCraftFailed] = useState(false);
+  const [prettifyingId, setPrettifyingId] = useState<number | null>(null);
+  const [prettifyFailed, setPrettifyFailed] = useState(false);
+  const [prettifiedText, setPrettifiedText] = useState<string | null>(null);
+  const [pendingPrettify, setPendingPrettify] = useState<{
+    original: string;
+    cleaned: string;
+  } | null>(null);
   // Read after an await to avoid acting on a stale closure once the user has
   // switched sessions — plain state would still hold the id captured when
   // the async handler started.
@@ -97,8 +107,10 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   }, [activeId]);
 
   // Scoped to the open session, so switching sessions can't paint a stale
-  // crafting state onto the newly opened one.
+  // crafting/prettifying state onto the newly opened one.
   const isCraftingActive = craftingId !== null && craftingId === activeId;
+  const isPrettifyingActive =
+    prettifyingId !== null && prettifyingId === activeId;
 
   // Derived, not stored, so it can't drift from Start/Stop; isRunning wins
   // over busy so a Stop-in-flight still reads as On Air.
@@ -108,22 +120,27 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       ? "starting"
       : isCraftingActive
         ? "crafting"
-        : craftFailed
-          ? "mfu-failed"
-          : "ready";
+        : isPrettifyingActive
+          ? "prettifying"
+          : craftFailed
+            ? "mfu-failed"
+            : prettifyFailed
+              ? "prettify-failed"
+              : "ready";
 
   // Recomputed from Date.now() each tick, not incremented, so a throttled
-  // setInterval can't drift the displayed value. Shared by On Air and
-  // Crafting — they're mutually exclusive (Craft is disabled while running).
+  // setInterval can't drift the displayed value. Shared by On Air, Crafting,
+  // and Prettifying — mutually exclusive states (each is disabled while any
+  // other is active).
   useEffect(() => {
-    if (!isRunning && !isCraftingActive) return;
+    if (!isRunning && !isCraftingActive && !isPrettifyingActive) return;
     startTimeRef.current = Date.now();
     setElapsed(0);
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
     }, 1000);
     return () => clearInterval(id);
-  }, [isRunning, isCraftingActive]);
+  }, [isRunning, isCraftingActive, isPrettifyingActive]);
 
   const refreshSessions = useCallback(async () => {
     setSessions(await listStreamingSessions());
@@ -191,6 +208,9 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       setCopyStatus("idle");
       setNotes(null);
       setCraftFailed(false);
+      setPrettifiedText(null);
+      setPrettifyFailed(false);
+      setPendingPrettify(null);
       setIsRunning(true);
       await refreshSessions();
     } catch (e) {
@@ -227,6 +247,9 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       setCopyStatus("idle");
       setNotes(session.notes ?? null);
       setCraftFailed(false);
+      setPrettifiedText(session.prettified_text ?? null);
+      setPrettifyFailed(false);
+      setPendingPrettify(null);
     } catch (e) {
       setError(String(e));
     }
@@ -257,6 +280,9 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
           setWindows([]);
           setNotes(null);
           setCraftFailed(false);
+          setPrettifiedText(null);
+          setPrettifyFailed(false);
+          setPendingPrettify(null);
           return null;
         });
         await refreshSessions();
@@ -267,27 +293,31 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
     [refreshSessions],
   );
 
+  // Once accepted, the cleaned text is what gets copied/exported — that's
+  // the point of prettifying.
+  const exportText = prettifiedText ?? plainTranscript(windows);
+
   const handleCopy = useCallback(async () => {
     setError(null);
     try {
-      await navigator.clipboard.writeText(plainTranscript(windows));
+      await navigator.clipboard.writeText(exportText);
       setCopyStatus("copied");
     } catch (e) {
       setError(String(e));
     }
-  }, [windows]);
+  }, [exportText]);
 
   const handleExport = useCallback(async () => {
     setError(null);
     try {
       await saveTextDialog(
-        toMarkdown(activeTitle, windows),
+        toMarkdown(activeTitle, exportText),
         fileNameFor(activeTitle),
       );
     } catch (e) {
       setError(String(e));
     }
-  }, [windows, activeTitle]);
+  }, [exportText, activeTitle]);
 
   const handleCraft = useCallback(async () => {
     if (activeId === null) return;
@@ -309,6 +339,50 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       setCraftingId((current) => (current === id ? null : current));
     }
   }, [activeId]);
+
+  const handlePrettify = useCallback(async () => {
+    if (activeId === null) return;
+    const id = activeId;
+    const original = plainTranscript(windows);
+    setError(null);
+    setPrettifyFailed(false);
+    setPrettifyingId(id);
+    try {
+      const cleaned = await generateStreamingPrettify(id);
+      if (activeIdRef.current === id) {
+        setPendingPrettify({ original, cleaned });
+      }
+    } catch (e) {
+      if (activeIdRef.current === id) {
+        setError(String(e));
+        setPrettifyFailed(true);
+      }
+    } finally {
+      setPrettifyingId((current) => (current === id ? null : current));
+    }
+  }, [activeId, windows]);
+
+  const handleAcceptPrettify = useCallback(async () => {
+    if (activeId === null || !pendingPrettify) return;
+    const id = activeId;
+    const text = pendingPrettify.cleaned;
+    setError(null);
+    try {
+      const session = await acceptStreamingPrettify(id, text);
+      if (activeIdRef.current === id) {
+        setPrettifiedText(session.prettified_text ?? null);
+        setPendingPrettify(null);
+      }
+    } catch (e) {
+      if (activeIdRef.current === id) {
+        setError(String(e));
+      }
+    }
+  }, [activeId, pendingPrettify]);
+
+  const handleCancelPrettify = useCallback(() => {
+    setPendingPrettify(null);
+  }, []);
 
   const hasText = windows.some((w) => windowText(w).length > 0);
   // Craft needs real decoded content, unlike Copy/Export's hasText — a
@@ -394,6 +468,33 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
                 />
                 <span className="wp-status-label wp-tone--error">
                   MFU Failed
+                </span>
+              </>
+            )}
+            {widgetStatus === "prettifying" && (
+              <>
+                <Icon
+                  name="refresh-cw"
+                  size={14}
+                  className="wp-spin wp-tone--crafting"
+                />
+                <span className="wp-status-label wp-tone--crafting">
+                  Prettifying…
+                </span>
+                <span className="wp-status-timer" aria-hidden="true">
+                  {formatElapsedClock(elapsed)}
+                </span>
+              </>
+            )}
+            {widgetStatus === "prettify-failed" && (
+              <>
+                <Icon
+                  name="alert-circle"
+                  size={14}
+                  className="wp-tone--error"
+                />
+                <span className="wp-status-label wp-tone--error">
+                  Prettify Failed
                 </span>
               </>
             )}
@@ -515,11 +616,55 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
               aria-label="Craft MFU notes"
               title="Craft MFU notes"
               onClick={() => void handleCraft()}
-              disabled={isRunning || !hasCraftableText || isCraftingActive}
+              disabled={
+                isRunning ||
+                !hasCraftableText ||
+                isCraftingActive ||
+                isPrettifyingActive
+              }
             >
               <Icon name="sparkles" size={16} />
               Craft
             </button>
+            <button
+              type="button"
+              className="streaming-action-btn"
+              aria-label="Prettify transcript"
+              title="Prettify transcript"
+              onClick={() => void handlePrettify()}
+              disabled={
+                isRunning ||
+                !hasCraftableText ||
+                isCraftingActive ||
+                isPrettifyingActive ||
+                pendingPrettify !== null
+              }
+            >
+              <Icon name="wand-sparkles" size={16} />
+              Prettify
+            </button>
+            {pendingPrettify && (
+              <>
+                <button
+                  type="button"
+                  className="streaming-action-btn"
+                  aria-label="Accept Prettify"
+                  title="Accept"
+                  onClick={() => void handleAcceptPrettify()}
+                >
+                  <Icon name="check" size={16} />
+                </button>
+                <button
+                  type="button"
+                  className="streaming-action-btn"
+                  aria-label="Cancel Prettify"
+                  title="Cancel"
+                  onClick={handleCancelPrettify}
+                >
+                  <Icon name="x" size={16} />
+                </button>
+              </>
+            )}
           </div>
           {windows.length === 0 ? (
             <p className="streaming-empty">
@@ -527,6 +672,33 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
                 ? "Listening…"
                 : "Start a session, or open one from the list."}
             </p>
+          ) : pendingPrettify ? (
+            <div className="streaming-transcript-text">
+              {computeWordDiff(
+                pendingPrettify.original,
+                pendingPrettify.cleaned,
+              ).map((span, i) => {
+                // <del>/<ins> so a screen reader announces the change, not
+                // just strikethrough/color a sighted user sees.
+                if (span.type === "del") {
+                  return (
+                    <del key={i} className="diff-del">
+                      {span.text}
+                    </del>
+                  );
+                }
+                if (span.type === "add") {
+                  return (
+                    <ins key={i} className="diff-add">
+                      {span.text}
+                    </ins>
+                  );
+                }
+                return <span key={i}>{span.text}</span>;
+              })}
+            </div>
+          ) : prettifiedText !== null ? (
+            <div className="streaming-transcript-text">{prettifiedText}</div>
           ) : (
             <div className="streaming-transcript-text">
               {windows.map((w) => (

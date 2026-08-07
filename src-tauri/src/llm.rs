@@ -147,6 +147,60 @@ pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<GeneratedNo
     parse_notes_json(&raw_output)
 }
 
+fn build_prettify_prompt(transcript: &str) -> String {
+    let is_russian = transcript
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+
+    let (system, user) = if is_russian {
+        (
+            "Ты — ассистент для очистки расшифровок. Перепиши расшифровку набело:\n\
+убери слова-паразиты, повторы и незаконченные фразы, поправь грамматику.\n\
+\n\
+ПРАВИЛА:\n\
+- Сохрани исходный смысл и порядок мыслей — не добавляй новую информацию.\n\
+- Верни только очищенный текст, без пояснений и без разметки.",
+            "Очисти расшифровку.",
+        )
+    } else {
+        (
+            "You are a transcript cleanup assistant. Rewrite the transcript:\n\
+remove filler words, interjections, and duplication, and polish grammar.\n\
+\n\
+RULES:\n\
+- Preserve the original meaning and order of ideas — do not add new information.\n\
+- Return only the cleaned text, with no explanation and no markup.",
+            "Clean up the transcript.",
+        )
+    };
+
+    format!(
+        "<|im_start|>system\n\
+{system}<|im_end|>\n\
+<|im_start|>user\n\
+Transcript:\n{transcript}\n\n\
+{user}<|im_end|>\n\
+<|im_start|>assistant\n\
+<think>\n\n</think>\n\n"
+    )
+}
+
+/// Strips a `<think>` reasoning block and markdown fences the model may wrap
+/// its output in — the same class of cleanup `parse_notes_json` already does
+/// for the JSON path, applied here to plain text instead.
+fn clean_prettify_output(raw: &str) -> String {
+    let cleaned = strip_think_block(raw.trim());
+    let cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
+    let cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+    cleaned.trim().to_string()
+}
+
+pub fn prettify_transcript(model_path: &Path, transcript: &str) -> Result<String> {
+    let prompt = build_prettify_prompt(transcript);
+    let raw_output = run_inference(model_path, &prompt)?;
+    Ok(clean_prettify_output(&raw_output))
+}
+
 fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
     let model_path = model_path.to_path_buf();
     let prompt = prompt.to_string();
@@ -315,5 +369,56 @@ mod tests {
     fn build_prompt_detects_cyrillic_even_when_mostly_ascii() {
         let prompt = build_prompt("We should обсуждать the budget.");
         assert!(prompt.contains("ассистент"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_includes_transcript() {
+        let prompt = build_prettify_prompt("Um so like we should, you know, ship it.");
+        assert!(prompt.contains("Um so like we should, you know, ship it."));
+        assert!(prompt.contains("cleanup"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_uses_english_for_ascii_transcript() {
+        let prompt = build_prettify_prompt("Let's talk about the roadmap.");
+        assert!(prompt.contains("cleanup"));
+        assert!(!prompt.contains("ассистент"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_uses_russian_for_cyrillic_transcript() {
+        let prompt = build_prettify_prompt("Привет, давайте обсудим план.");
+        assert!(prompt.contains("ассистент"));
+        assert!(!prompt.contains("cleanup"));
+    }
+
+    #[test]
+    fn clean_prettify_output_passes_through_plain_text_unchanged() {
+        assert_eq!(
+            clean_prettify_output("Let's kick off the meeting."),
+            "Let's kick off the meeting."
+        );
+    }
+
+    #[test]
+    fn clean_prettify_output_strips_think_block() {
+        let raw = "<think>\nreasoning about cleanup\n</think>\nCleaned text here.";
+        assert_eq!(clean_prettify_output(raw), "Cleaned text here.");
+    }
+
+    #[test]
+    fn clean_prettify_output_strips_markdown_fences() {
+        assert_eq!(
+            clean_prettify_output("```\nCleaned text here.\n```"),
+            "Cleaned text here."
+        );
+    }
+
+    #[test]
+    fn clean_prettify_output_trims_surrounding_whitespace() {
+        assert_eq!(
+            clean_prettify_output("  \n  Cleaned text here.  \n  "),
+            "Cleaned text here."
+        );
     }
 }

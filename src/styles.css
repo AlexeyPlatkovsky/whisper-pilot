@@ -1529,3 +1529,15 @@ body {
   color: var(--muted);
   font-style: italic;
 }
+
+.diff-del {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.diff-add {
+  color: var(--success);
+  font-weight: 600;
+  /* <ins> is underlined by default; the design calls for bold, not underline. */
+  text-decoration: none;
+}

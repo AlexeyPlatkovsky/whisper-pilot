@@ -290,6 +290,39 @@ impl StreamingStore {
         Ok(())
     }
 
+    pub fn upsert_prettified(&self, session_id: StreamingSessionId, text: &str) -> Result<()> {
+        self.connection()?
+            .execute(
+                "INSERT INTO streaming_prettified (session_id, text)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(session_id) DO UPDATE SET text = excluded.text",
+                params![session_id, text],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
+    pub fn get_prettified(&self, session_id: StreamingSessionId) -> Result<Option<String>> {
+        self.connection()?
+            .query_row(
+                "SELECT text FROM streaming_prettified WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(store_error)
+    }
+
+    pub fn delete_prettified(&self, session_id: StreamingSessionId) -> Result<()> {
+        self.connection()?
+            .execute(
+                "DELETE FROM streaming_prettified WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
@@ -403,6 +436,11 @@ CREATE TABLE IF NOT EXISTS streaming_notes (
     action_items TEXT NOT NULL,
     open_questions TEXT NOT NULL,
     participants TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS streaming_prettified (
+    session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+    text TEXT NOT NULL
 );
 "#;
 
@@ -707,6 +745,101 @@ mod tests {
         store.delete_notes(session_id).expect("delete notes");
 
         assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+        assert!(store
+            .get_session(session_id)
+            .expect("get session")
+            .is_some());
+    }
+
+    #[test]
+    fn given_no_prettified_text_when_getting_then_result_is_none() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        assert_eq!(
+            store.get_prettified(session_id).expect("get prettified"),
+            None
+        );
+    }
+
+    #[test]
+    fn upserted_prettified_text_round_trips() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        store
+            .upsert_prettified(session_id, "Cleaned transcript text.")
+            .expect("upsert prettified");
+
+        assert_eq!(
+            store.get_prettified(session_id).expect("get prettified"),
+            Some("Cleaned transcript text.".to_string())
+        );
+    }
+
+    #[test]
+    fn upserting_prettified_text_twice_overwrites_rather_than_duplicates() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_prettified(session_id, "First version.")
+            .expect("first upsert");
+
+        store
+            .upsert_prettified(session_id, "Revised version.")
+            .expect("second upsert");
+
+        assert_eq!(
+            store.get_prettified(session_id).expect("get prettified"),
+            Some("Revised version.".to_string())
+        );
+    }
+
+    #[test]
+    fn upserting_prettified_text_for_a_nonexistent_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        assert!(store.upsert_prettified(999_999, "text").is_err());
+    }
+
+    #[test]
+    fn deleting_a_session_cascades_its_prettified_text() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_prettified(session_id, "Cleaned text.")
+            .expect("upsert prettified");
+
+        store.delete_session(session_id).expect("delete session");
+
+        assert_eq!(
+            store.get_prettified(session_id).expect("get prettified"),
+            None
+        );
+    }
+
+    #[test]
+    fn deleting_prettified_text_directly_leaves_the_session_intact() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_prettified(session_id, "Cleaned text.")
+            .expect("upsert prettified");
+
+        store
+            .delete_prettified(session_id)
+            .expect("delete prettified");
+
+        assert_eq!(
+            store.get_prettified(session_id).expect("get prettified"),
+            None
+        );
         assert!(store
             .get_session(session_id)
             .expect("get session")

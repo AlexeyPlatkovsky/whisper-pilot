@@ -855,6 +855,31 @@ async fn generate_streaming_notes(
     streaming::open_streaming_session(&app_support_dir, id)
 }
 
+/// Returns the cleaned transcript without persisting it — the frontend
+/// shows it as a diff for review; only `accept_streaming_prettify` writes it.
+#[tauri::command]
+async fn generate_streaming_prettify(app: tauri::AppHandle, id: i64) -> Result<String> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
+    let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
+
+    tokio::task::spawn_blocking(move || llm::prettify_transcript(&model_path, &transcript))
+        .await
+        .map_err(|e| AppError::Llm(e.to_string()))?
+}
+
+#[tauri::command]
+async fn accept_streaming_prettify(
+    app: tauri::AppHandle,
+    id: i64,
+    text: String,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.upsert_prettified(id, &text)?;
+    streaming::open_streaming_session(&app_support_dir, id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // This same binary is re-executed as a diarization worker (WP-53). That
@@ -890,7 +915,9 @@ pub fn run() {
             download_model,
             delete_model,
             generate_notes,
-            generate_streaming_notes
+            generate_streaming_notes,
+            generate_streaming_prettify,
+            accept_streaming_prettify
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

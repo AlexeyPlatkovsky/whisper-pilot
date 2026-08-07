@@ -451,11 +451,13 @@ and ignores events for a session that isn't the open one — stale events
 from a just-stopped session are possible during the transition), the
 `streaming_sources` indicator so mic-only degradation is visible rather
 than silent, a header status widget (WP-76) cycling Ready → Starting…
-→ On Air → Crafting MFU…/MFU Failed (WP-77) (elapsed timer, `h:mm:ss` past
-one hour) as `isRunning`/`busy`/`craftingId`/`craftFailed` change, reusing
-`App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern, and a Craft button
+→ On Air → Crafting MFU…/MFU Failed (WP-77) → Prettifying…/Prettify Failed
+(WP-75) (elapsed timer, `h:mm:ss` past one hour) as `isRunning`/`busy`/
+`craftingId`/`craftFailed`/`prettifyingId`/`prettifyFailed` change, reusing
+`App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern; a Craft button
 (WP-77, `.streaming-transcript-actions`) that generates structured notes
-into a `.wp-mfu` panel — see Structured Notes above. A fail-open window
+into a `.wp-mfu` panel — see Structured Notes above; and a Prettify button
+(WP-75, same row) — see Transcript Prettify below. A fail-open window
 renders as `[unavailable]`, not blank space, so a decode failure reads
 differently from genuine silence — same distinction `outcome_ok` preserves
 in storage.
@@ -475,6 +477,25 @@ clearable. Streaming reuses the same `generate_notes` call (WP-77,
 same way (enabled only once the session is stopped) and persisted in its own
 `streaming_notes` table (`streaming_store.rs`), parallel to but independent
 of Meeting's `notes` table.
+
+## Transcript Prettify (WP-75, `llm.rs`, `src/diff.ts`) — Streaming only
+
+A second, distinct local-LLM use of the same model: `llm::prettify_transcript`
+rewrites a Streaming transcript to remove filler words/interjections/
+duplication and polish grammar, returning plain cleaned text (not the
+structured-notes JSON template `generate_notes` uses). Unlike Craft/MFU,
+Prettify's result is **not persisted on generation** — `generate_streaming_
+prettify` only returns it for review. The frontend diffs it client-side
+against the original transcript (`src/diff.ts`'s `computeWordDiff`, a
+self-contained LCS word-diff — no new dependency) and renders it as `<del>`/
+`<ins>` spans with Accept/Cancel controls. Only `accept_streaming_prettify`
+persists, to its own `streaming_prettified` table (`streaming_store.rs`,
+same `session_id`-keyed upsert/cascade-delete shape as `streaming_notes`).
+Once accepted, the transcript panel and Copy/Export use the accepted text
+instead of the raw per-window transcript. Craft and Prettify are mutually
+exclusive in flight (both are LLM calls against the same shared model), and
+both reuse `streaming::build_streaming_transcript`'s three guards
+(session exists, stopped, non-empty transcript) unchanged.
 
 ## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
 
