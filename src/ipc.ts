@@ -169,3 +169,91 @@ export function onTranscriptionPhase(
     handler(event.payload),
   );
 }
+
+export interface StreamingSessionSummary {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  status: string;
+}
+
+export interface StreamingWindow {
+  window_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  language: string;
+  outcome_ok: boolean;
+}
+
+export interface StreamingSession {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  status: string;
+  windows: StreamingWindow[];
+}
+
+export function listStreamingSessions(): Promise<StreamingSessionSummary[]> {
+  return invoke<StreamingSessionSummary[]>("list_streaming_sessions");
+}
+
+export function openStreamingSession(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("open_streaming_session", { id });
+}
+
+export function renameStreamingSession(
+  id: number,
+  title: string,
+): Promise<StreamingSession> {
+  return invoke<StreamingSession>("rename_streaming_session", { id, title });
+}
+
+export function deleteStreamingSession(id: number): Promise<void> {
+  return invoke<void>("delete_streaming_session", { id });
+}
+
+/** Starts capture + rolling-window decode; returns once capture has begun. */
+export function startStreamingSession(): Promise<StreamingSessionSummary> {
+  return invoke<StreamingSessionSummary>("start_streaming_session");
+}
+
+export function stopStreamingSession(): Promise<void> {
+  return invoke<void>("stop_streaming_session");
+}
+
+/** One decoded window, live — whether it succeeded or fail-open-skipped. */
+export function onStreamingWindow(
+  handler: (window: StreamingWindow & { session_id: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingWindow & { session_id: number }>(
+    "streaming_window",
+    (event) => handler(event.payload),
+  );
+}
+
+export interface StreamingSources {
+  session_id: number;
+  mic: boolean;
+  system_audio: boolean;
+}
+
+/** Fired once, right after a session starts, naming which source(s) came up. */
+export function onStreamingSources(
+  handler: (sources: StreamingSources) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingSources>("streaming_sources", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Fired once the session's decode loop has fully ended (after Stop). */
+export function onStreamingSessionEnded(
+  handler: (payload: { session_id: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ session_id: number }>("streaming_session_ended", (event) =>
+    handler(event.payload),
+  );
+}

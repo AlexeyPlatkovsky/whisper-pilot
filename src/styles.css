@@ -1365,3 +1365,136 @@ body {
   justify-content: flex-end;
   gap: var(--wp-space-sm);
 }
+
+/* ==========================================================================
+   Streaming (WP-73): its own top-level view, entered/exited like Settings,
+   reusing the app shell's header classes but its own body layout below.
+   ========================================================================== */
+.streaming-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.streaming-sidebar {
+  flex: 0 0 var(--wp-sidebar-width);
+  min-width: 0;
+  max-width: var(--wp-sidebar-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-sm);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.streaming-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+}
+
+.streaming-controls .wp-primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 var(--wp-space-md);
+  border: none;
+  border-radius: var(--wp-radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.streaming-controls .wp-primary-btn:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.streaming-controls .wp-primary-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.streaming-sources {
+  margin: 0;
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.streaming-error {
+  margin: 0;
+  padding: var(--wp-space-xs) var(--wp-space-sm);
+  border-radius: var(--wp-radius-sm);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+  color: var(--error);
+  font-size: var(--wp-font-size-sm);
+}
+
+.streaming-session-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  min-height: 0;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.streaming-session-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  border-radius: var(--wp-radius-sm);
+  padding-right: var(--wp-space-xs);
+}
+
+.streaming-session-row--active {
+  background: var(--selected);
+}
+
+.streaming-session-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: var(--wp-space-xs) var(--wp-space-sm);
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--wp-font-size-body);
+  cursor: pointer;
+}
+
+.streaming-transcript {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--wp-space-lg);
+  background: var(--bg);
+}
+
+.streaming-empty {
+  color: var(--muted);
+  font-size: var(--wp-font-size-body);
+}
+
+.streaming-transcript-text {
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  line-height: 1.7;
+}
+
+.streaming-window--failed {
+  color: var(--muted);
+  font-style: italic;
+}

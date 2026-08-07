@@ -19,6 +19,7 @@ import {
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
+import { StreamingView } from "./StreamingView";
 import { applyTheme, type Theme } from "./theme";
 import { t } from "./i18n";
 import { formatClock } from "./format";
@@ -67,6 +68,7 @@ export function App() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isStreamingOpen, setIsStreamingOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
@@ -103,7 +105,9 @@ export function App() {
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
-  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(null);
+  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(
+    null,
+  );
   const isGeneratingNotes = generatingNotesId !== null;
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
@@ -427,7 +431,8 @@ export function App() {
   // The header describes the meeting the user is looking at, through the same
   // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
-    if (activeIsGeneratingNotes) return resolveMeetingStatus(undefined, "crafting");
+    if (activeIsGeneratingNotes)
+      return resolveMeetingStatus(undefined, "crafting");
     if (activeIsTranscribing)
       return resolveMeetingStatus(undefined, transcribingPhase);
     if (transcriptionModelReady === false)
@@ -456,6 +461,10 @@ export function App() {
         />
       </div>
     );
+  }
+
+  if (isStreamingOpen) {
+    return <StreamingView onClose={() => setIsStreamingOpen(false)} />;
   }
 
   return (
@@ -498,6 +507,16 @@ export function App() {
               <button
                 type="button"
                 className="wp-icon-btn"
+                aria-label="Streaming"
+                title="Streaming"
+                onClick={() => setIsStreamingOpen(true)}
+              >
+                <Icon name="sparkles" size={18} />
+              </button>
+              <span className="wp-sep" />
+              <button
+                type="button"
+                className="wp-icon-btn"
                 aria-label="Settings"
                 onClick={() => setIsSettingsOpen(true)}
               >
@@ -513,7 +532,9 @@ export function App() {
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
               onClick={() => activeMeeting && openRename(activeMeeting)}
-              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
+              disabled={
+                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+              }
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -531,7 +552,9 @@ export function App() {
                   status: activeMeeting.status,
                 })
               }
-              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
+              disabled={
+                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+              }
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -583,7 +606,18 @@ export function App() {
             <span className="wp-sep" />
             <ActionIcon icon="square" label="Stop" disabled />
             <span className="wp-sep" />
-            <ActionIcon icon="sparkles" label="Craft notes" accent onClick={() => void handleGenerateNotes()} disabled={!hasTranscript || llmModelReady !== true || activeIsTranscribing || isGeneratingNotes} />
+            <ActionIcon
+              icon="sparkles"
+              label="Craft notes"
+              accent
+              onClick={() => void handleGenerateNotes()}
+              disabled={
+                !hasTranscript ||
+                llmModelReady !== true ||
+                activeIsTranscribing ||
+                isGeneratingNotes
+              }
+            />
             <span className="wp-sep" />
             <button
               type="button"
@@ -762,7 +796,9 @@ export function App() {
                               speakerId={seg.speaker_id!}
                               label={resolveSpeakerLabel(seg.speaker_id!)}
                               onRename={renameSpeaker}
-                              disabled={activeIsTranscribing || isGeneratingNotes}
+                              disabled={
+                                activeIsTranscribing || isGeneratingNotes
+                              }
                             />
                           )}
                           <span className="wp-speaker-time">
@@ -977,7 +1013,10 @@ function MeetingRow({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const running = status.tone === "transcribing" || status.tone === "diarizing" || status.tone === "crafting";
+  const running =
+    status.tone === "transcribing" ||
+    status.tone === "diarizing" ||
+    status.tone === "crafting";
   return (
     <li
       className={`wp-meeting-row${selected ? " is-selected" : ""}`}

@@ -16,13 +16,14 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
   ipc.ts / events                  export.rs     meeting → Markdown / plain text
   theming / i18n                   error.rs      AppError → serialized to JS
-                                   settings.rs   key–value settings store (theme, ui_language, active models)
+  [WP-68] StreamingView.tsx        settings.rs   key–value settings store (theme, ui_language, active models)
                                    models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
                                    [WP-68] streaming_store.rs  SQLite streaming_sessions/streaming_segments
+                                   [WP-68] streaming.rs  Streaming IPC facade (list/open/rename/delete)
 ```
 
 The Rust core does all heavy work and owns persistence; the React layer is a
@@ -279,7 +280,15 @@ completes epic WP-1 (M2 speaker-attributed transcription).
 Streaming (ADR-014) is a second, separate capture mode from Meeting: near-
 real-time transcription of live audio rather than a finished file. This
 section covers only its capture/mixing layer (WP-70); the rolling-window
-decode pipeline that consumes this module's output is WP-71, not yet built.
+decode pipeline that consumes this module's output is WP-71 (see below).
+
+Both capture sources need macOS permissions this app never previously
+required: `src-tauri/Info.plist` declares `NSMicrophoneUsageDescription`
+(mic, via `cpal`) and `NSScreenCaptureUsageDescription` (system-audio
+loopback, via `screencapturekit`), auto-merged into the bundle by Tauri
+(same directory as `tauri.conf.json`). The `NSMicrophoneUsageDescription`
+key is not optional UX polish — without it, macOS crashes the app outright
+the first time it requests microphone access.
 
 `streaming_audio.rs` hands its consumer a continuous, unbounded stream of
 16 kHz mono f32 chunks (`crate::audio::SAMPLE_RATE`) via a plain
@@ -353,10 +362,10 @@ disclosed safety tightening beyond WP-68's literal Streaming-vs-Meeting
 ask, since the underlying safety property (one decode at a time against the
 shared context) does not depend on which caller is asking.
 
-**Not yet wired to Tauri IPC.** This module is the core session state
-machine; command/event registration to start/stop a session from the UI
-lands with WP-73 (Streaming UI) and WP-72 (persistence), since a meaningful
-end-to-end command needs both.
+Wired to Tauri IPC via `start_streaming_session`/`stop_streaming_session` in
+`lib.rs` (WP-73) — see the Streaming Runtime & UI section below for the
+command/event layer that ties this module to `streaming_audio.rs` and
+`streaming_store.rs`.
 
 **Latency is not measured against real hardware.** The feasibility spike
 WP-68's own DoD requires — measuring real per-window decode latency across
@@ -395,9 +404,55 @@ fail-open contract) — a failed window still gets a row (empty text,
 session's transcript can render "this span failed to decode" instead of
 silently reading as a span with no speech at all.
 
-No IPC commands exist yet for this store — `meetings.rs`'s equivalent
-`create_meeting`/`list_meetings`/etc. command layer for Streaming sessions
-lands with WP-73 (UI), which is the first consumer that needs it.
+`streaming.rs` is the IPC-facing facade over this store (WP-73), mirroring
+`meetings.rs`'s "open the store fresh per call" convention: `list_
+streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
+`delete_streaming_session`, `create_streaming_session`. Its DTOs
+(`StreamingSessionDto`, `StreamingWindowDto`) are the JSON shape the
+Streaming tab consumes.
+
+## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
+`stop_streaming_session` in `lib.rs`, `src/StreamingView.tsx`)
+
+Starting a session ties `streaming_audio.rs` (capture), `streaming_
+session.rs` (decode/mutual-exclusion), and `streaming_store.rs`
+(persistence) together via two new `AppState` fields:
+`whisper_busy` (WP-71's guard) and `streaming_runtime: Mutex<Option<
+StreamingRuntime>>` (macOS-only — the type doesn't exist on the Linux CI
+target), holding the live `streaming_audio::StreamingSession` capture.
+
+`start_streaming_session` claims `whisper_busy`, creates the session's DB
+row, starts capture, and spawns two `spawn_blocking` tasks: one runs `run_
+windowed_decode`, the other (`drive_streaming_results`) consumes its
+`WindowResult`s — persisting each via `append_window` and emitting
+`streaming_window` — until the results channel disconnects, at which point
+it marks the session stopped and releases `whisper_busy`. `stop_streaming_
+session` only has to do one thing: take `streaming_runtime` out of
+`AppState` and let it drop. Dropping the held `streaming_audio::
+StreamingSession` stops both capture streams, which cascades through the
+mixer thread → sample channel → decode loop → results channel, ending
+`drive_streaming_results` on its own. Both `SCStream` (`screencapturekit`)
+and `cpal::Stream` are `Send`/`Sync` (the former explicitly, documented in
+the crate itself; the latter via its own `assert_stream_send!`), so storing
+the capture in `AppState`'s tokio `Mutex` needed no additional unsafe code.
+
+On non-macOS targets, `start_streaming_session`/`stop_streaming_session`
+are still registered (same command names, same generated-handler list) but
+return a "macOS only" error — keeping the frontend's command surface
+identical across platforms rather than branching on `cfg` in TypeScript.
+
+`src/StreamingView.tsx` is a self-contained top-level view (entered/exited
+like `SettingsScreen`, via a new header icon in `App.tsx`), not a change to
+the existing Meeting workspace. It owns: the session list (rename/delete,
+mirroring Meeting's), Start/Stop controls, a live transcript that appends
+`streaming_window` events for whichever session is currently open
+(`upsertWindow` replaces rather than duplicates a resent `window_index`,
+and ignores events for a session that isn't the open one — stale events
+from a just-stopped session are possible during the transition), and the
+`streaming_sources` indicator so mic-only degradation is visible rather
+than silent. A fail-open window renders as `[unavailable]`, not blank
+space, so a decode failure reads differently from genuine silence — same
+distinction `outcome_ok` preserves in storage.
 
 ## Structured Notes (M3, `notes.rs`) — planned
 
@@ -460,6 +515,11 @@ rendering (the header's meeting-label **copy** copies the transcript).
 | `set_active_model(task, id)` | Choose the active model for a task | M3 |
 | `check_update()` / `apply_update()` | App update | M3 |
 | `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
+| `list_streaming_sessions()` | Streaming sessions list (summaries) | WP-68 |
+| `open_streaming_session(id)` | Full session (all decoded windows) | WP-68 |
+| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's | WP-68 |
+| `start_streaming_session()` | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68 |
+| `stop_streaming_session()` | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only) | WP-68 |
 
 Events: `transcription_progress { id, fraction }`, `transcription_done`,
 `transcription_error`,
@@ -470,6 +530,15 @@ than show a full bar. `Segment` is
 the shared transcript unit
 (`{ id, start_ms, end_ms, text, speaker_id? }`). Errors are `AppError` serialized
 to a human-readable string.
+
+**Streaming events:** `streaming_window { session_id, window_index, start_ms,
+end_ms, text, language, outcome_ok }` fires once per decoded window, whether
+it succeeded or fail-open-skipped (`outcome_ok` distinguishes the two, same
+convention as the persisted row). `streaming_sources { session_id, mic,
+system_audio }` fires once, right after a session starts, naming which
+capture source(s) actually came up — the UI's mic-only-degradation
+indicator. `streaming_session_ended { session_id }` fires once the decode
+loop has fully ended after `stop_streaming_session`.
 
 ## Security And Privacy
 

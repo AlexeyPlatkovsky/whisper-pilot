@@ -46,6 +46,11 @@ const WINDOW_SECONDS: f64 = 7.0;
 
 const WINDOW_SAMPLES: usize = (WINDOW_SECONDS * SAMPLE_RATE as f64) as usize;
 
+/// A window's length in milliseconds, exposed so a caller building a
+/// window's `end_ms` (IPC/persistence, not this module's concern) does not
+/// need to duplicate `WINDOW_SECONDS`.
+pub const WINDOW_MS: u64 = (WINDOW_SECONDS * 1000.0) as u64;
+
 /// How long the decode loop waits for a sample chunk before checking `stop`
 /// again. Independent of `WINDOW_SECONDS` — this is loop responsiveness, not
 /// decode granularity.
@@ -104,6 +109,31 @@ impl Drop for WhisperUsageGuard<'_> {
     fn drop(&mut self) {
         self.state.store(IDLE, Ordering::Release);
     }
+}
+
+/// Claim `state` for a Streaming session that outlives one IPC command call
+/// (`start_streaming_session` returns immediately; the claim must survive
+/// until `stop_streaming_session`, a separate call, later runs) — the
+/// borrowed-lifetime [`WhisperUsageGuard`] cannot express that, so this pair
+/// of free functions performs the same compare-exchange/release directly.
+/// Prefer `WhisperUsageGuard` whenever a hold is scoped to one function.
+pub fn try_claim_streaming(state: &AtomicU8) -> Result<(), WhisperUser> {
+    match state.compare_exchange(
+        IDLE,
+        WhisperUser::Streaming.as_u8(),
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => Ok(()),
+        Err(current) => Err(WhisperUser::from_u8(current).unwrap_or(WhisperUser::Streaming)),
+    }
+}
+
+/// Releases whichever user currently holds `state`. Pairs with
+/// [`try_claim_streaming`] (and, in principle, a leaked `WhisperUsageGuard`,
+/// though nothing in this codebase does that).
+pub fn release_whisper_busy(state: &AtomicU8) {
+    state.store(IDLE, Ordering::Release);
 }
 
 /// One decoded window, or the error it failed with (fail-open — the session
@@ -261,5 +291,36 @@ mod tests {
             assert!(WhisperUsageGuard::acquire(&state, WhisperUser::Streaming).is_err());
         }
         assert!(WhisperUsageGuard::acquire(&state, WhisperUser::Streaming).is_ok());
+    }
+
+    #[test]
+    fn try_claim_streaming_then_release_allows_a_later_claim() {
+        let state = AtomicU8::new(IDLE);
+
+        try_claim_streaming(&state).expect("idle state must grant the claim");
+        assert_eq!(
+            try_claim_streaming(&state).expect_err("a held claim must block a second one"),
+            WhisperUser::Streaming
+        );
+
+        release_whisper_busy(&state);
+
+        try_claim_streaming(&state).expect("releasing must allow a new claim");
+    }
+
+    #[test]
+    fn try_claim_streaming_names_a_meeting_holder() {
+        let state = AtomicU8::new(IDLE);
+        let _guard = WhisperUsageGuard::acquire(&state, WhisperUser::Meeting).unwrap();
+
+        assert_eq!(
+            try_claim_streaming(&state).expect_err("a Meeting hold must block Streaming"),
+            WhisperUser::Meeting
+        );
+    }
+
+    #[test]
+    fn window_ms_matches_window_seconds_in_milliseconds() {
+        assert_eq!(WINDOW_MS, (WINDOW_SECONDS * 1000.0) as u64);
     }
 }
