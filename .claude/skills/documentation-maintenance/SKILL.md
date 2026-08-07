@@ -41,6 +41,10 @@ material, `docs/development.md` for developer workflow, and focused product or
 architecture documents for their owned facts. Do not rely on a hard-coded,
 possibly stale document list.
 
+`pencil/*.pen` (the Pencil design source) is also an authoritative root when a
+change is UI-visual: it mirrors real screen layout, controls, and copy, and
+drifts from the shipped UI the same way any other doc can.
+
 ### 3. Decide Whether Docs Are Affected
 
 Check whether the change affects:
@@ -49,6 +53,7 @@ Check whether the change affects:
 - architecture, ownership, or source layout
 - domain vocabulary or business rules
 - known limitations, risks, or failure modes
+- UI-visual layout, controls, or copy already mirrored in `pencil/*.pen`
 
 If none apply, report that no documentation change was needed.
 
@@ -60,6 +65,10 @@ When documentation updates are needed:
 - update affected non-SDD indexes and cross-references; `docs/INDEX.md` belongs
   exclusively to `sdd-index-sync`
 - for implemented architecture changes, update the focused sections in `docs/architecture.md` rather than duplicating architecture facts in unrelated docs
+- for a `pencil/*.pen` update, route `.claude/skills/sync-pen-code/SKILL.md`
+  (`code-to-pen` direction) rather than editing the file directly — this skill
+  must not use `Edit`/`Write` on a `.pen` file itself; require its
+  `Status: completed` before reporting `documentation updated` for that file
 - avoid broad rewrites unless the task explicitly requires them
 
 After any documentation edit, refresh the exhaustive changed-file list and
@@ -100,5 +109,6 @@ Mode `implementation/fix` permits only `documentation updated`,
 blocked status.
 The blocked status fails the handoff. All success statuses require final-diff
 inspection, a refreshed exhaustive changed-file list, path/link checks, an
-authoritative source for each affected fact, and completed `sdd-index-sync`
+authoritative source for each affected fact, completed `sdd-index-sync`
+evidence when applicable, and completed `sync-pen-code` (`code-to-pen`)
 evidence when applicable.

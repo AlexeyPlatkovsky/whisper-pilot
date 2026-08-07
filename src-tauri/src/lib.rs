@@ -880,6 +880,18 @@ async fn accept_streaming_prettify(
     streaming::open_streaming_session(&app_support_dir, id)
 }
 
+/// Removes an accepted prettification so the raw per-window transcript is shown again.
+#[tauri::command]
+async fn revert_streaming_prettify(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.delete_prettified(id)?;
+    streaming::open_streaming_session(&app_support_dir, id)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // This same binary is re-executed as a diarization worker (WP-53). That
@@ -917,7 +929,8 @@ pub fn run() {
             generate_notes,
             generate_streaming_notes,
             generate_streaming_prettify,
-            accept_streaming_prettify
+            accept_streaming_prettify,
+            revert_streaming_prettify
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

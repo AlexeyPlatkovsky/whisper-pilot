@@ -481,21 +481,25 @@ of Meeting's `notes` table.
 ## Transcript Prettify (WP-75, `llm.rs`, `src/diff.ts`) — Streaming only
 
 A second, distinct local-LLM use of the same model: `llm::prettify_transcript`
-rewrites a Streaming transcript to remove filler words/interjections/
-duplication and polish grammar, returning plain cleaned text (not the
-structured-notes JSON template `generate_notes` uses). Unlike Craft/MFU,
-Prettify's result is **not persisted on generation** — `generate_streaming_
-prettify` only returns it for review. The frontend diffs it client-side
-against the original transcript (`src/diff.ts`'s `computeWordDiff`, a
-self-contained LCS word-diff — no new dependency) and renders it as `<del>`/
-`<ins>` spans with Accept/Cancel controls. Only `accept_streaming_prettify`
-persists, to its own `streaming_prettified` table (`streaming_store.rs`,
-same `session_id`-keyed upsert/cascade-delete shape as `streaming_notes`).
-Once accepted, the transcript panel and Copy/Export use the accepted text
-instead of the raw per-window transcript. Craft and Prettify are mutually
-exclusive in flight (both are LLM calls against the same shared model), and
-both reuse `streaming::build_streaming_transcript`'s three guards
-(session exists, stopped, non-empty transcript) unchanged.
+performs conservative cleanup of a Streaming transcript, returning plain
+cleaned text (not the structured-notes JSON template `generate_notes` uses).
+The backend rejects empty, language-dropping, excessively shortened or
+expanded candidates and candidates that omit protected numbers or technical
+terms, so an unsafe rewrite never reaches the review UI. Unlike Craft/MFU,
+Prettify's result is **not persisted on generation** —
+`generate_streaming_prettify` only returns a validated candidate for review.
+The frontend diffs it client-side against the original transcript
+(`src/diff.ts`'s `computeWordDiff`, a self-contained LCS word-diff — no new
+dependency) and renders it as `<del>`/`<ins>` spans with Accept/Cancel
+controls. `accept_streaming_prettify` persists accepted text to its own
+`streaming_prettified` table (`streaming_store.rs`, same `session_id`-keyed
+upsert/cascade-delete shape as `streaming_notes`); the `Revert Prettify`
+control calls `revert_streaming_prettify` to delete that row and restore the
+raw per-window transcript for display/copy/export. The two LLM-generation
+commands reuse `streaming::build_streaming_transcript`'s guards (session
+exists, stopped, non-empty transcript); Accept and Revert operate on an
+existing session row. Craft and Prettify are mutually exclusive in flight
+(both are LLM calls against the same shared model).
 
 ## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
 

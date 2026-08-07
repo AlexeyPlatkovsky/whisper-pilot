@@ -10,6 +10,7 @@ import {
   onStreamingWindow,
   openStreamingSession,
   renameStreamingSession,
+  revertStreamingPrettify,
   saveTextDialog,
   startStreamingSession,
   stopStreamingSession,
@@ -320,6 +321,7 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   }, [exportText, activeTitle]);
 
   const handleCraft = useCallback(async () => {
+    // c8 ignore next -- the action is not rendered until an active session exists.
     if (activeId === null) return;
     const id = activeId;
     setError(null);
@@ -341,6 +343,7 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   }, [activeId]);
 
   const handlePrettify = useCallback(async () => {
+    // c8 ignore next -- the action is not rendered until an active session exists.
     if (activeId === null) return;
     const id = activeId;
     const original = plainTranscript(windows);
@@ -363,6 +366,7 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   }, [activeId, windows]);
 
   const handleAcceptPrettify = useCallback(async () => {
+    // c8 ignore next -- Accept is only rendered while a review is pending.
     if (activeId === null || !pendingPrettify) return;
     const id = activeId;
     const text = pendingPrettify.cleaned;
@@ -383,6 +387,21 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   const handleCancelPrettify = useCallback(() => {
     setPendingPrettify(null);
   }, []);
+
+  const handleRevertPrettify = useCallback(async () => {
+    // c8 ignore next -- Revert is only rendered while accepted text exists.
+    if (activeId === null || prettifiedText === null) return;
+    const id = activeId;
+    setError(null);
+    try {
+      const session = await revertStreamingPrettify(id);
+      if (activeIdRef.current === id) {
+        setPrettifiedText(session.prettified_text ?? null);
+      }
+    } catch (e) {
+      if (activeIdRef.current === id) setError(String(e));
+    }
+  }, [activeId, prettifiedText]);
 
   const hasText = windows.some((w) => windowText(w).length > 0);
   // Craft needs real decoded content, unlike Copy/Export's hasText — a
@@ -664,6 +683,17 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
                   <Icon name="x" size={16} />
                 </button>
               </>
+            )}
+            {!pendingPrettify && prettifiedText !== null && (
+              <button
+                type="button"
+                className="streaming-action-btn"
+                aria-label="Cancel Prettify"
+                title="Revert to original transcript"
+                onClick={() => void handleRevertPrettify()}
+              >
+                <Icon name="x" size={16} />
+              </button>
             )}
           </div>
           {windows.length === 0 ? (

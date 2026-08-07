@@ -222,6 +222,11 @@ export function acceptStreamingPrettify(
   return invoke<StreamingSession>("accept_streaming_prettify", { id, text });
 }
 
+/** Removes an accepted prettification and restores the raw transcript view. */
+export function revertStreamingPrettify(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("revert_streaming_prettify", { id });
+}
+
 export function listStreamingSessions(): Promise<StreamingSessionSummary[]> {
   return invoke<StreamingSessionSummary[]>("list_streaming_sessions");
 }

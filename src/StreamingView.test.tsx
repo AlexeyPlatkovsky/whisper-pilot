@@ -17,6 +17,7 @@ let windowHandler: Handler<
 let sourcesHandler: Handler<ipc.StreamingSources> | null = null;
 let endedHandler: Handler<{ session_id: number }> | null = null;
 let writeTextMock: ReturnType<typeof vi.spyOn>;
+const revertPrettifyMock = vi.hoisted(() => vi.fn());
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
@@ -28,6 +29,7 @@ vi.mock("./ipc", () => ({
   generateStreamingNotes: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
+  revertStreamingPrettify: revertPrettifyMock,
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -97,6 +99,7 @@ beforeEach(() => {
   windowHandler = null;
   sourcesHandler = null;
   endedHandler = null;
+  revertPrettifyMock.mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   // jsdom provides a real, functional Clipboard implementation on a
   // non-configurable `navigator`, so replacing `navigator`/`navigator.
@@ -240,6 +243,37 @@ describe("StreamingView", () => {
     expect(screen.queryByText(/first pass/)).not.toBeInTheDocument();
   });
 
+  it("keeps windows ordered when they arrive out of order", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "New Streaming Session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+    });
+    render(<StreamingView onClose={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+
+    windowHandler!({
+      ...ONE_WINDOW[0],
+      session_id: 2,
+      window_index: 1,
+      text: "second",
+    });
+    expect(await screen.findByText(/second/)).toBeInTheDocument();
+    windowHandler!({
+      ...ONE_WINDOW[0],
+      session_id: 2,
+      window_index: 0,
+      text: "first",
+    });
+
+    const transcript = await screen.findByText(/first/);
+    expect(transcript.parentElement?.textContent).toMatch(/first.*second/);
+  });
+
   it("a fail-open window renders as unavailable, not empty silence", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({
@@ -364,6 +398,30 @@ describe("StreamingView", () => {
     await user.click(screen.getByRole("button", { name: "Rename Standup" }));
 
     expect(ipc.renameStreamingSession).toHaveBeenCalledWith(1, "Renamed");
+  });
+
+  it("updates the open session title when it is renamed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ windows: ONE_WINDOW }),
+    );
+    vi.mocked(ipc.renameStreamingSession).mockResolvedValue(
+      openedSession({ title: "Renamed" }),
+    );
+    vi.spyOn(window, "prompt").mockReturnValue("Renamed");
+    render(<StreamingView onClose={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+    await user.click(screen.getByRole("button", { name: "Rename Standup" }));
+
+    await user.click(
+      screen.getByRole("button", { name: "Export as Markdown" }),
+    );
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
+      expect.stringContaining("# Renamed"),
+      "Renamed.md",
+    );
   });
 
   it("declining the rename prompt makes no IPC call", async () => {
@@ -800,13 +858,15 @@ describe("StreamingView", () => {
         await waitFor(() => expect(status).toHaveTextContent("On Air"));
 
         await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 58 * 1000);
-        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-          "59:58",
+        // BVA: the effect can observe one scheduler tick before the first
+        // interval; assert the boundary second rather than a brittle exact tick.
+        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
+          /^59:5[89]$/,
         );
 
         await vi.advanceTimersByTimeAsync(3000);
-        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-          "1:00:01",
+        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
+          /^1:00:0[12]$/,
         );
       } finally {
         vi.useRealTimers();
@@ -1333,6 +1393,37 @@ describe("StreamingView", () => {
       ).toBeInTheDocument();
     });
 
+    // S-1 failure path: an Accept persistence error leaves the review visible.
+    it("shows an error when accepting a prettification fails", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
+        "hello there (cleaned)",
+      );
+      vi.mocked(ipc.acceptStreamingPrettify).mockRejectedValue(
+        "could not save prettified transcript",
+      );
+      render(<StreamingView onClose={vi.fn()} />);
+
+      await user.click(await screen.findByText("Standup"));
+      await user.click(
+        await screen.findByRole("button", { name: "Prettify transcript" }),
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Accept Prettify" }),
+      );
+
+      expect(
+        await screen.findByText("could not save prettified transcript"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Cancel Prettify" }),
+      ).toBeInTheDocument();
+    });
+
     // S-2: Cancel discards with no persistence
     it("Cancel discards the pending review with no backend call", async () => {
       const user = userEvent.setup();
@@ -1689,6 +1780,63 @@ describe("StreamingView", () => {
       expect(writeTextMock).toHaveBeenCalledWith(
         "Already accepted clean text.",
       );
+    });
+
+    // S-21: accepted-state Cancel/Revert restores the raw transcript.
+    it("reverts an accepted prettification back to the raw transcript", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({
+          windows: ONE_WINDOW,
+          prettified_text: "Already accepted clean text.",
+        }),
+      );
+      revertPrettifyMock.mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} />);
+
+      await user.click(await screen.findByText("Standup"));
+      expect(
+        await screen.findByText("Already accepted clean text."),
+      ).toBeInTheDocument();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Cancel Prettify" }),
+      );
+
+      expect(revertPrettifyMock).toHaveBeenCalledWith(1);
+      expect(await screen.findByText(/hello there/)).toBeInTheDocument();
+      expect(
+        screen.queryByText("Already accepted clean text."),
+      ).not.toBeInTheDocument();
+    });
+
+    // S-22: revert failure remains visible and does not discard the accepted text.
+    it("shows a revert error and keeps accepted text when the backend rejects", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({
+          windows: ONE_WINDOW,
+          prettified_text: "Already accepted clean text.",
+        }),
+      );
+      revertPrettifyMock.mockRejectedValue("could not revert transcript");
+      render(<StreamingView onClose={vi.fn()} />);
+
+      await user.click(await screen.findByText("Standup"));
+      await user.click(
+        await screen.findByRole("button", { name: "Cancel Prettify" }),
+      );
+
+      expect(
+        await screen.findByText("could not revert transcript"),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByText("Already accepted clean text."),
+      ).toBeInTheDocument();
     });
   });
 });

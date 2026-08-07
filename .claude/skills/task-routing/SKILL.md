@@ -38,6 +38,35 @@ Apply `AGENTS.md` §Quality Tiers and state the selected tier, its justification
 runtime, authority, lifecycle, security, persistence, dependency, generated
 artifact, or cross-reference effect. Everything else is `non-trivial`.
 
+**Exception — exploratory generated-artifact mutation.** A mutation that
+produces or updates a generated artifact stays trivial-eligible (its other
+disqualifiers — runtime, authority, lifecycle, security, persistence,
+dependency, cross-reference — still apply and still disqualify it if any are
+present) only when *all* of the following hold:
+1. The artifact — evaluated at the smallest independently-mutable unit its
+   producing tool addresses (e.g. one frame/component in a design file, not
+   necessarily the whole file) — is a design/planning medium, not
+   runtime/production code, a capability/config file, or a documented
+   authoritative fact. "Documented authoritative fact" means either listed in
+   `AGENTS.md`'s authoritative-source table, or covered by an
+   authoritative-root rule a specific skill declares for its own domain (for
+   example, `.claude/skills/documentation-maintenance/SKILL.md` §2 declares
+   `pencil/*.pen` content that mirrors shipped UI as authoritative even
+   though `AGENTS.md`'s table doesn't separately list it) — check both, not
+   only the root table.
+2. The mutation is reversible/re-runnable via the same tool that produced it,
+   with no manual recovery step.
+3. Nothing yet consumes or depends on the artifact's current state — no
+   downstream skill or pipeline has been handed the result.
+
+The moment any of these three stops holding for a given artifact unit — most
+commonly, once its content is approved and handed to a consuming step —
+classify normally as `non-trivial` from that point forward; a prior trivial
+run of the same skill does not retroactively cover the now-non-trivial one.
+This exception exists for genuinely exploratory work (e.g.
+`.claude/skills/design-in-pen/SKILL.md`); it does not apply to a mutation any
+other skill, pipeline, or shipped feature already reads.
+
 Risk is selected by the highest matching condition:
 
 | Risk | Observable condition |
@@ -99,6 +128,12 @@ Apply this precedence before using the table:
    exists and no re-scoping is requested, or when the user is describing a defect,
    crash, or unexpected behavior.
 2. Behavior or IPC work takes precedence over visual-only UI work.
+3. A request to implement or build an approved Pencil design into working
+   code always routes to `.claude/pipelines/implement-feature.md`, never to
+   the standalone `sync-pen-code` row below — `sync-pen-code`'s `pen-to-code`
+   direction never writes app code by itself; it only runs as that
+   pipeline's internal Step 1a. The standalone `sync-pen-code` row applies
+   only when no code implementation is requested this turn.
 
 | Task | Route |
 |---|---|
@@ -113,6 +148,8 @@ Apply this precedence before using the table:
 | Review existing test code without a change diff | Manager-declared read-only test audit with explicit scope; no post-implementation validation prerequisite |
 | Validate completed work with build, test, or manual checks | `.claude/agents/test-runner.md` |
 | Resolve an open design decision with meaningful trade-offs | `.claude/skills/brainstorm/SKILL.md` |
+| Create or iterate on a UI design mockup in `pencil/*.pen` before implementation | `.claude/skills/design-in-pen/SKILL.md` |
+| Sync `pencil/*.pen` with the real UI code in either direction, outside of `implement-feature`'s or `documentation-maintenance`'s automatic hook (e.g. a bare design→code translation with no implementation this turn, or a post-hoc drift correction) — subject to precedence rule 3 above | `.claude/skills/sync-pen-code/SKILL.md` |
 | Create or update non-instruction reference documentation | Direct execution with the required TaskPilot identity, git gate, `.claude/skills/documentation-maintenance/SKILL.md` outcome artifact (including the checked authoritative sources), and task-complete closure |
 | Author or update one SDD main or extension document (`docs/idea.md`, `architecture.md`, `design.md`, `testing.md`, `roadmap.md`, an ADR, or an extension doc) | Direct sequence: `.claude/skills/sdd-doc-author/SKILL.md`, then `.claude/skills/sdd-index-sync/SKILL.md` with mode, same Route run, attempt `1` (prior artifact plus increment on retry), then closure |
 | Scaffold or update one SDD feature folder | Direct sequence: require feature-author `Status: completed`; on `recovery required`, stop and perform its exact recovery with an incremented author attempt; then run `.claude/skills/sdd-index-sync/SKILL.md` with mode, same Route run, attempt `1` (prior artifact plus increment on retry), then closure |
