@@ -22,6 +22,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
                                    [M3] notes.rs     llama.cpp structured meeting notes
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
+                                   [WP-68] streaming_store.rs  SQLite streaming_sessions/streaming_segments
 ```
 
 The Rust core does all heavy work and owns persistence; the React layer is a
@@ -363,6 +364,40 @@ supported Mac hardware — needs a person running this with a downloaded
 model, which this environment cannot do. `WindowResult.decode_ms` exists so
 that measurement is possible once someone can run it; `WINDOW_SECONDS`
 itself is not yet the finalized, measured threshold.
+
+## Streaming Persistence (WP-68/WP-72, `streaming_store.rs`)
+
+A `StreamingSession` is a separate entity from a `Meeting` (WP-68 D5): no
+backing file, a possibly-mixed per-window language rather than one per-file
+language, and no diarization — none of which fit the `meetings` table's
+shape. `streaming_store.rs` opens its own `Connection` to the same
+`whisperpilot.sqlite3` file `store.rs` uses (SQLite supports multiple
+connections to one file; `store::shared_database_path` is the one shared
+path constant) and owns two new tables, `streaming_sessions` and
+`streaming_segments`, parallel to but independent of `meetings`/`segments`.
+
+**Incremental save, not replace-wholesale.** Unlike `Store::replace_segments`
+(delete-all-then-reinsert, appropriate for a finished file decoded once),
+`StreamingStore::append_window` upserts one window at a time as
+`streaming_session.rs`'s decode loop produces `WindowResult`s — an
+`ON CONFLICT(session_id, window_index) DO UPDATE` makes a retried save
+idempotent. This is what makes WP-68's crash-recovery DoD true: only the
+last in-flight window can be lost, because every prior window is already
+committed by the time the next one starts decoding. Each append also
+advances `streaming_sessions.updated_at_ms` in the same transaction, so a
+session that stalls (capture keeps running but decode stops producing
+windows) is distinguishable from one making progress.
+
+**A failed window is stored, not dropped.** `NewStreamingWindow.outcome_ok`
+records whether that window's decode succeeded (per `streaming_session.rs`'s
+fail-open contract) — a failed window still gets a row (empty text,
+`outcome_ok = false`) rather than being skipped entirely, so replaying a
+session's transcript can render "this span failed to decode" instead of
+silently reading as a span with no speech at all.
+
+No IPC commands exist yet for this store — `meetings.rs`'s equivalent
+`create_meeting`/`list_meetings`/etc. command layer for Streaming sessions
+lands with WP-73 (UI), which is the first consumer that needs it.
 
 ## Structured Notes (M3, `notes.rs`) — planned
 

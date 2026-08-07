@@ -12,6 +12,7 @@ pub mod settings;
 pub mod store;
 pub mod streaming_audio;
 pub mod streaming_session;
+pub mod streaming_store;
 pub mod transcribe;
 
 use error::{AppError, Result};
