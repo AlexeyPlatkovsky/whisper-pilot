@@ -14,8 +14,8 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
   MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
   settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
-  ipc.ts / events                  export.rs     meeting → Markdown / plain text
-  theming / i18n                   error.rs      AppError → serialized to JS
+  ipc.ts / events                  error.rs      AppError → serialized to JS
+  theming / i18n
   [WP-68] StreamingView.tsx        settings.rs   key–value settings store (theme, ui_language, active models)
                                    models.rs     model catalog: download + SHA verify + delete
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
@@ -487,11 +487,25 @@ entirely — the default for every user, including those upgrading from before
 this selection existed). This supersedes the earlier "manual model placement /
 deferred model management" note.
 
-## Export (`export.rs`)
+## Export
 
-A meeting renders to **Markdown** or **plain text** (transcript and/or notes),
-written to a user-chosen destination. Copy-to-clipboard reuses the same
-rendering (the header's meeting-label **copy** copies the transcript).
+**As actually built, not as originally planned:** there is no `export.rs`
+Rust module. A meeting's transcript is rendered client-side (`App.tsx`'s
+`transcriptText`, `"Label: text"` per line) and written to a user-chosen
+destination via the generic `save_text_dialog(content, default_name)`
+command — plain text only; Markdown rendering and copy-to-clipboard for
+Meeting were never built (WP-24, still `backlog`). Streaming's export/copy
+(WP-74, `StreamingView.tsx`) follows this same real pattern — render
+client-side, reuse `save_text_dialog` — rather than a nonexistent Rust
+export path, and is the first place either capability actually ships in
+this app: **Copy** calls the browser `navigator.clipboard.writeText` API
+directly (no Tauri clipboard plugin was added — the web API works in the
+WKWebView and avoids a new plugin/capability-permission surface for a
+one-line need); **Export** renders a minimal Markdown document (`# title`
++ the plain transcript) through `save_text_dialog`. Both reuse
+`windowText`'s `[unavailable]` marker for a fail-open window, so exported
+output matches what the live view showed rather than silently dropping or
+blanking a failed span.
 
 ## IPC Contract
 
@@ -587,6 +601,7 @@ directory, downloaded model files, and user-chosen export destinations. No
 | Audio normalize + decode | `src-tauri/src/audio.rs` |
 | Whisper transcription + progress | `src-tauri/src/transcribe.rs` |
 | SQLite meeting library | `src-tauri/src/store.rs` |
-| Export rendering | `src-tauri/src/export.rs` |
 | Error type | `src-tauri/src/error.rs` |
 | Two-pane shell: meetings list, meeting workspace, editors | `src/` |
+| Streaming capture / decode / persistence / IPC facade | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
+| Streaming tab | `src/StreamingView.tsx` |

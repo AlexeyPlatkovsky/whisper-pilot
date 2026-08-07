@@ -12,6 +12,7 @@ let windowHandler: Handler<
 > | null = null;
 let sourcesHandler: Handler<ipc.StreamingSources> | null = null;
 let endedHandler: Handler<{ session_id: number }> | null = null;
+let writeTextMock: ReturnType<typeof vi.spyOn>;
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
@@ -40,6 +41,7 @@ vi.mock("./ipc", () => ({
       endedHandler = null;
     };
   }),
+  saveTextDialog: vi.fn(async () => null),
 }));
 
 const SESSION_A: StreamingSessionSummary = {
@@ -70,6 +72,22 @@ beforeEach(() => {
   sourcesHandler = null;
   endedHandler = null;
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
+  // jsdom provides a real, functional Clipboard implementation on a
+  // non-configurable `navigator`, so replacing `navigator`/`navigator.
+  // clipboard` wholesale (Object.assign, defineProperty, vi.stubGlobal) is
+  // silently ineffective — spying on the real method is what actually
+  // intercepts the call. Whether jsdom has initialized `navigator.clipboard`
+  // by this point varies with run order/isolation, so fall back to defining
+  // a plain stub object to spy on when it's not there yet.
+  if (!navigator.clipboard) {
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText: async () => {} },
+      configurable: true,
+    });
+  }
+  writeTextMock = vi
+    .spyOn(navigator.clipboard, "writeText")
+    .mockResolvedValue(undefined);
 });
 
 describe("StreamingView", () => {
@@ -545,5 +563,140 @@ describe("StreamingView", () => {
     expect(
       await screen.findByText(/Start a session, or open one/),
     ).toBeInTheDocument();
+  });
+
+  it("Copy and Export are disabled until there is transcript text", async () => {
+    render(<StreamingView onClose={vi.fn()} />);
+    await screen.findByText(/Start a session, or open one/);
+
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Export as Markdown" }),
+    ).toBeDisabled();
+  });
+
+  it("Copy writes the plain transcript to the clipboard, marking [unavailable] windows too", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({
+        windows: [
+          {
+            window_index: 0,
+            start_ms: 0,
+            end_ms: 7000,
+            text: "hello",
+            language: "en",
+            outcome_ok: true,
+          },
+          {
+            window_index: 1,
+            start_ms: 7000,
+            end_ms: 14000,
+            text: "",
+            language: "auto",
+            outcome_ok: false,
+          },
+        ],
+      }),
+    );
+    render(<StreamingView onClose={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy transcript" }),
+    );
+
+    expect(await screen.findByText("Copied")).toBeInTheDocument();
+    expect(writeTextMock).toHaveBeenCalledWith("hello [unavailable]");
+  });
+
+  it("Export saves a Markdown-formatted file named after the session title", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({
+        title: "Team Standup",
+        windows: [
+          {
+            window_index: 0,
+            start_ms: 0,
+            end_ms: 7000,
+            text: "hello there",
+            language: "en",
+            outcome_ok: true,
+          },
+        ],
+      }),
+    );
+    render(<StreamingView onClose={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Export as Markdown" }),
+    );
+
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
+      "# Team Standup\n\nhello there\n",
+      "Team Standup.md",
+    );
+  });
+
+  it("a failed clipboard write surfaces the error instead of silently doing nothing", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({
+        windows: [
+          {
+            window_index: 0,
+            start_ms: 0,
+            end_ms: 7000,
+            text: "hello",
+            language: "en",
+            outcome_ok: true,
+          },
+        ],
+      }),
+    );
+    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue("denied");
+    render(<StreamingView onClose={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy transcript" }),
+    );
+
+    expect(await screen.findByText(/denied/)).toBeInTheDocument();
+  });
+
+  it("a failed export surfaces the error", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({
+        windows: [
+          {
+            window_index: 0,
+            start_ms: 0,
+            end_ms: 7000,
+            text: "hello",
+            language: "en",
+            outcome_ok: true,
+          },
+        ],
+      }),
+    );
+    vi.mocked(ipc.saveTextDialog).mockRejectedValue("disk full");
+    render(<StreamingView onClose={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Export as Markdown" }),
+    );
+
+    expect(await screen.findByText(/disk full/)).toBeInTheDocument();
   });
 });

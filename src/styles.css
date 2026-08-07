@@ -1483,6 +1483,37 @@ body {
   background: var(--bg);
 }
 
+.streaming-transcript-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--wp-space-sm);
+  margin-bottom: var(--wp-space-md);
+}
+
+.streaming-action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 var(--wp-space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--wp-font-size-sm);
+  cursor: pointer;
+}
+
+.streaming-action-btn:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.streaming-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .streaming-empty {
   color: var(--muted);
   font-size: var(--wp-font-size-body);

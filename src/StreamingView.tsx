@@ -7,6 +7,7 @@ import {
   onStreamingWindow,
   openStreamingSession,
   renameStreamingSession,
+  saveTextDialog,
   startStreamingSession,
   stopStreamingSession,
   type StreamingSessionSummary,
@@ -45,9 +46,31 @@ function sourcesLabel(sources: {
   return "No audio source";
 }
 
+/** A window's text for display/export — the same `[unavailable]` marker the
+ * live transcript shows for a fail-open window, so copy/export output
+ * matches what's on screen rather than silently dropping or blanking a
+ * failed span. */
+function windowText(w: StreamingWindow): string {
+  return w.outcome_ok ? w.text : "[unavailable]";
+}
+
+function plainTranscript(windows: StreamingWindow[]): string {
+  return windows.map(windowText).join(" ").replace(/\s+/g, " ").trim();
+}
+
+function toMarkdown(title: string, windows: StreamingWindow[]): string {
+  return `# ${title}\n\n${plainTranscript(windows)}\n`;
+}
+
+function fileNameFor(title: string): string {
+  const slug = title.replace(/[^\w\- ]+/g, "").trim();
+  return `${slug || "streaming-session"}.md`;
+}
+
 export function StreamingView({ onClose }: { onClose: () => void }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [activeTitle, setActiveTitle] = useState<string>("Streaming Session");
   const [windows, setWindows] = useState<StreamingWindow[]>([]);
   const [isRunning, setIsRunning] = useState(false);
   const [sources, setSources] = useState<{
@@ -56,6 +79,7 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
 
   const refreshSessions = useCallback(async () => {
     setSessions(await listStreamingSessions());
@@ -117,8 +141,10 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
     try {
       const summary = await startStreamingSession();
       setActiveId(summary.id);
+      setActiveTitle(summary.title);
       setWindows([]);
       setSources(null);
+      setCopyStatus("idle");
       setIsRunning(true);
       await refreshSessions();
     } catch (e) {
@@ -148,9 +174,11 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
     try {
       const session = await openStreamingSession(id);
       setActiveId(id);
+      setActiveTitle(session.title);
       setWindows(session.windows);
       setIsRunning(false);
       setSources(null);
+      setCopyStatus("idle");
     } catch (e) {
       setError(String(e));
     }
@@ -162,12 +190,13 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
       if (!title || title === currentTitle) return;
       try {
         await renameStreamingSession(id, title);
+        if (activeId === id) setActiveTitle(title);
         await refreshSessions();
       } catch (e) {
         setError(String(e));
       }
     },
-    [refreshSessions],
+    [refreshSessions, activeId],
   );
 
   const handleDelete = useCallback(
@@ -187,6 +216,30 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
     },
     [refreshSessions],
   );
+
+  const handleCopy = useCallback(async () => {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(plainTranscript(windows));
+      setCopyStatus("copied");
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [windows]);
+
+  const handleExport = useCallback(async () => {
+    setError(null);
+    try {
+      await saveTextDialog(
+        toMarkdown(activeTitle, windows),
+        fileNameFor(activeTitle),
+      );
+    } catch (e) {
+      setError(String(e));
+    }
+  }, [windows, activeTitle]);
+
+  const hasText = windows.some((w) => windowText(w).length > 0);
 
   return (
     <div className="app streaming-view">
@@ -291,6 +344,30 @@ export function StreamingView({ onClose }: { onClose: () => void }) {
         </aside>
 
         <main className="streaming-transcript" aria-label="Live transcript">
+          <div className="streaming-transcript-actions">
+            <button
+              type="button"
+              className="streaming-action-btn"
+              aria-label="Copy transcript"
+              title="Copy transcript"
+              onClick={() => void handleCopy()}
+              disabled={!hasText}
+            >
+              <Icon name="check" size={16} />
+              {copyStatus === "copied" ? "Copied" : "Copy"}
+            </button>
+            <button
+              type="button"
+              className="streaming-action-btn"
+              aria-label="Export as Markdown"
+              title="Export as Markdown"
+              onClick={() => void handleExport()}
+              disabled={!hasText}
+            >
+              <Icon name="download" size={16} />
+              Export
+            </button>
+          </div>
           {windows.length === 0 ? (
             <p className="streaming-empty">
               {isRunning
