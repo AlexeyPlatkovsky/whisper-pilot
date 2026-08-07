@@ -11,6 +11,7 @@ pub mod models;
 pub mod settings;
 pub mod store;
 pub mod streaming_audio;
+pub mod streaming_session;
 pub mod transcribe;
 
 use error::{AppError, Result};
@@ -76,9 +77,18 @@ fn now_ms() -> Result<i64> {
 /// The whisper model is loaded lazily on first use and cached for the session —
 /// loading ~800 MB should not block app launch or fail startup when the model
 /// is missing.
+///
+/// `whisper_busy` enforces WP-71's mutual-exclusion contract (a Meeting
+/// transcription and a Streaming session cannot run concurrently, since both
+/// would contend for `model`'s one cached context) via
+/// `streaming_session::WhisperUsageGuard`. It is a plain field here, not
+/// wrapped alongside `model`, because acquiring it must be synchronous and
+/// infallible-to-check from an async command without holding `model`'s lock
+/// for the guard's entire lifetime.
 #[derive(Default)]
 struct AppState {
     model: Mutex<Option<Arc<WhisperContext>>>,
+    whisper_busy: std::sync::atomic::AtomicU8,
 }
 
 impl AppState {
@@ -249,6 +259,22 @@ async fn transcribe_meeting(
     id: i64,
     state: State<'_, AppState>,
 ) -> Result<TranscribeMeetingResult> {
+    // WP-71: a Streaming session and a Meeting transcription share the one
+    // cached Whisper context and cannot run concurrently. Held for this
+    // whole command, released on return via Drop.
+    let _whisper_guard = streaming_session::WhisperUsageGuard::acquire(
+        &state.whisper_busy,
+        streaming_session::WhisperUser::Meeting,
+    )
+    .map_err(|holder| match holder {
+        streaming_session::WhisperUser::Streaming => AppError::Transcribe(
+            "a Streaming session is active; stop it before transcribing a meeting".into(),
+        ),
+        streaming_session::WhisperUser::Meeting => {
+            AppError::Transcribe("another meeting transcription is already running".into())
+        }
+    })?;
+
     let app_support_dir = app_data_dir(&app)?;
     let meeting = meetings::open_meeting(&app_support_dir, id)?;
     let path = meeting.source_path.ok_or_else(|| {

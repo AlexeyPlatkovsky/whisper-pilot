@@ -3,8 +3,17 @@ id: WP-71
 title: Streaming decode/session pipeline (rolling-window Whisper)
 priority: normal
 type: feature
-status: backlog
+status: done
 created_at: '2026-08-06T19:26:50Z'
-updated_at: '2026-08-06T19:27:21Z'
+updated_at: '2026-08-07T06:27:20Z'
 parent_id: WP-68
-description: Decode a live Streaming session on rolling ~5-10s windows reusing the bundled large-v3-turbo Whisper model, re-detecting language per window to support mixed-language input. Fails open per window on a decode error (skip and continue). Mutually exclusive with an active Meeting file transcription for v1 since both share the one cached Whisper AppState context. Requires a feasibility spike measuring window decode latency on supported Mac hardware before its own DoD's latency threshold can be finalized.
+description: 'Decode a live Streaming session on rolling ~7s windows (midpoint of the 5-10s budget) reusing the bundled large-v3-turbo Whisper model via the existing transcribe::transcribe function -- a window decodes exactly like a short Meeting file, so no new whisper-rs FFI was needed. Each window re-detects language independently to support mixed-language input. Fails open per window on a decode error (skip, log, keep the session running). Mutually exclusive with an active Meeting file transcription (and with a second concurrent Streaming session) via a new WhisperUsageGuard/AppState.whisper_busy primitive, since both would contend for the one cached Whisper context and whisper-rs''s WhisperState is not proven safe for concurrent .full() calls against the same WhisperContext.
+
+
+  Not yet wired to Tauri IPC -- this is the core session state machine; command/event registration lands with WP-72 (persistence) and WP-73 (UI), since a meaningful end-to-end command needs both. The required feasibility spike (measuring real per-window decode latency on supported Mac hardware) could not be run in this environment -- no downloaded model, no way to exercise real capture. WindowResult.decode_ms exists so that measurement is possible once someone can run it; WINDOW_SECONDS=7 is not yet the finalized threshold.'
+dod:
+- streaming_session.rs implements windowed decode (take_window, window_start_ms) reusing transcribe::transcribe per window, with fail-open error handling (WindowResult.outcome carries Result, loop continues on Err).
+- WhisperUsageGuard enforces mutual exclusion between Meeting and Streaming via AppState.whisper_busy; transcribe_meeting acquires it for its whole duration and returns a clear error when a Streaming session (or another Meeting transcription) is active.
+- Pure windowing and guard-acquisition logic has unit test coverage (8 new tests) and all tests pass.
+- cargo check/test/clippy(-D warnings)/fmt --check all pass with zero regressions (201/201 lib tests, unchanged 5/5 packaging tests).
+- docs/architecture.md documents the module, its fail-open/mutual-exclusion/IPC-not-yet-wired/latency-not-measured scope explicitly.

@@ -21,6 +21,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
                                    [M2] diarize.rs   sherpa-onnx speaker turns + merge
                                    [M3] notes.rs     llama.cpp structured meeting notes
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
+                                   [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
 ```
 
 The Rust core does all heavy work and owns persistence; the React layer is a
@@ -320,6 +321,48 @@ not exercised end-to-end.
 Mutual exclusion with an active Meeting transcription (both would share the
 one cached Whisper `AppState` context) is WP-71's concern, not implemented
 here — this module only captures and mixes audio, it does not decode it.
+
+## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
+
+Decodes the continuous sample stream `streaming_audio.rs` produces on fixed,
+non-overlapping ~7s windows (`WINDOW_SECONDS`, the midpoint of WP-68's
+approved 5-10s latency budget) by calling `transcribe::transcribe` per
+window — a window is just a short slice of samples, decoded exactly like a
+(short) Meeting file, so no new whisper-rs FFI was needed. Each window gets
+its own language detection, unlike Meeting's once-per-file detection
+(ADR-012), since a live session has no single fixed language the way a
+finished file does. A word can split across a window boundary — an accepted,
+documented trade-off for non-overlapping windows, not a silent one.
+
+**Fail-open per window** (mirroring diarization, ADR-013): a window whose
+decode errors is skipped — logged, no text emitted for that span — rather
+than ending the session. `WindowResult.outcome` carries the `Result` through
+rather than the loop propagating it.
+
+**Mutual exclusion** (`WhisperUsageGuard`, backed by a new `AppState.
+whisper_busy: AtomicU8`): a Meeting transcription and a Streaming session
+cannot run concurrently, because both would contend for the one cached
+Whisper context and `whisper-rs`'s `WhisperState` is not proven safe for two
+concurrent `.full()` calls against the same `WhisperContext`. `transcribe_
+meeting` now acquires this guard for its whole duration, released on drop;
+Streaming's own session start will do the same once wired to IPC. This
+guard is deliberately not narrowed to "only block the *other* kind" — two
+concurrent Meeting transcriptions are serialized by the same guard, a small,
+disclosed safety tightening beyond WP-68's literal Streaming-vs-Meeting
+ask, since the underlying safety property (one decode at a time against the
+shared context) does not depend on which caller is asking.
+
+**Not yet wired to Tauri IPC.** This module is the core session state
+machine; command/event registration to start/stop a session from the UI
+lands with WP-73 (Streaming UI) and WP-72 (persistence), since a meaningful
+end-to-end command needs both.
+
+**Latency is not measured against real hardware.** The feasibility spike
+WP-68's own DoD requires — measuring real per-window decode latency across
+supported Mac hardware — needs a person running this with a downloaded
+model, which this environment cannot do. `WindowResult.decode_ms` exists so
+that measurement is possible once someone can run it; `WINDOW_SECONDS`
+itself is not yet the finalized, measured threshold.
 
 ## Structured Notes (M3, `notes.rs`) — planned
 
