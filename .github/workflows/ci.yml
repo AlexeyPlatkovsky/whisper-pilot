@@ -143,7 +143,7 @@ jobs:
             const overall = allSuccess ? '✅ Passed' : '❌ Failed';
             const body = `## CI Quality Gates — ${overall}
 
-[View workflow run](${runUrl})
+            [View workflow run](${runUrl})
 
             | Check | Result |
             |-------|--------|
