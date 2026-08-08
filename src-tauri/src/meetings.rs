@@ -185,6 +185,70 @@ pub fn delete_meeting(app_support_dir: &Path, id: MeetingId) -> Result<()> {
     Store::open(app_support_dir)?.delete_meeting(id)
 }
 
+/// Auto-save an edited segment's text. `index` addresses the meeting's
+/// currently displayed (speaker-coalesced) segment list — the same list
+/// `open_meeting`/`to_dto` return — not raw storage ordinals. Persisting
+/// therefore rewrites storage to match the coalesced view: consecutive
+/// same-speaker raw segments the user sees (and edits) as one block become
+/// one stored row from this point on. No explicit save action is required.
+pub fn update_segment(
+    app_support_dir: &Path,
+    id: MeetingId,
+    index: usize,
+    text: String,
+) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    let meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+
+    let stored = store.list_segments(id)?;
+    let mut coalesced = coalesce_by_speaker(
+        stored
+            .iter()
+            .map(|segment| SegmentDto {
+                start_ms: segment.start_ms,
+                end_ms: segment.end_ms,
+                text: segment.text.clone(),
+                speaker_id: segment.speaker_id,
+            })
+            .collect(),
+    );
+    let target = coalesced
+        .get_mut(index)
+        .ok_or_else(|| AppError::Store(format!("segment {index} was not found")))?;
+    target.text = text;
+
+    let rows: Vec<NewSegment> = coalesced
+        .iter()
+        .enumerate()
+        .map(|(ordinal, segment)| NewSegment {
+            ordinal: ordinal as i64,
+            start_ms: segment.start_ms,
+            end_ms: segment.end_ms,
+            text: segment.text.clone(),
+            speaker_id: segment.speaker_id,
+        })
+        .collect();
+    store.replace_segments(id, &rows)?;
+
+    let saved = store.list_segments(id)?;
+    let notes = store.get_notes(id)?;
+    to_dto(meeting, saved, notes)
+}
+
+/// Auto-save the meeting notes fields as the user edits them.
+pub fn update_notes(app_support_dir: &Path, notes: MeetingNotes) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    let meeting = store
+        .get_meeting(notes.meeting_id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {} was not found", notes.meeting_id)))?;
+    store.upsert_notes(&notes)?;
+    let segments = store.list_segments(notes.meeting_id)?;
+    let saved_notes = store.get_notes(notes.meeting_id)?;
+    to_dto(meeting, segments, saved_notes)
+}
+
 fn validate_title(title: String) -> Result<String> {
     let title = title.trim().to_string();
     if title.is_empty() {
@@ -735,6 +799,128 @@ mod tests {
         ));
         assert!(matches!(
             delete_meeting(temp.path(), saved.id),
+            Err(AppError::Store(_))
+        ));
+    }
+
+    #[test]
+    fn given_saved_transcript_when_a_segment_is_edited_then_the_new_text_persists_and_reopens() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![
+                dto(0, 1_000, "Hello", Some(1)),
+                dto(2_000, 3_000, "World", Some(2)),
+            ],
+            Some(3_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        let updated = update_segment(temp.path(), created.id, 0, "Hi there".to_string())
+            .expect("update segment");
+
+        assert_eq!(updated.segments[0].text, "Hi there");
+        assert_eq!(updated.segments[1].text, "World");
+
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert_eq!(reopened.segments[0].text, "Hi there");
+    }
+
+    #[test]
+    fn given_coalesced_segments_when_the_merged_block_is_edited_then_storage_collapses_to_match_the_display(
+    ) {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![
+                dto(0, 1_000, "Hello", Some(1)),
+                dto(1_000, 2_000, "there", Some(1)),
+            ],
+            Some(2_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        let updated = update_segment(temp.path(), created.id, 0, "Hi all".to_string())
+            .expect("update segment");
+        assert_eq!(updated.segments, vec![dto(0, 2_000, "Hi all", Some(1))]);
+
+        let stored = Store::open(temp.path())
+            .expect("open store")
+            .list_segments(created.id)
+            .expect("list stored segments");
+        assert_eq!(stored.len(), 1);
+        assert_eq!(stored[0].text, "Hi all");
+    }
+
+    #[test]
+    fn given_an_out_of_range_index_or_unknown_meeting_when_a_segment_is_edited_then_a_typed_error_returns(
+    ) {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![dto(0, 1_000, "Hello", Some(1))],
+            Some(1_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        assert!(matches!(
+            update_segment(temp.path(), created.id, 5, "x".to_string()),
+            Err(AppError::Store(_))
+        ));
+        assert!(matches!(
+            update_segment(temp.path(), 999_999, 0, "x".to_string()),
+            Err(AppError::Store(_))
+        ));
+    }
+
+    #[test]
+    fn given_a_meeting_when_notes_are_edited_then_they_persist_and_reopen() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+
+        let notes = MeetingNotes {
+            meeting_id: created.id,
+            summary: "Summary".to_string(),
+            decisions: "Decided X".to_string(),
+            action_items: "Do Y".to_string(),
+            open_questions: "".to_string(),
+            participants: "Alice, Bob".to_string(),
+        };
+        let updated = update_notes(temp.path(), notes.clone()).expect("update notes");
+        assert_eq!(updated.notes, Some(notes.clone()));
+
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert_eq!(reopened.notes, Some(notes));
+    }
+
+    #[test]
+    fn given_an_unknown_meeting_when_notes_are_edited_then_a_typed_error_returns() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let notes = MeetingNotes {
+            meeting_id: 999_999,
+            summary: String::new(),
+            decisions: String::new(),
+            action_items: String::new(),
+            open_questions: String::new(),
+            participants: String::new(),
+        };
+        assert!(matches!(
+            update_notes(temp.path(), notes),
             Err(AppError::Store(_))
         ));
     }

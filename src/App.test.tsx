@@ -67,6 +67,9 @@ vi.mock("./ipc", () => ({
   listMeetings: vi.fn(),
   openMeeting: vi.fn(),
   renameMeeting: vi.fn(),
+  updateSegment: vi.fn(),
+  updateNotes: vi.fn(),
+  generateNotes: vi.fn(),
   saveTextDialog: vi.fn(async () => null),
   listTaskModels: vi.fn(),
   downloadModel: vi.fn(),
@@ -125,6 +128,16 @@ beforeEach(() => {
   vi.mocked(ipc.deleteMeeting).mockReset();
   vi.mocked(ipc.openMeeting).mockReset();
   vi.mocked(ipc.renameMeeting).mockReset();
+  vi.mocked(ipc.updateSegment).mockReset();
+  vi.mocked(ipc.updateNotes).mockReset();
+  vi.mocked(ipc.updateSegment).mockResolvedValue(
+    transcribedMeeting([HELLO_SEGMENT]),
+  );
+  vi.mocked(ipc.updateNotes).mockImplementation(async (notes) => ({
+    ...transcribedMeeting([HELLO_SEGMENT]),
+    notes,
+  }));
+  vi.mocked(ipc.generateNotes).mockReset();
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -868,6 +881,147 @@ describe("App — transcript editing", () => {
     await user.type(textarea, "Hi there");
 
     expect(screen.getByDisplayValue("Hi there")).toBeInTheDocument();
+  });
+
+  it("auto-saves an edited segment after a debounce, with no explicit save action", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      render(<App />);
+      await waitForAddFileEnabled();
+      await chooseAndTranscribe(user);
+      const textarea = await screen.findByDisplayValue("Hello");
+
+      await user.clear(textarea);
+      await user.type(textarea, "Hi there");
+      expect(ipc.updateSegment).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ipc.updateSegment).toHaveBeenCalledWith(100, 0, "Hi there");
+      expect(ipc.updateSegment).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("debounces rapid keystrokes into a single auto-save call", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      render(<App />);
+      await waitForAddFileEnabled();
+      await chooseAndTranscribe(user);
+      const textarea = await screen.findByDisplayValue("Hello");
+
+      await user.type(textarea, "!");
+      await vi.advanceTimersByTimeAsync(200);
+      await user.type(textarea, "!");
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(ipc.updateSegment).toHaveBeenCalledTimes(1);
+      expect(ipc.updateSegment).toHaveBeenCalledWith(100, 0, "Hello!!");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("surfaces an auto-save failure without discarding the edit", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.updateSegment).mockRejectedValue(new Error("disk full"));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      render(<App />);
+      await waitForAddFileEnabled();
+      await chooseAndTranscribe(user);
+      const textarea = await screen.findByDisplayValue("Hello");
+
+      await user.clear(textarea);
+      await user.type(textarea, "Hi there");
+      await vi.advanceTimersByTimeAsync(500);
+
+      await screen.findByText(/disk full/);
+      expect(screen.getByDisplayValue("Hi there")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("App — notes editing", () => {
+  async function transcribeAndCraftNotes(
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_DOWNLOADED,
+      {
+        id: "llm-1",
+        task: "llm",
+        label: "Local LLM",
+        downloaded: true,
+        size_bytes: 1,
+        recommended: false,
+      },
+    ]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "none",
+      active_model_llm: "llm-1",
+    });
+    vi.mocked(ipc.generateNotes).mockResolvedValue({
+      ...transcribedMeeting([HELLO_SEGMENT]),
+      notes: {
+        meeting_id: 100,
+        summary: "Summary text",
+        decisions: "",
+        action_items: "",
+        open_questions: "",
+        participants: "",
+      },
+    });
+
+    render(<App />);
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    const craft = await screen.findByRole("button", { name: "Craft notes" });
+    await waitFor(() => expect(craft).not.toBeDisabled());
+    await user.click(craft);
+    return screen.findByDisplayValue("Summary text");
+  }
+
+  it("auto-saves an edited notes field after a debounce", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      const summaryField = await transcribeAndCraftNotes(user);
+
+      await user.clear(summaryField);
+      await user.type(summaryField, "Updated summary");
+      expect(ipc.updateNotes).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(ipc.updateNotes).toHaveBeenCalledTimes(1);
+      expect(ipc.updateNotes).toHaveBeenCalledWith(
+        expect.objectContaining({
+          meeting_id: 100,
+          summary: "Updated summary",
+        }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

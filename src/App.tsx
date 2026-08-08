@@ -13,6 +13,8 @@ import {
   onTranscriptionPhase,
   saveTextDialog,
   renameMeeting,
+  updateSegment,
+  updateNotes,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
   type MeetingNotes,
@@ -54,6 +56,10 @@ function formatDuration(ms: number): string {
   if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
   return `${m}m ${s.toString().padStart(2, "0")}s`;
 }
+
+// How long an edited segment or notes field waits, idle, before it is
+// auto-saved to the database. There is no explicit save action or state.
+const AUTOSAVE_DEBOUNCE_MS = 500;
 
 function toSummary(meeting: PersistedMeeting): MeetingSummary {
   return {
@@ -115,6 +121,21 @@ export function App() {
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
+  // Pending debounced auto-save timers, keyed by segment index, and the one
+  // pending notes auto-save timer. Each timer's meeting id is captured at
+  // schedule time, so switching meetings mid-debounce still saves to the
+  // meeting the edit actually belongs to.
+  const segmentSaveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(
+    new Map(),
+  );
+  const notesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `notes` for the debounce timer callback below, which fires
+  // outside a React batch and must read the latest merged fields rather than
+  // whatever was in scope when the timer was scheduled.
+  const notesRef = useRef<MeetingNotes | null>(null);
+  useEffect(() => {
+    notesRef.current = notes;
+  }, [notes]);
   // Mirrors `transcribingId` for the phase-change listener below, which is
   // registered once and would otherwise close over a stale id.
   const transcribingIdRef = useRef<number | null>(null);
@@ -411,6 +432,36 @@ export function App() {
     setSegments((prev) =>
       prev.map((s, i) => (i === index ? { ...s, text } : s)),
     );
+    const meetingId = activeMeeting?.id;
+    if (meetingId === undefined) return;
+    const pending = segmentSaveTimers.current.get(index);
+    if (pending !== undefined) clearTimeout(pending);
+    segmentSaveTimers.current.set(
+      index,
+      setTimeout(() => {
+        segmentSaveTimers.current.delete(index);
+        updateSegment(meetingId, index, text).catch((error) => {
+          setStatus({ kind: "error", message: String(error) });
+        });
+      }, AUTOSAVE_DEBOUNCE_MS),
+    );
+  }
+
+  function editNotesField(field: keyof MeetingNotes, value: string) {
+    if (field === "meeting_id") return;
+    setNotes((prev) => (prev ? { ...prev, [field]: value } : prev));
+    const meetingId = activeMeeting?.id;
+    if (meetingId === undefined) return;
+    if (notesSaveTimer.current !== null) clearTimeout(notesSaveTimer.current);
+    notesSaveTimer.current = setTimeout(() => {
+      notesSaveTimer.current = null;
+      const current = notesRef.current;
+      if (current) {
+        updateNotes({ ...current, meeting_id: meetingId }).catch((error) => {
+          setStatus({ kind: "error", message: String(error) });
+        });
+      }
+    }, AUTOSAVE_DEBOUNCE_MS);
   }
 
   async function handleSave() {
@@ -879,36 +930,26 @@ export function App() {
           <aside className="wp-mfu">
             {notes ? (
               <div className="wp-mfu-notes">
-                {notes.summary && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Summary</h3>
-                    <p className="wp-mfu-text">{notes.summary}</p>
+                {(
+                  [
+                    ["summary", "Summary"],
+                    ["decisions", "Decisions"],
+                    ["action_items", "Action Items"],
+                    ["open_questions", "Open Questions"],
+                    ["participants", "Participants"],
+                  ] as const
+                ).map(([field, heading]) => (
+                  <section className="wp-mfu-section" key={field}>
+                    <h3 className="wp-mfu-heading">{heading}</h3>
+                    <textarea
+                      className="wp-mfu-text wp-mfu-textarea"
+                      value={notes[field]}
+                      rows={1}
+                      onChange={(e) => editNotesField(field, e.target.value)}
+                      disabled={activeIsTranscribing || isGeneratingNotes}
+                    />
                   </section>
-                )}
-                {notes.decisions && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Decisions</h3>
-                    <p className="wp-mfu-text">{notes.decisions}</p>
-                  </section>
-                )}
-                {notes.action_items && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Action Items</h3>
-                    <p className="wp-mfu-text">{notes.action_items}</p>
-                  </section>
-                )}
-                {notes.open_questions && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Open Questions</h3>
-                    <p className="wp-mfu-text">{notes.open_questions}</p>
-                  </section>
-                )}
-                {notes.participants && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Participants</h3>
-                    <p className="wp-mfu-text">{notes.participants}</p>
-                  </section>
-                )}
+                ))}
               </div>
             ) : (
               <div className="wp-mfu-placeholder">

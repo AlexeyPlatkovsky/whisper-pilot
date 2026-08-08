@@ -974,6 +974,34 @@ body {
   white-space: pre-wrap;
 }
 
+.wp-mfu-textarea {
+  width: 100%;
+  resize: none;
+  overflow: hidden;
+  border: 1px solid transparent;
+  border-radius: var(--wp-radius-sm);
+  margin: -4px -8px;
+  padding: 4px 8px;
+  background: transparent;
+  font-family: inherit;
+  field-sizing: content;
+}
+
+.wp-mfu-textarea:hover:not(:disabled) {
+  border-color: var(--border);
+}
+
+.wp-mfu-textarea:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wp-mfu-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  background: var(--panel);
+}
+
 /* Settings opened from inside Streaming layers on top rather than replacing
    the tree, so a live recording's mounted state survives the detour. */
 .settings-overlay {

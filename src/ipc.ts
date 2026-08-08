@@ -58,6 +58,21 @@ export function deleteMeeting(id: number): Promise<void> {
   return invoke<void>("delete_meeting", { id });
 }
 
+/** Auto-save an edited segment's text; `index` addresses the displayed
+ * (speaker-coalesced) segment list. No explicit save action is required. */
+export function updateSegment(
+  id: number,
+  index: number,
+  text: string,
+): Promise<Meeting> {
+  return invoke<Meeting>("update_segment", { id, index, text });
+}
+
+/** Auto-save the meeting notes fields as the user edits them. */
+export function updateNotes(notes: MeetingNotes): Promise<Meeting> {
+  return invoke<Meeting>("update_notes", { notes });
+}
+
 export function openFileDialog(): Promise<string | null> {
   return invoke<string | null>("open_file_dialog");
 }

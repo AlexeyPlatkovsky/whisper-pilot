@@ -24,6 +24,7 @@ use settings::Settings;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
+use store::MeetingNotes;
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 use whisper_rs::WhisperContext;
@@ -422,6 +423,25 @@ fn rename_meeting(app: tauri::AppHandle, id: i64, title: String) -> Result<Meeti
 #[tauri::command]
 fn delete_meeting(app: tauri::AppHandle, id: i64) -> Result<()> {
     meetings::delete_meeting(&app_data_dir(&app)?, id)
+}
+
+/// Auto-save a single transcript segment's edited text. `index` addresses the
+/// meeting's currently displayed (speaker-coalesced) segment list, matching
+/// what the workspace renders — see `meetings::update_segment`.
+#[tauri::command]
+fn update_segment(
+    app: tauri::AppHandle,
+    id: i64,
+    index: usize,
+    text: String,
+) -> Result<MeetingDto> {
+    meetings::update_segment(&app_data_dir(&app)?, id, index, text)
+}
+
+/// Auto-save the meeting notes fields as the user edits them.
+#[tauri::command]
+fn update_notes(app: tauri::AppHandle, notes: MeetingNotes) -> Result<MeetingDto> {
+    meetings::update_notes(&app_data_dir(&app)?, notes)
 }
 
 /// List persisted Streaming sessions newest-touched first, for the
@@ -925,6 +945,8 @@ pub fn run() {
             open_meeting,
             rename_meeting,
             delete_meeting,
+            update_segment,
+            update_notes,
             set_meeting_source,
             transcribe_meeting,
             list_streaming_sessions,

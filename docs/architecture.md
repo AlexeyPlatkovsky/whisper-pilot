@@ -38,8 +38,7 @@ cancellable via Tauri events.
 The library is a local **SQLite** database (`whisperpilot.sqlite3` in the app
 support directory, via bundled `rusqlite`). WP-16 implements the idempotent
 schema and Rust CRUD store. WP-21/WP-22 expose create/list/open/rename/delete
-commands and hydrate the workspace from persisted meetings; attaching files,
-transcription, and UI auto-save wiring remain follow-on work. A **meeting** is
+commands and hydrate the workspace from persisted meetings. A **meeting** is
 one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
@@ -47,26 +46,31 @@ defined "source missing" state).
 
 Entities (indicative):
 
-| Entity | Key fields |
-|---|---|
+| Entity     | Key fields                                                                        |
+| ---------- | --------------------------------------------------------------------------------- |
 | `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
-| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2) |
-| `notes` | meeting_id, summary, decisions, action_items, open_questions, participants (M3) |
+| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2)     |
+| `notes`    | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
 
 The store replaces/reads segments in ordinal order, upserts a single notes
-record per meeting, and cascades meeting deletion to dependent rows. Follow-on
-UI edits (segment text, speaker labels, notes) are **auto-saved**: each edit
-will persist to the DB immediately; there is no explicit save state. Export is
-a separate, explicit write to an external file.
+record per meeting, and cascades meeting deletion to dependent rows. Segment
+text and notes edits are **auto-saved** (WP-17): the front end debounces each
+edit (500ms idle) and calls `update_segment`/`update_notes`, which persist to
+the DB immediately; there is no explicit save state or button. Export is a
+separate, explicit write to an external file.
 
-Stored `segments` rows stay whisper's original fine-grained spans — `to_dto`
-(`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into larger
-display blocks on every read path (see Speaker Diarization below); the
-ordinal-keyed rows themselves are never merged or rewritten. **Not yet
-designed:** WP-17's auto-save wiring will edit whatever the UI renders, which
-after WP-48 is a coalesced block that can span multiple underlying
-ordinal-keyed rows — the write-back mapping from an edited coalesced block
-back to its source row(s) still needs a design before WP-17 is implemented.
+Stored `segments` rows start as whisper's original fine-grained spans —
+`to_dto` (`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into
+larger display blocks on every read path (see Speaker Diarization below), and
+that is what the UI renders and edits as one block. `update_segment` (WP-17)
+therefore writes back at the same granularity the user edited: it re-derives
+the current coalesced list, replaces the edited block's text, and rewrites
+_all_ segment rows for the meeting to match it. This means editing any one
+coalesced block also collapses the other, untouched blocks in that meeting to
+one row per display block from that point on — the fine-grained pre-edit
+ordinals are not preserved once an auto-save has happened. Speaker labels
+(the user-facing rename in `SpeakerLabelEditor`) remain session-only, not
+persisted; only segment text and notes are in WP-17's scope.
 
 ## Audio Ingestion (`audio.rs`)
 
@@ -83,7 +87,7 @@ whisper-rs with the `metal` feature; the context is created once and cached in
 auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
 language argument, so no caller can force one. The code Whisper decoded with is
 read back from decoder state and stored on the meeting, making
-`meetings.language` an *output* of a run rather than an input to one. Detection
+`meetings.language` an _output_ of a run rather than an input to one. Detection
 uses the first 30 seconds of audio, so a recording that opens with silence can
 misdetect — a known limitation. Whisper's progress callback drives a progress
 event; a cancel flag checked in the callback aborts a run. Output is timestamped
@@ -97,12 +101,13 @@ configuration as plain data so it can be asserted in a unit test — notably
 immediately after detection when it is set, yielding an empty transcript.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
-+ merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
-so the meeting is already marked finished while diarization is still running (see
-Speaker Diarization below). Progress and Stop span both phases; if diarization is
-unavailable or fails, the run still finishes with plain (speaker-less) segments.
-Re-running Transcribe on a meeting that already has a transcript replaces it (and
-any notes) after a confirmation.
+
+- merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
+  so the meeting is already marked finished while diarization is still running (see
+  Speaker Diarization below). Progress and Stop span both phases; if diarization is
+  unavailable or fails, the run still finishes with plain (speaker-less) segments.
+  Re-running Transcribe on a meeting that already has a transcript replaces it (and
+  any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models.rs`) into the app support directory;
@@ -252,7 +257,7 @@ native sherpa-onnx code that can abort the process it runs in (see the
 clustering crash risk and Diarization Process Isolation above), and such an
 abort is invisible to
 `apply_diarization_outcome`'s fail-open contract, so anything unpersisted at
-that moment is lost outright. Saving first bounds the cost of *any* diarization
+that moment is lost outright. Saving first bounds the cost of _any_ diarization
 failure to the speaker labels: the whisper pass survives. The diarization pass
 is therefore built as a deferred future, so nothing in it — including the
 `transcription_phase` event — can run before the transcript is safe. Two
@@ -356,7 +361,7 @@ Whisper context and `whisper-rs`'s `WhisperState` is not proven safe for two
 concurrent `.full()` calls against the same `WhisperContext`. `transcribe_
 meeting` now acquires this guard for its whole duration, released on drop;
 Streaming's own session start will do the same once wired to IPC. This
-guard is deliberately not narrowed to "only block the *other* kind" — two
+guard is deliberately not narrowed to "only block the _other_ kind" — two
 concurrent Meeting transcriptions are serialized by the same guard, a small,
 disclosed safety tightening beyond WP-68's literal Streaming-vs-Meeting
 ask, since the underlying safety property (one decode at a time against the
@@ -412,6 +417,7 @@ streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
 Streaming tab consumes.
 
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
+
 `stop_streaming_session` in `lib.rs`, `src/StreamingView.tsx`)
 
 Starting a session ties `streaming_audio.rs` (capture), `streaming_
@@ -556,7 +562,7 @@ Settings live in a small **key–value store** in the app support directory
 (theme, `ui_language`, and each task's active model), applied immediately and
 across restarts. The React layer owns **theming** (light / dark / system, plus
 release themes) and **i18n** (English default, release languages); the OS scheme
-drives the *System* theme.
+drives the _System_ theme.
 
 `models.rs` manages a **fixed, app-defined catalog** of the model(s) each task
 needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
@@ -590,38 +596,39 @@ this app: **Copy** calls the browser `navigator.clipboard.writeText` API
 directly (no Tauri clipboard plugin was added — the web API works in the
 WKWebView and avoids a new plugin/capability-permission surface for a
 one-line need); **Export** renders a minimal Markdown document (`# title`
-+ the plain transcript) through `save_text_dialog`. Both reuse
-`windowText`'s `[unavailable]` marker for a fail-open window, so exported
-output matches what the live view showed rather than silently dropping or
-blanking a failed span.
+
+- the plain transcript) through `save_text_dialog`. Both reuse
+  `windowText`'s `[unavailable]` marker for a fail-open window, so exported
+  output matches what the live view showed rather than silently dropping or
+  blanking a failed span.
 
 ## IPC Contract
 
-| Command | Purpose | Milestone |
-|---|---|---|
-| `open_file_dialog` | Pick a source audio/video file | M1 |
-| `create_meeting()` | Create an empty meeting; returns its id | M2 |
-| `attach_file(meeting, path)` | Attach the source file to a meeting | M2 |
-| `create_transcription(meeting, model)` | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012) | M2 |
-| `cancel_transcription(meeting)` | Abort a running transcription (Stop) | M2 |
-| `list_meetings()` | Meetings list (summaries) | M2 |
-| `open_meeting(id)` | Full meeting (segments, notes, meta) | M2 |
-| `rename_meeting(id, title)` / `delete_meeting(id)` | Library management | M2 |
-| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)` | Auto-saved edits | M2/M3 |
-| `export_meeting(id, format, target)` | Write Markdown / plain text | M2 |
-| `list_models()` | Available (downloaded) Whisper models for the switcher | M2 |
-| `diarize_meeting(id)` | Produce + merge speaker turns | M2 |
-| `get_settings()` / `set_setting(key, value)` | Read/update settings (theme, ui_language, active model) | M2 |
-| `list_task_models()` | Per-task model catalog with download state | M2 |
-| `download_model(id)` / `delete_model(id)` | Fetch (SHA-verified, progress) / remove a model | M2 |
-| `set_active_model(task, id)` | Choose the active model for a task | M3 |
-| `check_update()` / `apply_update()` | App update | M3 |
-| `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
-| `list_streaming_sessions()` | Streaming sessions list (summaries) | WP-68 |
-| `open_streaming_session(id)` | Full session (all decoded windows) | WP-68 |
-| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's | WP-68 |
-| `start_streaming_session()` | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68 |
-| `stop_streaming_session()` | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only) | WP-68 |
+| Command                                                                | Purpose                                                                                                                                                                                       | Milestone |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `open_file_dialog`                                                     | Pick a source audio/video file                                                                                                                                                                | M1        |
+| `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
+| `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
+| `create_transcription(meeting, model)`                                 | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012)                                                                         | M2        |
+| `cancel_transcription(meeting)`                                        | Abort a running transcription (Stop)                                                                                                                                                          | M2        |
+| `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
+| `open_meeting(id)`                                                     | Full meeting (segments, notes, meta)                                                                                                                                                          | M2        |
+| `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
+| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)`  | Auto-saved edits                                                                                                                                                                              | M2/M3     |
+| `export_meeting(id, format, target)`                                   | Write Markdown / plain text                                                                                                                                                                   | M2        |
+| `list_models()`                                                        | Available (downloaded) Whisper models for the switcher                                                                                                                                        | M2        |
+| `diarize_meeting(id)`                                                  | Produce + merge speaker turns                                                                                                                                                                 | M2        |
+| `get_settings()` / `set_setting(key, value)`                           | Read/update settings (theme, ui_language, active model)                                                                                                                                       | M2        |
+| `list_task_models()`                                                   | Per-task model catalog with download state                                                                                                                                                    | M2        |
+| `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
+| `set_active_model(task, id)`                                           | Choose the active model for a task                                                                                                                                                            | M3        |
+| `check_update()` / `apply_update()`                                    | App update                                                                                                                                                                                    | M3        |
+| `generate_notes(id)`                                                   | Generate structured MFU notes (Create MFU)                                                                                                                                                    | M3        |
+| `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
+| `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
+| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
+| `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
+| `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 
 Events: `transcription_progress { id, fraction }`, `transcription_done`,
 `transcription_error`,
@@ -683,13 +690,13 @@ directory, downloaded model files, and user-chosen export destinations. No
 
 ## Ownership
 
-| Concern | Owner |
-|---|---|
-| Command/event registration, app state, model cache | `src-tauri/src/lib.rs` |
-| Audio normalize + decode | `src-tauri/src/audio.rs` |
-| Whisper transcription + progress | `src-tauri/src/transcribe.rs` |
-| SQLite meeting library | `src-tauri/src/store.rs` |
-| Error type | `src-tauri/src/error.rs` |
-| Two-pane shell: meetings list, meeting workspace, editors | `src/` |
-| Streaming capture / decode / persistence / IPC facade | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
-| Streaming tab | `src/StreamingView.tsx` |
+| Concern                                                   | Owner                                                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Command/event registration, app state, model cache        | `src-tauri/src/lib.rs`                                                                              |
+| Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
+| Whisper transcription + progress                          | `src-tauri/src/transcribe.rs`                                                                       |
+| SQLite meeting library                                    | `src-tauri/src/store.rs`                                                                            |
+| Error type                                                | `src-tauri/src/error.rs`                                                                            |
+| Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
+| Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
+| Streaming tab                                             | `src/StreamingView.tsx`                                                                             |
