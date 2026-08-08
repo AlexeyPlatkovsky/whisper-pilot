@@ -9,7 +9,7 @@
 
 use crate::audio::SAMPLE_RATE;
 use crate::transcribe::{self, Transcription};
-use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -154,6 +154,10 @@ pub fn run_windowed_decode(
 ) {
     let mut buffer: Vec<f32> = Vec::new();
     let mut window_index: u64 = starting_window_index;
+    // Streaming windows have no per-window Stop control (WP-19 targets
+    // Meeting transcription only); a session ends by dropping capture, so
+    // each window's decode always runs to completion.
+    let never_cancel = Arc::new(AtomicBool::new(false));
 
     loop {
         match samples_rx.recv_timeout(RECV_POLL) {
@@ -168,7 +172,7 @@ pub fn run_windowed_decode(
             // Fail-open (module doc): an Err here is forwarded, not
             // propagated — the caller skips this window's text and the loop
             // keeps running on the next one.
-            let outcome = transcribe::transcribe(&ctx, &window);
+            let outcome = transcribe::transcribe(&ctx, &window, &never_cancel);
             let decode_ms = decode_start.elapsed().as_millis() as u64;
 
             if results_tx

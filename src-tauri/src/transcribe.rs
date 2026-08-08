@@ -10,6 +10,8 @@
 use crate::error::{AppError, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 /// The language of audio that has not been decoded yet, and the fallback when
@@ -112,7 +114,19 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
 
 /// Transcribe an entire file of 16 kHz mono samples into timestamped segments,
 /// letting whisper detect the language.
-pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription> {
+///
+/// `cancel` is polled by whisper's abort callback during decode (WP-19): once
+/// set, whisper stops and this returns [`AppError::Cancelled`] instead of a
+/// (partial) transcript, so a stopped run never produces a document.
+pub fn transcribe(
+    ctx: &WhisperContext,
+    samples: &[f32],
+    cancel: &Arc<AtomicBool>,
+) -> Result<Transcription> {
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
         beam_size: 5,
         patience: -1.0,
@@ -140,13 +154,21 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
+    let abort_flag = Arc::clone(cancel);
+    params.set_abort_callback_safe(move || abort_flag.load(Ordering::Relaxed));
 
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    state
-        .full(params, samples)
-        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    let full_result = state.full(params, samples);
+    // The abort callback stops whisper's decode loop, but whisper.cpp still
+    // returns success with whatever partial output it had, not a distinct
+    // error code — so cancellation is detected from our own flag, checked
+    // before the decode's own Err (a real decode failure), not after it.
+    if cancel.load(Ordering::Relaxed) {
+        return Err(AppError::Cancelled);
+    }
+    full_result.map_err(|e| AppError::Transcribe(e.to_string()))?;
 
     let n = state.full_n_segments();
     let mut segments = Vec::with_capacity(n as usize);
@@ -182,7 +204,7 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
 /// Full path from a picked file to timestamped segments.
 pub fn transcribe_file(ctx: &WhisperContext, input: &Path) -> Result<Transcription> {
     let samples = crate::audio::load_samples(input)?;
-    transcribe(ctx, &samples)
+    transcribe(ctx, &samples, &Arc::new(AtomicBool::new(false)))
 }
 
 #[cfg(test)]

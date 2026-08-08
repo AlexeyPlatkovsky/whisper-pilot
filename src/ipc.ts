@@ -73,6 +73,11 @@ export function updateNotes(notes: MeetingNotes): Promise<Meeting> {
   return invoke<Meeting>("update_notes", { notes });
 }
 
+/** Stop the meeting's in-flight transcription; no document is created. */
+export function cancelTranscription(id: number): Promise<void> {
+  return invoke<void>("cancel_transcription", { id });
+}
+
 export function openFileDialog(): Promise<string | null> {
   return invoke<string | null>("open_file_dialog");
 }

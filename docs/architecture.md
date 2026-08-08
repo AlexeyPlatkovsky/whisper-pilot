@@ -104,10 +104,15 @@ The **Transcribe** run is a two-phase pipeline: transcription, then **diarizatio
 
 - merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
   so the meeting is already marked finished while diarization is still running (see
-  Speaker Diarization below). Progress and Stop span both phases; if diarization is
-  unavailable or fails, the run still finishes with plain (speaker-less) segments.
-  Re-running Transcribe on a meeting that already has a transcript replaces it (and
-  any notes) after a confirmation.
+  Speaker Diarization below). A progress spinner spans both phases; **Stop
+  (WP-19) only cancels the transcription phase** — it flips a per-run abort
+  flag that whisper's abort callback polls, so no transcript is persisted for
+  a stopped run. Once the run reaches diarization the transcript is already
+  saved and Stop disables (the UI has no cancel hook for the diarization
+  child process, a materially different mechanism — see below); if
+  diarization is unavailable or fails, the run still finishes with plain
+  (speaker-less) segments. Re-running Transcribe on a meeting that already has
+  a transcript replaces it (and any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models.rs`) into the app support directory;
@@ -231,9 +236,8 @@ exposed yet) and, on success, `assign_speaker_ids` writes each segment's
 `speaker_id` in place. Diarization failure of any kind — missing models, an
 engine error, or the blocking task itself panicking — is fail-open: it is
 logged and the transcription still returns its (speaker-less) segments,
-never failing `transcribe_file`. There is still no Stop control, no progress event
-spanning both phases, and no persisted meeting entity (those remain the
-not-yet-built M2 library epic, F004/WP-11).
+never failing `transcribe_file`. Stop (WP-19, see above) reaches only the
+transcription phase, not this diarization pass.
 
 **The active diarization embedding model is user-selectable** (WP-52): Settings
 offers a three-way choice — None (skip diarization), CAM++ (3D-Speaker,

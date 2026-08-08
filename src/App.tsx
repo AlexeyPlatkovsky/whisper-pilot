@@ -15,6 +15,7 @@ import {
   renameMeeting,
   updateSegment,
   updateNotes,
+  cancelTranscription,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
   type MeetingNotes,
@@ -310,6 +311,17 @@ export function App() {
         setStatus({ kind: "error", message: String(e) });
     } finally {
       setTranscribingId(null);
+    }
+  }
+
+  // Signals a stop; `transcribingId` itself is cleared by `handleTranscribe`'s
+  // `finally` once the in-flight `transcribeMeeting` call rejects.
+  async function handleStop() {
+    if (transcribingId === null) return;
+    try {
+      await cancelTranscription(transcribingId);
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
     }
   }
 
@@ -680,10 +692,20 @@ export function App() {
               <Icon name="play" size={17} />
             </button>
             <span className="wp-sep" />
-            {/* No backend cancel exists for an in-flight transcription — this
-                stays a disabled placeholder, matching the design's icon set,
-                until that capability exists. */}
-            <ActionIcon icon="square" label="Stop" disabled />
+            {/* WP-19 cancels the whisper decode itself; diarization (a
+                separate, already-isolated child-process pass that starts
+                only after the transcript is persisted, see
+                docs/architecture.md) has no cancellation hook yet, so Stop
+                disables once the run reaches that phase rather than
+                appearing to do nothing. */}
+            <ActionIcon
+              icon="square"
+              label="Stop"
+              onClick={() => void handleStop()}
+              disabled={
+                !activeIsTranscribing || transcribingPhase === "diarizing"
+              }
+            />
             <span className="wp-sep" />
             <ActionIcon
               icon="sparkles"
