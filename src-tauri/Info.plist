@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Streaming (WP-70): microphone capture via cpal. Without this key macOS
+       crashes the app outright the first time it requests mic access — this
+       is not optional the way a UX-only string might be. Tauri auto-merges
+       this file (same directory as tauri.conf.json) into the bundle's
+       generated Info.plist. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>WhisperPilot uses your microphone to transcribe a live Streaming session.</string>
+  <!-- Streaming (WP-70): system-audio loopback via ScreenCaptureKit
+       (screencapturekit crate). -->
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>WhisperPilot captures system audio to transcribe a live Streaming session.</string>
+</dict>
+</plist>

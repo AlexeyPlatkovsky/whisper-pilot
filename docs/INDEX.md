@@ -52,7 +52,7 @@ milestones).
 | ADR | Title | Status |
 | --- | --- | --- |
 | ADR-001 | Standalone app, separate from VoicePilot | accepted |
-| ADR-002 | Offline full-file (batch) transcription, not live streaming | accepted |
+| ADR-002 | Offline full-file (batch) transcription, not live streaming | partially superseded by ADR-014 (app-wide scope boundary only; the full-file batch decision and its accuracy rationale for Meeting stand) |
 | ADR-003 | Whisper large-v3-turbo on Metal for transcription | accepted |
 | ADR-004 | ffmpeg as the single audio/video ingestion path | accepted |
 | ADR-005 | sherpa-onnx for speaker diarization | partially superseded by ADR-013 (engine hosting only; sherpa-onnx choice stands) |
@@ -64,6 +64,7 @@ milestones).
 | ADR-011 | Settings: in-app model management, theming, i18n, English-default UI | accepted |
 | ADR-012 | Transcription language is always auto-detected, never chosen (supersedes ADR-007 on the language mechanism) | accepted |
 | ADR-013 | Isolate the diarization engine in a child process | accepted |
+| ADR-014 | Streaming coexists with Meeting's batch-accuracy pipeline | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability Notes

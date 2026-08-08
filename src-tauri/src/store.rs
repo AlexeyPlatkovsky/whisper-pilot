@@ -7,6 +7,14 @@ use std::sync::{Mutex, MutexGuard};
 
 const DATABASE_FILE_NAME: &str = "whisperpilot.sqlite3";
 
+/// `streaming_store.rs` opens its own connection to this same file (SQLite
+/// supports multiple connections to one file); shared so there is exactly
+/// one name for "the app's database" rather than two constants that could
+/// drift apart.
+pub(crate) fn shared_database_path(app_support_dir: &Path) -> PathBuf {
+    database_path(app_support_dir)
+}
+
 pub type MeetingId = i64;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

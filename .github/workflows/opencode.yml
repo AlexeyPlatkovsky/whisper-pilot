@@ -43,7 +43,7 @@ jobs:
       - name: OpenCode review
         uses: sst/opencode/github@latest
         with:
-          model: opencode-go/deepseek-v4-flash
+          model: opencode-go/deepseek-v4-pro
           # Use the built-in GITHUB_TOKEN so the OpenCode GitHub App is not required.
           use_github_token: true
           # Do not publish a shareable session link for this public repo.

@@ -1,6 +1,6 @@
 [package]
 name = "whisper-pilot"
-version = "0.2.0"
+version = "1.0.0"
 edition = "2021"
 rust-version = "1.80"
 
@@ -44,9 +44,18 @@ encoding_rs = "0.8"
 
 # Metal GPU acceleration is macOS-only; CI runs on Linux so the feature must be
 # conditional. Cargo target-specific dependency sections handle this correctly.
+# cpal and screencapturekit are also macOS-only here: cpal's default Linux
+# backend (alsa-sys) needs ALSA dev headers CI does not install, and
+# ScreenCaptureKit is an Apple-only framework. Both are Streaming's (WP-70)
+# audio capture: cpal for the microphone, screencapturekit for system-audio
+# loopback. screencapturekit's mandatory `apple-metal` dependency needs a
+# full Xcode.app (not just Command Line Tools) to link its Swift
+# compatibility libraries — see streaming_audio.rs's module doc comment.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
 llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal"] }
+screencapturekit = "8.0.1"
+cpal = "0.17.3"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 whisper-rs = { version = "0.16" }
 llama-cpp-2 = { version = "0.1", default-features = false }

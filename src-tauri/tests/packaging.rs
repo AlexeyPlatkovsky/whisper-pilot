@@ -137,9 +137,23 @@ fn rpaths_of(binary: &Path) -> Vec<String> {
     rpaths
 }
 
+/// `@rpath` dylibs this app never bundles because they're OS-provided,
+/// resolved instead via a fixed system `LC_RPATH` (see `add_rpaths` in
+/// `build.rs`) rather than `Contents/Frameworks`. Unlike sherpa-onnx/
+/// onnxruntime, these have shipped as part of the OS since Swift ABI
+/// stability (macOS 10.14.4+, well below this app's deployment target) and
+/// exist only in the dyld shared cache — there is no standalone file on disk
+/// to bundle even if we wanted to.
+const OS_PROVIDED_DYLIBS: [&str; 1] = ["libswift_Concurrency.dylib"];
+
+/// The system rpath OS-provided dylibs above resolve against. Asserted
+/// separately below so this exemption can't silently mask a missing rpath.
+const OS_PROVIDED_DYLIB_RPATH: &str = "/usr/lib/swift";
+
 /// The bundler only copies what the config names, so an `@rpath` dependency
-/// the config omits is one that will be missing from the `.app`. This is what
-/// catches a sherpa-onnx upgrade that renames or adds a dylib.
+/// the config omits — and that isn't `OS_PROVIDED_DYLIBS` — is one that will
+/// be missing from the `.app`. This is what catches a sherpa-onnx upgrade
+/// that renames or adds a dylib.
 #[test]
 fn bundle_config_declares_every_native_dylib() {
     let required = rpath_dependencies_of_app_binary();
@@ -156,12 +170,35 @@ fn bundle_config_declares_every_native_dylib() {
 
     let missing: Vec<&String> = required
         .iter()
-        .filter(|name| !declared_names.contains(&name.as_str()))
+        .filter(|name| {
+            !declared_names.contains(&name.as_str()) && !OS_PROVIDED_DYLIBS.contains(&name.as_str())
+        })
         .collect();
     assert!(
         missing.is_empty(),
         "tauri.conf.json bundle.macOS.frameworks does not declare {missing:?}; \
          declared: {declared:?}. Those dylibs would be absent from Contents/Frameworks."
+    );
+}
+
+/// The exemption above is only sound if the binary can actually resolve an
+/// OS-provided dylib without bundling it — i.e. it carries the fixed system
+/// rpath those dylibs load against. Catches `add_rpaths` losing that rpath
+/// while an OS-provided dylib is still linked in.
+#[test]
+fn os_provided_dylibs_have_their_system_rpath() {
+    let required = rpath_dependencies_of_app_binary();
+    if !required
+        .iter()
+        .any(|name| OS_PROVIDED_DYLIBS.contains(&name.as_str()))
+    {
+        return;
+    }
+    let rpaths = rpaths_of(&app_binary());
+    assert!(
+        rpaths.iter().any(|p| p == OS_PROVIDED_DYLIB_RPATH),
+        "the app binary loads an OS-provided dylib ({OS_PROVIDED_DYLIBS:?}) but carries no \
+         {OS_PROVIDED_DYLIB_RPATH} rpath (found {rpaths:?}); it would abort at dyld"
     );
 }
 

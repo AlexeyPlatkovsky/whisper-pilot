@@ -1,0 +1,24 @@
+schema_version: 1
+id: WP-73
+title: Streaming UI (tab, live transcript, controls)
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-06T19:26:52Z'
+updated_at: '2026-08-07T06:54:28Z'
+parent_id: WP-68
+description: 'New top-level Streaming tab: session list (rename/delete, mirroring Meeting''s), Start/Stop controls, live scrolling transcript, active-audio-source indicator. Also carries the Rust IPC layer that ties streaming_audio.rs + streaming_session.rs + streaming_store.rs together (streaming.rs facade, start_streaming_session/stop_streaming_session commands, AppState.streaming_runtime, streaming_window/streaming_sources/streaming_session_ended events) since a meaningful UI needs it and no earlier child owned it.
+
+
+  src/StreamingView.tsx is a self-contained top-level view (entered/exited like SettingsScreen via a new header icon in App.tsx), not a change to the Meeting workspace. upsertWindow replaces rather than duplicates a resent window_index; a live window event for a session that isn''t the currently-open one is ignored (guards against a stale event during the stop transition). A fail-open window renders as [unavailable], not blank space.
+
+
+  Added src-tauri/Info.plist (NSMicrophoneUsageDescription, NSScreenCaptureUsageDescription) -- without the microphone key specifically, macOS crashes the app outright on first mic-permission request; this was a real gap left by WP-70, closed here since WP-73 is the first thing that actually exercises the permission prompts end-to-end (well, would, if this environment could grant them).'
+dod:
+- 'start_streaming_session/stop_streaming_session commands implemented (macOS: real capture+decode+persist; non-macOS: registered but return a clear ''macOS only'' error, keeping the frontend''s command surface identical across platforms).'
+- streaming.rs facade implements list/open/rename/delete/create_streaming_session, mirroring meetings.rs's open-store-fresh-per-call convention, with unit test coverage.
+- src/StreamingView.tsx implements session list, Start/Stop, live transcript (upsert on window_index, ignoring stale-session events), and source indicator, wired into App.tsx via a new header icon and isStreamingOpen toggle.
+- src-tauri/Info.plist declares NSMicrophoneUsageDescription and NSScreenCaptureUsageDescription, auto-merged by Tauri.
+- cargo check/test/clippy(-D warnings)/fmt --check pass with zero regressions (219/219 lib tests, 5/5 packaging tests).
+- 'npm run typecheck/lint/format:check pass with zero regressions; 147/147 vitest tests pass (30 new: StreamingView.test.tsx + 1 App.test.tsx toggle test).'
+- docs/architecture.md documents the IPC/runtime layer, the UI, and the Info.plist requirement; stale 'not yet wired'/'not yet implemented' notes from WP-70/WP-71's own sections are corrected.

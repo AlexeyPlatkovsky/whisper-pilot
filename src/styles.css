@@ -472,6 +472,36 @@ body {
   min-height: 0;
 }
 
+.wp-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 36px;
+  padding: 3px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+  flex: 0 0 auto;
+}
+
+.wp-mode-toggle-segment {
+  flex: 1;
+  height: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.wp-mode-toggle-segment.is-active {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+}
+
 .wp-search {
   display: flex;
   align-items: center;
@@ -944,6 +974,17 @@ body {
   white-space: pre-wrap;
 }
 
+/* Settings opened from inside Streaming layers on top rather than replacing
+   the tree, so a live recording's mounted state survives the detour. */
+.settings-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+
 /* ==========================================================================
    Settings screen (unchanged structure; consumes the same semantic vars)
    ========================================================================== */
@@ -1364,4 +1405,45 @@ body {
   display: flex;
   justify-content: flex-end;
   gap: var(--wp-space-sm);
+}
+
+/* ==========================================================================
+   Streaming: its own top-level view, entered/exited like Settings, now
+   reusing the app shell's header, info-bar, sidebar, and transcript-panel
+   classes wholesale (see StreamingView.tsx) — only the transcript's own
+   text-flow rendering (plain windows, fail-open spans, prettify diff) stays
+   distinct from Meeting's speaker-block markup, so only that keeps its own
+   rules below.
+   ========================================================================== */
+.streaming-transcript-text {
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  line-height: 1.7;
+}
+
+/* Groups of windows chunked by src/paragraphs.ts's sentence/length
+   heuristic — windows carry no pause signal of their own to split on. */
+.streaming-paragraph {
+  margin: 0 0 1em;
+}
+
+.streaming-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.streaming-window--failed {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.diff-del {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.diff-add {
+  color: var(--success);
+  font-weight: 600;
+  /* <ins> is underlined by default; the design calls for bold, not underline. */
+  text-decoration: none;
 }

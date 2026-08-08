@@ -26,6 +26,12 @@ editable transcript plus structured meeting notes — kept in a local library yo
 can reopen and edit, entirely on-device, no cloud, with accuracy prioritized over
 speed because processing is offline and batch.
 
+For live audio — a meeting in progress, your own dictated thoughts, or audio
+playing in the background — **Streaming** (ADR-014) gives a near-real-time,
+plain-text transcript you can copy or export as it happens, still entirely
+on-device. It trades a small latency budget for immediacy; it does not replace
+Meeting's batch-accuracy pipeline, which is unchanged.
+
 ## Scope
 
 ### In scope
@@ -50,10 +56,16 @@ speed because processing is offline and batch.
 - One language **setting** — the **app UI language** (English by default). The
   **transcription language** is not a setting at all: Whisper detects it per run
   and the meeting records what was detected.
+- **Streaming** (ADR-014): live, near-real-time transcription of microphone
+  and/or system audio for a Streaming session — plain, unattributed running
+  text (no speaker separation), multi-language including mixed-language input
+  within one session, with a roughly 5–10s latency budget. A separate,
+  additive capability from Meeting; it does not use or affect Meeting's
+  batch pipeline. No raw audio is retained for a Streaming session, so it
+  cannot later be re-transcribed with a different model.
 
 ### Out of scope
 
-- Live / microphone / system-audio capture (that is a different product).
 - Cloud transcription, summarization, or storage.
 - Translation between languages.
 - Real-name speaker identification (voice enrollment); speakers are generic
@@ -65,11 +77,15 @@ speed because processing is offline and batch.
 
 ## Non-Goals
 
-- WhisperPilot will not become a real-time transcriber. Accuracy from full-file,
-  batch processing is the whole point.
+- Meeting will not become a real-time transcriber. Its accuracy comes
+  specifically from full-file, batch processing (ADR-002), and that does not
+  change. Streaming (ADR-014) is a separate, additive capability with its own
+  quality-over-latency priority — it does not replace or dilute Meeting's
+  batch-accuracy approach.
 - It will not depend on any network service for its **core processing**:
-  transcription and MFU note generation make no network calls. The only network
-  use is downloading models (and, at release, app updates).
+  transcription (Meeting or Streaming) and MFU note generation make no network
+  calls. The only network use is downloading models (and, at release, app
+  updates).
 
 ## Principles
 

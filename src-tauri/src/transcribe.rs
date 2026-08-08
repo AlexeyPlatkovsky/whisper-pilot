@@ -1,14 +1,11 @@
-//! Offline, full-file transcription with whisper-rs on Metal.
+//! Offline, full-file transcription with whisper-rs on Metal. The whole
+//! file is decoded in one pass with beam search and no real-time
+//! constraint, so accuracy is the only priority.
 //!
-//! Unlike a live pipeline, the whole file is decoded in one pass with beam
-//! search and no real-time constraint, so accuracy is the only priority.
-//!
-//! The language is always **auto-detected** — there is no way to force one.
-//! Forcing a language the audio is not in does not merely degrade accuracy: the
-//! decoder collapses onto its highest-prior training artifact for that language
-//! and emits one hallucinated line per fixed 30-second analysis window instead
-//! of a transcript (WP-20). Whisper decides the language itself, and what it
-//! decided is reported back so the caller can record it.
+//! The language is always auto-detected — there is no way to force one; see
+//! ADR-012 for why forcing one is actively harmful, not just less accurate.
+//! Whisper decides the language itself, and what it decided is reported
+//! back so the caller can record it.
 
 use crate::error::{AppError, Result};
 use serde::Serialize;

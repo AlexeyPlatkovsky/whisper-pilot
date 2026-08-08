@@ -10,6 +10,10 @@ pub mod meetings;
 pub mod models;
 pub mod settings;
 pub mod store;
+pub mod streaming;
+pub mod streaming_audio;
+pub mod streaming_session;
+pub mod streaming_store;
 pub mod transcribe;
 
 use error::{AppError, Result};
@@ -46,6 +50,38 @@ struct TranscriptionPhaseEvent {
     phase: &'static str,
 }
 
+/// Emitted once per decoded Streaming window (`streaming_window`), whether
+/// it succeeded or fail-open-skipped — `outcome_ok` distinguishes the two so
+/// the UI can show "this span failed" rather than reading a skip as silence.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct StreamingWindowEvent {
+    session_id: i64,
+    window_index: i64,
+    start_ms: i64,
+    end_ms: i64,
+    text: String,
+    language: String,
+    outcome_ok: bool,
+}
+
+/// Emitted once, right after a session starts (`streaming_sources`), naming
+/// which capture source(s) actually came up — the mic-only-degradation
+/// indicator WP-73's UI needs, since a silent fallback would be invisible.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct StreamingSourcesEvent {
+    session_id: i64,
+    mic: bool,
+    system_audio: bool,
+}
+
+/// Emitted once the decode loop ends (`streaming_session_ended`) — either
+/// because `stop_streaming_session` dropped the capture, or (not yet
+/// possible in v1: no auto-timeout) it ended on its own.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct StreamingSessionEndedEvent {
+    session_id: i64,
+}
+
 /// The persisted `active_model.diarization` setting names the embedding
 /// variant to run, or the literal `"none"` to skip diarization entirely.
 fn diarization_variant_to_run(setting: &str) -> Option<&str> {
@@ -72,12 +108,38 @@ fn now_ms() -> Result<i64> {
         })
 }
 
-/// The whisper model is loaded lazily on first use and cached for the session —
-/// loading ~800 MB should not block app launch or fail startup when the model
-/// is missing.
+/// The whisper model is loaded lazily on first use and cached for the
+/// session — loading ~800 MB should not block app launch.
+///
+/// `whisper_busy` enforces WP-71's mutual exclusion (Meeting transcription
+/// vs. Streaming session, both contending for `model`'s one cached context)
+/// via `streaming_session::WhisperUsageGuard`. It's a plain field, not
+/// wrapped alongside `model`, so acquiring it stays synchronous without
+/// holding `model`'s lock for the guard's whole lifetime.
 #[derive(Default)]
 struct AppState {
     model: Mutex<Option<Arc<WhisperContext>>>,
+    whisper_busy: std::sync::atomic::AtomicU8,
+    /// The running Streaming session's audio capture, present only while a
+    /// session is active. Dropping it (via `stop_streaming_session` taking
+    /// it out, or app shutdown dropping `AppState` itself) stops both
+    /// capture streams, which cascades: the mixer thread ends, the sample
+    /// channel disconnects, the decode loop ends, and the results-consuming
+    /// task releases `whisper_busy` and marks the session stopped — see
+    /// `docs/architecture.md`'s Streaming IPC section.
+    #[cfg(target_os = "macos")]
+    streaming_runtime: Mutex<Option<StreamingRuntime>>,
+}
+
+// Both fields are held for their effect, not read back: `session_id`
+// documents which session this runtime belongs to (useful reading a debug
+// dump or extending this later); `capture`'s only job is to exist until
+// `stop_streaming_session` drops it, which is what actually stops capture.
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+struct StreamingRuntime {
+    session_id: i64,
+    capture: streaming_audio::StreamingSession,
 }
 
 impl AppState {
@@ -156,16 +218,12 @@ async fn decode_and_transcribe(
     Ok((transcription, samples))
 }
 
-/// Persist `transcription` immediately, then run `diarization` (when a model is
-/// active) and write the speaker ids it produces as a second, separate save.
-///
-/// Saving before diarization starts is load-bearing: diarization runs native
-/// sherpa-onnx code that can abort the process outright, which no Rust error
-/// path can catch, so anything unpersisted at that point is lost. See
-/// `docs/architecture.md`'s Speaker Diarization section.
-///
-/// Any diarization failure degrades to the already-persisted speaker-less
-/// segments and comes back as a warning, never failing the transcription.
+/// Persist `transcription` immediately, then run `diarization` (when a
+/// model is active) and write the speaker ids as a second, separate save —
+/// load-bearing, since diarization's native code can abort the process past
+/// any Rust error path (see `docs/architecture.md`'s Speaker Diarization
+/// section). A diarization failure degrades to the already-persisted
+/// speaker-less segments as a warning, never failing the transcription.
 async fn persist_transcript_then_diarize(
     app_support_dir: PathBuf,
     meeting_id: i64,
@@ -248,6 +306,22 @@ async fn transcribe_meeting(
     id: i64,
     state: State<'_, AppState>,
 ) -> Result<TranscribeMeetingResult> {
+    // WP-71: a Streaming session and a Meeting transcription share the one
+    // cached Whisper context and cannot run concurrently. Held for this
+    // whole command, released on return via Drop.
+    let _whisper_guard = streaming_session::WhisperUsageGuard::acquire(
+        &state.whisper_busy,
+        streaming_session::WhisperUser::Meeting,
+    )
+    .map_err(|holder| match holder {
+        streaming_session::WhisperUser::Streaming => AppError::Transcribe(
+            "a Streaming session is active; stop it before transcribing a meeting".into(),
+        ),
+        streaming_session::WhisperUser::Meeting => {
+            AppError::Transcribe("another meeting transcription is already running".into())
+        }
+    })?;
+
     let app_support_dir = app_data_dir(&app)?;
     let meeting = meetings::open_meeting(&app_support_dir, id)?;
     let path = meeting.source_path.ok_or_else(|| {
@@ -350,6 +424,284 @@ fn delete_meeting(app: tauri::AppHandle, id: i64) -> Result<()> {
     meetings::delete_meeting(&app_data_dir(&app)?, id)
 }
 
+/// List persisted Streaming sessions newest-touched first, for the
+/// Streaming tab's session list.
+#[tauri::command]
+fn list_streaming_sessions(
+    app: tauri::AppHandle,
+) -> Result<Vec<streaming::StreamingSessionSummaryDto>> {
+    streaming::list_streaming_sessions(&app_data_dir(&app)?)
+}
+
+/// Open a complete persisted Streaming session (all decoded windows) for
+/// the Streaming workspace.
+#[tauri::command]
+fn open_streaming_session(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    streaming::open_streaming_session(&app_data_dir(&app)?, id)
+}
+
+#[tauri::command]
+fn rename_streaming_session(
+    app: tauri::AppHandle,
+    id: i64,
+    title: String,
+) -> Result<streaming::StreamingSessionDto> {
+    streaming::rename_streaming_session(&app_data_dir(&app)?, id, title)
+}
+
+#[tauri::command]
+fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result<()> {
+    streaming::delete_streaming_session(&app_data_dir(&app)?, id)
+}
+
+/// Runs on its own blocking thread for a session's whole lifetime: persists
+/// each decoded window as it arrives (WP-72's incremental save) and emits
+/// `streaming_window` so the UI updates live. When `results_rx` disconnects
+/// — the decode loop ended because `stop_streaming_session` dropped the
+/// capture — finalizes the session: marks it stopped, releases
+/// `whisper_busy` so Meeting (or a new Streaming session) can run again, and
+/// emits `streaming_session_ended`.
+#[cfg(target_os = "macos")]
+fn drive_streaming_results(
+    app: tauri::AppHandle,
+    app_support_dir: PathBuf,
+    session_id: i64,
+    results_rx: std::sync::mpsc::Receiver<streaming_session::WindowResult>,
+) {
+    for result in results_rx.iter() {
+        let (text, language, outcome_ok) = match &result.outcome {
+            Ok(transcription) => {
+                let text = transcription
+                    .segments
+                    .iter()
+                    .map(|s| s.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                (text, transcription.language.clone(), true)
+            }
+            Err(e) => {
+                log::warn!(
+                    "streaming session {session_id} window {} fail-open: {e}",
+                    result.window_index
+                );
+                (
+                    String::new(),
+                    transcribe::UNDETECTED_LANGUAGE.to_string(),
+                    false,
+                )
+            }
+        };
+        let end_ms = result.start_ms + streaming_session::WINDOW_MS;
+
+        match streaming_store::StreamingStore::open(&app_support_dir) {
+            Ok(store) => {
+                let window = streaming_store::NewStreamingWindow {
+                    window_index: result.window_index as i64,
+                    start_ms: result.start_ms as i64,
+                    end_ms: end_ms as i64,
+                    text: text.clone(),
+                    language: language.clone(),
+                    outcome_ok,
+                };
+                let now = now_ms().unwrap_or(result.start_ms as i64);
+                if let Err(e) = store.append_window(session_id, &window, now) {
+                    log::error!(
+                        "streaming session {session_id}: failed to persist window {}: {e}",
+                        result.window_index
+                    );
+                }
+            }
+            Err(e) => log::error!("streaming session {session_id}: failed to open store: {e}"),
+        }
+
+        let _ = app.emit(
+            "streaming_window",
+            StreamingWindowEvent {
+                session_id,
+                window_index: result.window_index as i64,
+                start_ms: result.start_ms as i64,
+                end_ms: end_ms as i64,
+                text,
+                language,
+                outcome_ok,
+            },
+        );
+    }
+
+    // `results_rx.iter()` ended: the decode loop returned, which only
+    // happens once the sample channel disconnects, which only happens once
+    // the capture's mixer thread stops, which only happens once
+    // `StreamingRuntime` (holding the capture) is dropped.
+    let now = now_ms().unwrap_or(0);
+    if let Ok(store) = streaming_store::StreamingStore::open(&app_support_dir) {
+        if let Err(e) = store.mark_stopped(session_id, now) {
+            log::error!("streaming session {session_id}: failed to mark stopped: {e}");
+        }
+    }
+    streaming_session::release_whisper_busy(&app.state::<AppState>().whisper_busy);
+    let _ = app.emit(
+        "streaming_session_ended",
+        StreamingSessionEndedEvent { session_id },
+    );
+}
+
+/// Start a Streaming session: claims the shared Whisper context (mutually
+/// exclusive with an active Meeting transcription, WP-71), creates the
+/// session's DB record, starts audio capture (mic + system-audio, degrading
+/// to whichever source(s) actually came up), and spawns the decode and
+/// persistence loops. Returns once capture has started — decoding continues
+/// in the background; the caller listens for `streaming_window` events.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn start_streaming_session(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    session_id: Option<streaming_store::StreamingSessionId>,
+) -> Result<streaming::StreamingSessionSummaryDto> {
+    if state.streaming_runtime.lock().await.is_some() {
+        return Err(AppError::Capture(
+            "a Streaming session is already running".into(),
+        ));
+    }
+    streaming_session::try_claim_streaming(&state.whisper_busy).map_err(|holder| {
+        AppError::Capture(match holder {
+            streaming_session::WhisperUser::Meeting => {
+                "a meeting is currently transcribing; stop it before starting a Streaming session"
+                    .to_string()
+            }
+            streaming_session::WhisperUser::Streaming => {
+                "a Streaming session is already running".to_string()
+            }
+        })
+    })?;
+
+    let app_support_dir = app_data_dir(&app)?;
+
+    let ctx = match state.model(app_support_dir.clone()).await {
+        Ok(ctx) => ctx,
+        Err(e) => {
+            streaming_session::release_whisper_busy(&state.whisper_busy);
+            return Err(e);
+        }
+    };
+
+    let now = now_ms()?;
+    // A `session_id` continues an existing, previously-stopped session
+    // ("Start" on an open past session resumes it rather than always
+    // spawning a new one) — `starting_window_index` picks up window
+    // numbering where that session left off; the fresh-session branch always
+    // starts at 0.
+    let (summary, starting_window_index) = match session_id {
+        Some(id) => match streaming::resume_streaming_session(&app_support_dir, id, now) {
+            Ok(result) => result,
+            Err(e) => {
+                streaming_session::release_whisper_busy(&state.whisper_busy);
+                return Err(e);
+            }
+        },
+        None => match streaming::create_streaming_session(&app_support_dir, now) {
+            Ok(id) => (
+                streaming::StreamingSessionSummaryDto {
+                    id,
+                    title: "New Streaming Session".to_string(),
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                    status: streaming_store::status::ACTIVE.to_string(),
+                },
+                0,
+            ),
+            Err(e) => {
+                streaming_session::release_whisper_busy(&state.whisper_busy);
+                return Err(e);
+            }
+        },
+    };
+    let session_id = summary.id;
+
+    let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+    let capture = match streaming_audio::StreamingSession::start(samples_tx) {
+        Ok(capture) => capture,
+        Err(e) => {
+            streaming_session::release_whisper_busy(&state.whisper_busy);
+            // The session record already exists; leave it — an empty,
+            // never-started session is a legitimate (if unfortunate) history
+            // entry, consistent with a Meeting whose transcription failed.
+            return Err(e);
+        }
+    };
+    let active_sources = capture.active_sources();
+
+    let (results_tx, results_rx) = std::sync::mpsc::channel();
+    tokio::task::spawn_blocking(move || {
+        streaming_session::run_windowed_decode(ctx, samples_rx, results_tx, starting_window_index)
+    });
+
+    let results_app = app.clone();
+    let results_dir = app_support_dir.clone();
+    tokio::task::spawn_blocking(move || {
+        drive_streaming_results(results_app, results_dir, session_id, results_rx)
+    });
+
+    *state.streaming_runtime.lock().await = Some(StreamingRuntime {
+        session_id,
+        capture,
+    });
+
+    let _ = app.emit(
+        "streaming_sources",
+        StreamingSourcesEvent {
+            session_id,
+            mic: matches!(
+                active_sources,
+                streaming_audio::ActiveSources::Both | streaming_audio::ActiveSources::MicOnly
+            ),
+            system_audio: matches!(
+                active_sources,
+                streaming_audio::ActiveSources::Both
+                    | streaming_audio::ActiveSources::SystemAudioOnly
+            ),
+        },
+    );
+
+    Ok(summary)
+}
+
+/// Stop the running Streaming session. Dropping the held capture stops both
+/// audio sources; `drive_streaming_results` finishes persisting/emitting on
+/// its own once the resulting sample/decode-loop disconnect cascades
+/// through, releasing `whisper_busy` and marking the session stopped.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+async fn stop_streaming_session(state: State<'_, AppState>) -> Result<()> {
+    let runtime = state.streaming_runtime.lock().await.take();
+    if runtime.is_none() {
+        return Err(AppError::Capture("no Streaming session is running".into()));
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn start_streaming_session(
+    _state: State<'_, AppState>,
+    _session_id: Option<streaming_store::StreamingSessionId>,
+) -> Result<streaming::StreamingSessionSummaryDto> {
+    Err(AppError::Capture(
+        "Streaming's audio capture is only available on macOS".into(),
+    ))
+}
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+async fn stop_streaming_session(_state: State<'_, AppState>) -> Result<()> {
+    Err(AppError::Capture(
+        "Streaming's audio capture is only available on macOS".into(),
+    ))
+}
+
 /// Read all settings (theme, ui_language, active model), applying beta
 /// defaults for any key never set.
 #[tauri::command]
@@ -410,21 +762,17 @@ fn delete_model(app: tauri::AppHandle, id: String) -> Result<()> {
     Ok(())
 }
 
-/// Generate structured meeting notes (summary, decisions, action items, open
-/// questions, participants) from the current transcript using the active LLM
-/// model. Requires an LLM model to be downloaded and selected in Settings.
-#[tauri::command]
-async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
-    let app_support_dir = app_data_dir(&app)?;
-    let settings = settings::get_settings(&app_support_dir);
+/// Shared by both Craft/MFU commands (Meeting and Streaming). Errors name the
+/// exact missing prerequisite rather than a generic failure.
+fn resolve_llm_model_path(app_support_dir: &std::path::Path) -> Result<PathBuf> {
+    let settings = settings::get_settings(app_support_dir);
     let llm_model_id = settings
         .active_model_llm
         .as_deref()
         .ok_or_else(|| AppError::Llm("no LLM model selected in Settings".into()))?;
 
-    let model_path = models::primary_asset_path(&app_support_dir, llm_model_id).ok_or_else(
-        || AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")),
-    )?;
+    let model_path = models::primary_asset_path(app_support_dir, llm_model_id)
+        .ok_or_else(|| AppError::Llm(format!("LLM model {llm_model_id} is not downloaded")))?;
 
     if !model_path.exists() {
         return Err(AppError::Llm(format!(
@@ -432,6 +780,16 @@ async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
             model_path.display()
         )));
     }
+    Ok(model_path)
+}
+
+/// Generate structured meeting notes (summary, decisions, action items, open
+/// questions, participants) from the current transcript using the active LLM
+/// model. Requires an LLM model to be downloaded and selected in Settings.
+#[tauri::command]
+async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
 
     let store = store::Store::open(&app_support_dir)?;
     let _meeting = store
@@ -460,16 +818,91 @@ async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
     let app_support_dir_clone = app_support_dir.clone();
     let model_path_clone = model_path.clone();
     let transcript_clone = transcript.clone();
-    let mut notes = tokio::task::spawn_blocking(move || {
+    let generated = tokio::task::spawn_blocking(move || {
         llm::generate_notes(&model_path_clone, &transcript_clone)
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
 
-    notes.meeting_id = id;
-    store.upsert_notes(&notes)?;
+    store.upsert_notes(&store::MeetingNotes {
+        meeting_id: id,
+        summary: generated.summary,
+        decisions: generated.decisions,
+        action_items: generated.action_items,
+        open_questions: generated.open_questions,
+        participants: generated.participants,
+    })?;
 
     meetings::open_meeting(&app_support_dir_clone, id)
+}
+
+/// Same local model/JSON contract as `generate_notes`, for a Streaming
+/// session — `streaming::build_streaming_transcript` owns its guards.
+#[tauri::command]
+async fn generate_streaming_notes(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
+    let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
+
+    let model_path_clone = model_path.clone();
+    let transcript_clone = transcript.clone();
+    let generated = tokio::task::spawn_blocking(move || {
+        llm::generate_notes(&model_path_clone, &transcript_clone)
+    })
+    .await
+    .map_err(|e| AppError::Llm(e.to_string()))??;
+
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.upsert_notes(&streaming_store::StreamingNotes {
+        session_id: id,
+        summary: generated.summary,
+        decisions: generated.decisions,
+        action_items: generated.action_items,
+        open_questions: generated.open_questions,
+        participants: generated.participants,
+    })?;
+
+    streaming::open_streaming_session(&app_support_dir, id)
+}
+
+/// Returns the cleaned transcript without persisting it — the frontend
+/// shows it as a diff for review; only `accept_streaming_prettify` writes it.
+#[tauri::command]
+async fn generate_streaming_prettify(app: tauri::AppHandle, id: i64) -> Result<String> {
+    let app_support_dir = app_data_dir(&app)?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
+    let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
+
+    tokio::task::spawn_blocking(move || llm::prettify_transcript(&model_path, &transcript))
+        .await
+        .map_err(|e| AppError::Llm(e.to_string()))?
+}
+
+#[tauri::command]
+async fn accept_streaming_prettify(
+    app: tauri::AppHandle,
+    id: i64,
+    text: String,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.upsert_prettified(id, &text)?;
+    streaming::open_streaming_session(&app_support_dir, id)
+}
+
+/// Removes an accepted prettification so the raw per-window transcript is shown again.
+#[tauri::command]
+async fn revert_streaming_prettify(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = streaming_store::StreamingStore::open(&app_support_dir)?;
+    store.delete_prettified(id)?;
+    streaming::open_streaming_session(&app_support_dir, id)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -494,13 +927,23 @@ pub fn run() {
             delete_meeting,
             set_meeting_source,
             transcribe_meeting,
+            list_streaming_sessions,
+            open_streaming_session,
+            rename_streaming_session,
+            delete_streaming_session,
+            start_streaming_session,
+            stop_streaming_session,
             save_text_dialog,
             get_settings,
             set_setting,
             list_task_models,
             download_model,
             delete_model,
-            generate_notes
+            generate_notes,
+            generate_streaming_notes,
+            generate_streaming_prettify,
+            accept_streaming_prettify,
+            revert_streaming_prettify
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

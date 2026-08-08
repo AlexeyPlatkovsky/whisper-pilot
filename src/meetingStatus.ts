@@ -1,14 +1,7 @@
-/**
- * A meeting's status is shown in two places at once — the sidebar row's dot
- * (colour, tooltip, and accessible name) and the header status widget. They
- * previously each derived their own text and colour and drifted apart, so both
- * now resolve through this single function.
- *
- * The store only ever persists `no_files`, `ready`, and `finished` (see
- * `src-tauri/src/meetings.rs`). "Transcribing", "diarizing", and "error" are
- * transient, front-end-only states that outlive no reload, so they arrive as
- * an explicit activity override rather than as a stored value.
- */
+// Single source of truth for both the sidebar dot and the header status
+// widget, so the two can never drift apart. "Transcribing"/"diarizing"/"error"
+// are front-end-only activity overrides, not stored values — see
+// src-tauri/src/meetings.rs for the persisted status set.
 
 export type MeetingStatusTone =
   | "no-files"

@@ -26,6 +26,15 @@ fn main() {
 fn add_rpaths() {
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
     println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
+    // Streaming's system-audio capture (WP-70, screencapturekit) pulls in
+    // apple-metal, which links against libswift_Concurrency.dylib. That's an
+    // OS-provided Swift runtime library (present on every Mac since Swift ABI
+    // stability, no bundling needed like the dylibs above) but it lives only
+    // in the dyld shared cache, not the executable's own rpaths, so without
+    // this the binary links but aborts at launch with "Library not loaded:
+    // @rpath/libswift_Concurrency.dylib". A fixed absolute path, not
+    // `@executable_path`-relative, since nothing here is bundled.
+    println!("cargo:rustc-link-arg=-Wl,-rpath,/usr/lib/swift");
 }
 
 /// Copy the natives to a stable path the bundler can name: `tauri.conf.json`

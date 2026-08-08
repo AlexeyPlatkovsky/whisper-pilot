@@ -15,6 +15,7 @@
     "test:api": "cargo test --manifest-path src-tauri/Cargo.toml",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src",
+    "lint:comments": "node scripts/check-comment-blocks.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
   },

@@ -19,10 +19,13 @@ import {
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
+import { StreamingView } from "./StreamingView";
+import { ModeToggle } from "./ModeToggle";
 import { applyTheme, type Theme } from "./theme";
 import { t } from "./i18n";
 import { formatClock } from "./format";
-import { AppLogo, Icon, type IconName } from "./Icon";
+import { AppLogo, Icon } from "./Icon";
+import { ActionIcon } from "./ActionIcon";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
 import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
@@ -67,6 +70,7 @@ export function App() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isStreamingOpen, setIsStreamingOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
@@ -93,6 +97,7 @@ export function App() {
   const [diarizationWarning, setDiarizationWarning] = useState<string | null>(
     null,
   );
+  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   // The meeting currently being transcribed, or null. Kept outside `status`
   // and outside `activeMeeting` so that opening a different meeting cannot
   // discard a run that is still going.
@@ -103,7 +108,9 @@ export function App() {
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
-  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(null);
+  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(
+    null,
+  );
   const isGeneratingNotes = generatingNotesId !== null;
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
@@ -172,6 +179,7 @@ export function App() {
     setSpeakerLabels({});
     setStatus({ kind: "idle" });
     setNotes(meeting.notes ?? null);
+    setCopyStatus("idle");
   }, []);
 
   const upsertSummary = useCallback((meeting: PersistedMeeting) => {
@@ -410,6 +418,15 @@ export function App() {
     await saveTextDialog(transcriptText, `${base}.txt`);
   }
 
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(transcriptText);
+      setCopyStatus("copied");
+    } catch (e) {
+      setStatus({ kind: "error", message: String(e) });
+    }
+  }
+
   // `busy` is global because only one transcription may run at a time: it
   // gates starting another run, anywhere, and — conservatively — creating a
   // meeting, which would move the workspace mid-run. It does NOT gate
@@ -427,7 +444,8 @@ export function App() {
   // The header describes the meeting the user is looking at, through the same
   // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
-    if (activeIsGeneratingNotes) return resolveMeetingStatus(undefined, "crafting");
+    if (activeIsGeneratingNotes)
+      return resolveMeetingStatus(undefined, "crafting");
     if (activeIsTranscribing)
       return resolveMeetingStatus(undefined, transcribingPhase);
     if (transcriptionModelReady === false)
@@ -444,6 +462,34 @@ export function App() {
     status,
     activeMeeting,
   ]);
+
+  // Streaming is checked first: it renders its own top-level view as a
+  // mounted child, and a session may be actively recording in the backend
+  // while Settings opens on top of it. Replacing that child with
+  // SettingsScreen (as the Meeting branch below does, safely, since Meeting's
+  // own state lives in this component rather than a child) would unmount it
+  // and drop its live session state, so Settings layers as an overlay here
+  // instead of swapping the tree.
+  if (isStreamingOpen) {
+    return (
+      <>
+        <StreamingView
+          onClose={() => setIsStreamingOpen(false)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+        />
+        {isSettingsOpen && (
+          <div className="settings-overlay">
+            <SettingsScreen
+              onClose={() => {
+                setIsSettingsOpen(false);
+                void refreshModelAvailability();
+              }}
+            />
+          </div>
+        )}
+      </>
+    );
+  }
 
   if (isSettingsOpen) {
     return (
@@ -513,7 +559,9 @@ export function App() {
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Rename meeting"
               onClick={() => activeMeeting && openRename(activeMeeting)}
-              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
+              disabled={
+                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+              }
             >
               <Icon name="pencil" size={14} />
             </button>
@@ -531,7 +579,9 @@ export function App() {
                   status: activeMeeting.status,
                 })
               }
-              disabled={!activeMeeting || activeIsTranscribing || isGeneratingNotes}
+              disabled={
+                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+              }
             >
               <Icon name="trash-2" size={14} />
             </button>
@@ -579,11 +629,30 @@ export function App() {
               <Icon name="play" size={17} />
             </button>
             <span className="wp-sep" />
-            <ActionIcon icon="refresh-cw" label="Re-run" disabled />
-            <span className="wp-sep" />
+            {/* No backend cancel exists for an in-flight transcription — this
+                stays a disabled placeholder, matching the design's icon set,
+                until that capability exists. */}
             <ActionIcon icon="square" label="Stop" disabled />
             <span className="wp-sep" />
-            <ActionIcon icon="sparkles" label="Craft notes" accent onClick={() => void handleGenerateNotes()} disabled={!hasTranscript || llmModelReady !== true || activeIsTranscribing || isGeneratingNotes} />
+            <ActionIcon
+              icon="sparkles"
+              label="Craft notes"
+              accent
+              onClick={() => void handleGenerateNotes()}
+              disabled={
+                !hasTranscript ||
+                llmModelReady !== true ||
+                activeIsTranscribing ||
+                isGeneratingNotes
+              }
+            />
+            <span className="wp-sep" />
+            <ActionIcon
+              icon="copy"
+              label={copyStatus === "copied" ? "Copied" : "Copy transcript"}
+              onClick={() => void handleCopy()}
+              disabled={activeIsTranscribing || !hasTranscript}
+            />
             <span className="wp-sep" />
             <button
               type="button"
@@ -596,7 +665,23 @@ export function App() {
               <Icon name="download" size={17} />
             </button>
             <span className="wp-sep" />
-            <ActionIcon icon="trash-2" label="Delete transcript" disabled />
+            <ActionIcon
+              icon="trash-2"
+              label="Delete active meeting"
+              onClick={() =>
+                activeMeeting &&
+                setDeleteTarget({
+                  id: activeMeeting.id,
+                  title: activeMeeting.title,
+                  created_at_ms: activeMeeting.created_at_ms,
+                  duration_ms: activeMeeting.duration_ms,
+                  status: activeMeeting.status,
+                })
+              }
+              disabled={
+                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+              }
+            />
           </div>
         </div>
       </header>
@@ -650,6 +735,11 @@ export function App() {
       <div className="wp-main">
         {sidebarOpen && (
           <aside className="wp-sidebar">
+            <ModeToggle
+              mode="meeting"
+              onSelectMeeting={() => {}}
+              onSelectStreaming={() => setIsStreamingOpen(true)}
+            />
             <div className="wp-search">
               <Icon name="search" size={16} />
               <input
@@ -762,7 +852,9 @@ export function App() {
                               speakerId={seg.speaker_id!}
                               label={resolveSpeakerLabel(seg.speaker_id!)}
                               onRename={renameSpeaker}
-                              disabled={activeIsTranscribing || isGeneratingNotes}
+                              disabled={
+                                activeIsTranscribing || isGeneratingNotes
+                              }
                             />
                           )}
                           <span className="wp-speaker-time">
@@ -931,33 +1023,6 @@ export function App() {
   );
 }
 
-function ActionIcon({
-  icon,
-  label,
-  accent,
-  disabled,
-  onClick,
-}: {
-  icon: IconName;
-  label: string;
-  accent?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      className={`wp-icon-btn${accent ? " wp-icon-btn--accent" : ""}`}
-      aria-label={label}
-      title={label}
-      disabled={disabled}
-      onClick={onClick}
-    >
-      <Icon name={icon} size={17} />
-    </button>
-  );
-}
-
 function MeetingRow({
   title,
   when,
@@ -977,7 +1042,10 @@ function MeetingRow({
   onRename: () => void;
   onDelete: () => void;
 }) {
-  const running = status.tone === "transcribing" || status.tone === "diarizing" || status.tone === "crafting";
+  const running =
+    status.tone === "transcribing" ||
+    status.tone === "diarizing" ||
+    status.tone === "crafting";
   return (
     <li
       className={`wp-meeting-row${selected ? " is-selected" : ""}`}

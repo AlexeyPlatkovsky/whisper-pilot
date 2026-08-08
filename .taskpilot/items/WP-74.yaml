@@ -1,0 +1,23 @@
+schema_version: 1
+id: WP-74
+title: Streaming export & copy
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-06T19:26:53Z'
+updated_at: '2026-08-07T07:07:21Z'
+parent_id: WP-68
+description: 'One-click transcript copy and Markdown export for a Streaming session, available during or after the session once text exists.
+
+
+  Discovery during implementation: WP-68''s approved spec assumed ''reusing export.rs conventions'', but no export.rs module exists -- Meeting''s own export (Save button) renders client-side (App.tsx''s transcriptText) and writes via the generic save_text_dialog command; Meeting has no copy-to-clipboard at all (WP-24, still backlog, would have built both properly). Corrected docs/architecture.md''s Export section (was describing nonexistent Rust code as built) and followed the REAL pattern instead: render client-side, reuse save_text_dialog.
+
+
+  Copy uses the browser navigator.clipboard.writeText API directly (no new Tauri clipboard plugin/capability surface for a one-line need). Export renders a minimal Markdown document (title heading + plain transcript) through save_text_dialog. Both reuse windowText''s [unavailable] marker for a fail-open window, matching the live view.'
+dod:
+- Copy and Export buttons in src/StreamingView.tsx, disabled until transcript text exists (including a fail-open window's [unavailable] marker, which counts as text).
+- Copy writes the plain transcript (space-joined window texts, [unavailable] for failed windows) to the clipboard via navigator.clipboard.writeText.
+- Export writes a Markdown document (# title + transcript) via the existing save_text_dialog command, filename derived from the session title.
+- Both surface a caught error rather than failing silently; Copy shows a brief 'Copied' confirmation.
+- docs/architecture.md's Export section corrected to describe the real (client-side-rendering) pattern instead of a nonexistent export.rs module.
+- 'npm run typecheck/lint/format:check pass; 152/152 vitest tests pass (16 new: Copy/Export behavior + disabled-state coverage).'

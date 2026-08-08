@@ -1,0 +1,28 @@
+schema_version: 1
+id: WP-69
+title: Streaming scope amendment & ADR (docs/idea.md, docs/roadmap.md)
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-06T19:26:49Z'
+updated_at: '2026-08-06T19:38:30Z'
+parent_id: WP-68
+description: 'User goal: make Streaming (WP-68) a documented, in-scope product capability so its implementation children are not building an undocumented product pivot. Happy path: amend docs/idea.md''s Scope section (remove/replace the "Live / microphone / system-audio capture ... is a different product" out-of-scope line) and Non-Goals (replace "WhisperPilot will not become a real-time transcriber" with language describing Streaming''s scope and its relationship to Meeting''s batch-accuracy identity); mirror the equivalent change in docs/roadmap.md''s Non-Goals (Over Time) list ("Live capture — never; a different product"); author a new ADR-014 explaining the coexistence of Meeting (ADR-002: full-file batch, no streaming) and Streaming (near-real-time, quality-over-latency), marking ADR-002 partially superseded (its batch-accuracy rationale for Meeting stands; its "not live streaming" scope boundary is superseded for the app as a whole); run sdd-index-sync so docs/INDEX.md''s decision log reflects both. Primary failure mode: if the docs/roadmap.md non-goal is missed while docs/idea.md is updated, the two documents contradict each other post-change — sdd-index-sync''s read-through must catch that inconsistency. Scope boundary: prose/decision-record changes only; no code, no docs/architecture.md changes (that belongs to WP-70..WP-74, which will each update architecture.md for their own surface as they land).
+
+
+  Scenario (happy path): Given a reader opens docs/idea.md and docs/roadmap.md after this change, When they read the Scope/Non-Goals sections, Then Streaming appears as a documented in-scope capability in both, with no contradiction between the two documents, and ADR-014 is discoverable from docs/INDEX.md''s decision log.
+
+
+  Constraints: no runtime/code change (docs and decision-record only); existing ADRs are never deleted or rewritten, only marked superseded per this project''s ADR convention (see ADR-005, ADR-007 for the existing partial-supersession pattern); docs/INDEX.md''s generated sections must be produced by sdd-index-sync, not hand-edited.'
+dod:
+- docs/idea.md's Scope section no longer lists live/microphone/system-audio capture as out-of-scope, and its Non-Goals no longer states WhisperPilot will not become a real-time transcriber; both reflect Streaming as an in-scope, documented capability.
+- docs/roadmap.md's Non-Goals (Over Time) list no longer states live capture is never in scope, and is consistent with the amended docs/idea.md.
+- 'A new docs/decisions/ADR-014 exists with Status: accepted, explaining why Meeting''s batch-accuracy identity (ADR-002) and Streaming''s near-real-time identity coexist rather than conflict.'
+- docs/INDEX.md's decision log (generated section, via sdd-index-sync) lists ADR-014 and marks ADR-002 as partially superseded, consistent with the ADR-005/ADR-007 precedent already in that table.
+links:
+  blocks:
+  - WP-70
+  - WP-71
+  - WP-72
+  - WP-73
+  - WP-74

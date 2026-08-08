@@ -1,0 +1,90 @@
+schema_version: 1
+id: WP-76
+title: 'Streaming header status widget: On Air / Ready states'
+priority: normal
+type: task
+status: done
+created_at: '2026-08-07T13:33:18Z'
+updated_at: '2026-08-07T16:56:04Z'
+parent_id: WP-68
+description: 'StreamingView.tsx currently gives no at-a-glance signal of whether a session
+
+  is actively capturing versus idle — the only cue is which button (Start/Stop)
+
+  is showing. Add a status widget to the Streaming window''s header that shows
+
+  one of three states, driven entirely by existing/new client-side state (no
+
+  backend change): "Ready" (idle — no session running, green check icon, no
+
+  timer) is the default/first-launch state; clicking Start transitions it to
+
+  "Starting…" (neutral gray spinner icon, no timer) for the in-flight window
+
+  between the click and `isRunning` becoming true; once `isRunning` is true it
+
+  shows "On Air" (red spinner icon, red text, elapsed timer counting up from
+
+  0:00, ticking once per second, formatted with hour support once elapsed time
+
+  passes 60 minutes); on Stop (or the session ending on its own via
+
+  `onStreamingSessionEnded`), it returns to "Ready" and the timer stops.
+
+  Opening a past, already-stopped session from the sidebar list also shows
+
+  "Ready" (matching `handleOpen`''s existing `setIsRunning(false)`). If the
+
+  Start call itself fails before `isRunning` becomes true, the widget falls
+
+  back to "Ready" — the existing error banner handles the failure message
+
+  separately, not the widget. While a Stop request is in flight (`isRunning`
+
+  still true, `busy` true again until the call resolves), the widget stays "On
+
+  Air" — nothing changes until `isRunning` actually flips false via
+
+  `onStreamingSessionEnded`. The elapsed timer is computed each tick as
+
+  `Date.now() - startTime` (captured once when `handleStart` resolves), not an
+
+  incrementing counter, so if `setInterval` throttles or pauses while the
+
+  window is backgrounded or the system sleeps, the displayed value is always
+
+  correct the instant it next fires — no drift, no resume/catch-up logic
+
+  needed. The widget is purely informational — no click/hover/keyboard
+
+  interaction of its own. Design reference: pencil/main_view.pen, "Streaming
+
+  Window" Status Widget component and the "Status Widget — States" reference
+
+  panel (Ready/Starting…/On Air rows specifically; the other four rows belong
+
+  to WP-77/WP-75, not this task).
+
+
+  Non-goals: Crafting MFU…/Prettifying…/MFU Failed/Prettify Failed states (WP-77/WP-75); any backend/IPC change (elapsed time is client-side Date.now()-based, not a backend timestamp); any change to formatClockTime''s existing per-window timestamp behavior; mid-session degraded-capture states (deferred per streaming-status-states:1:1 D1); explicit backgrounding/sleep resume handling (verified none — Date.now()-delta computation makes drift structurally impossible).
+
+
+  Design reference: pencil/main_view.pen, "Streaming Window" Status Widget component and "Status Widget — States" reference panel (Ready/Starting…/On Air rows only).
+
+
+  Target surfaces: src/StreamingView.tsx (widget JSX, isRunning/busy-driven state, timer effect computing Date.now()-startTime each tick, new elapsed-time formatter distinct from formatClockTime), src/styles.css (new widget styles).
+
+
+  Constraints: plain setInterval + local state, no new re-render pressure; no new security/permission surface; no interaction contract (display-only widget).
+
+
+  Approved draft: streaming-followups:wp-76:2, digest sha256:ea2b7c01b48af2e8a1c8802496d1b0ea90e37a34792e35d6530124c081342d17, scope-verifier: No gaps.'
+dod:
+- On first launch / with no session ever run, the widget shows "Ready" (green check icon, no timer).
+- Clicking Start shows "Starting…" (neutral gray icon, no timer) until isRunning becomes true, then switches to "On Air" (red icon, red text, timer running from 0:00).
+- While On Air, the timer increments once per second and switches to h:mm:ss format once elapsed time reaches 60 minutes.
+- Clicking Stop, or the session ending on its own, returns the widget to "Ready" and stops the timer.
+- Opening a past (stopped) session from the sidebar list shows "Ready", not "On Air".
+- If the Start call fails before isRunning becomes true, the widget falls back to "Ready" (the existing error banner shows the failure).
+- While a Stop request is in flight, the widget remains "On Air" until isRunning actually flips false.
+- The widget has no click/hover/keyboard interaction of its own.

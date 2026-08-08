@@ -1,0 +1,74 @@
+[
+  {
+    "id": "english-roadmap",
+    "language": "en",
+    "original": "Um, so, the Q3 roadmap has, you know, 42 tickets, and the team will review the API changes on Friday.",
+    "unsafe_candidate": "The roadmap has tickets, and the team will review the changes on Friday."
+  },
+  {
+    "id": "russian-screenshot",
+    "language": "ru",
+    "original": "А исследователи из университета Корнеги Меллан проверили Агентов агентов на реальных задачах разработки разработки. В лучшем случае агент успешно выполнил две трети заданий. Звучит неплохо, вот только среди рабочих решений больше 80% не прошли тесты безопасности. То есть, приложение запускается, кнопка нажимается, а потом человек меняется и видит данные других пользователей. Год назад я делал видео по безопасности вайбкодинга. Но время летит, сейчас в топе агентное программирование и уязвимости выходят на новый левел, поэтому сегодня разберемся. Берем три типа атак, которые породил ИИ. Что такое летальная триада? Стоит ли защищаться от слоп-сквоттинга? Почему правила типа Cursor Rules не гарантируют никакой безопасности? И как вообще выглядит модель угроз сегодняшнего дня? Жил-был разработчик, пилил свою библиотеку, отвечал И как-то на ИИ-хайпе, вдохновленный новыми возможностями, новоиспеченный вайбкодер завел себе ИИ-агент. Дал все права и автоматизировал процессы от написания задач до деплоя и в один прекрасный день в его гитхаб прилетел и ищу так, ну вот я стопал Музыку я теперь говорю сам И что мы слышим... What we are listening to, we are listening to hear something about an interesting part of my day to day activity, and they can mix different languages, ... Koníčela Похоже, ты немножко сломал, да? Что нам логики говорят? Ойе, přijímáš mě to vyjde Locating происканий. Это что за ерунда? Здесь он не выгружается постоянно. Paď er hann. Смотрим в активе, у вас пропало 1 гигабайт на постоянке, Похоже, ты сбрызил себе ячейку, которая просканирует меня в реалтайме.",
+    "unsafe_candidate": "А исследователи проверили агентов. Сегодня разберем атаки и правила безопасности."
+  },
+  {
+    "id": "turkish-meeting",
+    "language": "tr",
+    "original": "Şey, yani 2026 bütçesini konuşalım; tekrar ediyorum, API erişimi cuma günü kapatılacak ve ekip 12 kullanıcıyı bilgilendirecek.",
+    "unsafe_candidate": "Bütçeyi konuşalım; erişim cuma günü kapatılacak."
+  },
+  {
+    "id": "mixed-russian-english",
+    "language": "mixed",
+    "original": "Ну, let's check the PostgreSQL migration, э-э, before the 3.14 release so we do not lose customer data.",
+    "unsafe_candidate": "Let's check the migration before the release."
+  },
+  {
+    "id": "technical-models",
+    "language": "en",
+    "original": "The WhisperPilot client uses Qwen2.5-Instruct locally with llama.cpp and keeps the transcript offline.",
+    "unsafe_candidate": "The client uses a model locally and keeps the transcript offline."
+  },
+  {
+    "id": "macos-capture",
+    "language": "en",
+    "original": "The ScreenCaptureKit permission failed once — um — but the microphone fallback kept the 16 kHz stream alive.",
+    "unsafe_candidate": "The permission failed, but the fallback kept the stream alive."
+  },
+  {
+    "id": "short-noisy",
+    "language": "ru",
+    "original": "Э-э, 7 задач, 7 задач, проверим сегодня.",
+    "unsafe_candidate": "Проверим сегодня."
+  },
+  {
+    "id": "numbers-and-version",
+    "language": "en",
+    "original": "Deploy version 1.4.2 to cluster eu-west-1 after the 09:30 backup finishes.",
+    "unsafe_candidate": "Deploy the new version after the backup."
+  },
+  {
+    "id": "turkish-technical",
+    "language": "tr",
+    "original": "Docker imajını güncelledik, fakat Redis bağlantısı 503 döndürüyor; S3 yedeği saat 23:45'te hazır olmalı.",
+    "unsafe_candidate": "İmajı güncelledik, fakat bağlantı hata döndürüyor."
+  },
+  {
+    "id": "mixed-action-items",
+    "language": "mixed",
+    "original": "Окей, Sam will update the CI workflow, а Мария проверит 99% coverage before merge.",
+    "unsafe_candidate": "Sam will update the workflow before merge."
+  },
+  {
+    "id": "long-gaps",
+    "language": "en",
+    "original": "We should — pause here — because the compliance review, including SOC2 and ISO-27001 evidence, is not complete yet.",
+    "unsafe_candidate": "We should pause because the review is not complete."
+  },
+  {
+    "id": "repeated-filler",
+    "language": "ru",
+    "original": "Ну да, ну да, я хотел сказать, что релиз 2.0.0 нельзя выкатывать без миграции схемы.",
+    "unsafe_candidate": "Релиз нельзя выкатывать."
+  }
+]

@@ -169,3 +169,128 @@ export function onTranscriptionPhase(
     handler(event.payload),
   );
 }
+
+export interface StreamingSessionSummary {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  status: string;
+}
+
+export interface StreamingWindow {
+  window_index: number;
+  start_ms: number;
+  end_ms: number;
+  text: string;
+  language: string;
+  outcome_ok: boolean;
+}
+
+export interface StreamingNotes {
+  summary: string;
+  decisions: string;
+  action_items: string;
+  open_questions: string;
+  participants: string;
+}
+
+export interface StreamingSession {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms: number;
+  status: string;
+  windows: StreamingWindow[];
+  notes?: StreamingNotes;
+  prettified_text?: string;
+}
+
+export function generateStreamingNotes(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("generate_streaming_notes", { id });
+}
+
+/** Returns the cleaned text for review — does not persist it. */
+export function generateStreamingPrettify(id: number): Promise<string> {
+  return invoke<string>("generate_streaming_prettify", { id });
+}
+
+export function acceptStreamingPrettify(
+  id: number,
+  text: string,
+): Promise<StreamingSession> {
+  return invoke<StreamingSession>("accept_streaming_prettify", { id, text });
+}
+
+/** Removes an accepted prettification and restores the raw transcript view. */
+export function revertStreamingPrettify(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("revert_streaming_prettify", { id });
+}
+
+export function listStreamingSessions(): Promise<StreamingSessionSummary[]> {
+  return invoke<StreamingSessionSummary[]>("list_streaming_sessions");
+}
+
+export function openStreamingSession(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("open_streaming_session", { id });
+}
+
+export function renameStreamingSession(
+  id: number,
+  title: string,
+): Promise<StreamingSession> {
+  return invoke<StreamingSession>("rename_streaming_session", { id, title });
+}
+
+export function deleteStreamingSession(id: number): Promise<void> {
+  return invoke<void>("delete_streaming_session", { id });
+}
+
+/** Starts capture + rolling-window decode; returns once capture has begun.
+ * Pass `sessionId` to resume a previously-stopped session (window numbering
+ * continues where it left off) instead of starting a brand-new one. */
+export function startStreamingSession(
+  sessionId?: number,
+): Promise<StreamingSessionSummary> {
+  return invoke<StreamingSessionSummary>("start_streaming_session", {
+    sessionId,
+  });
+}
+
+export function stopStreamingSession(): Promise<void> {
+  return invoke<void>("stop_streaming_session");
+}
+
+/** One decoded window, live — whether it succeeded or fail-open-skipped. */
+export function onStreamingWindow(
+  handler: (window: StreamingWindow & { session_id: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingWindow & { session_id: number }>(
+    "streaming_window",
+    (event) => handler(event.payload),
+  );
+}
+
+export interface StreamingSources {
+  session_id: number;
+  mic: boolean;
+  system_audio: boolean;
+}
+
+/** Fired once, right after a session starts, naming which source(s) came up. */
+export function onStreamingSources(
+  handler: (sources: StreamingSources) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingSources>("streaming_sources", (event) =>
+    handler(event.payload),
+  );
+}
+
+/** Fired once the session's decode loop has fully ended (after Stop). */
+export function onStreamingSessionEnded(
+  handler: (payload: { session_id: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ session_id: number }>("streaming_session_ended", (event) =>
+    handler(event.payload),
+  );
+}

@@ -3,9 +3,9 @@ id: WP-68
 title: Streaming — near-real-time multi-language audio transcription
 priority: normal
 type: epic
-status: in_progress
+status: done
 created_at: '2026-08-06T17:03:08Z'
-updated_at: '2026-08-06T18:57:02Z'
+updated_at: '2026-08-07T07:08:55Z'
 description: 'Description: WhisperPilot''s Meeting mode transcribes a pre-existing local audio/video file in one full-file batch pass, prioritizing accuracy over speed and never touching live audio (a standing product non-goal). This epic adds a second, first-class capture mode, "Streaming": a user starts a session, the app captures a mix of microphone and macOS system audio (loopback), and near-real-time text appears via the already-bundled large-v3-turbo Whisper model, decoded on rolling ~5-10s windows with per-window language re-detection so mixed-language speech (e.g. English/Russian/Turkish in one session) is handled without a language selector. No speaker diarization or role labels are produced — output is plain running text. Quality/precision is the primary priority for Streaming, with the 5-10s latency budget as a secondary priority (it must stay low but not at accuracy''s expense). A session is manually started and stopped, is incrementally persisted as it decodes (protecting against app crash/quit) to a new streaming_sessions entity separate from the meetings table, and once at least some text exists the user can one-click copy the transcript or export it to Markdown, reusing existing export.rs rendering conventions. A single decode-window failure is handled fail-open (skip that window, keep the session running); if system-audio permission is unavailable/denied but the microphone is available, the session still runs in mic-only mode. Streaming is mutually exclusive with an active Meeting file transcription for v1, since both share the one cached Whisper context in AppState. No raw audio is retained once a window is decoded — only the text persists, so a finished session cannot later be re-transcribed with a different model. Building this requires reversing a currently-documented product non-goal ("WhisperPilot will not become a real-time transcriber" / "Live... capture... is out of scope, a different product" in docs/idea.md, echoed in docs/roadmap.md); that scope amendment plus a new ADR explaining the coexistence of Meeting''s batch-accuracy identity and Streaming''s near-real-time identity is a required, sequenced-first child feature of this epic. A later, explicitly separate follow-on child feature ("Prettify") will let the user run a finished transcript through the same local LLM infrastructure already planned for Meeting''s structured notes (M3, llama.cpp + Qwen2.5-Instruct) with a cleanup prompt — removing filler words/interjections/duplication and polishing grammar — but is not required for this epic''s core deliverable to be considered done.
 
 
@@ -63,8 +63,7 @@ description: 'Description: WhisperPilot''s Meeting mode transcribes a pre-existi
   - Streaming export & copy: one-click transcript copy and Markdown export, reusing export.rs conventions.
 
   - Prettify (follow-on): local-LLM cleanup pass (filler/interjection/duplication removal, grammar polish) over a finished transcript, reusing M3''s llama.cpp/Qwen2.5-Instruct infrastructure with a dedicated prompt; sequenced after the six child features above.'
-dor:
-- SCOPE AMENDMENT APPROVED — docs/idea.md Scope/Non-Goals section reflects Streaming as in-scope, backed by a new ADR, before implementation begins.
+dor: []
 dod:
 - docs/idea.md Scope/Non-Goals (and docs/roadmap.md's echoed non-goal) are amended and an approved ADR documents Streaming's coexistence with Meeting, landed before any other child feature begins implementation.
 - A user can start a Streaming session and see mixed mic+system-audio speech (including a mix of at least two of English/Russian/Turkish across a session) appear as plain, unattributed running text; the measurable latency threshold and its measurement methodology are defined and owned by the "Streaming decode/session pipeline" child feature's own DoD, established from that child's required feasibility spike.

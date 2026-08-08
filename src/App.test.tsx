@@ -79,6 +79,15 @@ vi.mock("./ipc", () => ({
     active_model_diarization: "none",
   })),
   setSetting: vi.fn(),
+  listStreamingSessions: vi.fn(async () => []),
+  openStreamingSession: vi.fn(),
+  renameStreamingSession: vi.fn(),
+  deleteStreamingSession: vi.fn(),
+  startStreamingSession: vi.fn(),
+  stopStreamingSession: vi.fn(),
+  onStreamingWindow: vi.fn(async () => () => {}),
+  onStreamingSources: vi.fn(async () => () => {}),
+  onStreamingSessionEnded: vi.fn(async () => () => {}),
 }));
 
 async function waitForAddFileEnabled() {
@@ -1997,5 +2006,26 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     render(<App />);
 
     expect(await screen.findByText("1h 02m")).toBeInTheDocument();
+  });
+});
+
+describe("App — Streaming mode toggle", () => {
+  it("opens the Streaming view from the sidebar toggle and returns to Meetings", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    render(<App />);
+    await waitForAddFileEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Streaming" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Streaming Session" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Choose file" }),
+    ).toBeInTheDocument();
   });
 });

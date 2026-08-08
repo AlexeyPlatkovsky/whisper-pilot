@@ -106,6 +106,32 @@ Do not advance to Step 2 until the confirmed decision summary is present.
 
 ---
 
+### Step 1a — Pen-to-Code Design Translation (conditional)
+
+**Trigger:** the task touches a visual UI or interaction surface (same term
+as Step 6) and a confirmed `design-in-pen`/`brainstorm` output already
+present in the conversation approves the relevant `pencil/*.pen`
+frame(s)/component(s) for it.
+**Skip:** the task has no visual UI or interaction surface, or no approved
+Pencil design applies to it.
+
+Skill: `.claude/skills/sync-pen-code/SKILL.md`, direction `pen-to-code`
+Required input: manager route/run identity, the target `.pen` file, and the
+approved frame(s)/component(s) for this task (from a confirmed
+`design-in-pen` or `brainstorm` output already present in the conversation).
+Required output: `Skill: sync-pen-code - output below`
+
+If the referenced design is not yet approved, do not translate here: return to
+Step 1 (or route `design-in-pen`) to resolve it first. The translation this
+step produces (layout, copy, icons, states, reusable-component references) is
+additional input to Steps 2 and 3; it does not verify the eventual
+implementation — that remains Step 4 and Step 6, below.
+
+Do not advance to Step 2 until `Status: completed` is present, or the trigger
+condition is confirmed not met.
+
+---
+
 ### Step 2 — Test Authoring And Red Evidence
 
 Skill: `.claude/skills/testing-pro/SKILL.md`
@@ -123,9 +149,10 @@ only when the manager-declared scope contains no non-trivial logic. Stop on
 Skill: `.claude/skills/implement-tauri-feature/SKILL.md`
 Required output: `Skill: implement-tauri-feature - output below`
 Required input: route `implement-feature`, manager Route run, Git and lifecycle
-artifacts, Ready artifact, applicable confirmed brainstorm artifact,
-testing-pro artifact, approved scope/DoD/scenarios, and the pre-edit
-task-baseline snapshot.
+artifacts, Ready artifact, applicable confirmed brainstorm artifact, the Step
+1a `sync-pen-code` translation artifact when Step 1a ran, testing-pro
+artifact, approved scope/DoD/scenarios, and the pre-edit task-baseline
+snapshot.
 
 Advance only when `Status: Complete` and the exhaustive changed-file list is
 present. Stop and route `Blocked` or `Failed` to its stated blocker.
@@ -184,8 +211,15 @@ changed production behavior.
 
 Manually verify the changed UI: run the app, exercise the affected states, and
 confirm they match the specification and the conventions in
-`.claude/conventions/react-tauri/`. Emit a visible `Manual UI verification
-record` in this form:
+`.claude/conventions/react-tauri/`. If Step 1a ran, the specification includes
+its design translation. If, and only if, Step 1a's `sync-pen-code` output
+reports an `Export` path (its render is optional — absent when the JSON facts
+alone were sufficient), a screenshot of the built UI may additionally be
+checked against that export via `.claude/agents/pencil-vision-reviewer.md`
+(`counterpart-image` mode) as an automated second opinion; when no export
+exists, skip that optional check without treating its absence as a gap. Either
+way it does not replace this manual check. Emit a visible `Manual UI
+verification record` in this form:
 
 `Status` — exactly one of `Pass`, `Fail`, or `External verification limitation`.
 
@@ -279,9 +313,10 @@ Do not advance to Step 8 until verdict is `Approved` or `Approved with minor not
 ### Step 8 — Documentation Maintenance (conditional)
 
 **Trigger:** implementation changes any authoritative fact category owned by
-the skill: public behavior or user workflow; developer workflow or command;
-architecture, ownership, or source layout; domain vocabulary or business rule;
-known limitation, risk, or failure mode.
+the skill — the exact category list lives once in
+`.claude/skills/documentation-maintenance/SKILL.md` §3 ("Decide Whether Docs
+Are Affected"); consult that list here rather than a copy of it, so this step
+cannot go stale against it.
 **Skip:** the implementation changes none of those categories.
 
 Skill: `.claude/skills/documentation-maintenance/SKILL.md`

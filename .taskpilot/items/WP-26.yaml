@@ -3,9 +3,9 @@ id: WP-26
 title: Two-pane shell + collapsible left pane (persisted) + panel toggle + logo
 priority: normal
 type: task
-status: backlog
+status: cancelled
 created_at: '2026-07-21T11:04:48Z'
-updated_at: '2026-07-21T11:04:48Z'
+updated_at: '2026-08-08T12:42:35Z'
 parent_id: WP-25
 description: Persistent two-pane layout; header panel-toggle placed immediately after the macOS traffic lights (fixed position, toggled/untoggled state), app logo next to it; collapsed/expanded state persists across restarts. Implements F004-R2 (F004-T10).
 created_by: M2 UI planning

@@ -2,11 +2,9 @@
 //! docs/architecture.md's Diarization Process Isolation section.
 //!
 //! The child is *this same binary* re-executed with a hidden argv mode
-//! (`WORKER_FLAG`). Each attempt is an independent call, so a caller may run
-//! more than one per transcription (WP-57's fallback does).
-//!
-//! macOS only (`std::os::unix::process::ExitStatusExt`), matching the project's
-//! platform scope.
+//! (`WORKER_FLAG`); each attempt is independent, so a caller may run more
+//! than one per transcription (WP-57's fallback does). macOS only
+//! (`std::os::unix::process::ExitStatusExt`).
 
 use crate::diarize::{self, SpeakerTurn};
 use crate::error::{AppError, Result};

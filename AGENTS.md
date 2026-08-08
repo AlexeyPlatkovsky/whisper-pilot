@@ -191,6 +191,7 @@ each entry's own file is its sole behavioral authority.
 |---|---|
 | `agent-handoff` | A routed handoff to a distinct agent or subagent needs a runner selected or recovered |
 | `brainstorm` | An open design decision with meaningful trade-offs needs structured discussion |
+| `design-in-pen` | A UI design mockup needs creating or iterating on in `pencil/*.pen`, before implementation |
 | `discover-requirements` | Feature, epic, or task scope is unclear and requirements must be elicited before work |
 | `documentation-maintenance` | A feature, refactor, or non-trivial bug fix has landed and documentation may be stale |
 | `implement-tauri-feature` | Routed feature or confirmed bug-fix scope is ready to implement after its gates |
@@ -199,6 +200,7 @@ each entry's own file is its sole behavioral authority.
 | `sdd-doc-author` | One SDD main or extension document must be created or updated |
 | `sdd-feature-author` | One SDD feature folder must be scaffolded or updated |
 | `sdd-index-sync` | A doc, feature, or ADR change requires rebuilding `docs/INDEX.md` |
+| `sync-pen-code` | `pencil/*.pen` needs syncing with the real UI code, in either direction |
 | `task-complete` | Non-trivial routed work is ready for closure reporting |
 | `task-quality` | Completion evidence must be mapped against the Definition of Done before closure |
 | `task-routing` | Work is (or may be) non-trivial and needs classification and a route |
@@ -215,6 +217,7 @@ each entry's own file is its sole behavioral authority.
 |---|---|
 | `code-reviewer` | A completed, validated implementation diff needs review before closure |
 | `instruction-evaluator` | A changed AI-governance instruction artifact needs isolated review |
+| `pencil-vision-reviewer` | A `pencil` CLI mutation needs its rendered result checked against design intent or a counterpart image |
 | `scope-verifier` | A draft requirements specification needs a structural completeness check |
 | `sdd-gap-analyzer` | SDD adoption or expansion needs a docs-versus-code gap inventory |
 | `sdd-spec-reviewer` | An SDD docs tree needs a completeness and traceability review |

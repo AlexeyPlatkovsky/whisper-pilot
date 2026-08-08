@@ -1,5 +1,4 @@
 use crate::error::{AppError, Result};
-use crate::store::MeetingNotes;
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
@@ -25,10 +24,23 @@ struct NotesJson {
     participants: String,
 }
 
+/// Structured notes generation output, domain-agnostic — the caller (Meeting
+/// or Streaming) attaches its own id before persisting.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GeneratedNotes {
+    pub summary: String,
+    pub decisions: String,
+    pub action_items: String,
+    pub open_questions: String,
+    pub participants: String,
+}
+
 const ASSISTANT_PREFILL: &str = "{\"summary\":\"";
 
 fn build_prompt(transcript: &str) -> String {
-    let is_russian = transcript.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+    let is_russian = transcript
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
 
     let (system_ru, user_ru) = if is_russian {
         (
@@ -86,7 +98,7 @@ fn strip_think_block(raw: &str) -> &str {
     raw
 }
 
-fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
+fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
     let original = raw.trim();
     let cleaned = strip_think_block(original);
     let cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
@@ -103,8 +115,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     let json_str = json_str.trim();
 
     if let Ok(parsed) = serde_json::from_str::<NotesJson>(json_str) {
-        return Ok(MeetingNotes {
-            meeting_id: 0,
+        return Ok(GeneratedNotes {
             summary: parsed.summary,
             decisions: parsed.decisions,
             action_items: parsed.action_items,
@@ -121,8 +132,7 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
         participants: String::new(),
     };
 
-    Ok(MeetingNotes {
-        meeting_id: 0,
+    Ok(GeneratedNotes {
         summary: fallback.summary,
         decisions: String::new(),
         action_items: String::new(),
@@ -131,10 +141,143 @@ fn parse_notes_json(raw: &str) -> Result<MeetingNotes> {
     })
 }
 
-pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<MeetingNotes> {
+pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<GeneratedNotes> {
     let prompt = build_prompt(transcript);
     let raw_output = run_inference(model_path, &prompt)?;
     parse_notes_json(&raw_output)
+}
+
+fn build_prettify_prompt(transcript: &str) -> String {
+    let is_russian = transcript
+        .chars()
+        .any(|c| ('\u{0400}'..='\u{04FF}').contains(&c));
+
+    let (system, user) = if is_russian {
+        (
+            "Ты — ассистент для осторожной очистки расшифровок. Отредактируй текст, сохраняя его содержание:\n\
+убери только очевидные слова-паразиты и соседние повторы, а грамматику исправляй минимально.\n\
+\n\
+ПРАВИЛА:\n\
+- Не удаляй законченные предложения, факты, имена, числа, технические термины или фрагменты на другом языке.\n\
+- Сохрани исходный смысл, порядок мыслей и все языковые переключения — не добавляй новую информацию.\n\
+- Если не уверен, оставь исходный фрагмент без изменений.\n\
+- Верни только очищенный текст, без пояснений и без разметки.",
+            "Очисти расшифровку.",
+        )
+    } else {
+        (
+            "You are a conservative transcript cleanup assistant. Edit the transcript while preserving its content:\n\
+remove only obvious filler words and adjacent repetitions, and make minimal grammar fixes.\n\
+\n\
+RULES:\n\
+- Do not delete complete sentences, facts, names, numbers, technical terms, or passages in another language.\n\
+- Preserve the original meaning, order of ideas, and every language switch — do not add new information.\n\
+- If unsure, copy the original fragment unchanged.\n\
+- Return only the cleaned text, with no explanation and no markup.",
+            "Clean up the transcript.",
+        )
+    };
+
+    format!(
+        "<|im_start|>system\n\
+{system}<|im_end|>\n\
+<|im_start|>user\n\
+Transcript:\n{transcript}\n\n\
+{user}<|im_end|>\n\
+<|im_start|>assistant\n\
+<think>\n\n</think>\n\n"
+    )
+}
+
+/// Strips a `<think>` reasoning block and markdown fences the model may wrap
+/// its output in — the same class of cleanup `parse_notes_json` already does
+/// for the JSON path, applied here to plain text instead.
+fn clean_prettify_output(raw: &str) -> String {
+    let cleaned = strip_think_block(raw.trim());
+    let cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
+    let cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+    cleaned.trim().to_string()
+}
+
+pub fn prettify_transcript(model_path: &Path, transcript: &str) -> Result<String> {
+    let prompt = build_prettify_prompt(transcript);
+    let raw_output = run_inference(model_path, &prompt)?;
+    let cleaned = clean_prettify_output(&raw_output);
+    validate_prettify_candidate(transcript, &cleaned)
+}
+
+fn protected_tokens(text: &str) -> impl Iterator<Item = &str> {
+    text.split_whitespace().filter(|token| {
+        let token = normalize_protected_token(token);
+        let has_digit = token.chars().any(|c| c.is_ascii_digit());
+        let has_separator = token.contains('-') || token.contains('_');
+        let uppercase_count = token.chars().filter(|c| c.is_uppercase()).count();
+        !token.is_empty() && (has_digit || has_separator || uppercase_count >= 2)
+    })
+}
+
+fn normalize_protected_token(token: &str) -> &str {
+    token
+        .trim_matches(|c: char| {
+            !c.is_alphanumeric() && c != '%' && c != '-' && c != '_' && c != '.'
+        })
+        .trim_end_matches('.')
+}
+
+fn contains_cyrillic(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0400}'..='\u{04FF}').contains(&c))
+}
+
+fn contains_latin(text: &str) -> bool {
+    text.chars().any(|c| ('\u{0041}'..='\u{024F}').contains(&c))
+}
+
+fn validate_prettify_candidate(original: &str, candidate: &str) -> Result<String> {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return Err(AppError::Llm(
+            "prettify returned an empty transcript; the raw transcript was kept".into(),
+        ));
+    }
+
+    let original_words = original.split_whitespace().count();
+    let candidate_words = candidate.split_whitespace().count();
+    if original_words > 0 && candidate_words * 2 < original_words {
+        return Err(AppError::Llm(
+            "prettify suggestion removed too much transcript content; review was rejected".into(),
+        ));
+    }
+    if candidate_words > original_words.saturating_mul(3) / 2 + 8 {
+        return Err(AppError::Llm(
+            "prettify suggestion added too much new content; review was rejected".into(),
+        ));
+    }
+
+    if contains_cyrillic(original) && !contains_cyrillic(candidate) {
+        return Err(AppError::Llm(
+            "prettify suggestion dropped the original Cyrillic content; review was rejected".into(),
+        ));
+    }
+    if contains_latin(original) && !contains_latin(candidate) {
+        return Err(AppError::Llm(
+            "prettify suggestion dropped the original Latin content; review was rejected".into(),
+        ));
+    }
+
+    for token in protected_tokens(original) {
+        let normalized = normalize_protected_token(token);
+        let retained = candidate
+            .split_whitespace()
+            .map(normalize_protected_token)
+            .any(|candidate_token| candidate_token == normalized);
+        if !retained {
+            return Err(AppError::Llm(format!(
+                "prettify suggestion dropped protected term '{normalized}'; review was rejected"
+            )));
+        }
+    }
+
+    Ok(candidate.to_string())
 }
 
 fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
@@ -305,5 +448,104 @@ mod tests {
     fn build_prompt_detects_cyrillic_even_when_mostly_ascii() {
         let prompt = build_prompt("We should обсуждать the budget.");
         assert!(prompt.contains("ассистент"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_includes_transcript() {
+        let prompt = build_prettify_prompt("Um so like we should, you know, ship it.");
+        assert!(prompt.contains("Um so like we should, you know, ship it."));
+        assert!(prompt.contains("cleanup"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_uses_english_for_ascii_transcript() {
+        let prompt = build_prettify_prompt("Let's talk about the roadmap.");
+        assert!(prompt.contains("cleanup"));
+        assert!(!prompt.contains("ассистент"));
+    }
+
+    #[test]
+    fn build_prettify_prompt_uses_russian_for_cyrillic_transcript() {
+        let prompt = build_prettify_prompt("Привет, давайте обсудим план.");
+        assert!(prompt.contains("ассистент"));
+        assert!(!prompt.contains("cleanup"));
+    }
+
+    #[test]
+    fn clean_prettify_output_passes_through_plain_text_unchanged() {
+        assert_eq!(
+            clean_prettify_output("Let's kick off the meeting."),
+            "Let's kick off the meeting."
+        );
+    }
+
+    #[test]
+    fn clean_prettify_output_strips_think_block() {
+        let raw = "<think>\nreasoning about cleanup\n</think>\nCleaned text here.";
+        assert_eq!(clean_prettify_output(raw), "Cleaned text here.");
+    }
+
+    #[test]
+    fn clean_prettify_output_strips_markdown_fences() {
+        assert_eq!(
+            clean_prettify_output("```\nCleaned text here.\n```"),
+            "Cleaned text here."
+        );
+    }
+
+    #[test]
+    fn clean_prettify_output_trims_surrounding_whitespace() {
+        assert_eq!(
+            clean_prettify_output("  \n  Cleaned text here.  \n  "),
+            "Cleaned text here."
+        );
+    }
+
+    // S-21: adversarial multilingual corpus — unsafe omission is rejected.
+    #[test]
+    fn prettify_corpus_rejects_candidates_that_drop_protected_content() {
+        #[derive(Deserialize)]
+        struct CorpusCase {
+            id: String,
+            language: String,
+            original: String,
+            unsafe_candidate: String,
+        }
+
+        let cases: Vec<CorpusCase> =
+            serde_json::from_str(include_str!("../tests/fixtures/prettify_corpus.json"))
+                .expect("prettify corpus JSON");
+
+        assert_eq!(cases.len(), 12);
+        assert!(cases.iter().any(|case| case.language == "en"));
+        assert!(cases.iter().any(|case| case.language == "ru"));
+        assert!(cases.iter().any(|case| case.language == "tr"));
+        assert!(cases.iter().any(|case| case.language == "mixed"));
+
+        for case in cases {
+            let result = validate_prettify_candidate(&case.original, &case.unsafe_candidate);
+            assert!(result.is_err(), "{} should be rejected", case.id);
+        }
+    }
+
+    // S-22: empty and whitespace-only model output is never accepted.
+    #[test]
+    fn prettify_rejects_empty_candidates() {
+        let original = "The Q3 roadmap has 42 tickets.";
+        assert!(validate_prettify_candidate(original, "").is_err());
+        assert!(validate_prettify_candidate(original, "   \n  ").is_err());
+    }
+
+    // S-23: conservative cleanup remains usable when protected terms survive.
+    #[test]
+    fn prettify_accepts_small_filler_cleanup_with_protected_terms() {
+        let original =
+            "Um, the Q3 roadmap has 42 tickets, and WhisperPilot keeps the transcript offline.";
+        let candidate =
+            "The Q3 roadmap has 42 tickets, and WhisperPilot keeps the transcript offline.";
+        assert_eq!(
+            validate_prettify_candidate(original, candidate).unwrap(),
+            candidate
+        );
     }
 }

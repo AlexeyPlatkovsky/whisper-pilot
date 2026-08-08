@@ -1,0 +1,23 @@
+schema_version: 1
+id: WP-72
+title: Streaming persistence (streaming_sessions store)
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-06T19:26:51Z'
+updated_at: '2026-08-07T06:32:02Z'
+parent_id: WP-68
+description: 'New streaming_sessions store (parallel to store.rs''s meeting tables, not an extension of them, per WP-68 D5): a Streaming session has no backing file, a possibly-mixed per-window language, and no diarization. streaming_store.rs opens its own connection to the same whisperpilot.sqlite3 file and owns two new tables, streaming_sessions and streaming_segments.
+
+
+  append_window upserts one window at a time (ON CONFLICT DO UPDATE, idempotent on retry) rather than replacing wholesale, advancing updated_at_ms in the same transaction -- this is what makes crash recovery real: only the last in-flight window can be lost. A failed window (outcome_ok=false) is still stored, not dropped, so a decode failure is distinguishable from genuine silence on replay. Supports create/get/rename/delete/list sessions and list_windows for transcript reconstruction, mirroring store.rs''s meeting CRUD conventions.
+
+
+  No IPC commands yet -- the meetings.rs-equivalent command layer for Streaming sessions lands with WP-73 (UI), the first consumer that needs it.'
+dod:
+- streaming_store.rs implements StreamingStore with create/get/rename/delete/list_sessions and append_window/list_windows/mark_stopped, mirroring store.rs's Store conventions.
+- append_window is idempotent on retry (upsert on session_id+window_index) and advances updated_at_ms in the same transaction.
+- A failed window's outcome_ok=false is persisted and distinguishable from a silent-but-successful window.
+- 9 unit tests cover create/list/reopen-persistence/idempotent-retry/failed-window/unknown-session-errors/cascade-delete/rename-error/mark-stopped/independent-session-window-sequences, all passing.
+- cargo check/test/clippy(-D warnings)/fmt --check all pass with zero regressions (210/210 lib tests, unchanged 5/5 packaging tests).
+- docs/architecture.md documents the module and the incremental-save/fail-open-window design.

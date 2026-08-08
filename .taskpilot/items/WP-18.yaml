@@ -3,9 +3,9 @@ id: WP-18
 title: create_transcription(meeting, model, language) command with progress events
 priority: normal
 type: task
-status: backlog
+status: cancelled
 created_at: '2026-07-21T10:27:58Z'
-updated_at: '2026-07-21T11:04:21Z'
+updated_at: '2026-08-08T12:42:23Z'
 parent_id: WP-13
 description: 'Transcribe on spawn_blocking; emit transcription_progress{id,fraction} from Whisper''s progress callback; create+persist the document on completion. language: ru|auto.'
 created_by: M2 planning

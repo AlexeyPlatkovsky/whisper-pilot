@@ -43,6 +43,9 @@ pub enum AppError {
     #[error("meeting store failed: {0}")]
     Store(String),
 
+    #[error("streaming audio capture failed: {0}")]
+    Capture(String),
+
     #[error("note generation failed: {0}")]
     Llm(String),
 
