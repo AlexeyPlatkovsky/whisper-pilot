@@ -172,7 +172,7 @@ pub fn run_windowed_decode(
             // Fail-open (module doc): an Err here is forwarded, not
             // propagated — the caller skips this window's text and the loop
             // keeps running on the next one.
-            let outcome = transcribe::transcribe(&ctx, &window, &never_cancel);
+            let outcome = transcribe::transcribe(&ctx, &window, &never_cancel, |_| {});
             let decode_ms = decode_start.elapsed().as_millis() as u64;
 
             if results_tx

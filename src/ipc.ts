@@ -194,6 +194,22 @@ export function onTranscriptionPhase(
   );
 }
 
+export interface TranscriptionProgress {
+  id: number;
+  percent: number;
+}
+
+/** Fired repeatedly with whisper's own 0-100 percent-complete figure while a
+ * meeting's transcription phase runs (WP-58). No equivalent event exists for
+ * the diarization phase that follows. */
+export function onTranscriptionProgress(
+  handler: (progress: TranscriptionProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<TranscriptionProgress>("transcription_progress", (event) =>
+    handler(event.payload),
+  );
+}
+
 export interface StreamingSessionSummary {
   id: number;
   title: string;

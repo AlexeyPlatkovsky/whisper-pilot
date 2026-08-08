@@ -51,6 +51,15 @@ struct TranscriptionPhaseEvent {
     phase: &'static str,
 }
 
+/// Payload of the `transcription_progress` event (WP-58): whisper's own
+/// 0-100 percent-complete figure for the transcription phase only — there is
+/// no equivalent figure for the diarization phase that follows.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct TranscriptionProgressEvent {
+    id: i64,
+    percent: i32,
+}
+
 /// Emitted once per decoded Streaming window (`streaming_window`), whether
 /// it succeeded or fail-open-skipped — `outcome_ok` distinguishes the two so
 /// the UI can show "this span failed" rather than reading a skip as silence.
@@ -212,6 +221,7 @@ async fn decode_and_transcribe(
     ctx: Arc<WhisperContext>,
     path: String,
     cancel: Arc<std::sync::atomic::AtomicBool>,
+    on_progress: impl FnMut(i32) + Send + 'static,
 ) -> Result<(transcribe::Transcription, Vec<f32>)> {
     let input = PathBuf::from(&path);
 
@@ -225,9 +235,11 @@ async fn decode_and_transcribe(
     }
     let transcription = {
         let samples = samples.clone();
-        tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples, &cancel))
-            .await
-            .map_err(|e| AppError::Transcribe(e.to_string()))??
+        tokio::task::spawn_blocking(move || {
+            transcribe::transcribe(&ctx, &samples, &cancel, on_progress)
+        })
+        .await
+        .map_err(|e| AppError::Transcribe(e.to_string()))??
     };
 
     Ok((transcription, samples))
@@ -383,7 +395,14 @@ async fn transcribe_meeting(
 
     let (_cancel_guard, cancel) = TranscriptionCancelGuard::register(state.inner(), id);
     let ctx = state.model(app_support_dir.clone()).await?;
-    let (transcription, samples) = decode_and_transcribe(ctx, path, cancel).await?;
+    let progress_app = app.clone();
+    let on_progress = move |percent: i32| {
+        let _ = progress_app.emit(
+            "transcription_progress",
+            TranscriptionProgressEvent { id, percent },
+        );
+    };
+    let (transcription, samples) = decode_and_transcribe(ctx, path, cancel, on_progress).await?;
 
     let diarization: Option<PendingDiarization> = active_diarization_variant.map(|variant| {
         let app = app.clone();
@@ -1362,6 +1381,24 @@ mod tests {
             json.as_object().unwrap().len(),
             2,
             "unexpected extra key in the transcription_phase payload"
+        );
+    }
+
+    #[test]
+    fn transcription_progress_event_serializes_with_the_keys_the_frontend_expects() {
+        let event = TranscriptionProgressEvent {
+            id: 42,
+            percent: 57,
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+
+        assert_eq!(json["id"], serde_json::json!(42));
+        assert_eq!(json["percent"], serde_json::json!(57));
+        assert_eq!(
+            json.as_object().unwrap().len(),
+            2,
+            "unexpected extra key in the transcription_progress payload"
         );
     }
 

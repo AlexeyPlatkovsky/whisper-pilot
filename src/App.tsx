@@ -11,6 +11,7 @@ import {
   setMeetingSource,
   transcribeMeeting,
   onTranscriptionPhase,
+  onTranscriptionProgress,
   saveTextDialog,
   renameMeeting,
   updateSegment,
@@ -122,6 +123,13 @@ export function App() {
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
+  // Whisper's own 0-100 percent-complete figure for the transcription phase
+  // (WP-58), or null before the first event / once diarizing starts (there is
+  // no equivalent figure for that phase) — the status bar falls back to the
+  // indeterminate spinner + timer whenever this is null.
+  const [transcribingProgress, setTranscribingProgress] = useState<
+    number | null
+  >(null);
   const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(
     null,
   );
@@ -156,6 +164,21 @@ export function App() {
     onTranscriptionPhase((event) => {
       if (event.id === transcribingIdRef.current) {
         setTranscribingPhase(event.phase);
+        // Diarization has no percent-complete figure; drop the bar rather
+        // than leave it frozen at wherever transcription left off.
+        setTranscribingProgress(null);
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onTranscriptionProgress((event) => {
+      if (event.id === transcribingIdRef.current) {
+        setTranscribingProgress(event.percent);
       }
     }).then((fn) => {
       unlisten = fn;
@@ -303,6 +326,7 @@ export function App() {
     try {
       setTranscribingId(id);
       setTranscribingPhase("transcribing");
+      setTranscribingProgress(null);
       setStatus({ kind: "idle" });
       setSegments([]);
       setSpeakerLabels({});
@@ -323,6 +347,7 @@ export function App() {
         setStatus({ kind: "error", message: String(e) });
     } finally {
       setTranscribingId(null);
+      setTranscribingProgress(null);
     }
   }
 
@@ -687,6 +712,19 @@ export function App() {
                 {(activeIsTranscribing || activeIsGeneratingNotes) && (
                   <span className="wp-status-timer">
                     {formatClock(elapsed)}
+                  </span>
+                )}
+                {activeIsTranscribing && transcribingProgress !== null && (
+                  <span className="wp-status-progress">
+                    <progress
+                      className="wp-status-progress-bar"
+                      value={transcribingProgress}
+                      max={100}
+                      aria-label="Transcription progress"
+                    />
+                    <span className="wp-status-progress-label">
+                      {transcribingProgress}%
+                    </span>
                   </span>
                 )}
               </>

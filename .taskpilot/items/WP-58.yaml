@@ -3,8 +3,8 @@ id: WP-58
 title: Determinate progress bar during transcription
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-26T15:43:32Z'
-updated_at: '2026-08-08T12:42:57Z'
+updated_at: '2026-08-08T16:24:45Z'
 parent_id: WP-11
 description: Show a determinate progress bar (percentage or fraction complete) in the status bar while a transcription is running, replacing or augmenting the current indeterminate spinner + elapsed timer. Uses the progress events already available from the transcription pipeline. Split from WP-29.

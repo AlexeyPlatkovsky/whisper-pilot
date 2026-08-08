@@ -118,10 +118,15 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
 /// `cancel` is polled by whisper's abort callback during decode (WP-19): once
 /// set, whisper stops and this returns [`AppError::Cancelled`] instead of a
 /// (partial) transcript, so a stopped run never produces a document.
+///
+/// `on_progress` (WP-58) is called with whisper's own 0-100 percent-complete
+/// figure as decoding proceeds, on whichever thread runs this function (never
+/// concurrently with itself, since whisper drives it synchronously).
 pub fn transcribe(
     ctx: &WhisperContext,
     samples: &[f32],
     cancel: &Arc<AtomicBool>,
+    on_progress: impl FnMut(i32) + 'static,
 ) -> Result<Transcription> {
     if cancel.load(Ordering::Relaxed) {
         return Err(AppError::Cancelled);
@@ -156,6 +161,7 @@ pub fn transcribe(
     params.set_suppress_blank(true);
     let abort_flag = Arc::clone(cancel);
     params.set_abort_callback_safe(move || abort_flag.load(Ordering::Relaxed));
+    params.set_progress_callback_safe(on_progress);
 
     let mut state = ctx
         .create_state()
@@ -204,7 +210,7 @@ pub fn transcribe(
 /// Full path from a picked file to timestamped segments.
 pub fn transcribe_file(ctx: &WhisperContext, input: &Path) -> Result<Transcription> {
     let samples = crate::audio::load_samples(input)?;
-    transcribe(ctx, &samples, &Arc::new(AtomicBool::new(false)))
+    transcribe(ctx, &samples, &Arc::new(AtomicBool::new(false)), |_| {})
 }
 
 #[cfg(test)]
