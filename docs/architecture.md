@@ -351,13 +351,19 @@ here — this module only captures and mixes audio, it does not decode it.
 
 Decodes the continuous sample stream `streaming_audio.rs` produces on fixed,
 non-overlapping ~7s windows (`WINDOW_SECONDS`, the midpoint of WP-68's
-approved 5-10s latency budget) by calling `transcribe::transcribe` per
-window — a window is just a short slice of samples, decoded exactly like a
-(short) Meeting file, so no new whisper-rs FFI was needed. Each window gets
-its own language detection, unlike Meeting's once-per-file detection
-(ADR-012), since a live session has no single fixed language the way a
-finished file does. A word can split across a window boundary — an accepted,
-documented trade-off for non-overlapping windows, not a silent one.
+approved 5-10s latency budget). One session decodes every window through a
+single `WhisperState` (WP-82): `run_windowed_decode` builds one
+`WhisperSessionDecoder` when the loop starts and reuses it via
+`transcribe::transcribe_with_state`, because each state owns a full GPU
+backend plus its KV/compute buffers — one state per window was one backend
+init/free cycle per window. State reuse across calls is upstream's own
+`whisper_full` pattern (each call clears results, recomputes the mel, and
+clears the self-attention KV cache); Meeting keeps one state per whole-file
+run. Each window gets its own language detection, unlike Meeting's
+once-per-file detection (ADR-012), since a live session has no single fixed
+language the way a finished file does. A word can split across a window
+boundary — an accepted, documented trade-off for non-overlapping windows,
+not a silent one.
 
 **Fail-open per window** (mirroring diarization, ADR-013): a window whose
 decode errors is skipped — logged, no text emitted for that span — rather

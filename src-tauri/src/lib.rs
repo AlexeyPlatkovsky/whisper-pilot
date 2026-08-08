@@ -756,7 +756,12 @@ async fn start_streaming_session(
 
     let (results_tx, results_rx) = std::sync::mpsc::channel();
     tokio::task::spawn_blocking(move || {
-        streaming_session::run_windowed_decode(ctx, samples_rx, results_tx, starting_window_index)
+        streaming_session::run_windowed_decode(
+            move || streaming_session::WhisperSessionDecoder::new(&ctx),
+            samples_rx,
+            results_tx,
+            starting_window_index,
+        )
     });
 
     let results_app = app.clone();

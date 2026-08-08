@@ -12,7 +12,9 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+};
 
 /// The language of audio that has not been decoded yet, and the fallback when
 /// whisper reports an id we cannot name. Doubles as the value handed to whisper
@@ -115,6 +117,12 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
 /// Transcribe an entire file of 16 kHz mono samples into timestamped segments,
 /// letting whisper detect the language.
 ///
+/// Creates a fresh [`WhisperState`] for this run — the right granularity for
+/// Meeting's one-shot whole-file decode. Streaming instead reuses one state
+/// per session through [`transcribe_with_state`] (WP-82): each state owns a
+/// full GPU backend plus its compute buffers, so one state per window would
+/// be one backend init/free cycle per window.
+///
 /// `cancel` is polled by whisper's abort callback during decode (WP-19): once
 /// set, whisper stops and this returns [`AppError::Cancelled`] instead of a
 /// (partial) transcript, so a stopped run never produces a document.
@@ -124,6 +132,23 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
 /// concurrently with itself, since whisper drives it synchronously).
 pub fn transcribe(
     ctx: &WhisperContext,
+    samples: &[f32],
+    cancel: &Arc<AtomicBool>,
+    on_progress: impl FnMut(i32) + 'static,
+) -> Result<Transcription> {
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    transcribe_with_state(&mut state, samples, cancel, on_progress)
+}
+
+/// [`transcribe`] with a caller-owned state. Reusing one state across calls
+/// is upstream's own pattern (`whisper_full` reuses `ctx->state`; each call
+/// clears its results, recomputes the mel spectrogram, and clears the
+/// self-attention KV cache), so a sequential caller may keep one state for as
+/// long as it likes.
+pub fn transcribe_with_state(
+    state: &mut WhisperState,
     samples: &[f32],
     cancel: &Arc<AtomicBool>,
     on_progress: impl FnMut(i32) + 'static,
@@ -163,9 +188,6 @@ pub fn transcribe(
     params.set_abort_callback_safe(move || abort_flag.load(Ordering::Relaxed));
     params.set_progress_callback_safe(on_progress);
 
-    let mut state = ctx
-        .create_state()
-        .map_err(|e| AppError::Transcribe(e.to_string()))?;
     let full_result = state.full(params, samples);
     // The abort callback stops whisper's decode loop, but whisper.cpp still
     // returns success with whatever partial output it had, not a distinct

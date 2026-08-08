@@ -28,7 +28,6 @@ markers is never touched. Full contract:
 | `development.md` | Developer guide: prerequisites, build/dev/test commands, project layout | You need to build or run WhisperPilot from source |
 | `designbook.md` | UI design contract: design tokens (source of truth `src/tokens.css`), themes, component patterns | You do UI work and need tokens or patterns |
 | `decisions/` | One ADR per significant decision (rationale) | You need why a choice was made |
-| `plans/` | Dated one-off analyses (e.g. testing-pyramid gap analysis); not authoritative for any owned fact | You want the working notes behind a past analysis |
 <!-- sdd-index-sync:end documents -->
 
 ## Feature Registry
