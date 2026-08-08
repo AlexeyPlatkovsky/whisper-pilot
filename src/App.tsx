@@ -32,6 +32,11 @@ import { ActionIcon } from "./ActionIcon";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
 import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
+import {
+  renderForExport,
+  exportFileExtension,
+  type ExportFileType,
+} from "./export";
 
 // A running transcription is tracked by meeting id (`transcribingId`), not by
 // this union, so that it survives the user switching to another meeting and
@@ -105,6 +110,8 @@ export function App() {
     null,
   );
   const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
+  const [exportFileType, setExportFileType] =
+    useState<ExportFileType>("plain_text");
   // The meeting currently being transcribed, or null. Kept outside `status`
   // and outside `activeMeeting` so that opening a different meeting cannot
   // discard a run that is still going.
@@ -187,11 +194,21 @@ export function App() {
     void refreshModelAvailability();
   }, [refreshModelAvailability]);
 
+  const refreshExportFileType = useCallback(async () => {
+    try {
+      const settings = await getSettings();
+      setExportFileType(settings.export_file_type as ExportFileType);
+    } catch {
+      // Keep the previous selection; the export actions still work with it.
+    }
+  }, []);
+
   useEffect(() => {
     getSettings()
       .then((s) => applyTheme(s.theme as Theme))
       .catch(() => {});
-  }, []);
+    void refreshExportFileType();
+  }, [refreshExportFileType]);
 
   const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
     activeMeetingIdRef.current = meeting.id;
@@ -253,16 +270,11 @@ export function App() {
     setSpeakerLabels((prev) => ({ ...prev, [speakerId]: newLabel }));
   }
 
-  const transcriptText = useMemo(
-    () =>
-      segments
-        .map((s) =>
-          s.speaker_id !== undefined
-            ? `${resolveSpeakerLabel(s.speaker_id)}: ${s.text}`
-            : s.text,
-        )
-        .join("\n"),
-    [segments, speakerLabels],
+  // The single rendering both export-to-file and the header copy button use,
+  // so the two can never drift apart (WP-15).
+  const exportText = useMemo(
+    () => renderForExport(exportFileType, segments, notes, resolveSpeakerLabel),
+    [exportFileType, segments, notes, speakerLabels],
   );
 
   const durationLabel = useMemo(() => {
@@ -478,12 +490,15 @@ export function App() {
 
   async function handleSave() {
     const base = (fileName ?? "transcript").replace(/\.[^.]+$/, "");
-    await saveTextDialog(transcriptText, `${base}.txt`);
+    await saveTextDialog(
+      exportText,
+      `${base}.${exportFileExtension(exportFileType)}`,
+    );
   }
 
   async function handleCopy() {
     try {
-      await navigator.clipboard.writeText(transcriptText);
+      await navigator.clipboard.writeText(exportText);
       setCopyStatus("copied");
     } catch (e) {
       setStatus({ kind: "error", message: String(e) });
@@ -546,6 +561,7 @@ export function App() {
               onClose={() => {
                 setIsSettingsOpen(false);
                 void refreshModelAvailability();
+                void refreshExportFileType();
               }}
             />
           </div>
@@ -561,6 +577,7 @@ export function App() {
           onClose={() => {
             setIsSettingsOpen(false);
             void refreshModelAvailability();
+            void refreshExportFileType();
           }}
         />
       </div>

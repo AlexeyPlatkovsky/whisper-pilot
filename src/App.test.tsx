@@ -82,6 +82,7 @@ vi.mock("./ipc", () => ({
     theme: "system",
     ui_language: "en",
     active_model_diarization: "none",
+    export_file_type: "plain_text",
   })),
   setSetting: vi.fn(),
   listStreamingSessions: vi.fn(async () => []),
@@ -146,6 +147,7 @@ beforeEach(() => {
     theme: "system",
     ui_language: "en",
     active_model_diarization: "none",
+    export_file_type: "plain_text",
   });
   delete document.documentElement.dataset.theme;
 });
@@ -331,6 +333,7 @@ describe("App — theme application", () => {
       theme: "dark",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
 
     render(<App />);
@@ -470,6 +473,54 @@ describe("App — file handling", () => {
     await user.click(screen.getByRole("button", { name: "Save" }));
 
     expect(ipc.saveTextDialog).toHaveBeenCalledWith("Hello", "meeting.txt");
+  });
+
+  it("saves as Markdown with a .md extension when that is the persisted export file type", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "none",
+      export_file_type: "markdown",
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByDisplayValue("Hello");
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
+      "# Transcript\n\n[0:00] Hello",
+      "meeting.md",
+    );
+  });
+
+  it("copies the Markdown rendering to the clipboard when that is the persisted export file type", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "none",
+      export_file_type: "markdown",
+    });
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByDisplayValue("Hello");
+
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+
+    expect(writeText).toHaveBeenCalledWith("# Transcript\n\n[0:00] Hello");
   });
 });
 
@@ -1157,6 +1208,7 @@ describe("App — notes editing", () => {
       ui_language: "en",
       active_model_diarization: "none",
       active_model_llm: "llm-1",
+      export_file_type: "plain_text",
     });
     vi.mocked(ipc.generateNotes).mockResolvedValue({
       ...transcribedMeeting([HELLO_SEGMENT]),

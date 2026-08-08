@@ -127,6 +127,7 @@ export interface Settings {
   active_model_transcription?: string;
   active_model_diarization: string;
   active_model_llm?: string;
+  export_file_type: string;
 }
 
 export function getSettings(): Promise<Settings> {

@@ -594,23 +594,34 @@ deferred model management" note.
 ## Export
 
 **As actually built, not as originally planned:** there is no `export.rs`
-Rust module. A meeting's transcript is rendered client-side (`App.tsx`'s
-`transcriptText`, `"Label: text"` per line) and written to a user-chosen
-destination via the generic `save_text_dialog(content, default_name)`
-command — plain text only; Markdown rendering and copy-to-clipboard for
-Meeting were never built (WP-24, still `backlog`). Streaming's export/copy
-(WP-74, `StreamingView.tsx`) follows this same real pattern — render
-client-side, reuse `save_text_dialog` — rather than a nonexistent Rust
-export path, and is the first place either capability actually ships in
-this app: **Copy** calls the browser `navigator.clipboard.writeText` API
-directly (no Tauri clipboard plugin was added — the web API works in the
-WKWebView and avoids a new plugin/capability-permission surface for a
-one-line need); **Export** renders a minimal Markdown document (`# title`
+Rust module. A meeting's transcript (and, for Markdown, its notes) is
+rendered client-side and written to a user-chosen destination via the
+generic `save_text_dialog(content, default_name)` command — `save_text_dialog`
+itself is format-agnostic; it just writes whatever string it is given.
 
-- the plain transcript) through `save_text_dialog`. Both reuse
-  `windowText`'s `[unavailable]` marker for a fail-open window, so exported
-  output matches what the live view showed rather than silently dropping or
-  blanking a failed span.
+**Meeting export** (`src/export.ts`, WP-15/WP-24): a persisted
+`export_file_type` setting (`"plain_text"` | `"markdown"`, Settings → Export)
+selects the rendering. `renderForExport` is the one function both **Save**
+(`handleSave`) and the header **copy** action (`handleCopy`,
+`navigator.clipboard.writeText`) call, so file export and clipboard copy can
+never render differently. Plain text (`renderPlainText`) is unchanged from
+before this setting existed — transcript only, `"Label: text"` per line, no
+notes. Markdown (`renderMarkdown`) adds a `# Transcript` heading, bold speaker
+labels, `[m:ss]` timestamps, and — only when the meeting has notes — a
+`## Notes` section with one `### <field>` subsection per non-empty notes
+field.
+
+Streaming's export/copy (WP-74, `StreamingView.tsx`) is a separate,
+older implementation following the same real pattern — render client-side,
+reuse `save_text_dialog` — but does not share `export.ts`'s rendering or its
+file-type setting: **Copy** calls `navigator.clipboard.writeText` directly (no
+Tauri clipboard plugin was added — the web API works in the WKWebView and
+avoids a new plugin/capability-permission surface for a one-line need);
+**Export** always renders a minimal Markdown document (`# title` - the plain
+transcript) through `save_text_dialog`. Both reuse `windowText`'s
+`[unavailable]` marker for a fail-open window, so exported output matches
+what the live view showed rather than silently dropping or blanking a failed
+span.
 
 ## IPC Contract
 

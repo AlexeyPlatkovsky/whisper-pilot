@@ -2,9 +2,10 @@ import { useEffect, useState } from "react";
 import { AiModelsSection } from "./AiModelsSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { AppLanguageSection } from "./AppLanguageSection";
+import { ExportSection } from "./ExportSection";
 import { AppLogo, Icon, type IconName } from "./Icon";
 
-type SectionId = "ai-models" | "appearance" | "app-language";
+type SectionId = "ai-models" | "appearance" | "app-language" | "export";
 
 const SECTIONS: {
   id: SectionId;
@@ -25,6 +26,12 @@ const SECTIONS: {
     title: "App Language",
     icon: "globe",
   },
+  {
+    id: "export",
+    label: "Export",
+    title: "Export",
+    icon: "download",
+  },
 ];
 
 function SectionContent({ id }: { id: SectionId }) {
@@ -35,6 +42,8 @@ function SectionContent({ id }: { id: SectionId }) {
       return <AppearanceSection />;
     case "app-language":
       return <AppLanguageSection />;
+    case "export":
+      return <ExportSection />;
   }
 }
 

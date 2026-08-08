@@ -29,6 +29,7 @@ describe("AppearanceSection", () => {
       theme: "system",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
 
     render(<AppearanceSection />);
@@ -43,6 +44,7 @@ describe("AppearanceSection", () => {
       theme: "dark",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
 
     render(<AppearanceSection />);
@@ -55,11 +57,13 @@ describe("AppearanceSection", () => {
       theme: "system",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
     vi.mocked(ipc.setSetting).mockResolvedValue({
       theme: "dark",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
     const user = userEvent.setup();
 
@@ -80,11 +84,13 @@ describe("AppearanceSection", () => {
       theme: "dark",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
     vi.mocked(ipc.setSetting).mockResolvedValue({
       theme: "system",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
     const user = userEvent.setup();
 
@@ -99,6 +105,7 @@ describe("AppearanceSection", () => {
       theme: "light",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
     vi.mocked(ipc.setSetting).mockRejectedValue(new Error("disk full"));
     const user = userEvent.setup();
