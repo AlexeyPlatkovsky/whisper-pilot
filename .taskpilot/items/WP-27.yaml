@@ -3,9 +3,9 @@ id: WP-27
 title: Meeting header controls + model switcher (default large; hidden+warning if none)
 priority: normal
 type: task
-status: backlog
+status: cancelled
 created_at: '2026-07-21T11:04:48Z'
-updated_at: '2026-07-21T11:04:48Z'
+updated_at: '2026-08-08T12:42:36Z'
 parent_id: WP-25
 description: Header row with meeting label (edit/copy-transcript/delete), model switcher defaulting to the large model and hidden with a status-bar warning when no model is available, plus Transcribe/Stop/Create MFU buttons with hover text and enable/disable rules. Implements F004-R4, F004-R5 (F004-T11).
 created_by: M2 UI planning

@@ -5,7 +5,12 @@ priority: normal
 type: feature
 status: backlog
 created_at: '2026-07-21T10:27:57Z'
-updated_at: '2026-07-21T11:04:19Z'
+updated_at: '2026-08-08T12:43:14Z'
 parent_id: WP-11
-description: Render a meeting (transcript and/or notes) to Markdown or plain text to a chosen destination; the header label copy places the transcript on the clipboard using the same rendering.
+description: Add an export file-type setting (plain text / Markdown) governing how a meeting (transcript and/or notes) is rendered to a chosen destination file. Plain-text export already exists (saveTextDialog, src/App.tsx, src/ipc.ts); this task adds Markdown-formatted rendering as the second option plus the setting to choose between the two. The header label copy places the transcript on the clipboard using the same rendering as the selected file type.
+dod:
+- An export file-type setting (plain text / Markdown) is available and persisted.
+- Selecting Markdown renders the transcript and/or notes with Markdown syntax (headers, speaker labels, timestamps); selecting plain text preserves today's existing rendering.
+- The header label copy places the transcript on the clipboard using the same rendering as the selected file type.
+- Unit tests cover both file-type renderings.
 created_by: M2 planning

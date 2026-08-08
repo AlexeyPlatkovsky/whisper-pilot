@@ -108,17 +108,14 @@ fn now_ms() -> Result<i64> {
         })
 }
 
-/// The whisper model is loaded lazily on first use and cached for the session —
-/// loading ~800 MB should not block app launch or fail startup when the model
-/// is missing.
+/// The whisper model is loaded lazily on first use and cached for the
+/// session — loading ~800 MB should not block app launch.
 ///
-/// `whisper_busy` enforces WP-71's mutual-exclusion contract (a Meeting
-/// transcription and a Streaming session cannot run concurrently, since both
-/// would contend for `model`'s one cached context) via
-/// `streaming_session::WhisperUsageGuard`. It is a plain field here, not
-/// wrapped alongside `model`, because acquiring it must be synchronous and
-/// infallible-to-check from an async command without holding `model`'s lock
-/// for the guard's entire lifetime.
+/// `whisper_busy` enforces WP-71's mutual exclusion (Meeting transcription
+/// vs. Streaming session, both contending for `model`'s one cached context)
+/// via `streaming_session::WhisperUsageGuard`. It's a plain field, not
+/// wrapped alongside `model`, so acquiring it stays synchronous without
+/// holding `model`'s lock for the guard's whole lifetime.
 #[derive(Default)]
 struct AppState {
     model: Mutex<Option<Arc<WhisperContext>>>,
@@ -221,16 +218,12 @@ async fn decode_and_transcribe(
     Ok((transcription, samples))
 }
 
-/// Persist `transcription` immediately, then run `diarization` (when a model is
-/// active) and write the speaker ids it produces as a second, separate save.
-///
-/// Saving before diarization starts is load-bearing: diarization runs native
-/// sherpa-onnx code that can abort the process outright, which no Rust error
-/// path can catch, so anything unpersisted at that point is lost. See
-/// `docs/architecture.md`'s Speaker Diarization section.
-///
-/// Any diarization failure degrades to the already-persisted speaker-less
-/// segments and comes back as a warning, never failing the transcription.
+/// Persist `transcription` immediately, then run `diarization` (when a
+/// model is active) and write the speaker ids as a second, separate save —
+/// load-bearing, since diarization's native code can abort the process past
+/// any Rust error path (see `docs/architecture.md`'s Speaker Diarization
+/// section). A diarization failure degrades to the already-persisted
+/// speaker-less segments as a warning, never failing the transcription.
 async fn persist_transcript_then_diarize(
     app_support_dir: PathBuf,
     meeting_id: i64,

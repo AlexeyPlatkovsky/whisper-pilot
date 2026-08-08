@@ -1,35 +1,11 @@
 //! Streaming decode/session pipeline: rolling-window Whisper decode over the
-//! continuous sample stream `streaming_audio.rs` produces.
-//!
-//! Reuses `transcribe::transcribe` unchanged — a window is just a short
-//! slice of samples, decoded exactly like a (short) Meeting file, so no new
-//! whisper-rs FFI is needed here, only the windowing and session logic
-//! around it.
-//!
-//! **Windowing:** fixed-size, non-overlapping ~`WINDOW_SECONDS` windows.
-//! Simpler than a sliding/overlapping window, at the cost of an occasional
-//! word split across a window boundary — an accepted, documented trade-off
-//! for a first version, not a silent one. Each window gets its own language
-//! detection (unlike Meeting's once-per-file detection, ADR-012), because a
-//! live session has no single fixed language the way a finished file does.
-//!
-//! **Fail-open:** a window whose decode errors is skipped (logged, no text
-//! emitted for that span) rather than ending the session, mirroring this
-//! app's other fail-open engine paths (diarization, ADR-013).
-//!
-//! **Mutual exclusion:** [`WhisperUsageGuard`] enforces WP-68's decision that
-//! a Meeting transcription and a Streaming session cannot run concurrently —
-//! both would contend for the one cached Whisper context in `AppState`, and
-//! whisper-rs's `WhisperState` is not proven safe for two concurrent
-//! `.full()` calls against the same `WhisperContext`.
-//!
-//! **Not yet wired to Tauri IPC.** This module is the core session
-//! machinery; command/event registration ties it to the Streaming UI (WP-73)
-//! and lands with that work. **Latency is not measured against real
-//! hardware** — the required feasibility spike (see WP-71 in TaskPilot)
-//! needs a person running this on real Mac hardware with a downloaded model,
-//! which this environment cannot do; `WindowResult` carries `decode_ms` so
-//! that measurement is possible once someone can run it.
+//! continuous sample stream `streaming_audio.rs` produces, reusing
+//! `transcribe::transcribe` unchanged per window. Wired to Tauri IPC via
+//! `start_streaming_session`/`stop_streaming_session` in `lib.rs` (WP-73).
+//! See docs/architecture.md's Streaming Decode/Session Pipeline section for
+//! the windowing trade-off, fail-open behavior, `WhisperUsageGuard` mutual
+//! exclusion with Meeting transcription, and the still-open real-hardware
+//! latency measurement this module leaves for WP-71's feasibility spike.
 
 use crate::audio::SAMPLE_RATE;
 use crate::transcribe::{self, Transcription};
@@ -162,23 +138,14 @@ fn window_start_ms(window_index: u64) -> u64 {
     window_index * (WINDOW_SECONDS * 1000.0) as u64
 }
 
-/// Runs the rolling-window decode loop until `samples_rx` disconnects (the
-/// capture session ended) or a result fails to send (the consumer is gone).
-/// Blocking — call from `tokio::task::spawn_blocking`, matching every other
-/// heavy Rust-core operation in this app (model load, Meeting transcription,
-/// diarization).
-///
-/// Takes `ctx` already-acquired: this function does not itself enforce
-/// mutual exclusion — the caller must hold a live [`WhisperUsageGuard`] for
-/// [`WhisperUser::Streaming`] for the loop's whole duration, exactly as
-/// `transcribe_meeting` will need to hold one for [`WhisperUser::Meeting`].
-///
-/// `starting_window_index` is 0 for a fresh session, or one past the last
-/// persisted window index when resuming a previously-stopped session — see
-/// `streaming::resume_streaming_session`. Windows are numbered (and their
-/// `start_ms` computed) purely as an offset from this starting point, not
-/// from wall-clock time, so a resume's paused interval does not appear as a
-/// gap in the window timeline.
+/// Runs the rolling-window decode loop until `samples_rx` disconnects or a
+/// result fails to send. Blocking — call from `tokio::task::spawn_blocking`.
+/// Takes `ctx` already-acquired: the caller must hold a live
+/// [`WhisperUsageGuard`] for [`WhisperUser::Streaming`] for the loop's whole
+/// duration. `starting_window_index` offsets window numbering for a resumed
+/// session (see `streaming::resume_streaming_session` and
+/// docs/architecture.md's Streaming Runtime & UI section) so a paused
+/// interval doesn't appear as a gap in the timeline.
 pub fn run_windowed_decode(
     ctx: Arc<WhisperContext>,
     samples_rx: Receiver<Vec<f32>>,

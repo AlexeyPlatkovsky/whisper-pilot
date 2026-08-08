@@ -1,17 +1,10 @@
 //! Local SQLite persistence for Streaming sessions and their decoded
-//! windows — parallel to, but a separate entity from, `store.rs`'s meeting
-//! tables (WP-68 D5): a Streaming session has no backing file, a
-//! possibly-mixed per-window language, and no diarization, none of which
-//! fit the `meetings` table's shape.
-//!
-//! Windows are **appended one at a time** (`append_window`), not replaced
+//! windows — a separate entity from `store.rs`'s meeting tables (WP-68 D5).
+//! Windows are appended one at a time (`append_window`), not replaced
 //! wholesale like `Store::replace_segments` — that incremental save is what
-//! makes a session recoverable after a crash/quit, per WP-68's DoD (only the
-//! last in-flight window may be lost). `streaming_session.rs`'s decode loop
-//! calls this after every `WindowResult`, successful or not (a failed
-//! window still advances the session's `updated_at_ms`, so "the session is
-//! alive but this window skipped" is distinguishable from "the session
-//! stalled").
+//! makes a session recoverable after a crash/quit. See
+//! docs/architecture.md's Streaming Persistence section for the full
+//! entity-shape and recovery-contract rationale.
 
 use crate::error::{AppError, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};

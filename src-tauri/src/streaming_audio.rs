@@ -1,26 +1,11 @@
-//! Streaming audio capture: microphone + macOS system-audio (loopback),
-//! mixed into one continuous 16 kHz mono f32 stream for a Streaming session.
-//!
-//! WP-70 owns capture and mixing only. Windowing the continuous stream into
-//! ~5-10s decode chunks, and everything downstream of that, is WP-71's
-//! concern — this module hands its consumer a plain, unbounded stream of
-//! samples at Whisper's required rate/format (`crate::audio::SAMPLE_RATE`).
-//!
-//! Mic-only degradation (WP-68 D-Capture-fallback): if system-audio capture
-//! is unavailable or its permission is denied, a session still starts with
-//! whichever source(s) actually came up; only "both sources failed" is a
-//! hard error. This mirrors this app's other fail-open engine paths
-//! (diarization, ADR-013) rather than treating a partial capture failure as
-//! fatal.
-//!
-//! System-audio loopback uses the `screencapturekit` crate. An earlier
-//! attempt at this module used the lower-level `objc2-screen-capture-kit`
-//! binding specifically to avoid `screencapturekit`'s mandatory `apple-metal`
-//! dependency, which needs a full Xcode.app (not just Command Line Tools) to
-//! link its Swift compatibility libraries — that constraint no longer
-//! applies once Xcode.app is installed, and the ergonomic crate is
-//! materially lower-risk than hand-written CoreMedia buffer extraction for a
-//! feature whose stated top priority is quality/precision.
+//! Streaming audio capture: microphone + macOS system-audio (loopback, via
+//! `screencapturekit` — see docs/architecture.md's Streaming Audio Capture
+//! section), mixed into one continuous 16 kHz mono f32 stream at
+//! `crate::audio::SAMPLE_RATE` for `streaming_session.rs` to window.
+//! Mic-only degradation: an unavailable/denied system-audio source still
+//! lets a session start with whichever source(s) came up; only "both
+//! sources failed" is a hard error, mirroring this app's other fail-open
+//! engine paths (diarization, ADR-013).
 
 use crate::audio::SAMPLE_RATE;
 use crate::error::{AppError, Result};

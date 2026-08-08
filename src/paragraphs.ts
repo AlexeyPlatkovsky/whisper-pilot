@@ -1,12 +1,7 @@
-/** Groups Streaming's fixed-size decode windows into paragraphs for
- * readability. Windows carry no pause/VAD signal (see `streaming_session.rs`
- * — they're fixed ~7s slices of continuous audio, not silence-delimited), so
- * there is no natural "paragraph break" in the data. This applies a
- * sentence-boundary + length heuristic instead: start a new paragraph once
- * the accumulated text both reaches a minimum length and ends a sentence, or
- * once too many windows have piled up without ever hitting a sentence end
- * (a run-on span, or a stretch of fail-open windows) — otherwise a single
- * un-punctuated stretch could grow forever. */
+// Windows carry no pause/VAD signal (fixed ~7s slices, not silence-delimited
+// — see streaming_session.rs), so paragraphs are inferred from a
+// sentence-boundary + length heuristic instead, with a window-count cap so an
+// un-punctuated stretch can't grow forever.
 
 const MIN_PARAGRAPH_CHARS = 240;
 const MAX_WINDOWS_PER_PARAGRAPH = 6;

@@ -3,9 +3,9 @@ id: WP-32
 title: 'Re-transcribe guard: confirm before replacing an existing transcript/MFU'
 priority: normal
 type: task
-status: backlog
+status: cancelled
 created_at: '2026-07-21T12:44:02Z'
-updated_at: '2026-07-21T12:44:02Z'
+updated_at: '2026-08-08T12:42:25Z'
 parent_id: WP-13
 description: When Transcribe is pressed on a meeting that already has a transcript, warn that the existing transcript and any MFU will be replaced and proceed only on confirmation; cancelling keeps existing content. Implements F004-R14 (F004-T15).
 created_by: M2 review

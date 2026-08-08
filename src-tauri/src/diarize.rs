@@ -908,15 +908,13 @@ const AUTO_DETECT_MIN_DURATION_ON: f32 = 1.0;
 const AUTO_DETECT_MIN_DURATION_OFF: f32 = 1.0;
 
 /// Translate a caller-provided speaker count into sherpa-onnx's clustering
-/// config. `num_clusters < 1` means "auto-detect via the threshold instead"
-/// (per sherpa-onnx's `fast-clustering-config.cc`); the crate's own default
-/// is a fixed `num_clusters: Some(4)`, so this must be set explicitly.
+/// config. `num_clusters < 1` means "auto-detect via the threshold instead";
+/// the crate's own default is a fixed `num_clusters: Some(4)`.
 ///
 /// `min_duration_on`/`min_duration_off` are gated to the auto-detect branch
-/// only — unlike `threshold`, they still apply after clustering regardless
-/// of how the count was chosen, so setting them unconditionally would
-/// silently affect WP-49's not-yet-built explicit-count path. See
-/// docs/architecture.md's Speaker Diarization section for the full rationale.
+/// only, since setting them unconditionally would silently affect WP-49's
+/// not-yet-built explicit-count path. See docs/architecture.md's Speaker
+/// Diarization section.
 #[cfg(test)]
 fn build_config(speaker_count: Option<i32>) -> sherpa_rs::diarize::DiarizeConfig {
     let is_auto_detect = speaker_count.filter(|&n| n > 0).is_none();
@@ -957,14 +955,13 @@ fn diarize_with(
 pub type ProgressCallback = Box<dyn Fn(i32, i32) -> i32 + Send + 'static>;
 
 /// Run speaker diarization over `samples` (16kHz mono f32), using the models
-/// WP-5's `resolve_diarization_models` prepares. WP-62 supports automatic
-/// threshold clustering only; positive `speaker_count` is rejected until
-/// WP-49 owns fixed-count behavior.
+/// WP-5's `resolve_diarization_models` prepares. Automatic threshold
+/// clustering only; positive `speaker_count` is rejected until WP-49 owns
+/// fixed-count behavior.
 ///
-/// This runs native inference **in this process**; `transcribe_meeting` goes through
-/// `diarize_process::diarize_isolated` instead. Retained as the no-progress
-/// form used by `tests/diarize_integration.rs` — the isolating child calls
-/// [`diarize_samples_with_progress`].
+/// Runs native inference in this process — `transcribe_meeting` instead goes
+/// through `diarize_process::diarize_isolated`. Retained as the no-progress
+/// form used by `tests/diarize_integration.rs`.
 pub fn diarize_samples(
     app_support_dir: &Path,
     samples: Vec<f32>,
@@ -1126,14 +1123,12 @@ pub fn assign_speaker_ids(segments: &mut [transcribe::Segment], turns: &[Speaker
 }
 
 /// Apply the outcome of a spawned diarization task to `segments`: on
-/// success, assign speaker ids; on any failure — the diarization call
-/// itself erroring, or the blocking task panicking/being cancelled — log a
-/// warning and leave `segments` exactly as they were (speaker-less). A
-/// diarization failure must never be treated as a transcription failure.
+/// success, assign speaker ids; on any failure (erroring, panicking, or
+/// cancelled) log a warning and leave `segments` speaker-less — diarization
+/// failure must never be treated as a transcription failure.
 ///
-/// When the outcome carries a fallback warning (the other embedding model
-/// was retried after a crash), speakers are still assigned — the warning
-/// is informational, not a failure signal.
+/// A fallback warning (the other embedding model was retried after a crash)
+/// still assigns speakers — it's informational, not a failure signal.
 pub fn apply_diarization_outcome(
     segments: &mut [transcribe::Segment],
     outcome: std::result::Result<
