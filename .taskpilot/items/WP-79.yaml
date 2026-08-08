@@ -1,0 +1,21 @@
+schema_version: 1
+id: WP-79
+title: Prompt storage module + IPC (load/save/restore)
+priority: normal
+type: task
+status: backlog
+created_at: '2026-08-08T15:11:23Z'
+updated_at: '2026-08-08T15:12:27Z'
+parent_id: WP-78
+description: 'New src-tauri/src/prompts.rs providing the effective-prompt resolution, save, and restore-to-default operations for two prompt kinds, mfu and prettify. Each kind''s default is a file checked into the repo (src-tauri/prompts/mfu.default.txt, src-tauri/prompts/prettify.default.txt) compiled into the binary via include_str!. A user override, when present, lives in the app-support directory (parallel to settings.json) and is read instead of the default; restoring deletes or overwrites the override so the compiled-in default applies again. No migration or version comparison against a prior override is ever performed. Tauri commands expose get/set/restore for both prompt kinds to the frontend. Out of scope: no change to llm.rs''s prompt-building functions or to the Cyrillic-detection branch, and no Settings UI — those are separate tasks.'
+dod:
+- 'prompts.rs resolves the effective prompt per kind (mfu, prettify): user override content when the override file exists, else the compiled-in include_str! default.'
+- Saving an override persists it to the app-support directory and it is read back as the effective prompt on the next resolution.
+- Restoring a kind removes/overwrites its override so the compiled-in default becomes the effective prompt again, with no version or diff check against the prior override content.
+- Tauri commands for get/set/restore per prompt kind are registered and covered by tests using a temporary app-support directory.
+- cargo test, cargo clippy, and cargo fmt --check pass for the new module.
+links:
+  blocks:
+  - WP-80
+  - WP-81
+created_by: Aleksei_Platkovskii

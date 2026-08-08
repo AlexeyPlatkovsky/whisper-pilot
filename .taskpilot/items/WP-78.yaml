@@ -1,0 +1,29 @@
+schema_version: 1
+id: WP-78
+title: Editable prompt files for MFU notes and Prettify
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-08-08T14:28:46Z'
+updated_at: '2026-08-08T14:28:46Z'
+description: 'Store the MFU-notes prompt and the Prettify prompt as separate files instead of hardcoded Rust strings, each user-editable via Settings with a Restore-to-default button, no version/diff tracking against user edits.
+
+
+  Two prompt files total: mfu (shared by both Meeting''s generate_notes command and Streaming''s notes generation — already one call path today, both go through llm::generate_notes) and prettify (llm::prettify_transcript). Only the natural-language instructions/rules are user-editable; the chat-template scaffolding (<|im_start|>... markers) and, for MFU, the JSON output contract (summary/decisions/action_items/open_questions/participants) that parse_notes_json depends on stay Rust-owned and get spliced around the user''s instruction text, so an edit cannot break output parsing.
+
+
+  Each prompt''s default lives as a file checked into the repo (e.g. src-tauri/prompts/mfu.default.txt, src-tauri/prompts/prettify.default.txt) compiled into the binary via include_str!. A user override, when present, lives in the app-support directory (parallel to settings.json) and is used instead of the default; Restore removes/overwrites the override so the compiled-in default applies again. No migration or version comparison is performed against a user''s saved override, ever.
+
+
+  Both prompts drop the current hardcoded Cyrillic-detection branch (today build_prompt and build_prettify_prompt in llm.rs each hardcode two full parallel prompt bodies, Russian and English, chosen by scanning the transcript for Cyrillic characters). Each becomes one language-agnostic default prompt, authored in English, instructing the model to respond in the same language as the input transcript — English, Russian, Turkish, mixed, or otherwise.
+
+
+  Settings UI: a new section with one textarea, a Save action, and a Restore-default action per prompt (MFU and Prettify are edited independently). Explicit Save rather than autosave-per-keystroke, since these are multi-line free text and a mid-edit autosave could persist a broken prompt.'
+dod:
+- MFU and Prettify each load their effective prompt (user override if present, else the compiled-in default) from a file-backed source, not a hardcoded Rust string branch.
+- The Cyrillic-detection language branch is removed from both build_prompt and build_prettify_prompt; each has one default prompt instructing language-mirroring behavior.
+- Settings exposes both prompts as independently editable text with Save and Restore-default actions; Restore reverts to the compiled-in default with no version/diff check against the prior override.
+- User edits are scoped to instruction/rule text only — the JSON output contract and chat-template scaffolding remain code-owned and cannot be broken by a prompt edit.
+- 'Manual verification: MFU and Prettify output quality checked against real Russian and English (and ideally mixed-language) transcripts after the language-branch removal, per CLAUDE.md''s RUST_LOG=info npm run tauri:dev debugging note.'
+- Rust and frontend validation (cargo test/clippy/fmt, npm test/lint/typecheck/build) pass.
+created_by: Aleksei_Platkovskii

@@ -1,0 +1,17 @@
+schema_version: 1
+id: WP-81
+title: 'Settings UI: editable Prompts section (MFU + Prettify)'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-08-08T15:12:22Z'
+updated_at: '2026-08-08T15:12:22Z'
+parent_id: WP-78
+description: New Settings section, parallel to existing sections like AppearanceSection.tsx and AiModelsSection.tsx, with two independent textareas (MFU, Prettify), each with its own Save action and Restore-default action, wired to WP-79's get/set/restore Tauri commands. Explicit Save rather than autosave-per-keystroke, since these are multi-line free text and a mid-edit autosave could persist a broken prompt.
+dod:
+- A new Settings section renders the current effective MFU and Prettify prompt text, loaded via WP-79's IPC.
+- Each prompt has an independent Save action that persists an edit as a user override, and an independent Restore-default action that reverts to the compiled-in default and updates the displayed text.
+- Edits are not persisted until Save is explicitly triggered (no autosave-per-keystroke).
+- 'Component tests cover load, edit+save, and restore for both prompts, following this codebase''s existing Settings-section test conventions (e.g. AppearanceSection.test.tsx).'
+- npm run typecheck, lint, format:check, and test:run pass.
+created_by: Aleksei_Platkovskii
