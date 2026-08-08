@@ -42,7 +42,13 @@ commands and hydrate the workspace from persisted meetings. A **meeting** is
 one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
-defined "source missing" state).
+defined "source missing" state). `MeetingDto.source_missing` (WP-23) is
+computed fresh on every DTO build — `to_dto` in `meetings.rs` checks
+`Path::exists()` on the stored `source_path` — rather than stored, so it
+always reflects the file's current state instead of a snapshot from whenever
+it was last attached or transcribed. The front end disables **Transcribe**
+and shows an explanatory note when set; the transcript and notes stay
+readable and editable either way.
 
 Entities (indicative):
 

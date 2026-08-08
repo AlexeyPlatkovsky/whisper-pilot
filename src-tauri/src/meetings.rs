@@ -40,6 +40,11 @@ pub struct MeetingDto {
     pub segments: Vec<SegmentDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub notes: Option<MeetingNotes>,
+    /// `true` when this meeting has an attached source file that is no longer
+    /// readable at `source_path` (moved or deleted since it was attached).
+    /// `false` for a meeting with no source at all. The transcript and notes
+    /// stay readable/editable either way; only re-transcribing needs the file.
+    pub source_missing: bool,
 }
 
 pub fn create_empty_meeting(app_support_dir: &Path, created_at_ms: i64) -> Result<MeetingDto> {
@@ -311,6 +316,10 @@ fn to_dto(
             speaker_id: segment.speaker_id,
         })
         .collect();
+    let source_missing = meeting
+        .source_path
+        .as_ref()
+        .is_some_and(|path| !Path::new(path).exists());
     Ok(MeetingDto {
         id: meeting.id,
         title: meeting.title,
@@ -322,6 +331,7 @@ fn to_dto(
         status: meeting.status,
         segments: coalesce_by_speaker(segments),
         notes,
+        source_missing,
     })
 }
 
@@ -434,6 +444,7 @@ mod tests {
                 speaker_id: Some(3),
             }],
             notes: None,
+            source_missing: false,
         };
 
         let json = serde_json::to_value(&original).expect("serialize meeting DTO");
@@ -923,5 +934,53 @@ mod tests {
             update_notes(temp.path(), notes),
             Err(AppError::Store(_))
         ));
+    }
+
+    #[test]
+    fn given_no_source_when_opened_then_source_missing_is_false() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+
+        assert!(!created.source_missing);
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert!(!reopened.source_missing);
+    }
+
+    #[test]
+    fn given_an_existing_source_file_when_opened_then_source_missing_is_false() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let source = temp.path().join("talk.m4a");
+        std::fs::write(&source, b"fake audio").expect("write fake source file");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+
+        let attached = set_meeting_source(
+            temp.path(),
+            created.id,
+            Some(source.to_string_lossy().to_string()),
+        )
+        .expect("attach source");
+
+        assert!(!attached.source_missing);
+    }
+
+    #[test]
+    fn given_a_source_file_removed_after_attaching_when_reopened_then_source_missing_is_true() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let source = temp.path().join("talk.m4a");
+        std::fs::write(&source, b"fake audio").expect("write fake source file");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(
+            temp.path(),
+            created.id,
+            Some(source.to_string_lossy().to_string()),
+        )
+        .expect("attach source");
+
+        std::fs::remove_file(&source).expect("remove source file");
+
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert!(reopened.source_missing);
+        // Transcript/notes access is unaffected — this only gates re-transcribing.
+        assert_eq!(reopened.status, "ready");
     }
 }

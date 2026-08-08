@@ -36,6 +36,9 @@ export interface Meeting {
   status: string;
   segments: Segment[];
   notes?: MeetingNotes;
+  /** `true` when an attached source file is no longer readable at its saved
+   * path (moved or deleted). `false` when there is no source at all. */
+  source_missing: boolean;
 }
 
 export function createMeeting(): Promise<Meeting> {

@@ -419,6 +419,11 @@ body {
   color: var(--muted);
 }
 
+.wp-info-warning {
+  font-size: var(--wp-font-size-sm);
+  color: var(--tone-error);
+}
+
 .wp-file-chip {
   display: inline-flex;
   align-items: center;

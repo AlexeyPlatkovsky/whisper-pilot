@@ -686,6 +686,7 @@ export function App() {
               disabled={
                 busy ||
                 !activeMeeting?.source_path ||
+                activeMeeting?.source_missing ||
                 transcriptionModelReady !== true
               }
             >
@@ -793,6 +794,12 @@ export function App() {
             </span>
           ) : (
             <span className="wp-info-muted">No file loaded</span>
+          )}
+          {activeMeeting?.source_missing && (
+            <span className="wp-info-warning" role="note">
+              Source file missing — re-transcribe disabled. The transcript and
+              notes are still readable and editable.
+            </span>
           )}
         </div>
         <div className="wp-info-right">

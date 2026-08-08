@@ -1085,6 +1085,7 @@ mod tests {
             status: "transcribed".to_string(),
             segments: Vec::new(),
             notes: None,
+            source_missing: false,
         }
     }
 

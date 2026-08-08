@@ -30,6 +30,7 @@ const EMPTY_MEETING: Meeting = {
   language: "ru",
   status: "no_files",
   segments: [],
+  source_missing: false,
 };
 
 const ATTACHED_MEETING: Meeting = {
@@ -497,6 +498,7 @@ describe("App — persisted meeting workspace", () => {
     language: "ru",
     status: "finished",
     segments: [{ start_ms: 0, end_ms: 1_000, text: "Saved transcript" }],
+    source_missing: false,
   };
 
   it("opens the newest persisted meeting on startup without rendering sample rows", async () => {
@@ -564,6 +566,7 @@ describe("App — persisted meeting workspace", () => {
       language: "ru",
       status: "finished",
       segments: [],
+      source_missing: false,
     });
     vi.mocked(ipc.createMeeting).mockResolvedValue({
       id: 3,
@@ -572,6 +575,7 @@ describe("App — persisted meeting workspace", () => {
       language: "ru",
       status: "no_files",
       segments: [],
+      source_missing: false,
     });
     const user = userEvent.setup();
     render(<App />);
@@ -665,6 +669,7 @@ describe("App — persisted meeting workspace", () => {
       language: "ru",
       status: "no_files",
       segments: [],
+      source_missing: false,
     });
     const user = userEvent.setup();
     render(<App />);
@@ -683,6 +688,59 @@ describe("App — persisted meeting workspace", () => {
   });
 });
 
+describe("App — source file missing", () => {
+  const MISSING_SOURCE_MEETING: Meeting = {
+    ...transcribedMeeting([HELLO_SEGMENT]),
+    source_missing: true,
+  };
+
+  it("disables Transcribe and shows an explanatory note, but keeps the transcript editable", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: MISSING_SOURCE_MEETING.id,
+        title: MISSING_SOURCE_MEETING.title,
+        created_at_ms: MISSING_SOURCE_MEETING.created_at_ms,
+        duration_ms: MISSING_SOURCE_MEETING.duration_ms,
+        status: MISSING_SOURCE_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(MISSING_SOURCE_MEETING);
+
+    render(<App />);
+
+    await screen.findByText(/Source file missing/);
+    expect(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
+
+    const textarea = screen.getByDisplayValue("Hello");
+    expect(textarea).not.toBeDisabled();
+  });
+
+  it("does not show the note and keeps Transcribe available when the source file exists", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: ATTACHED_MEETING.id,
+        title: ATTACHED_MEETING.title,
+        created_at_ms: ATTACHED_MEETING.created_at_ms,
+        duration_ms: ATTACHED_MEETING.duration_ms,
+        status: ATTACHED_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(ATTACHED_MEETING);
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ATTACHED_MEETING.title });
+    expect(screen.queryByText(/Source file missing/)).not.toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Transcribe" }),
+      ).not.toBeDisabled(),
+    );
+  });
+});
+
 describe("App — persisted meeting controls", () => {
   const ACTIVE_MEETING = {
     id: 2,
@@ -691,6 +749,7 @@ describe("App — persisted meeting controls", () => {
     language: "ru",
     status: "finished",
     segments: [{ start_ms: 0, end_ms: 1_000, text: "Saved transcript" }],
+    source_missing: false,
   };
 
   function arrangeActiveMeeting() {
@@ -850,6 +909,7 @@ describe("App — persisted meeting controls", () => {
       language: "ru",
       status: "no_files",
       segments: [],
+      source_missing: false,
     });
     const user = userEvent.setup();
     render(<App />);
@@ -1393,6 +1453,7 @@ describe("App — meeting status consistency", () => {
     source_path: "/path/to/meeting.mp3",
     source_name: "meeting.mp3",
     segments: [],
+    source_missing: false,
   };
 
   const READY_OTHER: Meeting = {
@@ -1410,6 +1471,7 @@ describe("App — meeting status consistency", () => {
     language: "ru",
     status: "finished",
     segments: [HELLO_SEGMENT],
+    source_missing: false,
   };
 
   const NO_FILES: Meeting = {
@@ -1419,6 +1481,7 @@ describe("App — meeting status consistency", () => {
     language: "ru",
     status: "no_files",
     segments: [],
+    source_missing: false,
   };
 
   /** What READY_ACTIVE becomes once its transcription succeeds. */
@@ -1817,6 +1880,7 @@ describe("App — a run that ends after the user has moved on", () => {
     source_path: "/path/to/meeting.mp3",
     source_name: "meeting.mp3",
     segments: [],
+    source_missing: false,
   };
 
   const BYSTANDER: Meeting = {
@@ -1826,6 +1890,7 @@ describe("App — a run that ends after the user has moved on", () => {
     language: "ru",
     status: "no_files",
     segments: [],
+    source_missing: false,
   };
 
   const RUNNER_FINISHED: Meeting = {
@@ -1942,6 +2007,7 @@ describe("App — controls unrelated to the running meeting", () => {
     source_path: "/path/to/meeting.mp3",
     source_name: "meeting.mp3",
     segments: [],
+    source_missing: false,
   };
 
   const DONE: Meeting = {
@@ -1954,6 +2020,7 @@ describe("App — controls unrelated to the running meeting", () => {
     source_path: "/path/to/other.mp3",
     source_name: "other.mp3",
     segments: [HELLO_SEGMENT],
+    source_missing: false,
   };
 
   it("leaves Save and Choose file usable on a meeting that is not the one running", async () => {
@@ -2021,6 +2088,7 @@ describe("App — transcript panel while its own meeting is transcribing", () =>
     source_path: "/path/to/meeting.mp3",
     source_name: "meeting.mp3",
     segments: [HELLO_SEGMENT],
+    source_missing: false,
   };
 
   const OTHER: Meeting = {
@@ -2030,6 +2098,7 @@ describe("App — transcript panel while its own meeting is transcribing", () =>
     language: "ru",
     status: "no_files",
     segments: [],
+    source_missing: false,
   };
 
   it("disables the existing segments and speaker names once the meeting is reopened mid-run", async () => {
@@ -2082,6 +2151,7 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     language: "ru",
     status: "finished",
     segments: [{ start_ms: 0, end_ms: 1_000, text: "Saved transcript" }],
+    source_missing: false,
   };
 
   function arrangeSavedMeeting() {
