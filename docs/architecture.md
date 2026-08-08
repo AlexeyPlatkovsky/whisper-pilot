@@ -421,14 +421,27 @@ session.rs` (decode/mutual-exclusion), and `streaming_store.rs`
 StreamingRuntime>>` (macOS-only — the type doesn't exist on the Linux CI
 target), holding the live `streaming_audio::StreamingSession` capture.
 
-`start_streaming_session` claims `whisper_busy`, creates the session's DB
-row, starts capture, and spawns two `spawn_blocking` tasks: one runs `run_
-windowed_decode`, the other (`drive_streaming_results`) consumes its
-`WindowResult`s — persisting each via `append_window` and emitting
-`streaming_window` — until the results channel disconnects, at which point
-it marks the session stopped and releases `whisper_busy`. `stop_streaming_
-session` only has to do one thing: take `streaming_runtime` out of
-`AppState` and let it drop. Dropping the held `streaming_audio::
+`start_streaming_session` claims `whisper_busy`, then either creates a fresh
+session row (no `session_id` argument) or **resumes** a previously-stopped
+one: given a `session_id`, `streaming::resume_streaming_session` validates
+the session exists and is `STOPPED` (rejecting an already-`ACTIVE` one —
+resuming it would double-capture), computes the window index to continue
+counting from (one past the last persisted window, or 0 if none was ever
+saved), and flips its status back to `ACTIVE` via the new `StreamingStore::
+mark_active`. Either way it then starts capture and spawns two `spawn_
+blocking` tasks: one runs `run_windowed_decode` (now taking a `starting_
+window_index` so a resume's window numbering — and thus each window's
+`start_ms`, still an offset into this take's audio timeline, not wall-clock
+time — continues rather than restarting at 0), the other (`drive_streaming_
+results`) consumes its `WindowResult`s — persisting each via `append_window`
+and emitting `streaming_window` — until the results channel disconnects, at
+which point it marks the session stopped and releases `whisper_busy`.
+`src/StreamingView.tsx`'s Start action resumes the currently-open session
+when it's a past, stopped one (and relabels itself "Resume" accordingly);
+the header's "+"/New icon always starts fresh regardless of what's open,
+via a separate `handleStartNew` that never passes a `session_id`.
+`stop_streaming_session` only has to do one thing: take `streaming_runtime`
+out of `AppState` and let it drop. Dropping the held `streaming_audio::
 StreamingSession` stops both capture streams, which cascades through the
 mixer thread → sample channel → decode loop → results channel, ending
 `drive_streaming_results` on its own. Both `SCStream` (`screencapturekit`)
@@ -442,25 +455,61 @@ return a "macOS only" error — keeping the frontend's command surface
 identical across platforms rather than branching on `cfg` in TypeScript.
 
 `src/StreamingView.tsx` is a self-contained top-level view (entered/exited
-like `SettingsScreen`, via a new header icon in `App.tsx`), not a change to
-the existing Meeting workspace. It owns: the session list (rename/delete,
-mirroring Meeting's), Start/Stop controls, a live transcript that appends
-`streaming_window` events for whichever session is currently open
-(`upsertWindow` replaces rather than duplicates a resent `window_index`,
-and ignores events for a session that isn't the open one — stale events
-from a just-stopped session are possible during the transition), the
-`streaming_sources` indicator so mic-only degradation is visible rather
-than silent, a header status widget (WP-76) cycling Ready → Starting…
-→ On Air → Crafting MFU…/MFU Failed (WP-77) → Prettifying…/Prettify Failed
-(WP-75) (elapsed timer, `h:mm:ss` past one hour) as `isRunning`/`busy`/
-`craftingId`/`craftFailed`/`prettifyingId`/`prettifyFailed` change, reusing
-`App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern; a Craft button
-(WP-77, `.streaming-transcript-actions`) that generates structured notes
-into a `.wp-mfu` panel — see Structured Notes above; and a Prettify button
-(WP-75, same row) — see Transcript Prettify below. A fail-open window
-renders as `[unavailable]`, not blank space, so a decode failure reads
+like `SettingsScreen`), not a change to the existing Meeting workspace — but
+since this UI redesign it now mirrors `App.tsx`'s window shell wholesale
+(`.wp-header`/`.wp-info-bar`/`.wp-sidebar`/`.wp-transcript-panel`/`.wp-mfu`,
+plus the shared `ActionIcon` component) rather than keeping its own bespoke
+sidebar/action-row markup, so the two windows can't drift apart visually. The
+two windows are switched via a `ModeToggle` control in each one's sidebar
+(`src/ModeToggle.tsx`, "Meeting" / "Streaming" segments) instead of a
+dedicated header icon — clicking the inactive segment calls `onClose` (from
+Streaming) or opens Streaming (from Meeting). Because `StreamingView` is a
+mounted child rather than inline JSX in `App`, opening Settings from inside
+it (its header also carries the same Toggle-sidebar/New/Settings icon group
+as Meeting's) renders `SettingsScreen` as a fixed-position `.settings-overlay`
+layered on top rather than replacing the tree — swapping to `SettingsScreen`
+outright would unmount `StreamingView` and drop a live recording's in-flight
+state; the overlay keeps it mounted underneath. `StreamingView` owns: the
+session list (rename/delete, styled like Meeting's `wp-meeting-row`, mirroring
+Meeting's), Start/Stop/Craft/Copy/Export/Delete in the header's Main Actions
+row, a live transcript that appends `streaming_window` events for whichever
+session is currently open (`upsertWindow` replaces rather than duplicates a
+resent `window_index`, and ignores events for a session that isn't the open
+one — stale events from a just-stopped session are possible during the
+transition), an Audio Source chip in the info bar for the `streaming_sources`
+indicator so mic-only degradation is visible rather than silent, a header
+status widget (WP-76) cycling Ready → Starting… → On Air → Crafting
+MFU…/MFU Failed (WP-77) → Prettifying…/Prettify Failed (WP-75) (elapsed
+timer, `h:mm:ss` past one hour) as `isRunning`/`busy`/`craftingId`/
+`craftFailed`/`prettifyingId`/`prettifyFailed` change, driven by a single
+`src/streamingStatus.ts` resolver (mirroring `meetingStatus.ts`'s one-table
+approach) that both the header widget and the sidebar row's status dot read,
+reusing `App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern; a Craft
+button (WP-77, in the header's Main Actions row) that generates structured
+notes into a `.wp-mfu` panel — see Structured Notes above; and a Prettify
+button (WP-75, in the transcript panel's own header actions, alongside its
+Accept/Cancel/Revert controls) — see Transcript Prettify below. A fail-open
+window renders as `[unavailable]`, not blank space, so a decode failure reads
 differently from genuine silence — same distinction `outcome_ok` preserves
 in storage.
+
+Rename and delete (both the header title's icons and each sidebar row's) go
+through in-app `.modal-overlay`/`.modal-panel` dialogs, matching `App.tsx`'s
+Meeting rename/delete pattern exactly — not `window.prompt`/`window.confirm`,
+which Tauri's WKWebView does not reliably wire up (they silently no-op rather
+than showing anything).
+
+The raw live transcript groups windows into `<p>` paragraphs via `src/
+paragraphs.ts`'s `groupWindowsIntoParagraphs` — a client-side sentence-
+boundary + length heuristic (new paragraph once the accumulated text is both
+long enough and ends a sentence, or once too many windows have piled up
+without ever hitting a sentence end), since windows carry no pause/VAD signal
+of their own to split on (they're fixed-size slices of continuous audio, not
+silence-delimited — see Streaming Decode/Session Pipeline above). Each
+window keeps its own span (fail-open styling, per-window tooltip) inside its
+paragraph, so this is purely a rendering grouping, not a change to the
+underlying transcript data. Prettify's LLM cleanup does not yet also emit
+paragraph breaks — a possible follow-on, not yet built.
 
 ## Structured Notes (M3, `llm.rs`)
 

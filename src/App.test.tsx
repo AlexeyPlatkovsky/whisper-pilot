@@ -2010,7 +2010,7 @@ describe("App — IPC failures surface as errors without breaking the workspace"
 });
 
 describe("App — Streaming mode toggle", () => {
-  it("opens the Streaming view from the header icon and returns to Meetings", async () => {
+  it("opens the Streaming view from the sidebar toggle and returns to Meetings", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     render(<App />);
@@ -2019,10 +2019,10 @@ describe("App — Streaming mode toggle", () => {
     await user.click(screen.getByRole("button", { name: "Streaming" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Streaming" }),
+      await screen.findByRole("heading", { name: "Streaming Session" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Back to Meetings" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
 
     expect(
       await screen.findByRole("button", { name: "Choose file" }),

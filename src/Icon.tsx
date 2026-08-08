@@ -25,7 +25,9 @@ export type IconName =
   | "info"
   | "alert-circle"
   | "wand-sparkles"
-  | "check";
+  | "check"
+  | "copy"
+  | "mic";
 
 const PATHS: Record<IconName, ReactElement> = {
   "panel-left": (
@@ -150,6 +152,19 @@ const PATHS: Record<IconName, ReactElement> = {
     </>
   ),
   check: <path d="M20 6 9 17l-5-5" />,
+  copy: (
+    <>
+      <rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+      <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" />
+    </>
+  ),
+  mic: (
+    <>
+      <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
+      <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+      <line x1="12" x2="12" y1="19" y2="22" />
+    </>
+  ),
 };
 
 export function Icon({

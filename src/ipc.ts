@@ -246,9 +246,15 @@ export function deleteStreamingSession(id: number): Promise<void> {
   return invoke<void>("delete_streaming_session", { id });
 }
 
-/** Starts capture + rolling-window decode; returns once capture has begun. */
-export function startStreamingSession(): Promise<StreamingSessionSummary> {
-  return invoke<StreamingSessionSummary>("start_streaming_session");
+/** Starts capture + rolling-window decode; returns once capture has begun.
+ * Pass `sessionId` to resume a previously-stopped session (window numbering
+ * continues where it left off) instead of starting a brand-new one. */
+export function startStreamingSession(
+  sessionId?: number,
+): Promise<StreamingSessionSummary> {
+  return invoke<StreamingSessionSummary>("start_streaming_session", {
+    sessionId,
+  });
 }
 
 export function stopStreamingSession(): Promise<void> {

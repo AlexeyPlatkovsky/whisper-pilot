@@ -161,6 +161,12 @@
     "original_status": "cancelled",
     "project_key": "WP"
   },
+  "WP-52": {
+    "archived_at": "2026-08-08T08:13:47Z",
+    "original_id": "WP-52",
+    "original_status": "done",
+    "project_key": "WP"
+  },
   "WP-6": {
     "archived_at": "2026-08-06T12:17:50Z",
     "original_id": "WP-6",

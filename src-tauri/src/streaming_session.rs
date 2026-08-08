@@ -172,13 +172,21 @@ fn window_start_ms(window_index: u64) -> u64 {
 /// mutual exclusion — the caller must hold a live [`WhisperUsageGuard`] for
 /// [`WhisperUser::Streaming`] for the loop's whole duration, exactly as
 /// `transcribe_meeting` will need to hold one for [`WhisperUser::Meeting`].
+///
+/// `starting_window_index` is 0 for a fresh session, or one past the last
+/// persisted window index when resuming a previously-stopped session — see
+/// `streaming::resume_streaming_session`. Windows are numbered (and their
+/// `start_ms` computed) purely as an offset from this starting point, not
+/// from wall-clock time, so a resume's paused interval does not appear as a
+/// gap in the window timeline.
 pub fn run_windowed_decode(
     ctx: Arc<WhisperContext>,
     samples_rx: Receiver<Vec<f32>>,
     results_tx: Sender<WindowResult>,
+    starting_window_index: u64,
 ) {
     let mut buffer: Vec<f32> = Vec::new();
-    let mut window_index: u64 = 0;
+    let mut window_index: u64 = starting_window_index;
 
     loop {
         match samples_rx.recv_timeout(RECV_POLL) {

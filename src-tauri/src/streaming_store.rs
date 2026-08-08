@@ -243,6 +243,21 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
+    /// Inverse of `mark_stopped` — flips a stopped session back to active so
+    /// capture can resume into it. Callers are responsible for confirming the
+    /// session is actually `STOPPED` first; this does not itself validate the
+    /// prior status.
+    pub fn mark_active(&self, id: StreamingSessionId, now_ms: i64) -> Result<()> {
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE streaming_sessions SET status = ?1, updated_at_ms = ?2 WHERE id = ?3",
+                params![status::ACTIVE, now_ms, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "streaming session", id)
+    }
+
     pub fn upsert_notes(&self, notes: &StreamingNotes) -> Result<()> {
         self.connection()?
             .execute(
@@ -672,6 +687,36 @@ mod tests {
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
 
         assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+    }
+
+    #[test]
+    fn marking_a_stopped_session_active_again_updates_status_and_freshness() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store
+            .create_session(draft("Resumable", 100))
+            .expect("create session")
+            .id;
+        store.mark_stopped(session_id, 5_000).expect("mark stopped");
+
+        store.mark_active(session_id, 9_000).expect("mark active");
+
+        let session = store
+            .get_session(session_id)
+            .expect("get session")
+            .expect("session exists");
+        assert_eq!(session.status, status::ACTIVE);
+        assert_eq!(session.updated_at_ms, 9_000);
+    }
+
+    #[test]
+    fn marking_an_unknown_session_active_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        let result = store.mark_active(999_999, 100);
+
+        assert!(matches!(result, Err(AppError::Store(_))));
     }
 
     #[test]

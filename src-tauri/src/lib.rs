@@ -566,6 +566,7 @@ fn drive_streaming_results(
 async fn start_streaming_session(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    session_id: Option<streaming_store::StreamingSessionId>,
 ) -> Result<streaming::StreamingSessionSummaryDto> {
     if state.streaming_runtime.lock().await.is_some() {
         return Err(AppError::Capture(
@@ -594,14 +595,38 @@ async fn start_streaming_session(
         }
     };
 
-    let created_at_ms = now_ms()?;
-    let session_id = match streaming::create_streaming_session(&app_support_dir, created_at_ms) {
-        Ok(id) => id,
-        Err(e) => {
-            streaming_session::release_whisper_busy(&state.whisper_busy);
-            return Err(e);
-        }
+    let now = now_ms()?;
+    // A `session_id` continues an existing, previously-stopped session
+    // ("Start" on an open past session resumes it rather than always
+    // spawning a new one) — `starting_window_index` picks up window
+    // numbering where that session left off; the fresh-session branch always
+    // starts at 0.
+    let (summary, starting_window_index) = match session_id {
+        Some(id) => match streaming::resume_streaming_session(&app_support_dir, id, now) {
+            Ok(result) => result,
+            Err(e) => {
+                streaming_session::release_whisper_busy(&state.whisper_busy);
+                return Err(e);
+            }
+        },
+        None => match streaming::create_streaming_session(&app_support_dir, now) {
+            Ok(id) => (
+                streaming::StreamingSessionSummaryDto {
+                    id,
+                    title: "New Streaming Session".to_string(),
+                    created_at_ms: now,
+                    updated_at_ms: now,
+                    status: streaming_store::status::ACTIVE.to_string(),
+                },
+                0,
+            ),
+            Err(e) => {
+                streaming_session::release_whisper_busy(&state.whisper_busy);
+                return Err(e);
+            }
+        },
     };
+    let session_id = summary.id;
 
     let (samples_tx, samples_rx) = std::sync::mpsc::channel();
     let capture = match streaming_audio::StreamingSession::start(samples_tx) {
@@ -618,7 +643,7 @@ async fn start_streaming_session(
 
     let (results_tx, results_rx) = std::sync::mpsc::channel();
     tokio::task::spawn_blocking(move || {
-        streaming_session::run_windowed_decode(ctx, samples_rx, results_tx)
+        streaming_session::run_windowed_decode(ctx, samples_rx, results_tx, starting_window_index)
     });
 
     let results_app = app.clone();
@@ -648,13 +673,7 @@ async fn start_streaming_session(
         },
     );
 
-    Ok(streaming::StreamingSessionSummaryDto {
-        id: session_id,
-        title: "New Streaming Session".to_string(),
-        created_at_ms,
-        updated_at_ms: created_at_ms,
-        status: streaming_store::status::ACTIVE.to_string(),
-    })
+    Ok(summary)
 }
 
 /// Stop the running Streaming session. Dropping the held capture stops both
@@ -675,6 +694,7 @@ async fn stop_streaming_session(state: State<'_, AppState>) -> Result<()> {
 #[tauri::command]
 async fn start_streaming_session(
     _state: State<'_, AppState>,
+    _session_id: Option<streaming_store::StreamingSessionId>,
 ) -> Result<streaming::StreamingSessionSummaryDto> {
     Err(AppError::Capture(
         "Streaming's audio capture is only available on macOS".into(),

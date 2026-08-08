@@ -160,6 +160,43 @@ pub fn create_streaming_session(
     Ok(session.id)
 }
 
+/// Prepare a previously-stopped session to resume capturing: validates it is
+/// actually stopped (an active or nonexistent session cannot be resumed),
+/// marks it active again, and returns the window index the decode loop
+/// should continue counting from — one past the last persisted window, or 0
+/// for a session that was stopped before any window was ever saved.
+pub fn resume_streaming_session(
+    app_support_dir: &Path,
+    id: StreamingSessionId,
+    now_ms: i64,
+) -> Result<(StreamingSessionSummaryDto, u64)> {
+    let store = StreamingStore::open(app_support_dir)?;
+    let session = store
+        .get_session(id)?
+        .ok_or_else(|| AppError::Store(format!("streaming session {id} was not found")))?;
+    if session.status != streaming_store::status::STOPPED {
+        return Err(AppError::Capture(
+            "only a stopped Streaming session can be resumed".into(),
+        ));
+    }
+    let next_window_index = store
+        .list_windows(id)?
+        .last()
+        .map(|w| w.window_index as u64 + 1)
+        .unwrap_or(0);
+    store.mark_active(id, now_ms)?;
+    Ok((
+        StreamingSessionSummaryDto {
+            id: session.id,
+            title: session.title,
+            created_at_ms: session.created_at_ms,
+            updated_at_ms: now_ms,
+            status: streaming_store::status::ACTIVE.to_string(),
+        },
+        next_window_index,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +247,90 @@ mod tests {
         delete_streaming_session(temp.path(), id).expect("delete");
 
         assert!(open_streaming_session(temp.path(), id).is_err());
+    }
+
+    // S-1: happy path — a stopped session with saved windows resumes from
+    // one past the last window index, and its status/freshness update.
+    #[test]
+    fn resuming_a_stopped_session_with_windows_continues_from_the_next_index() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        store
+            .append_window(
+                id,
+                &NewStreamingWindow {
+                    window_index: 0,
+                    start_ms: 0,
+                    end_ms: 7_000,
+                    text: "hello".to_string(),
+                    language: "en".to_string(),
+                    outcome_ok: true,
+                },
+                7_100,
+            )
+            .expect("append window 0");
+        store
+            .append_window(
+                id,
+                &NewStreamingWindow {
+                    window_index: 1,
+                    start_ms: 7_000,
+                    end_ms: 14_000,
+                    text: "there".to_string(),
+                    language: "en".to_string(),
+                    outcome_ok: true,
+                },
+                14_100,
+            )
+            .expect("append window 1");
+        store.mark_stopped(id, 15_000).expect("mark stopped");
+
+        let (summary, next_window_index) =
+            resume_streaming_session(temp.path(), id, 20_000).expect("resume");
+
+        assert_eq!(next_window_index, 2);
+        assert_eq!(summary.status, streaming_store::status::ACTIVE);
+        assert_eq!(summary.updated_at_ms, 20_000);
+        assert_eq!(summary.title, "New Streaming Session");
+        let reloaded = store
+            .get_session(id)
+            .expect("get session")
+            .expect("session exists");
+        assert_eq!(reloaded.status, streaming_store::status::ACTIVE);
+    }
+
+    // BVA: a stopped session that never saved a window resumes at index 0,
+    // the lower boundary — not an out-of-range or panicking `.last()`.
+    #[test]
+    fn resuming_a_stopped_session_with_no_windows_starts_at_index_zero() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        store.mark_stopped(id, 500).expect("mark stopped");
+
+        let (_summary, next_window_index) =
+            resume_streaming_session(temp.path(), id, 600).expect("resume");
+
+        assert_eq!(next_window_index, 0);
+    }
+
+    // S-2, decision-table: status=active is the one rejected cell — resuming
+    // an already-running session would double-capture into it.
+    #[test]
+    fn resuming_an_active_session_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        // Deliberately not marked stopped — session stays "active".
+
+        assert!(resume_streaming_session(temp.path(), id, 200).is_err());
+    }
+
+    #[test]
+    fn resuming_a_nonexistent_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        assert!(resume_streaming_session(temp.path(), 999_999, 100).is_err());
     }
 
     #[test]
