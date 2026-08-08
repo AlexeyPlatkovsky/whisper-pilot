@@ -452,10 +452,7 @@ mod tests {
         );
         for result in &results {
             assert!(
-                matches!(
-                    result.outcome,
-                    Err(crate::error::AppError::Transcribe(_))
-                ),
+                matches!(result.outcome, Err(crate::error::AppError::Transcribe(_))),
                 "creation failure must fail each window open, not end the session"
             );
         }
