@@ -110,6 +110,15 @@ export function transcribeMeeting(
   return invoke<TranscribeMeetingResult>("transcribe_meeting", { id });
 }
 
+/**
+ * Re-run speaker identification alone on an already-transcribed meeting,
+ * leaving the transcript text untouched. Requires an active diarization
+ * model and a readable source file.
+ */
+export function diarizeMeeting(id: number): Promise<TranscribeMeetingResult> {
+  return invoke<TranscribeMeetingResult>("diarize_meeting", { id });
+}
+
 export function generateNotes(id: number): Promise<Meeting> {
   return invoke<Meeting>("generate_notes", { id });
 }

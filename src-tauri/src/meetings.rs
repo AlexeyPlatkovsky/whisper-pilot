@@ -1,5 +1,6 @@
 //! Testable persistence facade behind the meeting-library Tauri commands.
 
+use crate::diarize::SpeakerTurn;
 use crate::error::AppError;
 use crate::error::Result;
 use crate::store::{Meeting, MeetingId, MeetingNotes, NewMeeting, NewSegment, Store};
@@ -252,6 +253,54 @@ pub fn update_notes(app_support_dir: &Path, notes: MeetingNotes) -> Result<Meeti
     let segments = store.list_segments(notes.meeting_id)?;
     let saved_notes = store.get_notes(notes.meeting_id)?;
     to_dto(meeting, segments, saved_notes)
+}
+
+/// Assign `turns` onto the meeting's already-persisted segments (by their
+/// stored `start_ms`/`end_ms` spans) and save the result — the "Diarize"
+/// action re-running speaker identification alone, without a Transcribe run.
+/// Segments that were never diarized keep whisper's original per-utterance
+/// granularity, so a first Diarize run assigns at full precision; a meeting
+/// that was already diarized (and therefore coalesced into per-speaker
+/// blocks — see `to_dto`) is re-assigned at that coarser, already-collapsed
+/// granularity instead.
+pub fn diarize_meeting_segments(
+    app_support_dir: &Path,
+    id: MeetingId,
+    turns: &[SpeakerTurn],
+) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    let meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+
+    let stored = store.list_segments(id)?;
+    let mut segments: Vec<crate::transcribe::Segment> = stored
+        .iter()
+        .map(|segment| crate::transcribe::Segment {
+            start_ms: segment.start_ms.max(0) as u64,
+            end_ms: segment.end_ms.max(0) as u64,
+            text: segment.text.clone(),
+            speaker_id: segment.speaker_id.map(|id| id as i32),
+        })
+        .collect();
+    crate::diarize::assign_speaker_ids(&mut segments, turns);
+
+    let rows: Vec<NewSegment> = segments
+        .iter()
+        .enumerate()
+        .map(|(ordinal, segment)| NewSegment {
+            ordinal: ordinal as i64,
+            start_ms: segment.start_ms as i64,
+            end_ms: segment.end_ms as i64,
+            text: segment.text.clone(),
+            speaker_id: segment.speaker_id.map(i64::from),
+        })
+        .collect();
+    store.replace_segments(id, &rows)?;
+
+    let saved = store.list_segments(id)?;
+    let notes = store.get_notes(id)?;
+    to_dto(meeting, saved, notes)
 }
 
 fn validate_title(title: String) -> Result<String> {
@@ -982,5 +1031,79 @@ mod tests {
         assert!(reopened.source_missing);
         // Transcript/notes access is unaffected — this only gates re-transcribing.
         assert_eq!(reopened.status, "ready");
+    }
+
+    #[test]
+    fn given_an_undiarized_transcript_when_diarized_then_speaker_ids_are_assigned_and_text_is_unchanged(
+    ) {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![
+                dto(0, 1_000, "Hello", None),
+                dto(1_000, 2_000, "World", None),
+            ],
+            Some(2_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        let turns = [
+            SpeakerTurn {
+                start_ms: 0,
+                end_ms: 1_000,
+                speaker: 1,
+            },
+            SpeakerTurn {
+                start_ms: 1_000,
+                end_ms: 2_000,
+                speaker: 2,
+            },
+        ];
+        let diarized =
+            diarize_meeting_segments(temp.path(), created.id, &turns).expect("diarize meeting");
+
+        assert_eq!(diarized.segments[0].text, "Hello");
+        assert_eq!(diarized.segments[0].speaker_id, Some(1));
+        assert_eq!(diarized.segments[1].text, "World");
+        assert_eq!(diarized.segments[1].speaker_id, Some(2));
+
+        let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
+        assert_eq!(reopened.segments, diarized.segments);
+    }
+
+    #[test]
+    fn given_an_unknown_meeting_when_diarized_then_a_typed_error_returns() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+
+        assert!(matches!(
+            diarize_meeting_segments(temp.path(), 999_999, &[]),
+            Err(AppError::Store(_))
+        ));
+    }
+
+    #[test]
+    fn given_empty_turns_when_diarized_then_segments_are_left_speakerless() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![dto(0, 1_000, "Hello", None)],
+            Some(1_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+
+        let diarized =
+            diarize_meeting_segments(temp.path(), created.id, &[]).expect("diarize meeting");
+
+        assert_eq!(diarized.segments[0].speaker_id, None);
     }
 }

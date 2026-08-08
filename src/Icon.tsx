@@ -27,7 +27,8 @@ export type IconName =
   | "wand-sparkles"
   | "check"
   | "copy"
-  | "mic";
+  | "mic"
+  | "messages-square";
 
 const PATHS: Record<IconName, ReactElement> = {
   "panel-left": (
@@ -163,6 +164,13 @@ const PATHS: Record<IconName, ReactElement> = {
       <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
       <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
       <line x1="12" x2="12" y1="19" y2="22" />
+    </>
+  ),
+  // Two overlapping dialogue bubbles — speaker diarization/dialogue.
+  "messages-square": (
+    <>
+      <path d="M14 9a2 2 0 0 1-2 2H6l-4 4V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2z" />
+      <path d="M18 9h2a2 2 0 0 1 2 2v11l-4-4h-6a2 2 0 0 1-2-2v-1" />
     </>
   ),
 };

@@ -113,6 +113,14 @@ Single line reflecting the meeting's current state:
 - Each segment is an auto-sizing editable field prefixed by its timestamp
   (`m:ss`); edits auto-save. Bubble grouping/coloring is F002; the editable
   segment surface is F004.
+- The transcript panel's own header row (title + segment count, right-aligned
+  actions) carries a **Diarize** icon button next to the Editable indicator —
+  re-runs speaker identification alone on the current transcript, without
+  re-transcribing. Disabled until a transcript exists, a diarization model is
+  active, and the source file is still readable; disabled together with every
+  other run-blocking control while Transcribe, Craft MFU, or Diarize itself
+  is in flight. Mirrors Streaming's Prettify button position in its own
+  transcript header.
 
 ### MFU section (bottom of the right pane)
 

@@ -443,6 +443,64 @@ async fn transcribe_meeting(
     })
 }
 
+/// Re-run speaker identification alone on an already-transcribed meeting,
+/// leaving the transcript text untouched — the "Diarize" header action.
+/// Unlike the diarization pass folded into `transcribe_meeting`, a failure
+/// here is a real error (the user asked for diarization specifically, so
+/// there is no already-safe transcript to fail open onto); a fallback
+/// warning (the other embedding model was retried after a crash) still
+/// succeeds and is surfaced the same way `transcribe_meeting` does.
+#[tauri::command]
+async fn diarize_meeting(app: tauri::AppHandle, id: i64) -> Result<TranscribeMeetingResult> {
+    let app_support_dir = app_data_dir(&app)?;
+    let meeting = meetings::open_meeting(&app_support_dir, id)?;
+    if meeting.segments.is_empty() {
+        return Err(AppError::Diarization(
+            "meeting has no transcript to diarize yet".into(),
+        ));
+    }
+    if meeting.source_missing {
+        return Err(AppError::Diarization(
+            "meeting's source file is missing".into(),
+        ));
+    }
+    let path = meeting.source_path.ok_or_else(|| {
+        AppError::Diarization("meeting has no source file to diarize".to_string())
+    })?;
+    let variant = diarization_variant_to_run(
+        &settings::get_settings(&app_support_dir).active_model_diarization,
+    )
+    .map(str::to_string)
+    .ok_or_else(|| AppError::Diarization("no diarization model is active".into()))?;
+
+    let input = PathBuf::from(&path);
+    let samples = tokio::task::spawn_blocking(move || audio::load_samples(&input))
+        .await
+        .map_err(|e| AppError::Diarization(e.to_string()))??;
+
+    let diarize_dir = app_support_dir.clone();
+    let outcome = tokio::task::spawn_blocking(move || {
+        diarize_process::diarize_with_fallback(&diarize_dir, samples, None, &variant)
+    })
+    .await;
+
+    match outcome {
+        Ok((Ok(turns), fallback_warning)) => {
+            let meeting = meetings::diarize_meeting_segments(&app_support_dir, id, &turns)?;
+            Ok(TranscribeMeetingResult {
+                meeting,
+                diarization_warning: fallback_warning,
+            })
+        }
+        Ok((Err(e), _fallback_warning)) => Err(AppError::Diarization(format!(
+            "speaker identification is unavailable: {e}"
+        ))),
+        Err(e) => Err(AppError::Diarization(format!(
+            "speaker identification failed: {e}"
+        ))),
+    }
+}
+
 /// Stop the meeting's in-flight transcription (WP-19): flips its abort flag,
 /// which whisper's abort callback (or the pre-decode check in
 /// `decode_and_transcribe`) turns into `AppError::Cancelled` — the run then
@@ -1055,6 +1113,7 @@ pub fn run() {
             set_meeting_source,
             transcribe_meeting,
             cancel_transcription,
+            diarize_meeting,
             list_streaming_sessions,
             open_streaming_session,
             rename_streaming_session,

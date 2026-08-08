@@ -133,6 +133,24 @@ English per ADR-011) and user-renamed within the current session. The
 transcript renders as a per-speaker chat of colored bubbles (10 shades).
 Reassigning or merging speakers is out of scope for M2.
 
+**Standalone "Diarize" action** (`diarize_meeting` command, Transcript
+header, next to the Editable indicator): re-runs speaker identification
+alone on an already-transcribed meeting, without re-transcribing. Re-decodes
+the source audio (samples are never persisted) and re-runs the same
+`diarize_process::diarize_with_fallback` pass `transcribe_meeting` uses
+internally, then assigns the resulting turns onto the meeting's
+already-persisted segments by time overlap
+(`meetings::diarize_meeting_segments` → `diarize::assign_speaker_ids`) and
+saves the result. Unlike the diarization folded into a Transcribe run, a
+failure here is a real error surfaced to the user, not a fail-open warning —
+diarization is what was explicitly asked for, so there is no already-safe
+transcript to fail open onto. Requires an active diarization model, an
+existing transcript, and a readable source file (disabled client-side
+otherwise); reuses the same time-overlap assignment as the automatic pass,
+so it re-diarizes at whatever segment granularity currently exists —
+full per-utterance precision on a never-diarized meeting, or the coarser,
+already-coalesced per-speaker blocks on one diarized before.
+
 `diarize.rs` resolves the configured model artifacts, then produces ordered
 `SpeakerTurn`s from raw 16 kHz samples. Since WP-62, the production route is
 owned in Rust: `ort` v1.16.3 dynamically loads the packaged ONNX Runtime 1.17.1

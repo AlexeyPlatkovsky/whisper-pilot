@@ -63,6 +63,7 @@ vi.mock("./ipc", () => ({
   openFileDialog: vi.fn(async () => "/path/to/meeting.mp3"),
   setMeetingSource: vi.fn(),
   transcribeMeeting: vi.fn(),
+  diarizeMeeting: vi.fn(),
   createMeeting: vi.fn(),
   deleteMeeting: vi.fn(),
   listMeetings: vi.fn(),
@@ -144,6 +145,7 @@ beforeEach(() => {
   vi.mocked(ipc.generateNotes).mockReset();
   vi.mocked(ipc.cancelTranscription).mockReset();
   vi.mocked(ipc.cancelTranscription).mockResolvedValue(undefined);
+  vi.mocked(ipc.diarizeMeeting).mockReset();
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -1277,6 +1279,91 @@ describe("App — cancel transcription (Stop)", () => {
     // The run itself is still in flight — resolving it completes normally.
     resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
     await screen.findByDisplayValue("Hello");
+  });
+});
+
+const DIARIZATION_DOWNLOADED = {
+  id: "diarization-campplus",
+  task: "diarization",
+  label: "CAM++",
+  downloaded: true,
+  size_bytes: 1,
+  recommended: false,
+};
+
+describe("App — diarize speakers", () => {
+  async function transcribeWithDiarizationActive(
+    user: ReturnType<typeof userEvent.setup>,
+  ) {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_DOWNLOADED,
+      DIARIZATION_DOWNLOADED,
+    ]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "campplus",
+      export_file_type: "plain_text",
+    });
+    render(<App />);
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByDisplayValue("Hello");
+    return screen.findByRole("button", { name: "Diarize speakers" });
+  }
+
+  it("is disabled when no diarization model is active", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByDisplayValue("Hello");
+
+    expect(
+      screen.getByRole("button", { name: "Diarize speakers" }),
+    ).toBeDisabled();
+  });
+
+  it("calls diarizeMeeting and applies the returned speaker ids once clicked", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+    vi.mocked(ipc.diarizeMeeting).mockResolvedValue({
+      meeting: transcribedMeeting([{ ...HELLO_SEGMENT, speaker_id: 1 }]),
+      diarization_warning: undefined,
+    });
+
+    await user.click(diarizeButton);
+
+    expect(ipc.diarizeMeeting).toHaveBeenCalledWith(100);
+    await screen.findByText("Speaker 2");
+  });
+
+  it("surfaces a diarization failure as an error without discarding the transcript", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+    vi.mocked(ipc.diarizeMeeting).mockRejectedValue(
+      new Error("no diarization model is active"),
+    );
+
+    await user.click(diarizeButton);
+
+    await screen.findByText(/no diarization model is active/);
+    expect(screen.getByDisplayValue("Hello")).toBeInTheDocument();
+  });
+
+  it("disables Diarize while transcribing, generating notes, or itself running", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+
+    vi.mocked(ipc.diarizeMeeting).mockReturnValue(new Promise(() => {}));
+    await user.click(diarizeButton);
+
+    expect(diarizeButton).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
   });
 });
 

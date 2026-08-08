@@ -10,6 +10,7 @@ import {
   openFileDialog,
   setMeetingSource,
   transcribeMeeting,
+  diarizeMeeting,
   onTranscriptionPhase,
   onTranscriptionProgress,
   saveTextDialog,
@@ -134,6 +135,14 @@ export function App() {
     null,
   );
   const isGeneratingNotes = generatingNotesId !== null;
+  // The meeting whose standalone "Diarize" run is in flight, or null — the
+  // header action that re-runs speaker identification alone, without
+  // re-transcribing (separate from diarization folded into Transcribe).
+  const [diarizingId, setDiarizingId] = useState<number | null>(null);
+  const isDiarizing = diarizingId !== null;
+  const [diarizationModelReady, setDiarizationModelReady] = useState<
+    boolean | null
+  >(null);
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
@@ -188,11 +197,16 @@ export function App() {
 
   // Tick a once-per-second elapsed clock while a run is in flight.
   useEffect(() => {
-    if (transcribingId === null && generatingNotesId === null) return;
+    if (
+      transcribingId === null &&
+      generatingNotesId === null &&
+      diarizingId === null
+    )
+      return;
     setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [transcribingId, generatingNotesId]);
+  }, [transcribingId, generatingNotesId, diarizingId]);
 
   const refreshModelAvailability = useCallback(async () => {
     try {
@@ -207,9 +221,19 @@ export function App() {
       } else {
         setLlmModelReady(false);
       }
+      const diarizationVariant = settings.active_model_diarization;
+      if (diarizationVariant && diarizationVariant !== "none") {
+        const diarization = models.find(
+          (m) => m.id === `diarization-${diarizationVariant}`,
+        );
+        setDiarizationModelReady(diarization?.downloaded ?? false);
+      } else {
+        setDiarizationModelReady(false);
+      }
     } catch {
       setTranscriptionModelReady(false);
       setLlmModelReady(false);
+      setDiarizationModelReady(false);
     }
   }, []);
 
@@ -381,6 +405,29 @@ export function App() {
     }
   }
 
+  // Re-runs speaker identification alone on the active meeting's existing
+  // transcript — the header "Diarize" action, separate from the diarization
+  // pass folded into Transcribe.
+  async function handleDiarize() {
+    if (!activeMeeting) return;
+    const id = activeMeeting.id;
+    try {
+      setDiarizingId(id);
+      setStatus({ kind: "idle" });
+      const { meeting, diarization_warning } = await diarizeMeeting(id);
+      upsertSummary(meeting);
+      if (activeMeetingIdRef.current === meeting.id) {
+        applyActiveMeeting(meeting);
+        if (diarization_warning) setDiarizationWarning(diarization_warning);
+      }
+    } catch (e) {
+      if (activeMeetingIdRef.current === id)
+        setStatus({ kind: "error", message: String(e) });
+    } finally {
+      setDiarizingId(null);
+    }
+  }
+
   async function handleRemoveFile() {
     if (!activeMeeting) return;
     try {
@@ -536,11 +583,13 @@ export function App() {
   // actions that belong to whichever meeting is on screen — those use
   // `activeIsTranscribing`, so exporting an unrelated finished transcript or
   // attaching a file to an idle meeting still works while a run is going.
-  const busy = transcribingId !== null || isGeneratingNotes;
+  const busy = transcribingId !== null || isGeneratingNotes || isDiarizing;
   const activeIsTranscribing =
     activeMeeting !== null && transcribingId === activeMeeting.id;
   const activeIsGeneratingNotes =
     activeMeeting !== null && generatingNotesId === activeMeeting.id;
+  const activeIsDiarizing =
+    activeMeeting !== null && diarizingId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
   const meetingTitle = activeMeeting?.title ?? "New Meeting";
 
@@ -549,6 +598,7 @@ export function App() {
   const headerStatus: MeetingStatusView | null = useMemo(() => {
     if (activeIsGeneratingNotes)
       return resolveMeetingStatus(undefined, "crafting");
+    if (activeIsDiarizing) return resolveMeetingStatus(undefined, "diarizing");
     if (activeIsTranscribing)
       return resolveMeetingStatus(undefined, transcribingPhase);
     if (transcriptionModelReady === false)
@@ -559,6 +609,7 @@ export function App() {
     return resolveMeetingStatus(activeMeeting.status);
   }, [
     activeIsGeneratingNotes,
+    activeIsDiarizing,
     activeIsTranscribing,
     transcribingPhase,
     transcriptionModelReady,
@@ -665,7 +716,10 @@ export function App() {
               aria-label="Rename meeting"
               onClick={() => activeMeeting && openRename(activeMeeting)}
               disabled={
-                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+                !activeMeeting ||
+                activeIsTranscribing ||
+                isGeneratingNotes ||
+                activeIsDiarizing
               }
             >
               <Icon name="pencil" size={14} />
@@ -685,7 +739,10 @@ export function App() {
                 })
               }
               disabled={
-                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+                !activeMeeting ||
+                activeIsTranscribing ||
+                isGeneratingNotes ||
+                activeIsDiarizing
               }
             >
               <Icon name="trash-2" size={14} />
@@ -697,7 +754,9 @@ export function App() {
           <div className="wp-status" role="status">
             {headerStatus && (
               <>
-                {(activeIsTranscribing || activeIsGeneratingNotes) && (
+                {(activeIsTranscribing ||
+                  activeIsGeneratingNotes ||
+                  activeIsDiarizing) && (
                   <Icon
                     name="refresh-cw"
                     size={14}
@@ -709,7 +768,9 @@ export function App() {
                 >
                   {headerStatus.label}
                 </span>
-                {(activeIsTranscribing || activeIsGeneratingNotes) && (
+                {(activeIsTranscribing ||
+                  activeIsGeneratingNotes ||
+                  activeIsDiarizing) && (
                   <span className="wp-status-timer">
                     {formatClock(elapsed)}
                   </span>
@@ -772,7 +833,8 @@ export function App() {
                 !hasTranscript ||
                 llmModelReady !== true ||
                 activeIsTranscribing ||
-                isGeneratingNotes
+                isGeneratingNotes ||
+                activeIsDiarizing
               }
             />
             <span className="wp-sep" />
@@ -808,7 +870,10 @@ export function App() {
                 })
               }
               disabled={
-                !activeMeeting || activeIsTranscribing || isGeneratingNotes
+                !activeMeeting ||
+                activeIsTranscribing ||
+                isGeneratingNotes ||
+                activeIsDiarizing
               }
             />
           </div>
@@ -842,7 +907,9 @@ export function App() {
                 className="wp-icon-btn wp-icon-btn--tiny"
                 aria-label="Remove file"
                 onClick={handleRemoveFile}
-                disabled={activeIsTranscribing || isGeneratingNotes}
+                disabled={
+                  activeIsTranscribing || isGeneratingNotes || activeIsDiarizing
+                }
               >
                 <Icon name="x" size={12} />
               </button>
@@ -937,6 +1004,18 @@ export function App() {
               <div className="wp-transcript-actions">
                 <Icon name="pencil" size={14} />
                 <span>Editable</span>
+                <span className="wp-sep" />
+                <ActionIcon
+                  icon="messages-square"
+                  label="Diarize speakers"
+                  onClick={() => void handleDiarize()}
+                  disabled={
+                    !hasTranscript ||
+                    activeMeeting?.source_missing ||
+                    diarizationModelReady !== true ||
+                    busy
+                  }
+                />
               </div>
             </div>
             <div className="wp-separator" />
@@ -988,7 +1067,9 @@ export function App() {
                               label={resolveSpeakerLabel(seg.speaker_id!)}
                               onRename={renameSpeaker}
                               disabled={
-                                activeIsTranscribing || isGeneratingNotes
+                                activeIsTranscribing ||
+                                isGeneratingNotes ||
+                                activeIsDiarizing
                               }
                             />
                           )}
@@ -1001,7 +1082,11 @@ export function App() {
                           value={seg.text}
                           rows={1}
                           onChange={(e) => editSegment(i, e.target.value)}
-                          disabled={activeIsTranscribing || isGeneratingNotes}
+                          disabled={
+                            activeIsTranscribing ||
+                            isGeneratingNotes ||
+                            activeIsDiarizing
+                          }
                         />
                       </div>
                     </div>
@@ -1030,7 +1115,11 @@ export function App() {
                       value={notes[field]}
                       rows={1}
                       onChange={(e) => editNotesField(field, e.target.value)}
-                      disabled={activeIsTranscribing || isGeneratingNotes}
+                      disabled={
+                        activeIsTranscribing ||
+                        isGeneratingNotes ||
+                        activeIsDiarizing
+                      }
                     />
                   </section>
                 ))}
