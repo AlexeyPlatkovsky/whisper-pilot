@@ -3,8 +3,8 @@ id: WP-11
 title: M2 — Library & workspace
 priority: normal
 type: epic
-status: in_progress
+status: done
 created_at: '2026-07-21T10:27:55Z'
-updated_at: '2026-07-23T15:16:40Z'
+updated_at: '2026-08-08T16:25:21Z'
 description: 'Turn the stateless M1 flow into a persisted two-pane workspace: a left Meetings list and a right meeting workspace (header, status bar, transcript, MFU section). Local SQLite library of meetings with reopen/rename/delete, auto-saved edits, a model switcher, automatic transcription-language detection (no language selector - ADR-012), and a MANUAL, UI-blocking Transcribe with progress + Stop. Markdown/plain-text export. One file per meeting. Serves roadmap M2 and feature F004 (ADR-008, ADR-010). Acceptance: meetings persist and survive reopen; edits auto-save; transcribe is manual/stoppable; export produces .md/.txt.'
 created_by: M2 planning
