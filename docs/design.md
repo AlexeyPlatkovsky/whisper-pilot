@@ -99,7 +99,7 @@ Single line reflecting the meeting's current state:
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                                                                                                                                                                                                                      |
 | **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting                                                                                                                                                                                                                                                                                                                                              |
-| **Transcribing**     | spinner + live timer (updates every second), plus a determinate progress **bar** with a percent label during the transcribing pass — whisper reports real percent-complete there (WP-58); once the run moves into **identifying speakers**, the bar disappears (no equivalent figure for that pass) and only the spinner+timer remain. **All UI blocked except Stop** (WP-19; Stop only reaches the transcribing pass — see architecture.md) |
+| **Transcribing**     | spinner + live timer (updates every second), plus a determinate progress **bar** with a percent label during the transcribing pass — whisper reports real percent-complete there. Once the run moves into **identifying speakers**, the bar disappears (no equivalent figure for that pass) and the persisted transcript appears read-only while the spinner+timer remain. Actions stay blocked; Stop disables because it only reaches the transcription pass (WP-19; see architecture.md). |
 | **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                                                                                                                                                                                                                        |
 | **No model**         | warning that no Whisper model is available                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -179,11 +179,12 @@ Whisper model; diarization degrades without its models).
    meeting's title defaults to the file name (renamable any time).
 3. (Optional) pick the **model**. The language is detected from the audio — there
    is nothing to choose (ADR-012).
-4. Press **Transcribe** → the UI blocks (except **Stop**); the status bar shows a
-   progress bar (or spinner+timer) across two phases: **transcribing**, then
-   **identifying speakers** (diarization runs automatically — there is no separate
-   diarize action).
-5. On completion the transcript appears in the center as **colored per-speaker
+4. Press **Transcribe** → the status bar shows a progress bar (or spinner+timer)
+   across two phases: **transcribing**, then **identifying speakers** (diarization
+   runs automatically — there is no separate diarize action). When speaker
+   identification begins, the persisted transcript appears read-only; action
+   controls stay blocked and Stop disables.
+5. On completion the transcript updates to **colored per-speaker
    bubbles**; status bar shows **Finished**; **Create MFU** enables. Everything
    auto-saves to the library.
    - **Stop** during a run cancels it (transcription and diarization together); no

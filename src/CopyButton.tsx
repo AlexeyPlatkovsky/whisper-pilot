@@ -7,8 +7,8 @@ const COPY_FEEDBACK_MS = 2500;
 
 /** Copy-to-clipboard action for the header action rows, shared by the Meeting
  * and Streaming windows so their copy affordance can't drift. On a successful
- * write the button swaps to a checked, accented state and a bottom-center
- * toast announces "Copied!"; both roll back after COPY_FEEDBACK_MS. Clicking
+ * write the button swaps to a checked, accented state and a top-center toast
+ * announces "Copied"; both roll back after COPY_FEEDBACK_MS. Clicking
  * again while the confirmation is showing re-copies and restarts the timeout.
  * `resetKey` identifies the owning meeting/session: when it changes, any
  * pending feedback is cleared so a newly opened meeting/session never
@@ -82,8 +82,12 @@ export function CopyButton({
         onClick={() => void handleClick()}
       />
       {copied && (
-        <div className="wp-toast" role="status" aria-atomic="true">
-          Copied!
+        <div
+          className="wp-toast wp-toast--top"
+          role="status"
+          aria-atomic="true"
+        >
+          Copied
         </div>
       )}
     </>

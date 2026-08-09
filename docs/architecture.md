@@ -643,7 +643,7 @@ file-type setting. Both screens' **Copy** buttons share `CopyButton`
 (no Tauri clipboard plugin was added — the web API works in the WKWebView and
 avoids a new plugin/capability-permission surface for a one-line need) and
 confirms a successful write with a transient checked button state plus a
-bottom-center "Copied!" toast that rolls back automatically after ~2.5
+top-center "Copied" toast that rolls back automatically after ~2.5
 seconds;
 **Export** always renders a minimal Markdown document (`# title` - the plain
 transcript) through `save_text_dialog`. Both reuse `windowText`'s

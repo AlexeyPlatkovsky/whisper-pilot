@@ -260,6 +260,37 @@ describe("App — transcription model availability", () => {
 });
 
 describe("App — English strings", () => {
+  it("shows the detected language only after a meeting has been transcribed", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    expect(screen.queryByText("Russian")).not.toBeInTheDocument();
+
+    await chooseAndTranscribe(user);
+
+    expect(await screen.findByText("Russian")).toBeInTheDocument();
+  });
+
+  it("shows the detected non-Russian language after transcription", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+      transcribeResult({
+        ...transcribedMeeting([HELLO_SEGMENT]),
+        language: "en",
+      }),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+
+    expect(await screen.findByText("English")).toBeInTheDocument();
+    expect(screen.queryByText("Russian")).not.toBeInTheDocument();
+  });
+
   it("renders the Save button in English", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     render(<App />);
@@ -632,6 +663,47 @@ describe("App — sidebar", () => {
 
     expect(screen.queryByLabelText("Search meetings")).not.toBeInTheDocument();
   });
+
+  it("filters meetings by title only after three characters and shows no matches", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: 2,
+        title: "Roadmap review",
+        created_at_ms: 2_000,
+        status: "finished",
+      },
+      {
+        id: 1,
+        title: "Weekly sync",
+        created_at_ms: 1_000,
+        status: "finished",
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue({
+      ...transcribedMeeting([HELLO_SEGMENT]),
+      id: 2,
+      title: "Roadmap review",
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    const search = await screen.findByLabelText("Search meetings");
+    const sidebar = search.closest("aside");
+    expect(sidebar).not.toBeNull();
+    // BVA: filtering starts at exactly three characters and resets at two.
+    await user.type(search, "roa");
+    expect(within(sidebar!).getByText("Roadmap review")).toBeInTheDocument();
+    expect(within(sidebar!).queryByText("Weekly sync")).not.toBeInTheDocument();
+
+    await user.type(search, "x");
+    expect(await screen.findByText("No matches")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "ro");
+    expect(within(sidebar!).getByText("Roadmap review")).toBeInTheDocument();
+    expect(within(sidebar!).getByText("Weekly sync")).toBeInTheDocument();
+  });
 });
 
 describe("App — persisted meeting workspace", () => {
@@ -680,7 +752,7 @@ describe("App — persisted meeting workspace", () => {
   });
 
   // state-transition: idle → copied → idle (timeout rollback).
-  it("shows a 'Copied!' toast and a checked button after copying, then rolls back", async () => {
+  it("shows a top 'Copied' toast and a checked button after copying, then rolls back", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.listMeetings).mockResolvedValue([
       {
@@ -708,8 +780,11 @@ describe("App — persisted meeting workspace", () => {
 
       await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
-      const toast = await screen.findByText("Copied!");
+      const toast = await screen.findByText("Copied", {
+        selector: ".wp-toast",
+      });
       expect(toast).toHaveAttribute("role", "status");
+      expect(toast).toHaveClass("wp-toast--top");
       expect(
         screen.getByRole("button", { name: "Copied" }),
       ).toBeInTheDocument();
@@ -718,7 +793,9 @@ describe("App — persisted meeting workspace", () => {
         await vi.advanceTimersByTimeAsync(2600);
       });
 
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -773,14 +850,16 @@ describe("App — persisted meeting workspace", () => {
       await screen.findByDisplayValue("Saved transcript");
 
       await user.click(screen.getByRole("button", { name: "Copy transcript" }));
-      await screen.findByText("Copied!");
+      await screen.findByText("Copied", { selector: ".wp-toast" });
 
       await user.click(
         screen.getByRole("button", { name: "Open Older meeting" }),
       );
       await screen.findByDisplayValue("Older transcript");
 
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -789,7 +868,9 @@ describe("App — persisted meeting workspace", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3000);
       });
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -847,7 +928,9 @@ describe("App — persisted meeting workspace", () => {
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
     // The write is still in flight: no feedback yet.
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", { name: "Open Older meeting" }),
@@ -858,7 +941,9 @@ describe("App — persisted meeting workspace", () => {
     resolveWrite();
     await act(async () => {});
 
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy transcript" }),
     ).toBeInTheDocument();
@@ -890,7 +975,9 @@ describe("App — persisted meeting workspace", () => {
 
     const status = await screen.findByRole("status");
     await waitFor(() => expect(status).toHaveTextContent("Error"));
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy transcript" }),
     ).toBeInTheDocument();
@@ -2004,6 +2091,17 @@ describe("App — meeting status consistency", () => {
     expect(screen.queryByText("finished")).not.toBeInTheDocument();
   });
 
+  it("shows an icon alongside the Meeting Ready status", async () => {
+    arrangeLibrary();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: READY_ACTIVE.title });
+
+    const status = screen.getByRole("status");
+    expect(status).toHaveTextContent("Ready");
+    expect(status.querySelector("svg")).not.toBeNull();
+  });
+
   it("carries the row status on the dot alone — no status text in the row", async () => {
     arrangeLibrary();
     render(<App />);
@@ -2229,6 +2327,34 @@ describe("App — meeting status consistency", () => {
     await waitFor(() =>
       expect(screen.getByRole("status")).toHaveTextContent("Finished"),
     );
+  });
+
+  it("shows the persisted transcript as diarization continues", async () => {
+    arrangeLibrary();
+    deferTranscription();
+    let phaseHandler: (p: {
+      id: number;
+      phase: "diarizing";
+    }) => void = () => {};
+    vi.mocked(ipc.onTranscriptionPhase).mockImplementation(async (handler) => {
+      phaseHandler = handler;
+      return () => {};
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await startTranscribing(user);
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) => {
+      if (id === READY_ACTIVE.id) return { ...ACTIVE_FINISHED };
+      const found = LIBRARY.find((meeting) => meeting.id === id);
+      if (!found) throw new Error(`no meeting ${id}`);
+      return { ...found };
+    });
+
+    phaseHandler({ id: READY_ACTIVE.id, phase: "diarizing" });
+
+    expect(await screen.findByDisplayValue("Hello")).toBeDisabled();
+    expect(screen.getByRole("status")).toHaveTextContent("Diarizing");
   });
 
   it("ignores a phase event that arrives after the run it belongs to has already finished", async () => {

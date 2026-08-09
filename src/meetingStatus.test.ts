@@ -7,14 +7,17 @@ describe("resolveMeetingStatus — persisted statuses", () => {
     expect(resolveMeetingStatus("no_files")).toEqual({
       tone: "no-files",
       label: "No files",
+      icon: "info",
     });
     expect(resolveMeetingStatus("ready")).toEqual({
       tone: "ready",
       label: "Ready",
+      icon: "check",
     });
     expect(resolveMeetingStatus("finished")).toEqual({
       tone: "finished",
       label: "Finished",
+      icon: "check",
     });
   });
 });
@@ -26,10 +29,12 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     expect(resolveMeetingStatus("ready", "transcribing")).toEqual({
       tone: "transcribing",
       label: "Transcribing",
+      icon: "refresh-cw",
     });
     expect(resolveMeetingStatus("finished", "transcribing")).toEqual({
       tone: "transcribing",
       label: "Transcribing",
+      icon: "refresh-cw",
     });
   });
 
@@ -39,10 +44,12 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     expect(resolveMeetingStatus("ready", "diarizing")).toEqual({
       tone: "diarizing",
       label: "Diarizing",
+      icon: "refresh-cw",
     });
     expect(resolveMeetingStatus("finished", "diarizing")).toEqual({
       tone: "diarizing",
       label: "Diarizing",
+      icon: "refresh-cw",
     });
   });
 
@@ -50,6 +57,7 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     expect(resolveMeetingStatus("ready", "no-model")).toEqual({
       tone: "no-model",
       label: "No model",
+      icon: "alert-circle",
     });
   });
 
@@ -57,6 +65,7 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     expect(resolveMeetingStatus("ready", "error")).toEqual({
       tone: "error",
       label: "Error",
+      icon: "alert-circle",
     });
   });
 
@@ -73,6 +82,7 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
     expect(resolveMeetingStatus("transmogrifying")).toEqual({
       tone: "unknown",
       label: "Unknown",
+      icon: "alert-circle",
     });
   });
 
@@ -81,10 +91,12 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
     expect(resolveMeetingStatus(undefined)).toEqual({
       tone: "unknown",
       label: "Unknown",
+      icon: "alert-circle",
     });
     expect(resolveMeetingStatus("")).toEqual({
       tone: "unknown",
       label: "Unknown",
+      icon: "alert-circle",
     });
   });
 
@@ -94,10 +106,12 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
     expect(resolveMeetingStatus("constructor")).toEqual({
       tone: "unknown",
       label: "Unknown",
+      icon: "alert-circle",
     });
     expect(resolveMeetingStatus("toString")).toEqual({
       tone: "unknown",
       label: "Unknown",
+      icon: "alert-circle",
     });
   });
 
@@ -105,6 +119,7 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
     expect(resolveMeetingStatus("transmogrifying", "transcribing")).toEqual({
       tone: "transcribing",
       label: "Transcribing",
+      icon: "refresh-cw",
     });
   });
 });

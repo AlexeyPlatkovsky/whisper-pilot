@@ -128,6 +128,30 @@ describe("StreamingView", () => {
     expect(await screen.findByText("Standup")).toBeInTheDocument();
   });
 
+  it("filters sessions by title only after three characters and shows no matches", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      { ...SESSION_A, id: 2, title: "Retro" },
+    ]);
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const search = await screen.findByLabelText("Search sessions");
+    // BVA: filtering starts at exactly three characters and resets at two.
+    await user.type(search, "sta");
+    expect(screen.getByText("Standup")).toBeInTheDocument();
+    expect(screen.queryByText("Retro")).not.toBeInTheDocument();
+
+    await user.type(search, "x");
+    expect(await screen.findByText("No matches")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "st");
+    expect(screen.getByText("Standup")).toBeInTheDocument();
+    expect(screen.getByText("Retro")).toBeInTheDocument();
+  });
+
   it("shows the empty state before any session is started or opened", async () => {
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
@@ -933,7 +957,7 @@ describe("StreamingView", () => {
   });
 
   // state-transition: idle → copied → idle (timeout rollback).
-  it("shows a 'Copied!' toast and a checked button after a successful copy, then rolls back", async () => {
+  it("shows a 'Copied' toast and a checked button after a successful copy, then rolls back", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({
@@ -950,7 +974,9 @@ describe("StreamingView", () => {
         await screen.findByRole("button", { name: "Copy transcript" }),
       );
 
-      const toast = await screen.findByText("Copied!");
+      const toast = await screen.findByText("Copied", {
+        selector: ".wp-toast",
+      });
       expect(toast).toHaveAttribute("role", "status");
       expect(
         screen.getByRole("button", { name: "Copied" }),
@@ -960,7 +986,9 @@ describe("StreamingView", () => {
         await vi.advanceTimersByTimeAsync(2600);
       });
 
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -993,7 +1021,7 @@ describe("StreamingView", () => {
       await user.click(
         await screen.findByRole("button", { name: "Copy transcript" }),
       );
-      await screen.findByText("Copied!");
+      await screen.findByText("Copied", { selector: ".wp-toast" });
 
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000);
@@ -1005,13 +1033,17 @@ describe("StreamingView", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(2000);
       });
-      expect(screen.getByText("Copied!")).toBeInTheDocument();
+      expect(
+        screen.getByText("Copied", { selector: ".wp-toast" }),
+      ).toBeInTheDocument();
 
       // …and only the restarted timeout (2.5s) rolls it back.
       await act(async () => {
         await vi.advanceTimersByTimeAsync(600);
       });
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -1049,12 +1081,14 @@ describe("StreamingView", () => {
       await user.click(
         await screen.findByRole("button", { name: "Copy transcript" }),
       );
-      await screen.findByText("Copied!");
+      await screen.findByText("Copied", { selector: ".wp-toast" });
 
       await user.click(screen.getByText("Retro"));
       await screen.findByRole("heading", { name: "Retro" });
 
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -1063,7 +1097,9 @@ describe("StreamingView", () => {
       await act(async () => {
         await vi.advanceTimersByTimeAsync(3000);
       });
-      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Copy transcript" }),
       ).toBeInTheDocument();
@@ -1111,7 +1147,9 @@ describe("StreamingView", () => {
       await screen.findByRole("button", { name: "Copy transcript" }),
     );
     // The write is still in flight: no feedback yet.
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
 
     await user.click(screen.getByText("Retro"));
     await screen.findByRole("heading", { name: "Retro" });
@@ -1120,7 +1158,9 @@ describe("StreamingView", () => {
     resolveWrite();
     await act(async () => {});
 
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy transcript" }),
     ).toBeInTheDocument();
@@ -1183,7 +1223,9 @@ describe("StreamingView", () => {
     );
 
     expect(await screen.findByText(/denied/)).toBeInTheDocument();
-    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Copy transcript" }),
     ).toBeInTheDocument();

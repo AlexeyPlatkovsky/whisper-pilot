@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptStreamingPrettify,
   deleteStreamingSession,
@@ -91,6 +91,7 @@ export function StreamingView({
   onOpenSettings: () => void;
 }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
+  const [sessionSearch, setSessionSearch] = useState("");
   const [activeId, setActiveId] = useState<number | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>("Streaming Session");
   const [windows, setWindows] = useState<StreamingWindow[]>([]);
@@ -158,6 +159,13 @@ export function StreamingView({
               ? "prettify-failed"
               : "ready";
   const widget = resolveStreamingWidgetStatus(widgetStatus);
+  const filteredSessions = useMemo(() => {
+    const query = sessionSearch.trim().toLocaleLowerCase();
+    if (query.length < 3) return sessions;
+    return sessions.filter((session) =>
+      session.title.toLocaleLowerCase().includes(query),
+    );
+  }, [sessionSearch, sessions]);
 
   // Recomputed from Date.now() each tick, not incremented, so a throttled
   // setInterval can't drift the displayed value. Shared by On Air, Crafting,
@@ -666,14 +674,18 @@ export function StreamingView({
                 className="wp-search-input"
                 placeholder="Search sessions..."
                 aria-label="Search sessions"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
               />
             </div>
 
             {sessions.length === 0 ? (
               <p className="wp-info-muted">No sessions yet</p>
+            ) : filteredSessions.length === 0 ? (
+              <p className="wp-info-muted">No matches</p>
             ) : (
               <ul className="wp-meeting-list" role="list">
-                {sessions.map((s) => (
+                {filteredSessions.map((s) => (
                   <StreamingSessionRow
                     key={s.id}
                     title={s.title}

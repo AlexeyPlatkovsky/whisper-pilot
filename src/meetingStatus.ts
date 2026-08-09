@@ -3,6 +3,8 @@
 // are front-end-only activity overrides, not stored values — see
 // src-tauri/src/meetings.rs for the persisted status set.
 
+import type { IconName } from "./Icon";
+
 export type MeetingStatusTone =
   | "no-files"
   | "ready"
@@ -23,26 +25,38 @@ export interface MeetingStatusView {
   tone: MeetingStatusTone;
   /** The user-visible label; never the raw store value. */
   label: string;
+  /** The same visual status cue used by Streaming's header widget. */
+  icon: IconName;
 }
 
 // A Map, not an object literal, so a meeting whose status happens to collide
 // with an Object.prototype key ("constructor", "toString") still falls through
 // to the unknown case instead of resolving to a prototype member.
 const PERSISTED = new Map<string, MeetingStatusView>([
-  ["no_files", { tone: "no-files", label: "No files" }],
-  ["ready", { tone: "ready", label: "Ready" }],
-  ["finished", { tone: "finished", label: "Finished" }],
+  ["no_files", { tone: "no-files", label: "No files", icon: "info" }],
+  ["ready", { tone: "ready", label: "Ready", icon: "check" }],
+  ["finished", { tone: "finished", label: "Finished", icon: "check" }],
 ]);
 
 const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
-  ["transcribing", { tone: "transcribing", label: "Transcribing" }],
-  ["diarizing", { tone: "diarizing", label: "Diarizing" }],
-  ["crafting", { tone: "crafting", label: "Crafting notes" }],
-  ["error", { tone: "error", label: "Error" }],
-  ["no-model", { tone: "no-model", label: "No model" }],
+  [
+    "transcribing",
+    { tone: "transcribing", label: "Transcribing", icon: "refresh-cw" },
+  ],
+  ["diarizing", { tone: "diarizing", label: "Diarizing", icon: "refresh-cw" }],
+  [
+    "crafting",
+    { tone: "crafting", label: "Crafting notes", icon: "refresh-cw" },
+  ],
+  ["error", { tone: "error", label: "Error", icon: "alert-circle" }],
+  ["no-model", { tone: "no-model", label: "No model", icon: "alert-circle" }],
 ]);
 
-const UNKNOWN: MeetingStatusView = { tone: "unknown", label: "Unknown" };
+const UNKNOWN: MeetingStatusView = {
+  tone: "unknown",
+  label: "Unknown",
+  icon: "alert-circle",
+};
 
 export function resolveMeetingStatus(
   persisted: string | undefined,

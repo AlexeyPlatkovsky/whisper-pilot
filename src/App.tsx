@@ -41,6 +41,16 @@ import {
   type ExportFileType,
 } from "./export";
 
+const LANGUAGE_LABELS: Record<string, string> = {
+  en: "English",
+  ru: "Russian",
+  tr: "Turkish",
+};
+
+function formatDetectedLanguage(language: string): string {
+  return LANGUAGE_LABELS[language] ?? language;
+}
+
 // A running transcription is tracked by meeting id (`transcribingId`), not by
 // this union, so that it survives the user switching to another meeting and
 // back. This union only carries what the workspace itself is showing.
@@ -99,9 +109,17 @@ export function App() {
   const [meetingSummaries, setMeetingSummaries] = useState<MeetingSummary[]>(
     [],
   );
+  const [meetingSearch, setMeetingSearch] = useState("");
   const [activeMeeting, setActiveMeeting] = useState<PersistedMeeting | null>(
     null,
   );
+  const filteredMeetingSummaries = useMemo(() => {
+    const query = meetingSearch.trim().toLocaleLowerCase();
+    if (query.length < 3) return meetingSummaries;
+    return meetingSummaries.filter((meeting) =>
+      meeting.title.toLocaleLowerCase().includes(query),
+    );
+  }, [meetingSearch, meetingSummaries]);
   const [renameTarget, setRenameTarget] = useState<Pick<
     PersistedMeeting,
     "id" | "title"
@@ -167,21 +185,6 @@ export function App() {
   useEffect(() => {
     transcribingIdRef.current = transcribingId;
   }, [transcribingId]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    onTranscriptionPhase((event) => {
-      if (event.id === transcribingIdRef.current) {
-        setTranscribingPhase(event.phase);
-        // Diarization has no percent-complete figure; drop the bar rather
-        // than leave it frozen at wherever transcription left off.
-        setTranscribingProgress(null);
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => unlisten?.();
-  }, []);
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -276,6 +279,42 @@ export function App() {
         : [toSummary(meeting), ...previous],
     );
   }, []);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onTranscriptionPhase((event) => {
+      if (event.id !== transcribingIdRef.current) return;
+
+      setTranscribingPhase(event.phase);
+      // Diarization has no percent-complete figure; drop the bar rather
+      // than leave it frozen at wherever transcription left off.
+      setTranscribingProgress(null);
+
+      // Transcription persists its segments before diarization begins. Reload
+      // the meeting so the user can read that completed work immediately.
+      if (
+        event.phase === "diarizing" &&
+        activeMeetingIdRef.current === event.id
+      ) {
+        void Promise.resolve()
+          .then(() => openMeeting(event.id))
+          .then((meeting) => {
+            if (!meeting) return;
+            if (activeMeetingIdRef.current !== meeting.id) return;
+            setActiveMeeting(meeting);
+            setFileName(meeting.source_name ?? null);
+            setSegments(meeting.segments);
+            setSpeakerLabels({});
+            setNotes(meeting.notes ?? null);
+            upsertSummary(meeting);
+          })
+          .catch(() => {});
+      }
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => unlisten?.();
+  }, [upsertSummary]);
 
   useEffect(() => {
     let cancelled = false;
@@ -744,15 +783,11 @@ export function App() {
           <div className="wp-status" role="status">
             {headerStatus && (
               <>
-                {(activeIsTranscribing ||
-                  activeIsGeneratingNotes ||
-                  activeIsDiarizing) && (
-                  <Icon
-                    name="refresh-cw"
-                    size={14}
-                    className={`wp-spin wp-tone--${headerStatus.tone}`}
-                  />
-                )}
+                <Icon
+                  name={headerStatus.icon}
+                  size={14}
+                  className={`${activeIsTranscribing || activeIsGeneratingNotes || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone}`}
+                />
                 <span
                   className={`wp-status-label wp-tone--${headerStatus.tone}`}
                 >
@@ -915,10 +950,12 @@ export function App() {
           )}
         </div>
         <div className="wp-info-right">
-          <span className="wp-info-meta">
-            <Icon name="globe" size={14} />
-            Russian
-          </span>
+          {activeMeeting?.status === "finished" && (
+            <span className="wp-info-meta">
+              <Icon name="globe" size={14} />
+              {formatDetectedLanguage(activeMeeting.language)}
+            </span>
+          )}
           <span className="wp-info-meta">{durationLabel}</span>
         </div>
       </div>
@@ -939,19 +976,23 @@ export function App() {
                 className="wp-search-input"
                 placeholder="Search meetings..."
                 aria-label="Search meetings"
+                value={meetingSearch}
+                onChange={(event) => setMeetingSearch(event.target.value)}
               />
             </div>
             {/* The empty-state copy stays outside the list: a list may only
                 own list items. */}
             {meetingSummaries.length === 0 ? (
               <p className="wp-info-muted">No meetings yet</p>
+            ) : filteredMeetingSummaries.length === 0 ? (
+              <p className="wp-info-muted">No matches</p>
             ) : (
               // WebKit drops the implicit list role from a <ul> styled
               // `list-style: none`, and from flex list items — and WKWebView is
               // this app's only runtime. These roles restore the native
               // semantics rather than override them.
               <ul className="wp-meeting-list" role="list">
-                {meetingSummaries.map((meeting) => (
+                {filteredMeetingSummaries.map((meeting) => (
                   <MeetingRow
                     key={meeting.id}
                     title={meeting.title}
@@ -1023,7 +1064,7 @@ export function App() {
                 </div>
               )}
 
-              {activeIsTranscribing && (
+              {activeIsTranscribing && !hasTranscript && (
                 <div className="wp-empty">
                   <p>
                     {transcribingPhase === "diarizing"
