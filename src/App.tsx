@@ -31,6 +31,7 @@ import { t } from "./i18n";
 import { formatClock } from "./format";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
+import { CopyButton } from "./CopyButton";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
 import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
@@ -111,7 +112,6 @@ export function App() {
   const [diarizationWarning, setDiarizationWarning] = useState<string | null>(
     null,
   );
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const [exportFileType, setExportFileType] =
     useState<ExportFileType>("plain_text");
   // The meeting currently being transcribed, or null. Kept outside `status`
@@ -265,7 +265,6 @@ export function App() {
     setSpeakerLabels({});
     setStatus({ kind: "idle" });
     setNotes(meeting.notes ?? null);
-    setCopyStatus("idle");
   }, []);
 
   const upsertSummary = useCallback((meeting: PersistedMeeting) => {
@@ -568,15 +567,6 @@ export function App() {
     );
   }
 
-  async function handleCopy() {
-    try {
-      await navigator.clipboard.writeText(exportText);
-      setCopyStatus("copied");
-    } catch (e) {
-      setStatus({ kind: "error", message: String(e) });
-    }
-  }
-
   // `busy` is global because only one transcription may run at a time: it
   // gates starting another run, anywhere, and — conservatively — creating a
   // meeting, which would move the workspace mid-run. It does NOT gate
@@ -838,10 +828,10 @@ export function App() {
               }
             />
             <span className="wp-sep" />
-            <ActionIcon
-              icon="copy"
-              label={copyStatus === "copied" ? "Copied" : "Copy transcript"}
-              onClick={() => void handleCopy()}
+            <CopyButton
+              text={exportText}
+              resetKey={activeMeeting?.id ?? null}
+              onError={(message) => setStatus({ kind: "error", message })}
               disabled={activeIsTranscribing || !hasTranscript}
             />
             <span className="wp-sep" />

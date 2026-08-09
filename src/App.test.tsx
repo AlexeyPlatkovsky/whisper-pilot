@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
@@ -677,6 +677,223 @@ describe("App — persisted meeting workspace", () => {
     expect(screen.queryByText("Product Standup")).not.toBeInTheDocument();
     // A non-empty library must not seed an extra meeting.
     expect(ipc.createMeeting).not.toHaveBeenCalled();
+  });
+
+  // state-transition: idle → copied → idle (timeout rollback).
+  it("shows a 'Copied!' toast and a checked button after copying, then rolls back", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      // Installed after userEvent.setup, which swaps navigator.clipboard for
+      // its own stub — defining ours last is what the component actually calls.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      render(<App />);
+      await screen.findByDisplayValue("Saved transcript");
+
+      await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+
+      const toast = await screen.findByText("Copied!");
+      expect(toast).toHaveAttribute("role", "status");
+      expect(
+        screen.getByRole("button", { name: "Copied" }),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copied --switch meeting--> idle (pending feedback cleared).
+  it("clears a pending Copied feedback when another meeting is opened", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const OLDER_MEETING = {
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+      duration_ms: 500,
+      language: "ru",
+      status: "finished",
+      segments: [{ start_ms: 0, end_ms: 500, text: "Older transcript" }],
+      source_missing: false,
+    };
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+      {
+        id: OLDER_MEETING.id,
+        title: OLDER_MEETING.title,
+        created_at_ms: OLDER_MEETING.created_at_ms,
+        status: OLDER_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === OLDER_MEETING.id ? OLDER_MEETING : NEWEST_MEETING,
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      // Installed after userEvent.setup, which swaps navigator.clipboard for
+      // its own stub — defining ours last is what the component actually calls.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      render(<App />);
+      await screen.findByDisplayValue("Saved transcript");
+
+      await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+      await screen.findByText("Copied!");
+
+      await user.click(
+        screen.getByRole("button", { name: "Open Older meeting" }),
+      );
+      await screen.findByDisplayValue("Older transcript");
+
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+
+      // The cancelled timer must not resurrect the feedback on the new meeting.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copying (in-flight write) --switch meeting--> the late
+  // resolution must not enter the copied state on the new meeting.
+  it("does not paint Copied feedback onto a meeting opened while the clipboard write is in flight", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const OLDER_MEETING = {
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+      duration_ms: 500,
+      language: "ru",
+      status: "finished",
+      segments: [{ start_ms: 0, end_ms: 500, text: "Older transcript" }],
+      source_missing: false,
+    };
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+      {
+        id: OLDER_MEETING.id,
+        title: OLDER_MEETING.title,
+        created_at_ms: OLDER_MEETING.created_at_ms,
+        status: OLDER_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === OLDER_MEETING.id ? OLDER_MEETING : NEWEST_MEETING,
+    );
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    let resolveWrite: () => void = () => {};
+    const writeText = vi.fn().mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
+
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+    // The write is still in flight: no feedback yet.
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+
+    await user.click(
+      screen.getByRole("button", { name: "Open Older meeting" }),
+    );
+    await screen.findByDisplayValue("Older transcript");
+
+    // The write for the previous meeting resolves only now.
+    resolveWrite();
+    await act(async () => {});
+
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
+  });
+
+  it("a failed clipboard write surfaces an error and shows no Copied feedback", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    const writeText = vi.fn().mockRejectedValue("denied");
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
+
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+
+    const status = await screen.findByRole("status");
+    await waitFor(() => expect(status).toHaveTextContent("Error"));
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
   });
 
   it("seeds a single New Meeting when the library is empty, without fake sample rows", async () => {

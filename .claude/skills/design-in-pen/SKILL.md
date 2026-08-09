@@ -1,6 +1,6 @@
 ---
 name: design-in-pen
-description: Create or iterate on a UI design mockup in WhisperPilot's Pencil design file (pencil/*.pen) via the pencil CLI, before or during discussion — never by editing the .pen JSON directly.
+description: Create or iterate on a UI design mockup in WhisperPilot's Pencil design file (pencil/*.pen) via the pencil MCP (primary) or the pen CLI (fallback), before or during discussion — never by editing the .pen JSON directly.
 ---
 
 # Skill: design-in-pen
@@ -24,35 +24,45 @@ Do not use:
 - for any `.pen` file mutation, however small. There is no trivial-edit
   exception (see §Hard Rule below).
 
-## Hard Rule: CLI-Only Mutation, No Exceptions
+## Hard Rule: Tool-Mediated Mutation Only, No Exceptions
 
-Every mutation to a `pencil/*.pen` file goes through the `pencil` CLI. Never
-use `Edit` or `Write` on the raw JSON, for any reason, including a one-word
-rename.
+Every mutation to a `pencil/*.pen` file goes through the pencil MCP — or, in
+a host where the MCP is not available, the `pen` CLI. Never use `Edit` or
+`Write` on the raw JSON, for any reason, including a one-word rename.
 
 This is not a style preference. In this project's own history, a raw
 `Edit`-tool JSON change to `pencil/main_view.pen` was silently reverted —
 something else (the Pencil app and/or its cloud sync) held the file and
-overwrote the direct edit the moment it next saved. The `pencil` CLI is the
-only mutation path that is actually durable, because it is the path the
-owning app/sync expects. A "trivial" raw edit does not avoid this failure
-mode; it is exactly what caused it.
+overwrote the direct edit the moment it next saved. Mutating through the MCP
+or the CLI is durable because those are paths the owning app/sync expects. A
+"trivial" raw edit does not avoid this failure mode; it is exactly what
+caused it.
 
 Reading a `.pen` file with `Read` (to understand its current structure before
-writing a prompt, or to extract facts for `sync-pen-code`) is fine — only
+composing a brief, or to extract facts for `sync-pen-code`) is fine — only
 mutation is restricted.
 
 ## Required Environment
 
-- The `pencil` CLI (`pencil --help` to confirm it's on `PATH`).
-- An authenticated session: run `pencil status`. If not authenticated, stop
-  and tell the user to run `pencil login` themselves (interactive
-  email/password or OTP — this cannot be automated), then retry.
+- **Primary — pencil MCP.** The `mcp__pencil__*` tools are available in the
+  host. Before the first mutation, call `get_app_state` with
+  `include_canvas_design` and `include_schema` to load the canvas-editor
+  instructions and the `.pen` schema, and `get_guidelines` for any
+  task-specific guide the mutation needs.
+- **Fallback — `pen` CLI.** When the MCP is not available in the host, or its
+  environment-level calls fail before any mutation lands (e.g. the Pencil app
+  session is unreachable): the `pen` CLI (`pen --help` to confirm it's on
+  `PATH`) and an authenticated session (`pen status`). If not authenticated,
+  stop and tell the user to run `pen login` themselves (interactive
+  email/password or OTP — this cannot be automated), then retry. If neither
+  the MCP nor an authenticated `pen` CLI is available, stop with `Status:
+  blocked` naming the missing tool path — never fall back to raw file
+  mutation.
 - Confirm no other process is expected to hold the target file open for
-  editing at the same time (ask the user if unsure) — the CLI mutation can
-  still lose a race against a live Pencil app/cloud session the same way a
-  raw edit can; this doesn't remove that risk, it only makes the mutation
-  itself durable once it lands.
+  editing at the same time (ask the user if unsure). The MCP's own Pencil app
+  session is the expected holder of the file; the concern is a second
+  interactive editing session racing the mutation — a mutation can still lose
+  that race the same way a raw edit can.
 
 ## Procedure
 
@@ -61,28 +71,39 @@ mutation is restricted.
    understand the frames/components already present and their IDs — reuse
    existing reusable components (`"reusable": true` frames) rather than
    duplicating structure, matching this file's existing conventions.
-2. **Compose the prompt.** Write the `--prompt` text as a concrete brief: what
+2. **Compose the brief.** Write the design intent as a concrete brief: what
    frame(s)/component(s) to add or change, and the specific visual facts
    (labels, icons, positions, states) — precise enough that a reviewer with no
-   other context could check the result against it. Echo the prompt back to
-   the user before running, since it is the actual instruction to the
-   AI agent that will edit the file.
-3. **Mutate and render in one call.**
-   ```
-   pencil --in <file> --out <file> --prompt "<prompt>" --agent claude \
-     --export <preview.png> --export-type png
-   ```
-   Use the same path for `--in`/`--out` for an in-place edit; use a different
-   `--out` only when the user explicitly wants a new file rather than an
-   update. Set `--repo` to the project root if the CLI needs it to resolve
-   `--in`/`--out`.
+   other context could check the result against it. Echo the brief back to
+   the user before mutating, since it is the instruction the mutation will be
+   checked against.
+3. **Mutate and render.**
+   - **Primary (MCP):** apply the brief with `mcp__pencil__execute` snippets
+     against the file (pass its path as `filePath`). Prefer several small,
+     verifiable snippets over one large one. When a snippet fails, retry it
+     with the `edits`/`editId` patch mechanism instead of resending it
+     unchanged. Render the affected frame with `get_screenshot` for your own
+     read of the result, and produce the reviewer's PNG with `export_nodes`
+     (the affected frame's node ID, PNG format) into a scratch directory
+     outside the working tree (e.g. an OS temp directory), so the export
+     never dirties the repository.
+   - **Fallback (CLI):** mutate and render in one call:
+     ```
+     pen --in <file> --out <file> --prompt "<brief>" --agent claude \
+       --export <preview.png> --export-type png
+     ```
+     Use the same path for `--in`/`--out` for an in-place edit; use a
+     different `--out` only when the user explicitly wants a new file rather
+     than an update. Set `--repo` to the project root if the CLI needs it to
+     resolve `--in`/`--out`.
 4. **Verify before reporting success.**
    Agent: `.claude/agents/pencil-vision-reviewer.md`
-   Required input: the produced `export_path`, `comparison_mode:
-   design-intent`, `design_intent` set to the exact prompt from step 2, and
-   `caller: design-in-pen`.
+   Required input: the produced `export_path` (the `export_nodes` PNG, or the
+   CLI `--export` PNG in fallback mode), `comparison_mode: design-intent`,
+   `design_intent` set to the exact brief from step 2, and `caller:
+   design-in-pen`.
    Required output: `Agent: pencil-vision-reviewer - output below`.
-5. **On `Deviations found`**, either refine the prompt and repeat from step 3
+5. **On `Deviations found`**, either refine the brief and repeat from step 3
    (increment an attempt counter, maximum 3), or — if the deviation reveals
    the request itself was ambiguous — stop and ask the user, rather than
    guessing at a fix. After 3 attempts without a `Match`, stop and report to
@@ -91,7 +112,7 @@ mutation is restricted.
 6. **Sanity-check structure.** After a `Match` verdict, confirm the file is
    still valid JSON with unique element IDs (a quick `python3 -c "import
    json; json.load(open(f))"` and an ID-uniqueness pass is sufficient) — this
-   catches a CLI/agent malformation that a visual export might not surface
+   catches a mutation malformation that a visual export might not surface
    (e.g., an off-canvas duplicate).
 
 ## Governance
@@ -107,8 +128,9 @@ unapproved sketch at once):
    authoritative fact — true for a new or still-iterating sketch; false for
    content `.claude/skills/documentation-maintenance/SKILL.md` already treats
    as mirroring shipped UI.
-2. The mutation is cheaply reversible via another `pencil` CLI call — true
-   for every run of this skill.
+2. The mutation is cheaply reversible via another run of the same tool that
+   produced it (an `execute` snippet, or a `pen` CLI call in fallback mode) —
+   true for every run of this skill.
 3. Nothing yet consumes the touched frame(s)' current state — true until a
    design is approved and handed to `.claude/skills/sync-pen-code/SKILL.md`
    (`pen-to-code`) or `.claude/pipelines/implement-feature.md`.
@@ -128,7 +150,7 @@ complexity, treat as non-trivial").
 
 While all three criteria are confirmed to hold, a `design-in-pen` run is
 **trivial**: no TaskPilot item is required, and this skill's own Output
-Contract (Prompt used, CLI invocation, Export, Vision review, Structural
+Contract (Brief used, Mutation record, Export, Vision review, Structural
 check) is the run's visible record — classification and `task-routing` still
 apply as the gate that established this exception applies, but no further
 gate ceremony is needed beyond running this skill's own procedure.
@@ -156,8 +178,10 @@ Begin with:
 starts at `1` and increments on a refined re-run.
 
 Then emit:
-- **Prompt used** — the exact text sent to `pencil --prompt`.
-- **CLI invocation** — the exact command run.
+- **Brief used** — the exact design brief applied in step 3 (in CLI fallback
+  mode, the exact text sent to `pen --prompt`).
+- **Mutation record** — the `execute` snippets applied (or a faithful summary
+  of them), or the exact CLI command run in fallback mode.
 - **Export** — the produced PNG path.
 - **Vision review** — the `pencil-vision-reviewer` verdict and a link/summary
   of its output.
@@ -166,5 +190,6 @@ Then emit:
 - **Next step** — `ready for discussion`, `ready to hand to sync-pen-code
   (pen-to-code) once approved`, or the specific blocker.
 
-`blocked` requires the exact missing input, failed auth, or unresolved
+`blocked` requires the exact missing input, failed auth, an unavailable
+mutation tool (neither MCP nor authenticated `pen` CLI), or unresolved
 deviation, and does not claim a mutation succeeded.

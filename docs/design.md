@@ -78,7 +78,8 @@ controls (close / minimize / zoom):
 Row 2 — the active meeting's header:
 
 - **Meeting label** with three action buttons: **edit** (opens the rename
-  modal), **copy** (copies the full transcript to the clipboard), **delete**
+  modal), **copy** (copies the full transcript to the clipboard and confirms
+  with a brief checked button state and "Copied!" toast), **delete**
   (with confirmation — same as the list action).
 - **Model switcher** — dropdown of available Whisper models; default **large**.
   If **no model is available**, the switcher shows nothing and the status bar

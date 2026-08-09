@@ -626,8 +626,8 @@ itself is format-agnostic; it just writes whatever string it is given.
 **Meeting export** (`src/export.ts`, WP-15/WP-24): a persisted
 `export_file_type` setting (`"plain_text"` | `"markdown"`, Settings → Export)
 selects the rendering. `renderForExport` is the one function both **Save**
-(`handleSave`) and the header **copy** action (`handleCopy`,
-`navigator.clipboard.writeText`) call, so file export and clipboard copy can
+(`handleSave`) and the header **copy** action (`CopyButton`,
+`src/CopyButton.tsx`) call, so file export and clipboard copy can
 never render differently. Plain text (`renderPlainText`) is unchanged from
 before this setting existed — transcript only, `"Label: text"` per line, no
 notes. Markdown (`renderMarkdown`) adds a `# Transcript` heading, bold speaker
@@ -638,9 +638,13 @@ field.
 Streaming's export/copy (WP-74, `StreamingView.tsx`) is a separate,
 older implementation following the same real pattern — render client-side,
 reuse `save_text_dialog` — but does not share `export.ts`'s rendering or its
-file-type setting: **Copy** calls `navigator.clipboard.writeText` directly (no
-Tauri clipboard plugin was added — the web API works in the WKWebView and
-avoids a new plugin/capability-permission surface for a one-line need);
+file-type setting. Both screens' **Copy** buttons share `CopyButton`
+(`src/CopyButton.tsx`), which calls `navigator.clipboard.writeText` directly
+(no Tauri clipboard plugin was added — the web API works in the WKWebView and
+avoids a new plugin/capability-permission surface for a one-line need) and
+confirms a successful write with a transient checked button state plus a
+bottom-center "Copied!" toast that rolls back automatically after ~2.5
+seconds;
 **Export** always renders a minimal Markdown document (`# title` - the plain
 transcript) through `save_text_dialog`. Both reuse `windowText`'s
 `[unavailable]` marker for a fail-open window, so exported output matches

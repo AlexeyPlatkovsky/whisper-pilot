@@ -784,6 +784,25 @@ body {
   background: color-mix(in srgb, var(--error) 10%, transparent);
 }
 
+/* Transient copy confirmation (CopyButton): an inverted pill floating
+   bottom-center above the workspace, below modals (z-index 100) and the
+   settings overlay (50) so an open dialog is never covered. Rendered for a
+   few seconds only, so it needs no dismiss control. */
+.wp-toast {
+  position: fixed;
+  left: 50%;
+  bottom: var(--wp-space-xl);
+  transform: translateX(-50%);
+  z-index: 40;
+  padding: var(--wp-space-xs) var(--wp-space-md);
+  border-radius: var(--wp-radius-sm);
+  background: var(--text);
+  color: var(--panel);
+  font-size: var(--wp-font-size-body);
+  box-shadow: 0 2px 8px color-mix(in srgb, var(--text) 30%, transparent);
+  pointer-events: none;
+}
+
 .wp-empty {
   flex: 1;
   display: flex;

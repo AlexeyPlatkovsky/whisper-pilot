@@ -20,6 +20,7 @@ import {
 } from "./ipc";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
+import { CopyButton } from "./CopyButton";
 import { ModeToggle } from "./ModeToggle";
 import { formatElapsedClock } from "./format";
 import { computeWordDiff } from "./diff";
@@ -101,7 +102,6 @@ export function StreamingView({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [craftingId, setCraftingId] = useState<number | null>(null);
@@ -242,7 +242,6 @@ export function StreamingView({
         setActiveTitle(summary.title);
         if (resumeId === null) setWindows([]);
         setSources(null);
-        setCopyStatus("idle");
         setNotes(null);
         setCraftFailed(false);
         setPrettifiedText(null);
@@ -296,7 +295,6 @@ export function StreamingView({
       setWindows(session.windows);
       setIsRunning(false);
       setSources(null);
-      setCopyStatus("idle");
       setNotes(session.notes ?? null);
       setCraftFailed(false);
       setPrettifiedText(session.prettified_text ?? null);
@@ -374,16 +372,6 @@ export function StreamingView({
   // Once accepted, the cleaned text is what gets copied/exported — that's
   // the point of prettifying.
   const exportText = prettifiedText ?? plainTranscript(windows);
-
-  const handleCopy = useCallback(async () => {
-    setError(null);
-    try {
-      await navigator.clipboard.writeText(exportText);
-      setCopyStatus("copied");
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [exportText]);
 
   const handleExport = useCallback(async () => {
     setError(null);
@@ -619,10 +607,11 @@ export function StreamingView({
               disabled={canPrettify}
             />
             <span className="wp-sep" />
-            <ActionIcon
-              icon="copy"
-              label={copyStatus === "copied" ? "Copied" : "Copy transcript"}
-              onClick={() => void handleCopy()}
+            <CopyButton
+              text={exportText}
+              resetKey={activeId}
+              onError={setError}
+              onCopied={() => setError(null)}
               disabled={!hasText}
             />
             <span className="wp-sep" />

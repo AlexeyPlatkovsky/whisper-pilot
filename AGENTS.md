@@ -217,7 +217,7 @@ each entry's own file is its sole behavioral authority.
 |---|---|
 | `code-reviewer` | A completed, validated implementation diff needs review before closure |
 | `instruction-evaluator` | A changed AI-governance instruction artifact needs isolated review |
-| `pencil-vision-reviewer` | A `pencil` CLI mutation needs its rendered result checked against design intent or a counterpart image |
+| `pencil-vision-reviewer` | A `pencil/*.pen` mutation (via the pencil MCP or the `pen` CLI) needs its rendered result checked against design intent or a counterpart image |
 | `scope-verifier` | A draft requirements specification needs a structural completeness check |
 | `sdd-gap-analyzer` | SDD adoption or expansion needs a docs-versus-code gap inventory |
 | `sdd-spec-reviewer` | An SDD docs tree needs a completeness and traceability review |

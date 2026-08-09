@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
@@ -932,6 +932,200 @@ describe("StreamingView", () => {
     expect(writeTextMock).toHaveBeenCalledWith("hello [unavailable]");
   });
 
+  // state-transition: idle → copied → idle (timeout rollback).
+  it("shows a 'Copied!' toast and a checked button after a successful copy, then rolls back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+
+      const toast = await screen.findByText("Copied!");
+      expect(toast).toHaveAttribute("role", "status");
+      expect(
+        screen.getByRole("button", { name: "Copied" }),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copied --re-click--> copied (the timeout restarts).
+  it("restarts the feedback timeout when Copy is clicked again before the rollback", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      // Installed after userEvent.setup, which swaps navigator.clipboard for
+      // its own stub — defining ours last is what the component actually calls.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+      await screen.findByText("Copied!");
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await user.click(screen.getByRole("button", { name: "Copied" }));
+      expect(writeText).toHaveBeenCalledTimes(2);
+
+      // 2s after the second click the feedback must still be visible…
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(screen.getByText("Copied!")).toBeInTheDocument();
+
+      // …and only the restarted timeout (2.5s) rolls it back.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600);
+      });
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copied --switch session--> idle (pending feedback cleared).
+  it("clears a pending Copied feedback when another session is opened", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      const SESSION_B: StreamingSessionSummary = {
+        id: 2,
+        title: "Retro",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "stopped",
+      };
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+        SESSION_A,
+        SESSION_B,
+      ]);
+      vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+        id === SESSION_B.id
+          ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
+          : openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+      await screen.findByText("Copied!");
+
+      await user.click(screen.getByText("Retro"));
+      await screen.findByRole("heading", { name: "Retro" });
+
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+
+      // The cancelled timer must not resurrect the feedback on the new session.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copying (in-flight write) --switch session--> the late
+  // resolution must not enter the copied state on the new session.
+  it("does not paint Copied feedback onto a session opened while the clipboard write is in flight", async () => {
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    let resolveWrite: () => void = () => {};
+    const writeText = vi.fn().mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const SESSION_B: StreamingSessionSummary = {
+      id: 2,
+      title: "Retro",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "stopped",
+    };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      SESSION_B,
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      id === SESSION_B.id
+        ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
+        : openedSession({ windows: ONE_WINDOW }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy transcript" }),
+    );
+    // The write is still in flight: no feedback yet.
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Retro"));
+    await screen.findByRole("heading", { name: "Retro" });
+
+    // The write for the previous session resolves only now.
+    resolveWrite();
+    await act(async () => {});
+
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
+  });
+
   it("Export saves a Markdown-formatted file named after the session title", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
@@ -989,6 +1183,10 @@ describe("StreamingView", () => {
     );
 
     expect(await screen.findByText(/denied/)).toBeInTheDocument();
+    expect(screen.queryByText("Copied!")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
   });
 
   it("a failed export surfaces the error", async () => {

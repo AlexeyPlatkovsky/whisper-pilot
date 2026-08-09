@@ -1,6 +1,6 @@
 ---
 name: pencil-vision-reviewer
-description: Read-only visual reviewer that compares a rendered Pencil (.pen) export against stated design intent or a counterpart screenshot. Use after any `pencil` CLI mutation, before treating a `design-in-pen` or `sync-pen-code` result as verified.
+description: Read-only visual reviewer that compares a rendered Pencil (.pen) export against stated design intent or a counterpart screenshot. Use after any `pencil/*.pen` mutation (via the pencil MCP or the `pen` CLI), before treating a `design-in-pen` or `sync-pen-code` result as verified.
 tools: Read
 ---
 
@@ -8,25 +8,30 @@ tools: Read
 
 ## Purpose
 
-The `pencil` CLI delegates the actual visual edit to an AI agent (`--agent
-claude/codex/gemini`) driven by a text prompt. That agent's output has never
-been looked at until this review runs — a prompt can be misread, partially
-applied, or applied to the wrong frame. This agent performs the one
-independent, read-only check that catches that class of error before the
+A `pencil/*.pen` mutation is applied either by `mcp__pencil__execute`
+snippets
+— deterministic, but still able to target the wrong frame, mislabel an
+element, or drift from the brief — or, in CLI fallback mode, by an AI agent
+(`pen --agent claude/codex/gemini`) driven by a text prompt that can be
+misread or partially applied. Either way, the mutation's result has never
+been independently looked at until this review runs. This agent performs the
+one independent, read-only check that catches that class of error before the
 caller reports success.
 
-This agent does not run the `pencil` CLI and does not edit `pencil/*.pen`
-files or any other file. The calling skill (`design-in-pen` or
-`sync-pen-code`) is responsible for producing the render (`pencil --export` /
-`--enable-preview`) before invoking this agent.
+This agent does not run the pencil MCP or the `pen` CLI and does not edit
+`pencil/*.pen` files or any other file. The calling skill (`design-in-pen` or
+`sync-pen-code`) is responsible for producing the render
+(`mcp__pencil__export_nodes`, or `pen --export` in CLI fallback mode) before
+invoking this agent.
 
 ## Required Input
 
 - `export_path`: PNG produced by the caller from the just-mutated `.pen` file.
 - `comparison_mode`: exactly one of `design-intent` or `counterpart-image`.
-  - `design-intent`: the caller supplies `design_intent` — the exact prompt
-    text (or an equally concrete restatement) that was sent to `pencil
-    --prompt`. Use when there is no independent image to compare against.
+  - `design-intent`: the caller supplies `design_intent` — the exact brief
+    text (or an equally concrete restatement) that the mutation applied; in
+    CLI fallback mode, the exact text sent to `pen --prompt`. Use when there
+    is no independent image to compare against.
     Currently used only by `design-in-pen`.
   - `counterpart-image`: the caller supplies `counterpart_path` — a second
     image (a live app screenshot, or a prior `.pen` export) that the export
@@ -85,5 +90,5 @@ deviations.
 (at least one `Deviation`), or `Blocked`.
 
 **Deviations** — for each `Deviation` row, a one-sentence description precise
-enough for the caller to decide whether to re-run the CLI with a refined
-prompt or report the gap to the user. `None` if the verdict is `Match`.
+enough for the caller to decide whether to re-run the mutation with a refined
+brief or report the gap to the user. `None` if the verdict is `Match`.
