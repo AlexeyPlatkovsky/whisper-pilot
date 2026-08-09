@@ -114,22 +114,9 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
         .expect("\"transcription\" is a static CATALOG entry with at least one asset")
 }
 
-/// Transcribe an entire file of 16 kHz mono samples into timestamped segments,
-/// letting whisper detect the language.
-///
-/// Creates a fresh [`WhisperState`] for this run — the right granularity for
-/// Meeting's one-shot whole-file decode. Streaming instead reuses one state
-/// per session through [`transcribe_with_state`] (WP-82): each state owns a
-/// full GPU backend plus its compute buffers, so one state per window would
-/// be one backend init/free cycle per window.
-///
-/// `cancel` is polled by whisper's abort callback during decode (WP-19): once
-/// set, whisper stops and this returns [`AppError::Cancelled`] instead of a
-/// (partial) transcript, so a stopped run never produces a document.
-///
-/// `on_progress` (WP-58) is called with whisper's own 0-100 percent-complete
-/// figure as decoding proceeds, on whichever thread runs this function (never
-/// concurrently with itself, since whisper drives it synchronously).
+/// Transcribe 16 kHz mono samples into timestamped, auto-detected segments.
+/// A fresh state suits one-shot Meeting decode; Streaming reuses its state.
+/// Cancellation returns [`AppError::Cancelled`] rather than a partial result.
 pub fn transcribe(
     ctx: &WhisperContext,
     samples: &[f32],

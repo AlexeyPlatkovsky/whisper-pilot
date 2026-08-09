@@ -1,14 +1,5 @@
-//! Streaming decode/session pipeline: rolling-window Whisper decode over the
-//! continuous sample stream `streaming_audio.rs` produces. One streaming
-//! session decodes every window through a single `WhisperState`
-//! ([`WhisperSessionDecoder`], WP-82): each state owns a full GPU backend
-//! plus its KV/compute buffers, so one state is created per session, not per
-//! window. Wired to Tauri IPC via `start_streaming_session`/
-//! `stop_streaming_session` in `lib.rs` (WP-73). See docs/architecture.md's
-//! Streaming Decode/Session Pipeline section for the windowing trade-off,
-//! fail-open behavior, `WhisperUsageGuard` mutual exclusion with Meeting
-//! transcription, and the still-open real-hardware latency measurement this
-//! module leaves for WP-71's feasibility spike.
+//! Rolling-window Streaming decode. See `docs/architecture.md`'s Streaming
+//! Decode/Session Pipeline section for lifecycle and trade-off details.
 
 use crate::audio::SAMPLE_RATE;
 use crate::error::AppError;
@@ -180,20 +171,9 @@ fn window_start_ms(window_index: u64) -> u64 {
     window_index * (WINDOW_SECONDS * 1000.0) as u64
 }
 
-/// Runs the rolling-window decode loop until `samples_rx` disconnects or a
-/// result fails to send. Blocking — call from `tokio::task::spawn_blocking`.
-/// The caller must hold the streaming claim on `whisper_busy`
-/// (`try_claim_streaming`) for the loop's whole duration. `make_decoder`
-/// runs exactly once, here on the decode thread, before the first window:
-/// the session's [`SessionDecoder`] (one `WhisperState` in production,
-/// WP-82) is created up front and reused for every window. If creation
-/// fails, the error is fail-open-forwarded to every window's
-/// [`WindowResult`] — the loop keeps draining samples until capture stops,
-/// exactly as per-window decode failures behave. `starting_window_index`
-/// offsets window numbering for a resumed session (see
-/// `streaming::resume_streaming_session` and docs/architecture.md's
-/// Streaming Runtime & UI section) so a paused interval doesn't appear as a
-/// gap in the timeline.
+/// Blocking decode loop; call from `spawn_blocking` while holding the Streaming
+/// claim. Its decoder is created once and creation failure fails open per window.
+/// `starting_window_index` preserves timeline continuity after a resume.
 pub fn run_windowed_decode<D, F>(
     make_decoder: F,
     samples_rx: Receiver<Vec<f32>>,
