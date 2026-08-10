@@ -262,6 +262,53 @@ describe("App — meeting status consistency", () => {
     );
   });
 
+  it("shows the diarizing status and spinner in the row for a standalone run", async () => {
+    const diarizableMeeting: Meeting = { ...ACTIVE_FINISHED };
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_DOWNLOADED,
+      {
+        id: "diarization-campplus",
+        task: "diarization",
+        label: "CAM++",
+        downloaded: true,
+        size_bytes: 1,
+        recommended: false,
+      },
+    ]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "campplus",
+      export_file_type: "plain_text",
+    });
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: diarizableMeeting.id,
+        title: diarizableMeeting.title,
+        created_at_ms: diarizableMeeting.created_at_ms,
+        duration_ms: diarizableMeeting.duration_ms,
+        status: diarizableMeeting.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(diarizableMeeting);
+    vi.mocked(ipc.diarizeMeeting).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByDisplayValue("Hello");
+    const diarize = screen.getByRole("button", { name: "Diarize speakers" });
+    await waitFor(() => expect(diarize).not.toBeDisabled());
+    await user.click(diarize);
+
+    const active = row(diarizableMeeting.title);
+    expect(
+      await within(active).findByRole("img", { name: "Diarizing" }),
+    ).toBeInTheDocument();
+    expect(dot(diarizableMeeting.title)).toHaveClass("wp-tone--diarizing");
+    expect(dot(diarizableMeeting.title)).toHaveAttribute("title", "Diarizing");
+    expect(active.querySelector(".wp-meeting-busy .wp-spin")).not.toBeNull();
+  });
+
   it("[state-transition] keeps the transcribing status after switching away and back", async () => {
     arrangeLibrary();
     const finish = deferTranscription();

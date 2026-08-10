@@ -84,6 +84,24 @@ An operating mode that biases toward action (for example, Auto Mode) changes
 only whether to ask optional clarifying questions; when bias-to-action and a
 stop gate conflict, the stop gate wins.
 
+### Explicit No-TaskPilot Override
+
+When the user explicitly prohibits TaskPilot items or tickets — for example,
+"no TaskPilot items" or "do not create a ticket" — that direction is a
+binding override for the work in that request. Follow the user's requested
+work directly and do not block on, request, create, inspect, update, or
+require TaskPilot items.
+
+Notwithstanding the gates elsewhere in this contract, this override waives
+every process gate whose purpose is to require, prepare, validate, or close
+TaskPilot-tracked work, including routing, TaskPilot lifecycle,
+branch-decision, quality, review, commit, and closure artifacts. Do not invoke
+TaskPilot-tracked routing or closure workflows for an overridden request.
+Checks are optional unless independently required for safety, and no waived
+gate may prevent the requested implementation. The override does not authorize
+destructive Git operations, external writes, or other actions outside the
+user's stated scope.
+
 ---
 
 ## Task Identity And Tracking

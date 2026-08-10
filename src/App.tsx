@@ -968,6 +968,8 @@ export function App() {
                       meeting.status,
                       transcribingId === meeting.id
                         ? transcribingPhase
+                        : diarizingId === meeting.id
+                          ? "diarizing"
                         : generatingNotesId === meeting.id
                           ? "crafting"
                           : "none",
