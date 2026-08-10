@@ -1,7 +1,7 @@
 // Single source of truth for both the sidebar dot and the header status
 // widget, so the two can never drift apart. "Transcribing"/"diarizing"/"error"
 // are front-end-only activity overrides, not stored values — see
-// src-tauri/src/meetings.rs for the persisted status set.
+// src-tauri/src/meetings/ for the persisted status set.
 
 import type { IconName } from "./Icon";
 

@@ -9,16 +9,17 @@ core unit is a **Meeting** (one transcription of one source file).
 
 ```
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
-  meetings list                    lib.rs        command + event registration, AppState
-  meeting workspace                audio.rs      ffmpeg normalize + WAV decode
-  transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
-  MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
-  settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
-  ipc.ts / events                  error.rs      AppError → serialized to JS
-  theming / i18n
-  [WP-68] StreamingView.tsx        settings.rs   key–value settings store (theme, ui_language, active models)
-                                   models.rs     model catalog: download + SHA verify + delete
-                                   [M2] diarize.rs   sherpa-onnx speaker turns + merge
+  meetings list                    lib.rs        crate root; `run()` registration
+  meeting workspace                commands/     thin Tauri command layer (per-domain modules)
+  transcript editor                audio.rs      ffmpeg normalize + WAV decode
+  MFU panel                        transcribe.rs whisper (Metal) full-file decode, progress
+  settings screen                  store.rs      SQLite meeting library (meetings, segments, notes)
+  ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
+  theming / i18n                   state.rs      AppState (model cache, running-run slots)
+  [WP-68] StreamingView.tsx        error.rs      AppError → serialized to JS
+                                   settings.rs   key–value settings store (theme, ui_language, active models)
+                                   models/       model catalog (`catalog.rs`) + download (`download.rs`)
+                                   [M2] diarize/   sherpa-onnx speaker turns + merge (clustering/segmentation/speakers/pipeline)
                                    [M3] notes.rs     llama.cpp structured meeting notes
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
@@ -43,7 +44,7 @@ one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
 defined "source missing" state). `MeetingDto.source_missing` (WP-23) is
-computed fresh on every DTO build — `to_dto` in `meetings.rs` checks
+computed fresh on every DTO build — `to_dto` in `meetings/dto.rs` checks
 `Path::exists()` on the stored `source_path` — rather than stored, so it
 always reflects the file's current state instead of a snapshot from whenever
 it was last attached or transcribed. The front end disables **Transcribe**
@@ -66,7 +67,7 @@ the DB immediately; there is no explicit save state or button. Export is a
 separate, explicit write to an external file.
 
 Stored `segments` rows start as whisper's original fine-grained spans —
-`to_dto` (`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into
+`to_dto` (`meetings/dto.rs`, WP-48) coalesces consecutive same-speaker rows into
 larger display blocks on every read path (see Speaker Diarization below), and
 that is what the UI renders and edits as one block. `update_segment` (WP-17)
 therefore writes back at the same granularity the user edited: it re-derives
@@ -108,7 +109,7 @@ immediately after detection when it is set, yielding an empty transcript.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 
-- merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
+- merge** (M2, `diarize/`). The transcript is persisted between the two phases,
   so the meeting is already marked finished while diarization is still running (see
   Speaker Diarization below). A progress spinner spans both phases; **Stop
   (WP-19) only cancels the transcription phase** — it flips a per-run abort
@@ -121,10 +122,10 @@ The **Transcribe** run is a two-phase pipeline: transcription, then **diarizatio
   a transcript replaces it (and any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
-Settings AI models section (F005, `models.rs`) into the app support directory;
+Settings AI models section (F005, `models/`) into the app support directory;
 override the path for development with `WHISPERPILOT_MODEL_PATH`.
 
-## Speaker Diarization (M2, `diarize.rs`)
+## Speaker Diarization (M2, `diarize/`)
 
 sherpa-onnx segmentation + embedding models produce speaker turns, merged onto
 segments by time overlap to set each segment's `speaker_id`. Speaker count is
@@ -151,7 +152,7 @@ so it re-diarizes at whatever segment granularity currently exists —
 full per-utterance precision on a never-diarized meeting, or the coarser,
 already-coalesced per-speaker blocks on one diarized before.
 
-`diarize.rs` resolves the configured model artifacts, then produces ordered
+`diarize/` resolves the configured model artifacts, then produces ordered
 `SpeakerTurn`s from raw 16 kHz samples. Since WP-62, the production route is
 owned in Rust: `ort` v1.16.3 dynamically loads the packaged ONNX Runtime 1.17.1
 dylib and runs the downloaded pyannote segmentation model directly. Rust
@@ -183,7 +184,7 @@ without the 0.75 over-clustering outcome.
 The full evidence and metric definition are in
 `plans/2026-07-27-wp-62-clustering-feasibility-spike.md`.
 
-### Diarization Process Isolation (WP-53, `diarize_process.rs`)
+### Diarization Process Isolation (WP-53, `diarize_process/`)
 
 A fatal signal is not a catchable Rust `Err` or panic. Although WP-62 removes
 the known vendored fast-clustering abort from the production route, inference
@@ -230,7 +231,7 @@ resolve `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api` without help
 from the environment — which matters because a hardened-runtime build strips
 `DYLD_*` unless entitled. See §Build Notes for how the dylibs reach the bundle.
 
-`diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
+`diarize/` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
 maximally overlap it, deterministically tie-broken (lowest speaker id) and
 falling back to the nearest turn for a segment in an uncovered gap. `Segment`
@@ -240,7 +241,7 @@ existing consumers see no shape change), flowing through
 
 Because whisper's own segmentation is not speaker-aware, one continuous turn
 routinely comes back from `transcribe.rs` as many short (~2-3s) fragments that
-all land on the same `speaker_id`. `meetings.rs`'s `to_dto` (WP-48) coalesces
+all land on the same `speaker_id`. `meetings/dto.rs`'s `to_dto` (WP-48) coalesces
 consecutive segments sharing the same present `speaker_id` into one display
 block — text joined, spanning the first segment's start to the last segment's
 end — as long as the gap between them stays within a small tolerance (a
@@ -402,7 +403,7 @@ ask, since the underlying safety property (one decode at a time against the
 shared context) does not depend on which caller is asking.
 
 Wired to Tauri IPC via `start_streaming_session`/`stop_streaming_session` in
-`lib.rs` (WP-73) — see the Streaming Runtime & UI section below for the
+`commands/streaming.rs` (WP-73) — see the Streaming Runtime & UI section below for the
 command/event layer that ties this module to `streaming_audio.rs` and
 `streaming_store.rs`.
 
@@ -444,7 +445,7 @@ session's transcript can render "this span failed to decode" instead of
 silently reading as a span with no speech at all.
 
 `streaming.rs` is the IPC-facing facade over this store (WP-73), mirroring
-`meetings.rs`'s "open the store fresh per call" convention: `list_
+`meetings/`'s "open the store fresh per call" convention: `list_
 streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
 `delete_streaming_session`, `create_streaming_session`. Its DTOs
 (`StreamingSessionDto`, `StreamingWindowDto`) are the JSON shape the
@@ -452,7 +453,7 @@ Streaming tab consumes.
 
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
 
-`stop_streaming_session` in `lib.rs`, `src/StreamingView.tsx`)
+`stop_streaming_session` in `commands/streaming.rs`, `src/StreamingView.tsx`)
 
 Starting a session ties `streaming_audio.rs` (capture), `streaming_
 session.rs` (decode/mutual-exclusion), and `streaming_store.rs`
@@ -590,7 +591,7 @@ exists, stopped, non-empty transcript); Accept and Revert operate on an
 existing session row. Craft and Prettify are mutually exclusive in flight
 (both are LLM calls against the same shared model).
 
-## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
+## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
 (theme, `ui_language`, and each task's active model), applied immediately and
@@ -598,7 +599,7 @@ across restarts. The React layer owns **theming** (light / dark / system, plus
 release themes) and **i18n** (English default, release languages); the OS scheme
 drives the _System_ theme.
 
-`models.rs` manages a **fixed, app-defined catalog** of the model(s) each task
+`models/` manages a **fixed, app-defined catalog** of the model(s) each task
 needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
 selectable embedding, notes = llama/Qwen at M3). **Download** fetches from a
 known URL, streams progress, and marks a model ready only after **SHA
@@ -741,11 +742,17 @@ directory, downloaded model files, and user-chosen export destinations. No
 
 | Concern                                                   | Owner                                                                                               |
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Command/event registration, app state, model cache        | `src-tauri/src/lib.rs`                                                                              |
+| Tauri command layer (per-domain) + registration in `run()`| `src-tauri/src/commands/` + `src-tauri/src/lib.rs`                                                   |
+| App state, model cache, running-run slots                  | `src-tauri/src/state.rs`                                                                            |
+| IPC event payloads                                        | `src-tauri/src/events.rs`                                                                           |
 | Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
 | Whisper transcription + progress                          | `src-tauri/src/transcribe.rs`                                                                       |
 | SQLite meeting library                                    | `src-tauri/src/store.rs`                                                                            |
+| Meeting persistence facade / DTOs                         | `src-tauri/src/meetings/` (`mod.rs` facade, `dto.rs` DTOs + coalesce)                               |
 | Error type                                                | `src-tauri/src/error.rs`                                                                            |
+| Model catalog + download                                  | `src-tauri/src/models/` (`catalog.rs` catalog + state, `download.rs` fetch/verify)                  |
+| Speaker diarization                                       | `src-tauri/src/diarize/` (`clustering.rs`, `segmentation.rs`, `speakers.rs`, `pipeline.rs`)         |
+| Diarization process isolation                             | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                      |
 | Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
 | Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
 | Streaming tab                                             | `src/StreamingView.tsx`                                                                             |

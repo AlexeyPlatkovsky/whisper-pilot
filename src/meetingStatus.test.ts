@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { resolveMeetingStatus } from "./meetingStatus";
 
 describe("resolveMeetingStatus — persisted statuses", () => {
-  // EP: the valid partition — every status src-tauri/src/meetings.rs can write.
+  // EP: the valid partition — every status src-tauri/src/meetings/ can write.
   it("maps every persisted status the store can produce to one label and tone", () => {
     expect(resolveMeetingStatus("no_files")).toEqual({
       tone: "no-files",

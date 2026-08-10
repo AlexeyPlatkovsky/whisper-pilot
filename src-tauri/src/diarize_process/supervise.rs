@@ -1,34 +1,18 @@
-//! Process isolation for the native diarization engine — see ADR-013 and
-//! docs/architecture.md's Diarization Process Isolation section.
-//!
-//! The child is *this same binary* re-executed with a hidden argv mode
-//! (`WORKER_FLAG`); each attempt is independent, so a caller may run more
-//! than one per transcription (WP-57's fallback does). macOS only
-//! (`std::os::unix::process::ExitStatusExt`).
+//! The parent-side supervisor: spawn the worker child, watch its heartbeat,
+//! reap it on inactivity, and classify every ending into a `ChildOutcome`.
 
-use crate::diarize::{self, SpeakerTurn};
+use crate::diarize::SpeakerTurn;
 use crate::error::{AppError, Result};
-use serde::{Deserialize, Serialize};
 use std::ffi::{OsStr, OsString};
-use std::io::{BufRead, BufReader, Read, Write};
+use std::io::{BufRead, BufReader, Read};
 use std::os::unix::process::ExitStatusExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, ExitStatus, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-/// Hidden argv flag that turns a normal app launch into a diarization worker.
-/// Not a user-facing CLI: `prepare_and_supervise` is its only source.
-pub const WORKER_FLAG: &str = "--wp-diarize-worker";
-
-/// How long the child may go silent before it is presumed hung and killed.
-///
-/// An *inactivity* budget, not a total one, so it does not scale with
-/// recording length during the embedding loop. It must still absorb two
-/// genuinely silent stretches: sherpa-onnx segments the whole file before its
-/// first progress callback, and clusters after the last one.
-pub const DEFAULT_INACTIVITY: Duration = Duration::from_secs(120);
+use super::transport::{read_turns, write_samples, WorkerRequest};
+use super::worker::WORKER_FLAG;
 
 /// How often the supervisor re-checks a running child. Small enough that a
 /// finished child is reaped promptly, large enough not to spin.
@@ -36,19 +20,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(50);
 
 /// What `Child::kill` sends, and therefore the one signal that means "we did
 /// this" rather than "the engine faulted".
-const SIGKILL: i32 = 9;
-
-/// Exit codes the worker uses. The parent only needs "non-zero means the
-/// engine reported a real error"; these exist so a log or a bug report can say
-/// *which* error without parsing stderr.
-const EXIT_BAD_REQUEST: i32 = 2;
-const EXIT_ENGINE_ERROR: i32 = 3;
-const EXIT_UNWRITABLE_RESULT: i32 = 4;
-const EXIT_PARENT_GONE: i32 = 5;
-
-/// How long a transport file may sit in the cache dir before it is presumed
-/// abandoned. Generous enough that no in-flight run is ever swept.
-const STALE_TRANSPORT_AGE: Duration = Duration::from_secs(6 * 60 * 60);
+pub(crate) const SIGKILL: i32 = 9;
 
 /// The file-name prefixes this module creates, and the only ones it deletes.
 const TRANSPORT_PREFIXES: [&str; 3] = ["samples-", "turns-", "request-"];
@@ -108,256 +80,8 @@ pub struct SupervisedRun {
     pub outcome: ChildOutcome,
 }
 
-/// Everything the worker needs, handed over as a small JSON file rather than
-/// argv so paths with spaces and a growing field set stay uncomplicated.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkerRequest {
-    pub app_support_dir: PathBuf,
-    pub samples_path: PathBuf,
-    pub output_path: PathBuf,
-    pub variant: String,
-    pub speaker_count: Option<i32>,
-}
-
-/// Extract the worker request path from a process's argv, or `None` for a
-/// normal app launch. Kept separate from `std::env::args()` so the argv
-/// contract is testable without spawning anything.
-pub fn worker_request_path(args: &[String]) -> Option<PathBuf> {
-    let mut rest = args.iter().skip(1);
-    while let Some(arg) = rest.next() {
-        if arg == WORKER_FLAG {
-            return rest.next().map(PathBuf::from);
-        }
-    }
-    None
-}
-
-/// Run the engine if this process was launched as a diarization worker,
-/// returning the exit code it should terminate with. `None` means an ordinary
-/// app launch, so `run()` continues into Tauri. Returns the code rather than
-/// exiting so the decision stays in one place.
-pub fn worker_exit_code() -> Option<i32> {
-    let args: Vec<String> = std::env::args().collect();
-    let request_path = worker_request_path(&args)?;
-    Some(execute_worker(&request_path))
-}
-
-/// The worker body: read the request, run the real in-process engine, write
-/// the turns as JSON. Returns the process exit code.
-fn execute_worker(request_path: &Path) -> i32 {
-    // Armed before any other work: quitting the app mid-run must not leave
-    // inference running. Stdin is the parent's pipe, so its close is the one
-    // death signal that arrives however the parent went — including SIGKILL.
-    std::thread::spawn(|| {
-        wait_for_parent_to_go(std::io::stdin());
-        // `_exit`, not `exit`: the main thread is inside native inference, so
-        // running onnxruntime's static destructors underneath it could hang
-        // exactly the process this is trying to reap. Not `abort` either —
-        // SIGABRT would leave a macOS crash report behind every ordinary quit.
-        unsafe { libc::_exit(EXIT_PARENT_GONE) };
-    });
-
-    let request = match std::fs::read(request_path)
-        .map_err(|e| e.to_string())
-        .and_then(|bytes| {
-            serde_json::from_slice::<WorkerRequest>(&bytes).map_err(|e| e.to_string())
-        }) {
-        Ok(request) => request,
-        Err(e) => {
-            eprintln!(
-                "diarization worker: unusable request at {}: {e}",
-                request_path.display()
-            );
-            return EXIT_BAD_REQUEST;
-        }
-    };
-
-    let samples = match read_samples(&request.samples_path) {
-        Ok(samples) => samples,
-        Err(e) => {
-            eprintln!("diarization worker: {e}");
-            return EXIT_BAD_REQUEST;
-        }
-    };
-
-    // Anchors the parent's inactivity clock before model loading begins, so a
-    // slow load is never mistaken for a hang.
-    report_progress(0, 0);
-
-    let progress: diarize::ProgressCallback = Box::new(|done, total| {
-        report_progress(done, total);
-        0
-    });
-
-    match diarize::diarize_samples_with_progress(
-        &request.app_support_dir,
-        samples,
-        request.speaker_count,
-        &request.variant,
-        Some(progress),
-    ) {
-        Ok(turns) => match serde_json::to_vec(&turns)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| {
-                std::fs::write(&request.output_path, bytes).map_err(|e| e.to_string())
-            }) {
-            Ok(()) => 0,
-            Err(e) => {
-                eprintln!("diarization worker: could not write the result: {e}");
-                EXIT_UNWRITABLE_RESULT
-            }
-        },
-        Err(e) => {
-            eprintln!("diarization worker: {e}");
-            EXIT_ENGINE_ERROR
-        }
-    }
-}
-
-/// Block until the parent's end of `reader` closes. Anything the parent sends
-/// is discarded — this channel carries no data, only the fact of its own end.
-fn wait_for_parent_to_go(reader: impl Read) {
-    let mut reader = BufReader::new(reader);
-    let mut discard = Vec::new();
-    loop {
-        discard.clear();
-        match reader.read_until(b'\n', &mut discard) {
-            Ok(0) => return,
-            Ok(_) => {}
-            // A signal interrupting the read is not the parent going away.
-            // Ending the run here would abandon live inference.
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-            Err(_) => return,
-        }
-    }
-}
-
-/// Delete transport files older than `max_age`.
-///
-/// The supervised paths clean up after themselves; this covers the one that
-/// cannot — the parent being killed outright, which leaves its ~55MB sample
-/// file with no owner. Age-based rather than pid-based so a run still in
-/// flight in another process is never swept out from under itself.
-fn sweep_stale_transports(work_dir: &Path, max_age: Duration) {
-    let Ok(entries) = std::fs::read_dir(work_dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        // Only this module's own transports: age alone is too blunt a licence
-        // to delete from a shared directory.
-        let ours = entry
-            .file_name()
-            .to_str()
-            .is_some_and(|name| TRANSPORT_PREFIXES.iter().any(|p| name.starts_with(p)));
-        if !ours {
-            continue;
-        }
-        let stale = entry
-            .metadata()
-            .and_then(|meta| meta.modified())
-            .map(|modified| modified.elapsed().unwrap_or_default() >= max_age)
-            .unwrap_or(false);
-        if stale {
-            let _ = std::fs::remove_file(entry.path());
-        }
-    }
-}
-
-/// One heartbeat line on stdout. Rust's stdout is line-buffered, so the
-/// newline is what actually reaches the parent's pipe.
-fn report_progress(done: i32, total: i32) {
-    let mut stdout = std::io::stdout().lock();
-    let _ = writeln!(stdout, "progress {done} {total}");
-}
-
-/// Run diarization in a child process, re-executing this binary.
-///
-/// Returns the raw `ChildOutcome` rather than a `Result` so a caller can tell a
-/// native crash from a timeout from an engine error; use
-/// [`ChildOutcome::into_result`] when the existing fail-open path is all that
-/// is wanted.
-pub fn diarize_isolated(
-    app_support_dir: &Path,
-    samples: Vec<f32>,
-    speaker_count: Option<i32>,
-    active_variant: &str,
-) -> ChildOutcome {
-    let worker_exe = match std::env::current_exe() {
-        Ok(exe) => exe,
-        Err(e) => {
-            return ChildOutcome::Failed {
-                code: None,
-                detail: format!("could not locate this executable to isolate diarization: {e}"),
-            }
-        }
-    };
-    diarize_isolated_with(
-        &worker_exe,
-        app_support_dir,
-        samples,
-        speaker_count,
-        active_variant,
-        DEFAULT_INACTIVITY,
-    )
-}
-
-/// [`diarize_isolated`] with the worker binary and inactivity budget supplied
-/// explicitly. Exists because `current_exe()` under `cargo test` is the test
-/// binary, not the app, so the integration regression test must name the real
-/// one via `CARGO_BIN_EXE_*`.
-pub fn diarize_isolated_with(
-    worker_exe: &Path,
-    app_support_dir: &Path,
-    samples: Vec<f32>,
-    speaker_count: Option<i32>,
-    active_variant: &str,
-    inactivity: Duration,
-) -> ChildOutcome {
-    let work_dir = app_support_dir.join("cache").join("diarize");
-    if let Err(e) = std::fs::create_dir_all(&work_dir) {
-        return ChildOutcome::Failed {
-            code: None,
-            detail: format!("could not prepare {}: {e}", work_dir.display()),
-        };
-    }
-    sweep_stale_transports(&work_dir, STALE_TRANSPORT_AGE);
-
-    // Unique per attempt, not just per process: WP-57 runs a second attempt
-    // inside the same process after the first one fails.
-    static ATTEMPT: AtomicU64 = AtomicU64::new(0);
-    let tag = format!(
-        "{}-{}",
-        std::process::id(),
-        ATTEMPT.fetch_add(1, Ordering::Relaxed)
-    );
-    let samples_path = work_dir.join(format!("samples-{tag}.f32"));
-    let output_path = work_dir.join(format!("turns-{tag}.json"));
-    let request_path = work_dir.join(format!("request-{tag}.json"));
-
-    let request = WorkerRequest {
-        app_support_dir: app_support_dir.to_path_buf(),
-        samples_path,
-        output_path,
-        variant: active_variant.to_string(),
-        speaker_count,
-    };
-    let outcome = prepare_and_supervise(worker_exe, &request, &request_path, samples, inactivity);
-    let WorkerRequest {
-        samples_path,
-        output_path,
-        ..
-    } = request;
-
-    // Best-effort: a leftover sample file is harmless but can be ~55MB, so it
-    // is worth removing even when the child died badly.
-    for path in [&samples_path, &output_path, &request_path] {
-        let _ = std::fs::remove_file(path);
-    }
-
-    outcome
-}
-
-fn prepare_and_supervise(
+/// Stage the samples and request, then spawn and supervise the worker child.
+pub(crate) fn prepare_and_supervise(
     worker_exe: &Path,
     request: &WorkerRequest,
     request_path: &Path,
@@ -575,137 +299,40 @@ fn classify_exit(status: ExitStatus, output_path: &Path, stderr: String) -> Chil
     }
 }
 
-fn read_turns(path: &Path) -> Result<Vec<SpeakerTurn>> {
-    let bytes = std::fs::read(path).map_err(|e| {
-        AppError::Diarization(format!(
-            "the engine exited cleanly but left no result at {}: {e}",
-            path.display()
-        ))
-    })?;
-    serde_json::from_slice(&bytes)
-        .map_err(|e| AppError::Diarization(format!("the engine's result was unreadable: {e}")))
-}
-
-/// Samples cross the process boundary as a raw little-endian `f32` file rather
-/// than a pipe — see ADR-013 for why.
-fn write_samples(path: &Path, samples: &[f32]) -> Result<()> {
-    let mut bytes = Vec::with_capacity(samples.len() * 4);
-    for sample in samples {
-        bytes.extend_from_slice(&sample.to_le_bytes());
-    }
-    std::fs::write(path, bytes).map_err(|e| {
-        AppError::Diarization(format!(
-            "could not stage audio for the speaker-identification process at {}: {e}",
-            path.display()
-        ))
-    })
-}
-
-fn read_samples(path: &Path) -> Result<Vec<f32>> {
-    let bytes = std::fs::read(path).map_err(|e| {
-        AppError::Diarization(format!(
-            "could not read staged audio at {}: {e}",
-            path.display()
-        ))
-    })?;
-    if bytes.len() % 4 != 0 {
-        // `chunks_exact` would drop the partial tail silently, diarizing a
-        // slightly different recording than the one transcribed.
-        return Err(AppError::Diarization(format!(
-            "staged audio at {} is truncated ({} bytes is not a whole number of samples)",
-            path.display(),
-            bytes.len()
-        )));
-    }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
-}
-
-// --- Fallback: one-hop retry on crash (WP-57) ---------------------------
-
-/// Return the other known embedding variant, or `None` when `active` is
-/// not a recognised variant (no fallback possible).
-fn fallback_variant_for(active: &str) -> Option<&'static str> {
-    match active {
-        "titanet-large" => Some("campplus"),
-        "campplus" => Some("titanet-large"),
-        _ => None,
-    }
-}
-
-/// A crash is the only child outcome worth retrying: it is deterministic per
-/// input + model, so the same model would just crash again, but the *other*
-/// model may survive. A timeout means the time budget is spent; an engine
-/// error is a real failure — neither justifies a retry.
-fn should_retry_diarization(outcome: &ChildOutcome) -> bool {
-    matches!(outcome, ChildOutcome::Crashed { .. })
-}
-
-/// Human-readable label for a variant id so diarization warnings name the
-/// model the user sees in Settings, not the internal id.
-fn variant_display_name(variant: &str) -> &str {
-    match variant {
-        "titanet-large" => "TitaNet-large",
-        "campplus" => "CAM++",
-        other => other,
-    }
-}
-
-/// Run diarization isolated, retrying once with the other embedding model on
-/// a native crash. Returns the turns plus an optional warning — `None` on a
-/// clean first-attempt success, `Some` when the fallback was used (successful
-/// or not).
+/// Delete transport files older than `max_age`.
 ///
-/// The fallback attempt itself runs under the same process isolation as the
-/// first. `samples` are cloned so the retry has its own copy; on a typical
-/// recording (~6 MB) this is acceptable even on the common non-crash path.
-pub fn diarize_with_fallback(
-    app_support_dir: &Path,
-    samples: Vec<f32>,
-    speaker_count: Option<i32>,
-    active_variant: &str,
-) -> (Result<Vec<SpeakerTurn>>, Option<String>) {
-    let first = diarize_isolated(
-        app_support_dir,
-        samples.clone(),
-        speaker_count,
-        active_variant,
-    );
-
-    if !should_retry_diarization(&first) {
-        return (first.into_result(), None);
-    }
-
-    let fallback_variant = match fallback_variant_for(active_variant) {
-        Some(v) => v,
-        None => return (first.into_result(), None),
+/// The supervised paths clean up after themselves; this covers the one that
+/// cannot — the parent being killed outright, which leaves its ~55MB sample
+/// file with no owner. Age-based rather than pid-based so a run still in
+/// flight in another process is never swept out from under itself.
+pub(crate) fn sweep_stale_transports(work_dir: &Path, max_age: Duration) {
+    let Ok(entries) = std::fs::read_dir(work_dir) else {
+        return;
     };
-
-    if !crate::models::is_diarization_variant_downloaded(app_support_dir, fallback_variant) {
-        return (first.into_result(), None);
-    }
-
-    let second = diarize_isolated(app_support_dir, samples, speaker_count, fallback_variant);
-
-    match second {
-        ChildOutcome::Completed(turns) => {
-            let warning = format!(
-                "used {} because {} failed on this recording",
-                variant_display_name(fallback_variant),
-                variant_display_name(active_variant),
-            );
-            (Ok(turns), Some(warning))
+    for entry in entries.flatten() {
+        // Only this module's own transports: age alone is too blunt a licence
+        // to delete from a shared directory.
+        let ours = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| TRANSPORT_PREFIXES.iter().any(|p| name.starts_with(p)));
+        if !ours {
+            continue;
         }
-        other => (other.into_result(), None),
+        let stale = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .map(|modified| modified.elapsed().unwrap_or_default() >= max_age)
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::Path;
     use std::process::Command;
     use std::time::{Duration, Instant};
 
@@ -904,109 +531,7 @@ mod tests {
         );
     }
 
-    // --- The hidden argv mode --------------------------------------------
-
-    #[test]
-    fn worker_request_path_is_recognized_in_the_hidden_argv_mode() {
-        let args = vec![
-            "/Apps/WhisperPilot".to_string(),
-            WORKER_FLAG.to_string(),
-            "/tmp/request.json".to_string(),
-        ];
-
-        assert_eq!(
-            worker_request_path(&args),
-            Some(std::path::PathBuf::from("/tmp/request.json"))
-        );
-    }
-
-    #[test]
-    fn worker_request_path_is_absent_for_a_normal_app_launch() {
-        let args = vec!["/Apps/WhisperPilot".to_string()];
-
-        assert_eq!(worker_request_path(&args), None);
-    }
-
-    #[test]
-    fn worker_request_round_trips() {
-        let original = WorkerRequest {
-            app_support_dir: std::path::PathBuf::from("/support"),
-            samples_path: std::path::PathBuf::from("/cache/samples.f32"),
-            output_path: std::path::PathBuf::from("/cache/turns.json"),
-            variant: "titanet-large".to_string(),
-            speaker_count: Some(2),
-        };
-
-        let json = serde_json::to_string(&original).unwrap();
-        let round_tripped: WorkerRequest = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(round_tripped, original);
-    }
-
     // --- The child must not outlive the app that started it --------------
-
-    #[test]
-    fn the_orphan_watch_fires_as_soon_as_the_parents_pipe_closes() {
-        let dir = tempfile::tempdir().unwrap();
-        let closed = dir.path().join("already-closed");
-        std::fs::write(&closed, b"").unwrap();
-
-        // An empty file reads EOF immediately, standing in for the pipe the
-        // parent's death closes.
-        wait_for_parent_to_go(std::fs::File::open(&closed).unwrap());
-    }
-
-    #[test]
-    fn the_orphan_watch_ignores_traffic_and_waits_for_the_close() {
-        use std::io::Write as _;
-        use std::sync::mpsc;
-
-        let (mut parent_end, child_end) = std::os::unix::net::UnixStream::pair().unwrap();
-        let (tx, rx) = mpsc::channel();
-        std::thread::spawn(move || {
-            wait_for_parent_to_go(child_end);
-            let _ = tx.send(());
-        });
-
-        parent_end.write_all(b"the parent is still here\n").unwrap();
-        parent_end.flush().unwrap();
-        assert!(
-            rx.recv_timeout(Duration::from_millis(250)).is_err(),
-            "traffic from a live parent must not be mistaken for its death"
-        );
-
-        drop(parent_end);
-        assert!(
-            rx.recv_timeout(Duration::from_secs(5)).is_ok(),
-            "closing the parent's end must end the watch"
-        );
-    }
-
-    #[test]
-    fn the_orphan_watch_retries_an_interrupted_read_instead_of_quitting() {
-        use std::sync::atomic::AtomicUsize;
-
-        struct Scripted(Arc<AtomicUsize>);
-        impl Read for Scripted {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                match self.0.fetch_add(1, Ordering::SeqCst) {
-                    0 => Err(std::io::Error::from(std::io::ErrorKind::Interrupted)),
-                    1 => {
-                        buf[0] = b'\n';
-                        Ok(1)
-                    }
-                    _ => Ok(0),
-                }
-            }
-        }
-
-        let reads = Arc::new(AtomicUsize::new(0));
-        wait_for_parent_to_go(Scripted(Arc::clone(&reads)));
-
-        // Treating the interruption as the parent's death would stop at one
-        // read — and abandon a live inference pass.
-        assert_eq!(reads.load(Ordering::SeqCst), 3);
-    }
 
     #[test]
     fn the_child_is_given_a_pipe_on_stdin_so_it_can_notice_the_parent_dying() {
@@ -1061,19 +586,7 @@ mod tests {
         );
     }
 
-    // --- Transport parsing rejects what it cannot faithfully read ---------
-
-    #[test]
-    fn reading_a_truncated_samples_file_is_an_error_not_a_silent_short_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("truncated.f32");
-        // 6 bytes: one whole f32 plus half of another.
-        std::fs::write(&path, [0u8, 0, 0, 0, 1, 2]).unwrap();
-
-        let error = read_samples(&path).expect_err("a partial sample must not be silently dropped");
-
-        assert!(matches!(error, crate::error::AppError::Diarization(_)));
-    }
+    // --- A clean exit with malformed output is not success ----------------
 
     #[test]
     fn a_clean_exit_with_malformed_result_json_is_a_failure_not_a_success() {
@@ -1087,13 +600,6 @@ mod tests {
             ChildOutcome::Failed { code, .. } => assert_eq!(code, Some(0)),
             other => panic!("malformed output is not a completed run, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn the_worker_flag_without_a_path_is_not_a_worker_launch() {
-        let args = vec!["/Apps/WhisperPilot".to_string(), WORKER_FLAG.to_string()];
-
-        assert_eq!(worker_request_path(&args), None);
     }
 
     // --- A child that finishes in the timeout window is not a timeout -----
@@ -1164,17 +670,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn samples_round_trip_through_the_transport_file() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("samples.f32");
-        let samples = vec![0.0_f32, -1.0, 0.5, f32::MIN_POSITIVE];
-
-        write_samples(&path, &samples).unwrap();
-
-        assert_eq!(read_samples(&path).unwrap(), samples);
-    }
-
     // --- DoD C-2: every failure outcome stays fail-open, distinguishably --
 
     #[test]
@@ -1233,74 +728,5 @@ mod tests {
                 .unwrap(),
             turns
         );
-    }
-
-    // --- DoD C-1, C-5: fallback decision helpers ---------------------------
-
-    #[test]
-    fn fallback_variant_for_returns_campplus_for_titanet_large() {
-        assert_eq!(
-            super::fallback_variant_for("titanet-large"),
-            Some("campplus")
-        );
-    }
-
-    #[test]
-    fn fallback_variant_for_returns_titanet_large_for_campplus() {
-        assert_eq!(
-            super::fallback_variant_for("campplus"),
-            Some("titanet-large")
-        );
-    }
-
-    #[test]
-    fn fallback_variant_for_returns_none_for_unknown_variant() {
-        assert_eq!(super::fallback_variant_for("unknown-model"), None);
-    }
-
-    #[test]
-    fn should_retry_diarization_is_true_for_crashed() {
-        assert!(super::should_retry_diarization(&ChildOutcome::Crashed {
-            signal: 10
-        }));
-    }
-
-    #[test]
-    fn should_retry_diarization_is_false_for_timed_out() {
-        assert!(!super::should_retry_diarization(&ChildOutcome::TimedOut));
-    }
-
-    #[test]
-    fn should_retry_diarization_is_false_for_failed() {
-        assert!(!super::should_retry_diarization(&ChildOutcome::Failed {
-            code: Some(3),
-            detail: "engine error".to_string(),
-        }));
-    }
-
-    #[test]
-    fn should_retry_diarization_is_false_for_completed() {
-        let turns = vec![crate::diarize::SpeakerTurn {
-            start_ms: 0,
-            end_ms: 100,
-            speaker: 0,
-        }];
-        assert!(!super::should_retry_diarization(&ChildOutcome::Completed(
-            turns
-        )));
-    }
-
-    #[test]
-    fn variant_display_name_returns_label_for_known_variants() {
-        assert_eq!(
-            super::variant_display_name("titanet-large"),
-            "TitaNet-large"
-        );
-        assert_eq!(super::variant_display_name("campplus"), "CAM++");
-    }
-
-    #[test]
-    fn variant_display_name_returns_raw_id_for_unknown() {
-        assert_eq!(super::variant_display_name("unknown"), "unknown");
     }
 }

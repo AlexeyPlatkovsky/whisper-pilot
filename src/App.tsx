@@ -28,12 +28,14 @@ import { StreamingView } from "./StreamingView";
 import { ModeToggle } from "./ModeToggle";
 import { applyTheme, type Theme } from "./theme";
 import { t } from "./i18n";
-import { formatClock } from "./format";
+import { formatClock, formatDuration, formatRange } from "./format";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
+import { MeetingRow } from "./MeetingRow";
+import { formatDetectedLanguage, toSummary } from "./meetingUtils";
 import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
 import {
   renderForExport,
@@ -41,54 +43,14 @@ import {
   type ExportFileType,
 } from "./export";
 
-const LANGUAGE_LABELS: Record<string, string> = {
-  en: "English",
-  ru: "Russian",
-  tr: "Turkish",
-};
-
-function formatDetectedLanguage(language: string): string {
-  return LANGUAGE_LABELS[language] ?? language;
-}
-
 // A running transcription is tracked by meeting id (`transcribingId`), not by
 // this union, so that it survives the user switching to another meeting and
 // back. This union only carries what the workspace itself is showing.
 type Status = { kind: "idle" } | { kind: "error"; message: string };
 
-function formatTime(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-function formatRange(start: number, end: number): string {
-  return `${formatTime(start)} - ${formatTime(end)}`;
-}
-
-function formatDuration(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const h = Math.floor(total / 3600);
-  const m = Math.floor((total % 3600) / 60);
-  const s = total % 60;
-  if (h > 0) return `${h}h ${m.toString().padStart(2, "0")}m`;
-  return `${m}m ${s.toString().padStart(2, "0")}s`;
-}
-
 // How long an edited segment or notes field waits, idle, before it is
 // auto-saved to the database. There is no explicit save action or state.
 const AUTOSAVE_DEBOUNCE_MS = 500;
-
-function toSummary(meeting: PersistedMeeting): MeetingSummary {
-  return {
-    id: meeting.id,
-    title: meeting.title,
-    created_at_ms: meeting.created_at_ms,
-    duration_ms: meeting.duration_ms,
-    status: meeting.status,
-  };
-}
 
 export function App() {
   const [status, setStatus] = useState<Status>({ kind: "idle" });
@@ -1265,99 +1227,5 @@ export function App() {
         </div>
       )}
     </div>
-  );
-}
-
-function MeetingRow({
-  title,
-  when,
-  dur,
-  status,
-  selected,
-  onSelect,
-  onRename,
-  onDelete,
-}: {
-  title: string;
-  when: string;
-  dur: string;
-  status: MeetingStatusView;
-  selected?: boolean;
-  onSelect: () => void;
-  onRename: () => void;
-  onDelete: () => void;
-}) {
-  const running =
-    status.tone === "transcribing" ||
-    status.tone === "diarizing" ||
-    status.tone === "crafting";
-  return (
-    <li
-      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
-      role="listitem"
-      aria-label={title}
-    >
-      {/* The dot is the row's whole status surface: colour for a glance, the
-          `title` tooltip on hover, and the same words to a screen reader. */}
-      <span
-        className={`wp-meeting-dot wp-tone--${status.tone}`}
-        role="img"
-        aria-label={status.label}
-        title={status.label}
-      />
-      <button
-        type="button"
-        className="wp-meeting-open"
-        aria-label={`Open ${title}`}
-        aria-current={selected ? "page" : undefined}
-        onClick={onSelect}
-      >
-        <div className="wp-meeting-text">
-          {/* Long names are clipped to keep the sidebar at its fixed width, so
-              the tooltip is the only way left to read one in full. */}
-          <span className="wp-meeting-title" title={title}>
-            {title}
-          </span>
-          <div className="wp-meeting-meta">
-            <span>{when}</span>
-            <span>{dur}</span>
-          </div>
-        </div>
-      </button>
-      <span className="wp-meeting-actions">
-        {running ? (
-          // While this meeting is transcribing or diarizing, the spinner
-          // takes the action group's place — renaming or deleting a running
-          // meeting is not something we want to offer mid-run. It is hidden
-          // from assistive tech because the dot beside it already announces
-          // the current phase; exposing both would name the same status
-          // twice per row.
-          <span className="wp-meeting-busy" aria-hidden="true">
-            <Icon
-              name="refresh-cw"
-              size={13}
-              className={`wp-spin wp-tone--${status.tone}`}
-            />
-          </span>
-        ) : (
-          <>
-            <button
-              type="button"
-              aria-label={`Rename ${title}`}
-              onClick={onRename}
-            >
-              <Icon name="pencil" size={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete ${title}`}
-              onClick={onDelete}
-            >
-              <Icon name="trash-2" size={13} />
-            </button>
-          </>
-        )}
-      </span>
-    </li>
   );
 }

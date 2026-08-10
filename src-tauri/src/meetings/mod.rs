@@ -1,52 +1,14 @@
 //! Testable persistence facade behind the meeting-library Tauri commands.
 
+pub(crate) mod dto;
+
 use crate::diarize::SpeakerTurn;
-use crate::error::AppError;
-use crate::error::Result;
-use crate::store::{Meeting, MeetingId, MeetingNotes, NewMeeting, NewSegment, Store};
-use serde::{Deserialize, Serialize};
+use crate::error::{AppError, Result};
+use crate::store::{MeetingId, MeetingNotes, NewMeeting, NewSegment, Store};
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeetingSummaryDto {
-    pub id: MeetingId,
-    pub title: String,
-    pub created_at_ms: i64,
-    pub duration_ms: Option<i64>,
-    pub status: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SegmentDto {
-    pub start_ms: i64,
-    pub end_ms: i64,
-    pub text: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub speaker_id: Option<i64>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct MeetingDto {
-    pub id: MeetingId,
-    pub title: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub source_name: Option<String>,
-    pub created_at_ms: i64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<i64>,
-    pub language: String,
-    pub status: String,
-    pub segments: Vec<SegmentDto>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub notes: Option<MeetingNotes>,
-    /// `true` when this meeting has an attached source file that is no longer
-    /// readable at `source_path` (moved or deleted since it was attached).
-    /// `false` for a meeting with no source at all. The transcript and notes
-    /// stay readable/editable either way; only re-transcribing needs the file.
-    pub source_missing: bool,
-}
+pub(crate) use dto::{coalesce_by_speaker, to_dto};
+pub use dto::{MeetingDto, MeetingSummaryDto, SegmentDto};
 
 pub fn create_empty_meeting(app_support_dir: &Path, created_at_ms: i64) -> Result<MeetingDto> {
     let store = Store::open(app_support_dir)?;
@@ -316,79 +278,11 @@ fn validate_title(title: String) -> Result<String> {
     Ok(title)
 }
 
-/// A gap this long (ms) between consecutive same-speaker segments reads as a
-/// real pause rather than a whisper segmentation artifact, so it starts a new
-/// coalesced block instead of merging.
-const COALESCE_GAP_TOLERANCE_MS: i64 = 1_000;
-
-/// Merge consecutive `segments` that share the same present `speaker_id` into
-/// single display blocks: text joined with a space, spanning the first
-/// segment's `start_ms` to the last segment's `end_ms`. A gap larger than
-/// `COALESCE_GAP_TOLERANCE_MS` between same-speaker segments starts a new
-/// block. Segments with `speaker_id: None` are never merged with each other
-/// or a neighboring speaker, so a diarization failure never fabricates false
-/// turn continuity. Read-time/display transform only — the caller's
-/// underlying stored rows are untouched.
-fn coalesce_by_speaker(segments: Vec<SegmentDto>) -> Vec<SegmentDto> {
-    let mut coalesced: Vec<SegmentDto> = Vec::with_capacity(segments.len());
-    for segment in segments {
-        let merged = match (coalesced.last_mut(), segment.speaker_id) {
-            (Some(prev), Some(id))
-                if prev.speaker_id == Some(id)
-                    && segment.start_ms - prev.end_ms <= COALESCE_GAP_TOLERANCE_MS =>
-            {
-                prev.end_ms = segment.end_ms;
-                prev.text.push(' ');
-                prev.text.push_str(&segment.text);
-                true
-            }
-            _ => false,
-        };
-        if !merged {
-            coalesced.push(segment);
-        }
-    }
-    coalesced
-}
-
-fn to_dto(
-    meeting: Meeting,
-    segments: Vec<crate::store::StoredSegment>,
-    notes: Option<MeetingNotes>,
-) -> Result<MeetingDto> {
-    let segments = segments
-        .into_iter()
-        .map(|segment| SegmentDto {
-            start_ms: segment.start_ms,
-            end_ms: segment.end_ms,
-            text: segment.text,
-            speaker_id: segment.speaker_id,
-        })
-        .collect();
-    let source_missing = meeting
-        .source_path
-        .as_ref()
-        .is_some_and(|path| !Path::new(path).exists());
-    Ok(MeetingDto {
-        id: meeting.id,
-        title: meeting.title,
-        source_path: meeting.source_path,
-        source_name: meeting.source_name,
-        created_at_ms: meeting.created_at_ms,
-        duration_ms: meeting.duration_ms,
-        language: meeting.language,
-        status: meeting.status,
-        segments: coalesce_by_speaker(segments),
-        notes,
-        source_missing,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::error::AppError;
-    use crate::store::{NewSegment, Store};
+    use crate::store::{NewMeeting, Store};
 
     fn meeting(title: &str, created_at_ms: i64) -> NewMeeting {
         NewMeeting {
@@ -399,6 +293,15 @@ mod tests {
             duration_ms: Some(1_000),
             language: "ru".to_string(),
             status: "finished".to_string(),
+        }
+    }
+
+    fn dto(start_ms: i64, end_ms: i64, text: &str, speaker_id: Option<i64>) -> SegmentDto {
+        SegmentDto {
+            start_ms,
+            end_ms,
+            text: text.to_string(),
+            speaker_id,
         }
     }
 
@@ -476,34 +379,6 @@ mod tests {
     }
 
     #[test]
-    fn meeting_dto_round_trips_through_the_ipc_json_contract() {
-        let original = MeetingDto {
-            id: 7,
-            title: "Contract meeting".to_string(),
-            source_path: Some("/recordings/contract.m4a".to_string()),
-            source_name: Some("contract.m4a".to_string()),
-            created_at_ms: 42,
-            duration_ms: Some(1_000),
-            language: "ru".to_string(),
-            status: "finished".to_string(),
-            segments: vec![SegmentDto {
-                start_ms: 0,
-                end_ms: 1_000,
-                text: "Saved transcript".to_string(),
-                speaker_id: Some(3),
-            }],
-            notes: None,
-            source_missing: false,
-        };
-
-        let json = serde_json::to_value(&original).expect("serialize meeting DTO");
-        let round_tripped: MeetingDto =
-            serde_json::from_value(json).expect("deserialize meeting DTO");
-
-        assert_eq!(round_tripped, original);
-    }
-
-    #[test]
     fn given_empty_meeting_when_source_attached_then_it_is_ready_with_a_derived_name() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
 
@@ -533,12 +408,7 @@ mod tests {
         save_transcript(
             temp.path(),
             created.id,
-            vec![SegmentDto {
-                start_ms: 0,
-                end_ms: 2_000,
-                text: "Saved".to_string(),
-                speaker_id: Some(1),
-            }],
+            vec![dto(0, 2_000, "Saved", Some(1))],
             Some(2_000),
             "en".to_string(),
         )
@@ -575,18 +445,8 @@ mod tests {
             temp.path(),
             created.id,
             vec![
-                SegmentDto {
-                    start_ms: 0,
-                    end_ms: 1_000,
-                    text: "First".to_string(),
-                    speaker_id: Some(1),
-                },
-                SegmentDto {
-                    start_ms: 1_000,
-                    end_ms: 3_500,
-                    text: "Second".to_string(),
-                    speaker_id: None,
-                },
+                dto(0, 1_000, "First", Some(1)),
+                dto(1_000, 3_500, "Second", None),
             ],
             Some(3_500),
             "en".to_string(),
@@ -605,86 +465,6 @@ mod tests {
             vec!["First", "Second"]
         );
         assert_eq!(reopened.status, "finished");
-    }
-
-    fn dto(start_ms: i64, end_ms: i64, text: &str, speaker_id: Option<i64>) -> SegmentDto {
-        SegmentDto {
-            start_ms,
-            end_ms,
-            text: text.to_string(),
-            speaker_id,
-        }
-    }
-
-    // EP/BVA: same-speaker merge, gap-tolerance boundary (merge at exactly
-    // the tolerance, split just past it), different-speaker split,
-    // speakerless never merges, empty/single pass through unchanged.
-
-    #[test]
-    fn coalesce_merges_consecutive_segments_sharing_the_same_speaker() {
-        let segments = vec![
-            dto(0, 1_000, "Hello", Some(1)),
-            dto(1_000, 2_000, "there", Some(1)),
-            dto(2_000, 3_000, "friend", Some(1)),
-        ];
-
-        assert_eq!(
-            coalesce_by_speaker(segments),
-            vec![dto(0, 3_000, "Hello there friend", Some(1))]
-        );
-    }
-
-    #[test]
-    fn coalesce_merges_when_the_gap_is_exactly_at_the_tolerance_boundary() {
-        let segments = vec![
-            dto(0, 1_000, "First", Some(1)),
-            dto(1_000 + COALESCE_GAP_TOLERANCE_MS, 3_000, "Second", Some(1)),
-        ];
-
-        assert_eq!(
-            coalesce_by_speaker(segments),
-            vec![dto(0, 3_000, "First Second", Some(1))]
-        );
-    }
-
-    #[test]
-    fn coalesce_starts_a_new_block_when_the_gap_exceeds_the_tolerance() {
-        let second_start = 1_000 + COALESCE_GAP_TOLERANCE_MS + 1;
-        let segments = vec![
-            dto(0, 1_000, "First", Some(1)),
-            dto(second_start, 3_000, "Second", Some(1)),
-        ];
-
-        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
-    }
-
-    #[test]
-    fn coalesce_never_merges_across_different_speakers() {
-        let segments = vec![
-            dto(0, 1_000, "First", Some(1)),
-            dto(1_000, 2_000, "Second", Some(2)),
-        ];
-
-        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
-    }
-
-    #[test]
-    fn coalesce_never_merges_speakerless_segments_with_each_other_or_a_neighbor() {
-        let segments = vec![
-            dto(0, 1_000, "A", None),
-            dto(1_000, 2_000, "B", None),
-            dto(2_000, 3_000, "C", Some(1)),
-        ];
-
-        assert_eq!(coalesce_by_speaker(segments.clone()), segments);
-    }
-
-    #[test]
-    fn coalesce_passes_through_an_empty_list_and_a_single_segment_without_panicking() {
-        assert_eq!(coalesce_by_speaker(Vec::new()), Vec::<SegmentDto>::new());
-
-        let single = vec![dto(0, 1_000, "Solo", Some(1))];
-        assert_eq!(coalesce_by_speaker(single.clone()), single);
     }
 
     #[test]
@@ -734,12 +514,7 @@ mod tests {
         let saved = save_transcript(
             temp.path(),
             created.id,
-            vec![SegmentDto {
-                start_ms: 0,
-                end_ms: 1_400,
-                text: "Uh, your presenter now.".to_string(),
-                speaker_id: None,
-            }],
+            vec![dto(0, 1_400, "Uh, your presenter now.", None)],
             Some(1_400),
             "en".to_string(),
         )
@@ -767,12 +542,7 @@ mod tests {
         let saved = save_transcript(
             temp.path(),
             legacy.id,
-            vec![SegmentDto {
-                start_ms: 0,
-                end_ms: 1_000,
-                text: "Okay, let's start from today.".to_string(),
-                speaker_id: None,
-            }],
+            vec![dto(0, 1_000, "Okay, let's start from today.", None)],
             Some(1_000),
             "en".to_string(),
         )
