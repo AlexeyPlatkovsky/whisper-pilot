@@ -115,7 +115,10 @@ failures and segfaults (WP-84). A further known limitation is an intermittent
 upstream ggml Metal encoder fault on Apple M5 Pro (`auto-detected language: af
 (p = nan)`, then `failed to encode` or empty output); CPU decoding is
 unaffected and the fault is in whisper.cpp 1.8.3 itself, not in the decode
-setup (WP-82).
+setup (WP-82). Because the fault can make a decode return success with zero
+segments, the Meeting path rejects any empty decode with a retry-guidance
+error instead of persisting an empty, "finished" meeting (WP-85); the shared
+decode stays tolerant so silent Streaming windows still pass.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 

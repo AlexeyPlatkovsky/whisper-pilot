@@ -84,8 +84,30 @@ async fn decode_and_transcribe(
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??
     };
+    ensure_non_empty_transcript(&transcription)?;
 
     Ok((transcription, samples))
+}
+
+/// WP-85: a finished decode with zero segments is never a usable Meeting
+/// transcript — for audio holding speech it is the empty-output signature of
+/// the intermittent ggml Metal encoder fault (see `docs/architecture.md`'s
+/// Transcription section), and a genuinely speechless file has nothing to
+/// persist either. Failing here, before persist and before the diarization
+/// pass is constructed, keeps an empty yet "finished" meeting out of the
+/// library. Streaming never passes through this path — its windows
+/// legitimately contain silence — so the shared decode in `transcribe.rs`
+/// stays tolerant of zero segments.
+fn ensure_non_empty_transcript(transcription: &transcribe::Transcription) -> Result<()> {
+    if transcription.segments.is_empty() {
+        return Err(AppError::Transcribe(
+            "Whisper decoded no speech from this file. If the file does contain speech, \
+             retry — a known intermittent Metal encoder fault can make a decode return \
+             empty output."
+                .to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// Registers `id`'s abort flag in `AppState.running_transcription` for this
@@ -475,6 +497,27 @@ mod tests {
     ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = DiarizationOutcome> + Send>>>
     {
         Some(Box::pin(async move { outcome }))
+    }
+
+    // WP-85: a zero-segment decode is the empty-output signature of the
+    // intermittent ggml Metal encoder fault (or a genuinely speechless file).
+    // The Meeting path must fail it loudly rather than persist an empty,
+    // finished meeting.
+    #[test]
+    fn ensure_non_empty_transcript_rejects_a_zero_segment_decode_with_retry_guidance() {
+        let err = ensure_non_empty_transcript(&transcription(Vec::new()))
+            .expect_err("an empty decode must fail the Meeting run");
+        let message = err.to_string();
+        assert!(
+            message.contains("retry"),
+            "the error tells the user a retry may succeed (intermittent fault): {message}"
+        );
+    }
+
+    #[test]
+    fn ensure_non_empty_transcript_passes_a_decode_with_segments() {
+        let t = transcription(vec![segment(0, 1_000, "hello")]);
+        ensure_non_empty_transcript(&t).expect("a decode with segments passes");
     }
 
     // The whole point of WP-54: the transcript must already be readable from
