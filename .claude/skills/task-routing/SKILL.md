@@ -98,6 +98,17 @@ explicitly resumed `blocked` item. For an already-approved legacy/backlog item,
 first run DoR and route the verified `backlog → ready` promotion through
 `taskpilot-work`; otherwise route `discover-feature`.
 
+When `AGENTS.md`'s User-authored worktree review exception applies, declare
+`TaskPilot: untracked — user-authored worktree review`, identify the exact
+pre-existing diff boundary as the pre-review `HEAD` SHA, exhaustive path list,
+captured `git diff <SHA> -- <paths>` snapshot, and for every untracked regular
+UTF-8 text path its status plus `git diff --no-index /dev/null <path>` snapshot;
+block binary, non-regular, or undecodable untracked paths. Set Parent context
+and Lifecycle to `not applicable`. Do not create, mutate, or require TaskPilot records. The
+selected route's quality, validation, review, Git, documentation, and closure
+gates remain required; only TaskPilot identity, lifecycle, and TaskPilot-record
+commit requirements are waived.
+
 For AI-governance instruction-system work exempted by `AGENTS.md`, declare
 `TaskPilot: exempt — AI-governance maintenance` and do not create or mutate a
 TaskPilot item unless the user explicitly requests TaskPilot administration.
@@ -142,6 +153,7 @@ Apply this precedence before using the table:
 | Triage a bug or unexpected behavior with unknown root cause | `.claude/skills/triage-bug/SKILL.md` |
 | Fix a confirmed bug with reproduction steps | `.claude/pipelines/fix-bug.md` |
 | Review or advise on React/TypeScript/Tauri code practices | `.claude/skills/react-tauri-expert/SKILL.md` |
+| Review, validate, remediate, commit, or push a user-designated, pre-existing working-tree diff | Manager-declared direct user-authored worktree review route: frozen boundary record; review; conditional direct remediation; validation; code review; documentation decision; local commit/push; closure |
 | Implement a requested React/TypeScript/Tauri improvement | `.claude/pipelines/implement-feature.md` |
 | Write or improve Vitest or Rust test code | `.claude/skills/testing-pro/SKILL.md` |
 | Review completed, validated test changes | `.claude/agents/code-reviewer.md` |
@@ -163,6 +175,32 @@ Apply this precedence before using the table:
 | Review or change a CLI adapter | Manager-declared ad-hoc CLI route; require the adapter's invocation-contract evidence, tests through `testing-pro`, implementation through `implement-feature` when behavior changes, and code review |
 
 The SDD-document route applies only when `docs/INDEX.md` exists and lists the document, or the user explicitly frames the request as SDD / spec-driven-development work.
+
+### User-Authored Worktree Review Direct Route
+
+Use only for the routing-table row above. Maintain a Route execution record
+with these planned rows: `B1` frozen-boundary record; `B2` manager initial
+diff-review record plus, when frozen logic is present, the labeled existing-
+coverage assessment; `B3` conditional `Skill: testing-pro - output below` Red
+evidence; `B4` remediation or its exact skip condition; `B5` `Agent:
+test-runner - output below` final validation with manager-declared commands;
+`B6` `Agent: code-reviewer - output below`; `B7` `Skill:
+documentation-maintenance - output below` when its observable trigger applies,
+otherwise a manager documentation-decision record with the exact skip
+condition; `B8` conditional local commit and authorized push; `B9` closure.
+The manager owns objective DoD criteria for the
+frozen boundary. A remediation is eligible only when B2, B5, or B6 demonstrates
+a defect, regression, build failure, or validation failure within that boundary;
+otherwise B4 is skipped. B3 is required before a remediation that changes
+non-trivial production logic and skipped otherwise. A finding in B5 or B6
+returns to B3/B4, invalidates the prior B5/B6 attempts, and requires fresh
+validation and code review before B8. B8 runs when the user explicitly
+requested a commit or push; commit and push each run only when explicitly
+requested, otherwise record the exact skip condition. A push-only request
+requires an already-existing eligible local commit; otherwise block and request
+commit authorization. Any new behavior,
+unrelated path, or changed baseline invalidates this route and returns the work
+to normal TaskPilot routing.
 
 If the task does not match any route:
 
@@ -195,13 +233,14 @@ Use this table with no omitted rows:
 
 | Field | Decision | Evidence / required artifact |
 |---|---|---|
-| Route run | `<task identity>:<route>:<positive sequence>` | stable identifier unique to this routed invocation; start sequence at `1` for that task/route and increment on a new run |
+| Route run | `<task identity>:<route>:<positive sequence>` | stable identifier unique to this routed invocation; use `untracked-user-authored-worktree-review:<route>:<positive sequence>` for untracked work and bind it to the frozen boundary |
 | Classification | `<complexity>; <risk>; <domain>; <quality tier>` | tier justification and readiness confirmation |
-| Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` | `AGENTS.md` task-identity decision |
-| Parent context | `<expected parent ID>` / `none` / `not applicable` | tracked work: reloaded item parent; exempt work: reason |
+| Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` / `untracked — user-authored worktree review` | `AGENTS.md` task-identity decision |
+| Pre-existing diff boundary | `required` / `not applicable` | untracked: pre-review `HEAD` SHA, exhaustive paths, SHA-based tracked-path snapshot, and no-index snapshot for each regular UTF-8 text untracked path; otherwise reason |
+| Parent context | `<expected parent ID>` / `none` / `not applicable` | tracked work: reloaded item parent; exempt/untracked work: reason |
 | Definition of Done | stable `C-<positive integer>` criteria | objective pass/fail criteria; required explicitly for AI-governance work |
 | Execution record | `required` | pipeline-owned record, or complete ad-hoc step plan using the task-complete binding schema |
-| Lifecycle | `required` / `not applicable` | tracked work: required start, block/resume, completion, and reload-verification artifacts; exempt work: reason |
+| Lifecycle | `required` / `not applicable` | tracked work: required start, block/resume, completion, and reload-verification artifacts; exempt/untracked work: reason |
 | Git gate | `required` / `completed` / `blocked` | `Skill: work-with-git - output below` when complete |
 | Route | `<pipeline or capability path>` | selected route |
 | Validation | `<required checks and reviewers>` | expected validation artifacts |

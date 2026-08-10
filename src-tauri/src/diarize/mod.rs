@@ -19,8 +19,8 @@ use std::path::{Path, PathBuf};
 
 pub use clustering::{cluster_embeddings, ClusterStop};
 pub use segmentation::{powerset_class_to_activity, segmentation_windows};
-pub use speakers::{apply_diarization_outcome, assign_speaker_ids, merge_segments_with_turns};
 pub use speakers::SpeakerTurn;
+pub use speakers::{apply_diarization_outcome, assign_speaker_ids, merge_segments_with_turns};
 
 use pipeline::diarize_with_rust_clustering;
 

@@ -252,7 +252,8 @@ pub(crate) async fn start_streaming_session(
             ),
             system_audio: matches!(
                 active_sources,
-                streaming_audio::ActiveSources::Both | streaming_audio::ActiveSources::SystemAudioOnly
+                streaming_audio::ActiveSources::Both
+                    | streaming_audio::ActiveSources::SystemAudioOnly
             ),
         },
     );

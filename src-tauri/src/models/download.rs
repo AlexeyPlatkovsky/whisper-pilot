@@ -8,9 +8,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-use super::catalog::{
-    asset_path, is_asset_downloaded, models_dir, ModelAsset,
-};
+use super::catalog::{asset_path, is_asset_downloaded, models_dir, ModelAsset};
 
 /// Reports bytes downloaded so far for one asset.
 type ProgressCb = Box<dyn Fn(u64) + Send + Sync>;

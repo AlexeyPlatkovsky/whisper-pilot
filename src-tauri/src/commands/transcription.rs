@@ -339,8 +339,7 @@ pub(crate) async fn diarize_meeting(
 
     match outcome {
         Ok((Ok(turns), fallback_warning)) => {
-            let meeting =
-                crate::meetings::diarize_meeting_segments(&app_support_dir, id, &turns)?;
+            let meeting = crate::meetings::diarize_meeting_segments(&app_support_dir, id, &turns)?;
             Ok(TranscribeMeetingResult {
                 meeting,
                 diarization_warning: fallback_warning,

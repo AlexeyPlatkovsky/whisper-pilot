@@ -29,6 +29,11 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 - For TaskPilot-exempt instruction-system work, use the explicitly approved
   current branch or an explicitly approved descriptive branch; do not require
   or invent a TaskPilot ID.
+- For an untracked user-authored worktree review, use the explicitly approved
+  current branch or an explicitly approved descriptive branch. Verify that the
+  staged paths are limited to the frozen boundary; direct review remediation
+  must stay within that boundary;
+  do not require or invent a TaskPilot ID.
 - It is acceptable to perform a child task on a branch named for its parent feature or epic when the branch clearly covers the requested work.
 - On a feature/epic batch branch, the branch name does not make the parent the
   active work item. The routed batch manifest must identify the one active child
@@ -68,6 +73,10 @@ the required task-scoped local commits.
   start its two members together, but no third task may start.
 - AI-governance maintenance has no TaskPilot completion-commit requirement and
   follows the explicit commit authority in `AGENTS.md`.
+- An untracked user-authored worktree review has no TaskPilot completion-commit
+  requirement. When the user explicitly requests a local commit, it begins
+  `review: ` and includes only the frozen boundary and direct remediation
+  within it.
 
 ## Recommended Checks
 
@@ -101,7 +110,10 @@ After edits:
    transition first, then stage its finalized TaskPilot records with the code
    and create the required local commit. Report the commit hash in closure
    evidence without a post-commit TaskPilot write. For AI-governance work,
-   report whether a commit was requested or remains uncommitted.
+   report whether a commit was requested or remains uncommitted. For untracked
+   worktree review, verify the frozen boundary and that remediation stayed
+   within it,
+   then report the local commit evidence without a TaskPilot mutation.
 
 ### Commit-failure recovery
 
@@ -134,4 +146,4 @@ For an authorized local commit, emit:
 
 | Status | Task identity | Staged paths verified | Commit hash | Uncommitted remainder | Push |
 |---|---|---|---|---|---|
-| completed / blocked / failed | `<ID(s)>` / exempt | yes / no — reason | `<hash>` / none | `<paths>` / none | skipped / completed / failed |
+| completed / blocked / failed | `<ID(s)>` / exempt / `untracked — user-authored worktree review` | yes / no — reason | `<hash>` / none | `<paths>` / none | skipped / completed / failed |

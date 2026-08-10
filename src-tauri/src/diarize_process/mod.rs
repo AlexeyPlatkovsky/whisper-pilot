@@ -211,12 +211,18 @@ mod tests {
 
     #[test]
     fn fallback_variant_for_returns_campplus_for_titanet_large() {
-        assert_eq!(super::fallback_variant_for("titanet-large"), Some("campplus"));
+        assert_eq!(
+            super::fallback_variant_for("titanet-large"),
+            Some("campplus")
+        );
     }
 
     #[test]
     fn fallback_variant_for_returns_titanet_large_for_campplus() {
-        assert_eq!(super::fallback_variant_for("campplus"), Some("titanet-large"));
+        assert_eq!(
+            super::fallback_variant_for("campplus"),
+            Some("titanet-large")
+        );
     }
 
     #[test]
@@ -258,7 +264,10 @@ mod tests {
 
     #[test]
     fn variant_display_name_returns_label_for_known_variants() {
-        assert_eq!(super::variant_display_name("titanet-large"), "TitaNet-large");
+        assert_eq!(
+            super::variant_display_name("titanet-large"),
+            "TitaNet-large"
+        );
         assert_eq!(super::variant_display_name("campplus"), "CAM++");
     }
 

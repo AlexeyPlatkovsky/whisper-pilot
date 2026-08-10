@@ -26,11 +26,7 @@ pub(crate) fn open_meeting(app: tauri::AppHandle, id: i64) -> Result<MeetingDto>
 }
 
 #[tauri::command]
-pub(crate) fn rename_meeting(
-    app: tauri::AppHandle,
-    id: i64,
-    title: String,
-) -> Result<MeetingDto> {
+pub(crate) fn rename_meeting(app: tauri::AppHandle, id: i64, title: String) -> Result<MeetingDto> {
     crate::meetings::rename_meeting(&app_data_dir(&app)?, id, title)
 }
 

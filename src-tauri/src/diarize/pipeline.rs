@@ -3,8 +3,8 @@
 //! assignments.
 
 use crate::diarize::clustering::{cluster_embeddings, ClusterStop};
-use crate::diarize::segmentation::{embedding_progress_units, DirectSegmentationModel};
 use crate::diarize::segmentation::SegmentationWindow;
+use crate::diarize::segmentation::{embedding_progress_units, DirectSegmentationModel};
 use crate::error::{AppError, Result};
 use sherpa_rs::speaker_id::{EmbeddingExtractor, ExtractorConfig};
 use std::collections::BTreeMap;
@@ -285,10 +285,7 @@ mod tests {
 
         assert_eq!(
             turns_from_assignments(&windows, &assignments, 500, 100, 1_000).unwrap(),
-            vec![
-                speaker_turn(0, 500, 0),
-                speaker_turn(0, 500, 1),
-            ]
+            vec![speaker_turn(0, 500, 0), speaker_turn(0, 500, 1),]
         );
     }
 }

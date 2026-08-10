@@ -120,10 +120,7 @@ pub(crate) async fn generate_streaming_notes(
 /// Returns the cleaned transcript without persisting it — the frontend
 /// shows it as a diff for review; only `accept_streaming_prettify` writes it.
 #[tauri::command]
-pub(crate) async fn generate_streaming_prettify(
-    app: tauri::AppHandle,
-    id: i64,
-) -> Result<String> {
+pub(crate) async fn generate_streaming_prettify(app: tauri::AppHandle, id: i64) -> Result<String> {
     let app_support_dir = app_data_dir(&app)?;
     let model_path = resolve_llm_model_path(&app_support_dir)?;
     let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;

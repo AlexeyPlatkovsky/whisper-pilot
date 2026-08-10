@@ -94,6 +94,31 @@ required before implementation for that work.
 `.claude/skills/taskpilot-work/SKILL.md` owns item lookup, approval, record
 structure, commands, and lifecycle procedure.
 
+**User-authored worktree review exception.** When the user explicitly
+designates already-present paths as user-authored changes for review,
+validation, remediation, commit, or push, do not create or reopen a TaskPilot
+item solely to perform that closure work. Before remediation, freeze the
+boundary as the pre-review `HEAD` commit SHA, exhaustive path list, and a diff
+snapshot against that exact SHA. Designated untracked paths must be regular
+UTF-8 text files; capture each path's status and full `git diff --no-index
+/dev/null <path>` snapshot, and block on binary, non-regular, or undecodable
+untracked paths. Classify and route
+the work normally, preserve all applicable quality, validation, review,
+branch, and commit-scope gates, and limit remediation to a change directly
+necessary to correct a demonstrated defect, regression, build failure, or
+validation failure within that frozen boundary. Re-route scope expansion or
+new behavior as normal tracked work. Record the identity as `untracked —
+user-authored worktree review`; TaskPilot lifecycle and TaskPilot-record
+commit requirements are not applicable. Its local commit must begin `review: `.
+For frozen user-authored logic, the manager must provide a labeled existing-
+coverage assessment that maps each changed behavior to a focused passing test
+or marks it missing. Historical AI TDD provenance is not required, but each
+missing observable-coverage row is a Major review finding that blocks closure;
+the normal TDD provenance gate applies before any production-logic remediation
+in this route.
+New feature work or scope expansion remains tracked work and requires the
+normal TaskPilot identity before implementation.
+
 **AI-governance maintenance is TaskPilot-exempt.** The exemption covers this
 root `AGENTS.md` and the operational materials under `.claude/` when the
 change governs AI execution rather than product behavior or product
