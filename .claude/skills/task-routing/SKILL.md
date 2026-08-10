@@ -202,6 +202,9 @@ commit authorization. Any new behavior,
 unrelated path, or changed baseline invalidates this route and returns the work
 to normal TaskPilot routing.
 
+For frozen user-authored logic, the B2 assessment maps every changed observable
+behavior to a focused passing test or explicitly marks it missing.
+
 If the task does not match any route:
 
 - stop
