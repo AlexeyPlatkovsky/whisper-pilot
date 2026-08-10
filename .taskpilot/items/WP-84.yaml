@@ -1,0 +1,43 @@
+schema_version: 1
+id: WP-84
+title: 'Transcription randomly aborts with whisper error -6: whisper-rs safe callback trampolines are UB'
+priority: normal
+type: bug
+status: done
+created_at: '2026-08-10T10:57:13Z'
+updated_at: '2026-08-10T11:49:46Z'
+description: 'Observed on Apple M5 Pro, macOS 26.6, whisper.cpp 1.8.3 (whisper-rs 0.16.0 / whisper-rs-sys 0.15.0), 2026-08-10: transcription fails intermittently with `whisper_full_with_state: failed to encode` (whisper error code -6). Controlled experiments on the real model and a 1-minute fixture: with the abort callback installed, CPU decode failed 2 of 3 runs with -6 immediately after a successful language detection; without the callback the same CPU decode passed; the same whisper-rs/whisper.cpp versions have been pinned since long before the failure appeared, and the failure onset tracks a rebuild, consistent with a heap-layout-dependent read.
+
+
+  Root cause location: `transcribe_with_state` (src-tauri/src/transcribe.rs, the shared decode path for Meeting file transcription and Streaming windows) installs cancellation and progress through whisper-rs''s `set_abort_callback_safe` / `set_progress_callback_safe`. Those helpers box the closure as `Box<dyn FnMut>` (a fat pointer) but their FFI trampoline reinterprets user_data as the concrete closure type `F` (whisper-rs 0.16.0 src/whisper_params.rs; same code on upstream master). The abort-flag read therefore dereferences heap garbage; when that byte is nonzero, whisper.cpp''s encode loop treats it as an abort request and `whisper_full_with_state` returns -6 (whisper.cpp abort check at the end of `whisper_encode_internal`, called from the decode loop).
+
+
+  Scope: install the cancel/progress callbacks without the buggy safe trampolines - use whisper-rs''s raw setters (`set_abort_callback`, `set_abort_callback_user_data`, `set_progress_callback`, `set_progress_callback_user_data`) with our own sound trampolines whose user_data points at the live `AtomicBool` / at the concrete progress closure for the duration of the synchronous `state.full` call. Cancellation semantics (WP-19) and determinate progress events (WP-58) are unchanged. Non-goal: the separate, upstream ggml Metal fault observed on the same machine (`auto-detected language: af (p = nan)`, reproduced on main-branch code that installs no callbacks) - it is not addressed here.
+
+
+  Happy path: Given a running transcription whose cancel flag stays false, when the decode runs, then it completes without whisper error -6 regardless of allocator state; Given the user clicks Stop, when the flag flips true, then the decode aborts and the run reports cancellation exactly as today; progress events keep driving the determinate progress bar.
+
+
+  Failure behavior: the abort callback must return the exact flag value - true only after cancellation was requested - and the progress callback must forward the exact progress value whisper.cpp reports, on every call.
+
+
+  Edge cases: Stop requested before decode starts (Cancelled before `state.full`, unchanged); Stop during a streaming session window (same transcribe_with_state path); a progress sink that captures state (the app''s event emitter) must be invoked through a pointer that is valid for the whole synchronous decode, never through a reinterpreted trait object.
+
+
+  Target surfaces: src-tauri/src/transcribe.rs (callback installation inside `transcribe_with_state`) and its tests; src-tauri/tests/pipeline.rs family for end-to-end evidence. docs/architecture.md''s Transcription section describes the cancel/progress callback mechanism and must be checked in the documentation-maintenance step.
+
+
+  Constraints: no change to decode parameters, cancellation UX, IPC events, persistence, or the whisper-rs version. `unsafe` stays confined to the FFI trampoline wiring and is justified per line.'
+dod:
+- The abort trampoline returns the exact cancel-flag value across the FFI boundary - proven by a Rust unit test that invokes the installed trampoline against a stack `AtomicBool` in both states.
+- The progress trampoline forwards the exact progress value to the concrete closure - proven by a Rust unit test.
+- No call to `set_abort_callback_safe` or `set_progress_callback_safe` remains under src-tauri/ (grep-verified).
+- 'With a cancel flag that stays false, repeated decodes complete without whisper error -6: an ignored stress integration test (real model + fixture audio, CPU backend to stay clear of the unrelated Metal fault) passes 5 consecutive runs; pre-fix evidence: the same path failed 2 of 3 CPU runs.'
+- Stop still aborts a running decode with AppError::Cancelled - covered by a test.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the coverage gate.'
+links:
+  relates_to:
+  - WP-19
+  - WP-58
+  - WP-82
+created_by: Aleksei_Platkovskii

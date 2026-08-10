@@ -9,6 +9,7 @@
 
 use crate::error::{AppError, Result};
 use serde::Serialize;
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -114,6 +115,46 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
         .expect("\"transcription\" is a static CATALOG entry with at least one asset")
 }
 
+/// Sound FFI trampolines for the decode callbacks. whisper-rs's
+/// `set_abort_callback_safe` / `set_progress_callback_safe` reinterpret the
+/// boxed fat pointer as the concrete closure type (UB) — do not use them;
+/// see WP-84. user_data here is a plain pointer to the live [`AtomicBool`] /
+/// the concrete progress closure, borrowed for the whole synchronous
+/// `state.full` call they are installed for.
+unsafe extern "C" fn abort_trampoline(user_data: *mut c_void) -> bool {
+    // user_data is the `*const AtomicBool` installed by install_run_callbacks;
+    // the flag outlives the synchronous decode it is read during.
+    unsafe { (*user_data.cast::<AtomicBool>()).load(Ordering::Relaxed) }
+}
+
+unsafe extern "C" fn progress_trampoline<F: FnMut(i32)>(
+    _ctx: *mut whisper_rs::WhisperSysContext,
+    _state: *mut whisper_rs::WhisperSysState,
+    progress: std::ffi::c_int,
+    user_data: *mut c_void,
+) {
+    // user_data is the `*mut F` installed by install_run_callbacks; the
+    // closure outlives the synchronous decode it is invoked during.
+    unsafe { (*user_data.cast::<F>())(progress) }
+}
+
+/// Wire cancel/progress into `params` through whisper-rs's raw setters,
+/// bypassing the UB safe trampolines above. `cancel` and `on_progress` are
+/// borrowed stack/caller values that outlive the synchronous `state.full`
+/// call these params are built for; the raw pointers never escape it.
+fn install_run_callbacks<F: FnMut(i32)>(
+    params: &mut FullParams,
+    cancel: &AtomicBool,
+    on_progress: &mut F,
+) {
+    unsafe {
+        params.set_abort_callback(Some(abort_trampoline));
+        params.set_abort_callback_user_data(cancel as *const AtomicBool as *mut c_void);
+        params.set_progress_callback(Some(progress_trampoline::<F>));
+        params.set_progress_callback_user_data(on_progress as *mut F as *mut c_void);
+    }
+}
+
 /// Transcribe 16 kHz mono samples into timestamped, auto-detected segments.
 /// A fresh state suits one-shot Meeting decode; Streaming reuses its state.
 /// Cancellation returns [`AppError::Cancelled`] rather than a partial result.
@@ -138,7 +179,7 @@ pub fn transcribe_with_state(
     state: &mut WhisperState,
     samples: &[f32],
     cancel: &Arc<AtomicBool>,
-    on_progress: impl FnMut(i32) + 'static,
+    mut on_progress: impl FnMut(i32) + 'static,
 ) -> Result<Transcription> {
     if cancel.load(Ordering::Relaxed) {
         return Err(AppError::Cancelled);
@@ -171,9 +212,7 @@ pub fn transcribe_with_state(
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
-    let abort_flag = Arc::clone(cancel);
-    params.set_abort_callback_safe(move || abort_flag.load(Ordering::Relaxed));
-    params.set_progress_callback_safe(on_progress);
+    install_run_callbacks(&mut params, cancel, &mut on_progress);
 
     let full_result = state.full(params, samples);
     // The abort callback stops whisper's decode loop, but whisper.cpp still
@@ -294,6 +333,40 @@ mod tests {
     #[test]
     fn undetected_language_is_the_auto_sentinel() {
         assert_eq!(UNDETECTED_LANGUAGE, "auto");
+    }
+
+    #[test]
+    fn abort_trampoline_returns_the_exact_flag_value() {
+        // EP: flag false / flag true partitions — the trampoline must read
+        // back the exact flag it was handed (WP-84).
+        let flag = AtomicBool::new(false);
+        let data = &flag as *const AtomicBool as *mut std::ffi::c_void;
+
+        assert!(!unsafe { abort_trampoline(data) });
+        flag.store(true, Ordering::Relaxed);
+        assert!(unsafe { abort_trampoline(data) });
+    }
+
+    #[test]
+    fn progress_trampoline_forwards_the_exact_progress_value() {
+        // The generic helper mirrors how install_run_callbacks monomorphizes
+        // the trampoline over the caller's closure type (WP-84).
+        fn drive<F: FnMut(i32)>(sink: &mut F) {
+            unsafe {
+                progress_trampoline::<F>(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    42,
+                    sink as *mut F as *mut std::ffi::c_void,
+                );
+            }
+        }
+
+        let mut seen = Vec::new();
+        let mut sink = |p: i32| seen.push(p);
+        drive(&mut sink);
+
+        assert_eq!(seen, vec![42]);
     }
 
     #[test]

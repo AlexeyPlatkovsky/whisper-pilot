@@ -107,6 +107,16 @@ configuration as plain data so it can be asserted in a unit test — notably
 `detect_language_only`, which must stay `false` because whisper.cpp returns
 immediately after detection when it is set, yielding an empty transcript.
 
+Decode callbacks (progress, abort) are installed through whisper-rs's raw
+callback setters, not its `_*_callback_safe` helpers: those helpers box the
+closure as a fat pointer but their FFI trampoline reinterprets it as a concrete
+type — undefined behavior that surfaced as intermittent `failed to encode`
+failures and segfaults (WP-84). A further known limitation is an intermittent
+upstream ggml Metal encoder fault on Apple M5 Pro (`auto-detected language: af
+(p = nan)`, then `failed to encode` or empty output); CPU decoding is
+unaffected and the fault is in whisper.cpp 1.8.3 itself, not in the decode
+setup (WP-82).
+
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 
 - merge** (M2, `diarize/`). The transcript is persisted between the two phases,

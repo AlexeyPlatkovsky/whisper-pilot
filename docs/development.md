@@ -68,6 +68,8 @@ data model, and build notes.
 ## Environment Variables
 
 - `WHISPERPILOT_MODEL_PATH` — override the Whisper model path.
+- `WHISPERPILOT_TEST_AUDIO` — WAV fixture path for the ignored model-backed
+  tests (e.g. `cargo test --test wp84_callback_regression -- --ignored`).
 
 ## Testing Strategy
 
