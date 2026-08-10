@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
@@ -763,50 +770,41 @@ describe("App — persisted meeting workspace", () => {
       },
     ]);
     vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const user = userEvent.setup({
-        advanceTimers: vi.advanceTimersByTime.bind(vi),
-      });
-      // Installed after userEvent.setup, which swaps navigator.clipboard for
-      // its own stub — defining ours last is what the component actually calls.
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, "clipboard", {
-        value: { writeText },
-        configurable: true,
-      });
-      render(<App />);
-      await screen.findByDisplayValue("Saved transcript");
+    // Real timers, not fake: the toast's async continuation (await writeText →
+    // setCopied) and its 2500ms rollback timer are verified with waitFor, which
+    // is deterministic under CI load — fake timers with shouldAdvanceTime fold
+    // real wall-clock into the fake clock and can roll the toast back before
+    // an assertion observes it on a slow runner.
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
 
-      await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
-      // Flush the click's async continuation deterministically rather than
-      // polling with `findByText`: `shouldAdvanceTime` folds real wall-clock
-      // into the fake clock, so on a slow CI runner the 2500ms rollback timer
-      // could fire before the poll ever observes the toast.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(0);
-      });
-      const toast = screen.getByText("Copied", { selector: ".wp-toast" });
-      expect(toast).toHaveAttribute("role", "status");
-      expect(toast).toHaveClass("wp-toast--top");
-      expect(
-        screen.getByRole("button", { name: "Copied" }),
-      ).toBeInTheDocument();
+    const toast = await screen.findByText("Copied", { selector: ".wp-toast" });
+    expect(toast).toHaveAttribute("role", "status");
+    expect(toast).toHaveClass("wp-toast--top");
+    expect(screen.getByRole("button", { name: "Copied" })).toBeInTheDocument();
 
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2600);
-      });
-
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    // The 2500ms rollback timer is real, so wait for it to fire.
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByText("Copied", { selector: ".wp-toast" }),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
   });
 
   // state-transition: copied --switch meeting--> idle (pending feedback cleared).
@@ -839,54 +837,48 @@ describe("App — persisted meeting workspace", () => {
     vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
       id === OLDER_MEETING.id ? OLDER_MEETING : NEWEST_MEETING,
     );
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const user = userEvent.setup({
-        advanceTimers: vi.advanceTimersByTime.bind(vi),
-      });
-      // Installed after userEvent.setup, which swaps navigator.clipboard for
-      // its own stub — defining ours last is what the component actually calls.
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, "clipboard", {
-        value: { writeText },
-        configurable: true,
-      });
-      render(<App />);
-      await screen.findByDisplayValue("Saved transcript");
+    // Real timers, same reason as the first toast test: the toast's async
+    // continuation and its rollback timer are verified with waitFor, which is
+    // deterministic under CI load instead of racing fake-timer advancement.
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
 
-      await user.click(screen.getByRole("button", { name: "Copy transcript" }));
-      // Same deterministic flush as the first toast test: no polling across
-      // real time that `shouldAdvanceTime` folds into the fake clock.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(0);
-      });
-      screen.getByText("Copied", { selector: ".wp-toast" });
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+    await screen.findByText("Copied", { selector: ".wp-toast" });
 
-      await user.click(
-        screen.getByRole("button", { name: "Open Older meeting" }),
-      );
-      await screen.findByDisplayValue("Older transcript");
+    await user.click(
+      screen.getByRole("button", { name: "Open Older meeting" }),
+    );
+    await screen.findByDisplayValue("Older transcript");
 
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
 
-      // The cancelled timer must not resurrect the feedback on the new meeting.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(3000);
-      });
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
+    // The cancelled rollback timer must not resurrect the feedback on the new
+    // meeting — wait longer than the 2500ms window and re-check.
+    await waitFor(
+      () => {
+        expect(
+          screen.queryByText("Copied", { selector: ".wp-toast" }),
+        ).not.toBeInTheDocument();
+      },
+      { timeout: 4000 },
+    );
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
   });
 
   // state-transition: copying (in-flight write) --switch meeting--> the late
@@ -1441,9 +1433,14 @@ describe("App — transcript editing", () => {
       await chooseAndTranscribe(user);
       const textarea = await screen.findByDisplayValue("Hello");
 
-      await user.type(textarea, "!");
+      // `fireEvent.change`, not `user.type`: each keystroke's real wall-clock
+      // (which `shouldAdvanceTime` folds into the fake clock) would otherwise
+      // let the first debounce timer fire before the second keystroke
+      // reschedules it on a slow CI runner. Synchronous changes keep the fake
+      // clock advanced only by the explicit calls below.
+      fireEvent.change(textarea, { target: { value: "Hello!" } });
       await vi.advanceTimersByTimeAsync(200);
-      await user.type(textarea, "!");
+      fireEvent.change(textarea, { target: { value: "Hello!!" } });
       await vi.advanceTimersByTimeAsync(500);
 
       expect(ipc.updateSegment).toHaveBeenCalledTimes(1);

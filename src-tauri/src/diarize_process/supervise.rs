@@ -403,13 +403,20 @@ mod tests {
     fn supervise_reports_crashed_when_the_child_dies_by_signal() {
         let dir = tempfile::tempdir().unwrap();
         let output = out_path(dir.path());
-        // SIGBUS (10 on macOS) is the exact signal sherpa-onnx's native
-        // clustering raises on the WP-53 reproducer.
+        // SIGBUS is the exact signal sherpa-onnx's native clustering raises on
+        // the WP-53 reproducer. The signal number differs by platform (10 on
+        // macOS, 7 on Linux), so assert via the libc constant rather than a
+        // hardcoded value — the test runs on Linux CI too.
         let mut command = shell("kill -BUS $$; sleep 5");
 
         let run = supervise(&mut command, &output, Duration::from_secs(10)).unwrap();
 
-        assert_eq!(run.outcome, ChildOutcome::Crashed { signal: 10 });
+        assert_eq!(
+            run.outcome,
+            ChildOutcome::Crashed {
+                signal: libc::SIGBUS
+            }
+        );
     }
 
     #[test]

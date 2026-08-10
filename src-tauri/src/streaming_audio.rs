@@ -7,17 +7,28 @@
 //! sources failed" is a hard error, mirroring this app's other fail-open
 //! engine paths (diarization, ADR-013).
 
+// Everything below the DSP functions (the shared sample queue, the mixer
+// thread, and the imports they need) is only consumed by the macOS-gated
+// `platform` module further down, so it is gated to macOS too — a Linux build
+// sees no dead code and no unused imports.
+#[cfg(target_os = "macos")]
 use crate::audio::SAMPLE_RATE;
+#[cfg(target_os = "macos")]
 use crate::error::{AppError, Result};
+#[cfg(target_os = "macos")]
 use std::collections::VecDeque;
+#[cfg(target_os = "macos")]
 use std::sync::mpsc::Sender;
+#[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex};
+#[cfg(target_os = "macos")]
 use std::time::Duration;
 
 /// How often the mixer thread drains the source buffers and emits a mixed
 /// chunk to the session's output. Independent of WP-71's own 5-10s decode
 /// window — this is just the mixing granularity, kept short so a consumer
 /// seeing a continuous stream never waits long for the next chunk.
+#[cfg(target_os = "macos")]
 const MIX_TICK: Duration = Duration::from_millis(100);
 
 /// Which of the two capture sources are actually active in a session —
@@ -90,18 +101,22 @@ pub fn mix_mono(a: &[f32], b: &[f32]) -> Vec<f32> {
 /// a lock-free ring buffer: capture callbacks here push at most a few
 /// thousand samples at a time (tens of ms of audio), so a brief lock is not
 /// the bottleneck a real-time audio *output* path would need to avoid.
+#[cfg(target_os = "macos")]
 type SharedBuffer = Arc<Mutex<VecDeque<f32>>>;
 
+#[cfg(target_os = "macos")]
 fn new_shared_buffer() -> SharedBuffer {
     Arc::new(Mutex::new(VecDeque::new()))
 }
 
 /// Drain everything currently queued, in order, and clear the queue.
+#[cfg(target_os = "macos")]
 fn drain(buf: &SharedBuffer) -> Vec<f32> {
     let mut guard = buf.lock().expect("streaming audio buffer mutex poisoned");
     guard.drain(..).collect()
 }
 
+#[cfg(target_os = "macos")]
 fn push(buf: &SharedBuffer, samples: &[f32]) {
     let mut guard = buf.lock().expect("streaming audio buffer mutex poisoned");
     guard.extend(samples.iter().copied());
@@ -112,6 +127,7 @@ fn push(buf: &SharedBuffer, samples: &[f32]) {
 /// sends the result — even an empty chunk, so a consumer can tell the
 /// session is still alive versus having silently stopped. Stops when `tx`'s
 /// receiver is dropped (send failure) or `stop` is set.
+#[cfg(target_os = "macos")]
 fn run_mixer(
     mic_buf: Option<SharedBuffer>,
     system_buf: Option<SharedBuffer>,

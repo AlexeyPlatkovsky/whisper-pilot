@@ -3,6 +3,7 @@
 //! the running Streaming capture runtime.
 
 use crate::error::{AppError, Result};
+#[cfg(target_os = "macos")]
 use crate::streaming_audio;
 use crate::transcribe;
 use std::path::PathBuf;

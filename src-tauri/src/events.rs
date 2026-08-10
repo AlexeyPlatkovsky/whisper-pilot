@@ -26,6 +26,7 @@ pub(crate) struct TranscriptionProgressEvent {
 /// Emitted once per decoded Streaming window (`streaming_window`), whether
 /// it succeeded or fail-open-skipped — `outcome_ok` distinguishes the two so
 /// the UI can show "this span failed" rather than reading a skip as silence.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingWindowEvent {
     pub(crate) session_id: i64,
@@ -40,6 +41,7 @@ pub(crate) struct StreamingWindowEvent {
 /// Emitted once, right after a session starts (`streaming_sources`), naming
 /// which capture source(s) actually came up — the mic-only-degradation
 /// indicator WP-73's UI needs, since a silent fallback would be invisible.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingSourcesEvent {
     pub(crate) session_id: i64,
@@ -50,6 +52,7 @@ pub(crate) struct StreamingSourcesEvent {
 /// Emitted once the decode loop ends (`streaming_session_ended`) — either
 /// because `stop_streaming_session` dropped the capture, or (not yet
 /// possible in v1: no auto-timeout) it ended on its own.
+#[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingSessionEndedEvent {
     pub(crate) session_id: i64,
