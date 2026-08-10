@@ -1336,7 +1336,8 @@ describe("StreamingView", () => {
         // firing thousands of them takes real time — seconds under coverage
         // instrumentation — which shouldAdvanceTime bleeds into the measured
         // elapsed. Assert bleed-tolerant windows on each side of the 60
-        // minute format switch instead of exact boundary seconds.
+        // minute format switch instead of exact boundary seconds. The
+        // generous timeout absorbs the thousands of instrumented re-renders.
         await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 30 * 1000);
         expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
           /^59:\d{2}$/,
@@ -1349,7 +1350,7 @@ describe("StreamingView", () => {
       } finally {
         vi.useRealTimers();
       }
-    });
+    }, 60_000);
 
     // S-5: the session ending on its own (not via manual Stop) still resets the widget
     it("returns to Ready when the session ends on its own, not only via manual Stop", async () => {
@@ -1574,15 +1575,19 @@ describe("StreamingView", () => {
           "00:00",
         );
 
+        // Same bleed consideration as the h:mm:ss test above: real wall-clock
+        // folded into the fake clock can add a second or two on a slow,
+        // instrumented runner, so assert a small window rather than an exact
+        // boundary.
         await vi.advanceTimersByTimeAsync(3000);
 
-        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-          "00:03",
+        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
+          /^00:0[3-9]$/,
         );
       } finally {
         vi.useRealTimers();
       }
-    });
+    }, 60_000);
 
     // Empty notes sections are omitted, matching Meeting's rendering
     it("omits empty notes sections", async () => {

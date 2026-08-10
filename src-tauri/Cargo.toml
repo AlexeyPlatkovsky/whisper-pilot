@@ -19,6 +19,9 @@ tokio = { version = "1", features = ["full"] }
 hound = "3"
 # WhisperPilot currently targets macOS; opt out of rfd's default Linux portal
 # stack, which is unused here and carries a vulnerable quick-xml transitively.
+# On macOS rfd needs no explicit backend. The non-macOS CI target (Linux) must
+# still build, so the target-specific section below adds the gtk3 backend there
+# (the CI installs libgtk-3-dev).
 rfd = { version = "0.15", default-features = false }
 anyhow = "1"
 thiserror = "2"
@@ -57,6 +60,7 @@ llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal"] 
 screencapturekit = "8.0.1"
 cpal = "0.17.3"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
+rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 whisper-rs = { version = "0.16" }
 llama-cpp-2 = { version = "0.1", default-features = false }
 

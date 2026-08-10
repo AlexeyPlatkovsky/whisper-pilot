@@ -780,9 +780,14 @@ describe("App — persisted meeting workspace", () => {
 
       await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
-      const toast = await screen.findByText("Copied", {
-        selector: ".wp-toast",
+      // Flush the click's async continuation deterministically rather than
+      // polling with `findByText`: `shouldAdvanceTime` folds real wall-clock
+      // into the fake clock, so on a slow CI runner the 2500ms rollback timer
+      // could fire before the poll ever observes the toast.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
       });
+      const toast = screen.getByText("Copied", { selector: ".wp-toast" });
       expect(toast).toHaveAttribute("role", "status");
       expect(toast).toHaveClass("wp-toast--top");
       expect(
@@ -850,7 +855,12 @@ describe("App — persisted meeting workspace", () => {
       await screen.findByDisplayValue("Saved transcript");
 
       await user.click(screen.getByRole("button", { name: "Copy transcript" }));
-      await screen.findByText("Copied", { selector: ".wp-toast" });
+      // Same deterministic flush as the first toast test: no polling across
+      // real time that `shouldAdvanceTime` folds into the fake clock.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(0);
+      });
+      screen.getByText("Copied", { selector: ".wp-toast" });
 
       await user.click(
         screen.getByRole("button", { name: "Open Older meeting" }),

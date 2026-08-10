@@ -2,14 +2,22 @@
 //! sessions, plus start/stop the live session (macOS capture).
 
 use crate::error::{AppError, Result};
+#[cfg(target_os = "macos")]
 use crate::events::{StreamingSessionEndedEvent, StreamingSourcesEvent, StreamingWindowEvent};
-use crate::state::{app_data_dir, now_ms, AppState, StreamingRuntime};
+use crate::state::{app_data_dir, AppState};
+#[cfg(target_os = "macos")]
+use crate::state::{now_ms, StreamingRuntime};
 use crate::streaming;
+#[cfg(target_os = "macos")]
 use crate::streaming_audio;
+#[cfg(target_os = "macos")]
 use crate::streaming_session;
 use crate::streaming_store;
+#[cfg(target_os = "macos")]
 use crate::transcribe;
-use tauri::{Emitter, Manager, State};
+use tauri::State;
+#[cfg(target_os = "macos")]
+use tauri::{Emitter, Manager};
 
 /// List persisted Streaming sessions newest-touched first, for the
 /// Streaming tab's session list.

@@ -2,14 +2,10 @@
 //! docs/architecture.md's Diarization Process Isolation section.
 //!
 //! The child is *this same binary* re-executed with a hidden argv mode
-//! (`worker::WORKER_FLAG`); each attempt is independent, so a caller may run
-//! more than one per transcription (WP-57's fallback does). macOS only
+//! (`worker::WORKER_FLAG`); each attempt is independent. Split by concern:
+//! [`transport`] (file formats), [`worker`] (child behavior), [`supervise`]
+//! (parent supervisor + outcome classification). macOS only
 //! (`std::os::unix::process::ExitStatusExt`).
-//!
-//! Split by concern: [`transport`] owns the file formats that cross the
-//! process boundary, [`worker`] owns the re-executed child's behavior, and
-//! [`supervise`] owns the parent-side supervisor and outcome classification.
-//! This module owns the public entry points and WP-57's crash fallback.
 
 pub(crate) mod supervise;
 pub(crate) mod transport;
