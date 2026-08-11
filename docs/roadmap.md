@@ -27,7 +27,8 @@ being rewritten. No public distribution or notarization in the current horizon.
 - **Goal:** Turn the stateless flow into a persisted two-pane workspace **and**
   attribute the transcript by speaker, to a **beta-ready** app. A local library of
   **meetings** with reopen/rename/delete, **auto-saved** edits, a manual
-  **Transcribe** action with **progress + Stop**, automatic language detection,
+  **Transcribe** action with an indeterminate running status, automatic language detection
+  (safe cancellation is deferred to WP-87's isolated worker),
   and **Markdown / plain-text export**; local **diarization** so the
   transcript renders as a per-speaker chat of **colored bubbles**; plus a
   **Settings** screen (beta scope): **AI models** download/delete (one model per

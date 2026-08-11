@@ -5,7 +5,7 @@ use crate::audio;
 use crate::diarize;
 use crate::diarize_process;
 use crate::error::{AppError, Result};
-use crate::events::{TranscriptionPhaseEvent, TranscriptionProgressEvent};
+use crate::events::TranscriptionPhaseEvent;
 use crate::meetings::MeetingDto;
 use crate::settings;
 use crate::state::{app_data_dir, AppState};
@@ -13,7 +13,9 @@ use crate::streaming_session;
 use crate::transcribe;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use tauri::{Emitter, State};
+use whisper_rs::WhisperContext;
 
 /// `transcribe_meeting`'s result: the persisted meeting plus a non-fatal
 /// warning when diarization was requested but degraded (its active model's
@@ -56,9 +58,8 @@ type PendingDiarization =
 /// the samples it was decoded from so diarization can reuse them.
 ///
 async fn decode_and_transcribe(
-    app_support_dir: PathBuf,
+    ctx: Arc<WhisperContext>,
     path: String,
-    on_progress: impl FnMut(i32) + Send + 'static,
 ) -> Result<(transcribe::Transcription, Vec<f32>)> {
     let input = PathBuf::from(&path);
 
@@ -69,35 +70,23 @@ async fn decode_and_transcribe(
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
     let transcription = {
         let samples = samples.clone();
-        tokio::task::spawn_blocking(move || {
-            transcribe::decode_meeting_once(|| {
-                let cpu_ctx = transcribe::load_model_cpu(&app_support_dir)?;
-                transcribe::transcribe(&cpu_ctx, &samples, on_progress)
-            })
-        })
-        .await
-        .map_err(|e| AppError::Transcribe(e.to_string()))??
+        tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples))
+            .await
+            .map_err(|e| AppError::Transcribe(e.to_string()))??
     };
     ensure_non_empty_transcript(&transcription)?;
 
     Ok((transcription, samples))
 }
 
-/// WP-85: a finished decode with zero segments is never a usable Meeting
-/// transcript — for audio holding speech it is the empty-output signature of
-/// the intermittent ggml Metal encoder fault (see `docs/architecture.md`'s
-/// Transcription section), and a genuinely speechless file has nothing to
-/// persist either. Failing here, before persist and before the diarization
-/// pass is constructed, keeps an empty yet "finished" meeting out of the
-/// library. Streaming never passes through this path — its windows
-/// legitimately contain silence — so the shared decode in `transcribe.rs`
-/// stays tolerant of zero segments.
+/// Reject empty Meeting decodes before persistence or diarization. This
+/// protects against the Metal encoder's empty-output failure while allowing
+/// Streaming windows to remain tolerant of silence.
 fn ensure_non_empty_transcript(transcription: &transcribe::Transcription) -> Result<()> {
     if transcription.segments.is_empty() {
         return Err(AppError::Transcribe(
-            "Whisper decoded no speech from this file. If the file does contain speech, \
-             retry — a known intermittent Metal encoder fault can make a decode return \
-             empty output."
+            "Whisper decoded no speech from this file. Check that the source contains \
+             audible speech and try another recording if needed."
                 .to_string(),
         ));
     }
@@ -222,15 +211,8 @@ pub(crate) async fn transcribe_meeting(
     )
     .map(str::to_string);
 
-    let progress_app = app.clone();
-    let on_progress = move |percent: i32| {
-        let _ = progress_app.emit(
-            "transcription_progress",
-            TranscriptionProgressEvent { id, percent },
-        );
-    };
-    let (transcription, samples) =
-        decode_and_transcribe(app_support_dir.clone(), path, on_progress).await?;
+    let ctx = state.model(app_support_dir.clone()).await?;
+    let (transcription, samples) = decode_and_transcribe(ctx, path).await?;
 
     let diarization: Option<PendingDiarization> = active_diarization_variant.map(|variant| {
         let app = app.clone();
@@ -423,18 +405,17 @@ mod tests {
         Some(Box::pin(async move { outcome }))
     }
 
-    // WP-85: a zero-segment decode is the empty-output signature of the
-    // intermittent ggml Metal encoder fault (or a genuinely speechless file).
-    // The Meeting path must fail it loudly rather than persist an empty,
-    // finished meeting.
+    // A zero-segment Meeting decode is not useful output, whether its source
+    // is silent or the decoder could not recover speech. Fail before an empty,
+    // finished meeting can be persisted.
     #[test]
-    fn ensure_non_empty_transcript_rejects_a_zero_segment_decode_with_retry_guidance() {
+    fn ensure_non_empty_transcript_rejects_a_zero_segment_decode_with_neutral_guidance() {
         let err = ensure_non_empty_transcript(&transcription(Vec::new()))
             .expect_err("an empty decode must fail the Meeting run");
         let message = err.to_string();
         assert!(
-            message.contains("retry"),
-            "the error tells the user a retry may succeed (intermittent fault): {message}"
+            message.contains("audible speech") && !message.contains("Metal encoder fault"),
+            "the error should explain empty speech without claiming the fixed Metal fault: {message}"
         );
     }
 

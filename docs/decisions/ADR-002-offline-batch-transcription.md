@@ -40,4 +40,5 @@ Whisper the full file as context.
 - **Reuse the live streaming pipeline** — carried exactly the fragmentation and
   context-loss problems this product exists to avoid.
 - **Chunked pseudo-streaming for progress feedback** — unnecessary complexity;
-  full-file decoding plus a progress callback covers the UX need.
+  full-file decoding plus an indeterminate spinner and timer covers the current
+  UX need without changing Whisper's Meeting callback configuration.

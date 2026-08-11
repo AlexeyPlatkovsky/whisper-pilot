@@ -1,20 +1,22 @@
 schema_version: 1
 id: WP-86
-title: Remove Stop because Metal abort callback breaks Meeting transcription
+title: Restore reliable Metal Meeting transcription
 priority: normal
 type: bug
 status: in_progress
 created_at: '2026-08-10T18:39:21Z'
-updated_at: '2026-08-10T18:42:19Z'
-description: 'On Apple M5 Pro, Meeting transcription can return a failed encode or zero segments from the Metal backend even after the in-process abort callback was removed. The Stop implementation exposed the first failure, but the remaining native Metal fault needs a reliable decode path. Meeting transcription must never install a whisper abort callback and now uses a fresh CPU-only context directly; Streaming retains its cached Metal context. The Stop UI control, cancel_transcription IPC command, running-transcription state and guard, Meeting cancel parameter/plumbing, and abort callback installation remain removed. Retain determinate progress events, existing persistence/diarization ordering, Streaming behavior, and the zero-segment Meeting guard. This is a standalone bug with no parent item. Target surfaces are src-tauri/src/transcribe.rs, src-tauri/src/commands/transcription.rs, their focused tests, and docs/architecture.md. Do not add a worker process or new UI behavior in this item.'
+updated_at: '2026-08-11T09:28:37Z'
+description: On macOS, Meeting Metal transcription can fail to encode or return zero segments when whisper-rs and llama-cpp-2 statically link incompatible ggml versions into one executable. Keep Whisper static on Metal and dynamically link llama-cpp-2 so each engine resolves its own ggml symbols. Stage all eight native sherpa/ONNX/llama/ggml dylibs in Tauri beforeBundleCommand, after Cargo has produced them, so clean builds cannot race build.rs. Meeting uses the cached Metal context without progress or abort callbacks; remove the dead Meeting percent-progress IPC/UI state and retain the indeterminate phase/timer UI. Streaming keeps its progress callback with closure storage alive for the entire synchronous native decode. The Stop UI control, cancel_transcription IPC command, running-transcription state and guard, and Meeting cancellation plumbing remain removed. Retain persistence/diarization ordering and the zero-segment Meeting guard with neutral user guidance. Coverage includes a real ignored Apple Metal transcription plus callback-lifetime probe, a Meeting command-registration contract test, clean-target build verification, bundle/signature checks, and the four formerly failing recordings. Update the affected README, architecture, design, roadmap, ADR, and F002/F004 specification surfaces. Do not add a worker process or new UI behavior in this item.
 dod:
 - Meeting transcription calls Whisper without an abort callback; no Meeting code path installs `set_abort_callback`, `set_abort_callback_safe`, or abort callback user data.
 - The Stop button and its UI state, `cancel_transcription` IPC binding, and the per-run cancellation state/guard are removed; no client or Tauri command exposes Stop.
-- Determinate transcription-progress events remain functional and the shared Streaming decode path continues to compile and run with its existing no-op progress sink.
-- A focused test proves the retained decode configuration has no abort callback, and updated React/Rust tests cover the absence of the Stop action and command.
+- The shared Streaming decode path continues to compile and run with its existing progress sink.
+- A focused Rust test proves Meeting's `transcribe` API has no progress callback, and updated React/Rust tests cover the absence of the Stop action and command.
+- llama-cpp-2 is dynamically linked on macOS, every required llama/ggml dylib is bundled and signed, and Whisper retains its own Metal implementation.
+- An ignored macOS integration test synthesizes speech, proves the production model is allocated on a real Metal GPU, and requires non-empty transcript segments.
 - The same four source files that fail with the abort callback transcribe successfully in a real macOS dev run, recorded as manual verification.
-- Meeting transcription loads and decodes with one fresh CPU-only context; it does not perform a preceding Metal decode.
-- A zero-segment CPU result is surfaced and no empty transcript is persisted.
+- Meeting transcription uses the cached Metal context with no progress or abort callback, matching the known-good main path.
+- A zero-segment decode is surfaced and no empty transcript is persisted.
 - cargo test, cargo clippy -- -D warnings, cargo fmt --check, npm run typecheck, npm run lint, npm run format:check, and npm run test:run pass.
 links:
   relates_to:

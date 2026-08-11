@@ -28,15 +28,14 @@ pub(crate) fn now_ms() -> Result<i64> {
         })
 }
 
-/// Streaming's whisper model is loaded lazily on first use and cached for the
-/// session — loading ~800 MB should not block app launch. Meeting loads its
-/// CPU-only context inside its blocking transcription task.
+/// The whisper model is loaded lazily on first use and cached for the
+/// session — loading ~800 MB should not block app launch.
 ///
-/// `whisper_busy` enforces WP-71's mutual exclusion between Meeting
-/// transcription and Streaming capture via `streaming_session::WhisperUsageGuard`.
-/// Streaming owns the cached Metal context; Meeting loads a CPU-only context
-/// for each run. It's a plain field, not wrapped alongside `model`, so
-/// acquiring it stays synchronous without holding `model`'s lock.
+/// `whisper_busy` enforces WP-71's mutual exclusion (Meeting transcription
+/// vs. Streaming session, both contending for `model`'s one cached context)
+/// via `streaming_session::WhisperUsageGuard`. It's a plain field, not
+/// wrapped alongside `model`, so acquiring it stays synchronous without
+/// holding `model`'s lock for the guard's whole lifetime.
 #[derive(Default)]
 pub(crate) struct AppState {
     pub(crate) model: Mutex<Option<Arc<WhisperContext>>>,

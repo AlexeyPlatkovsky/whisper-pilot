@@ -47,7 +47,7 @@ fn decode_without_stop_callback_completes() {
     let samples = whisperpilot_lib::audio::load_samples(&audio).expect("samples");
 
     for run in 1..=5 {
-        let result = whisperpilot_lib::transcribe::transcribe(&ctx, &samples, |_| {});
+        let result = whisperpilot_lib::transcribe::transcribe(&ctx, &samples);
         assert!(
             result.is_ok(),
             "run {run}/5 failed without a Stop callback: {result:?}"

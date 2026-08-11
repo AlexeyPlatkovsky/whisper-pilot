@@ -12,7 +12,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meetings list                    lib.rs        crate root; `run()` registration
   meeting workspace                commands/     thin Tauri command layer (per-domain modules)
   transcript editor                audio.rs      ffmpeg normalize + WAV decode
-  MFU panel                        transcribe.rs whisper (Metal) full-file decode, progress
+  MFU panel                        transcribe.rs whisper (Metal) decode; Streaming progress callback
   settings screen                  store.rs      SQLite meeting library (meetings, segments, notes)
   ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
   theming / i18n                   state.rs      AppState (model cache, running-run slots)
@@ -89,16 +89,14 @@ ffmpeg is a required external dependency (system binary on PATH for now).
 
 ## Transcription (`transcribe.rs`)
 
-whisper-rs with the `metal` feature; the Streaming context is created once and
-cached in `AppState`, while Meeting loads a CPU-only context per run. Decoding
-is **full-file** with beam search. **Language is always
+whisper-rs with the `metal` feature; the context is created once and cached in
+`AppState`. Decoding is **full-file** with beam search. **Language is always
 auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
 language argument, so no caller can force one. The code Whisper decoded with is
 read back from decoder state and stored on the meeting, making
 `meetings.language` an _output_ of a run rather than an input to one. Detection
 uses the first 30 seconds of audio, so a recording that opens with silence can
-misdetect — a known limitation. Whisper's progress callback drives a progress
-event. Meeting output is timestamped
+misdetect — a known limitation. Meeting output is timestamped
 `Segment`s persisted to the meeting.
 
 Forcing a language is deliberately unreachable rather than merely defaulted:
@@ -108,14 +106,16 @@ configuration as plain data so it can be asserted in a unit test — notably
 `detect_language_only`, which must stay `false` because whisper.cpp returns
 immediately after detection when it is set, yielding an empty transcript.
 
-Only the progress callback is installed through whisper-rs's raw callback
-setter; Meeting never installs an abort callback because the bundled Metal
-path changes scheduling when one is present (WP-86). An intermittent upstream
-ggml Metal encoder fault on Apple M5 Pro can return `failed to encode` or an
-empty result (WP-82). Meeting therefore uses a fresh CPU-only context directly;
-the shared Streaming decode retains its cached Metal context. If CPU returns no
-segments, the Meeting path returns retry guidance instead of persisting an
-empty, "finished" meeting (WP-85).
+Meeting does not install a Whisper progress or abort callback: the bundled
+Metal path is kept identical to the known-good main-branch decode (WP-86).
+Streaming retains its separate state-reuse path. A percent-progress event is
+therefore not emitted during Meeting decode; the UI uses its indeterminate status.
+
+On macOS, `llama-cpp-2` is dynamically linked while Whisper remains static.
+Both engines embed incompatible ggml versions with the same exported symbol
+names; linking both statically can resolve Whisper's Metal calls to llama.cpp's
+ggml implementation and corrupt encoder output. The llama/ggml dylibs are
+staged into the app bundle alongside the sherpa-onnx native libraries.
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 
@@ -398,10 +398,11 @@ rather than the loop propagating it.
 
 **Mutual exclusion** (`WhisperUsageGuard`, backed by a new `AppState.
 whisper_busy: AtomicU8`): a Meeting transcription and a Streaming session
-cannot run concurrently. Meeting uses a per-run CPU context while Streaming
-uses the cached Metal context, but concurrent native model work remains
-intentionally serialized. `transcribe_meeting` acquires this guard for its
-whole duration, released on drop;
+cannot run concurrently. Both use the one cached Metal context, with a fresh
+Whisper state for each whole-file Meeting run and a reused state for each
+Streaming session. Concurrent native model work remains intentionally
+serialized. `transcribe_meeting` acquires this guard for its whole duration,
+released on drop;
 Streaming's own session start will do the same once wired to IPC. This
 guard is deliberately not narrowed to "only block the _other_ kind" — two
 concurrent Meeting transcriptions are serialized by the same guard, a small,
@@ -666,7 +667,7 @@ span.
 | `open_file_dialog`                                                     | Pick a source audio/video file                                                                                                                                                                | M1        |
 | `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
 | `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
-| `create_transcription(meeting, model)`                                 | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012)                                                                         | M2        |
+| `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes; Meeting decode emits no percent-progress event.                                           | M2        |
 | `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
 | `open_meeting(id)`                                                     | Full meeting (segments, notes, meta)                                                                                                                                                          | M2        |
 | `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
@@ -686,9 +687,10 @@ span.
 | `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 
-Events: `transcription_progress { id, fraction }`, `transcription_done`,
-`transcription_error`,
-`model_download_progress { id, fraction, stage }` — where `stage` is
+Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
+between the Meeting run's two passes; completion and errors return through the
+`transcribe_meeting` invoke promise. `model_download_progress { id, fraction,
+stage }` uses `stage` =
 `downloading` while bytes arrive and `verifying` while the fetched file is
 SHA-hashed, a pass long enough on a large model that the UI must name it rather
 than show a full bar. `Segment` is
@@ -731,17 +733,21 @@ directory, downloaded model files, and user-chosen export destinations. No
   Capture above.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
-- Native dylib packaging (WP-60): `sherpa-rs-sys` leaves
-  `libsherpa-onnx-c-api.dylib` and `libonnxruntime.<version>.dylib` in the cargo
-  profile directory, and the linker records them as `@rpath/…`. `build.rs`
-  therefore does two things on macOS — links every binary with
-  `@executable_path/../Frameworks` and `@executable_path` rpaths, and stages
-  both dylibs into the generated `src-tauri/frameworks/` for
+- Native dylib packaging (WP-60/WP-86): sherpa-rs-sys and dynamically linked
+  llama-cpp place eight runtime libraries in the Cargo profile directory:
+  sherpa-onnx, ONNX Runtime, and six llama/ggml dylibs. The linker records them
+  as `@rpath/…`. `build.rs` links every binary with
+  `@executable_path/../Frameworks` and `@executable_path` rpaths. After Cargo
+  compilation and immediately before bundling, Tauri's `beforeBundleCommand`
+  runs `scripts/stage-native-dylibs.sh`; the script stages all eight dylibs into
+  the generated `src-tauri/frameworks/` for
   `bundle.macOS.frameworks` to copy into `Contents/Frameworks`. Without both, a
   packaged build aborts at dyld before `main` while `cargo run` keeps working,
   because cargo supplies a fallback search path the `.app` never gets.
-  `src-tauri/tests/packaging.rs` asserts the config, staging, and rpaths.
-  Signing and notarizing the bundled dylibs is not solved.
+  `src-tauri/tests/packaging.rs` asserts the config, staging, and rpaths. Tauri's
+  local/debug bundle signs each staged dylib and deep signature verification is
+  part of validation; release identity signing and Apple notarization remain a
+  release operation rather than a build-time guarantee.
 - Run: `npm install`, then `npm run tauri:dev`.
 
 ## Ownership
@@ -752,7 +758,7 @@ directory, downloaded model files, and user-chosen export destinations. No
 | App state, model cache, running-run slots                  | `src-tauri/src/state.rs`                                                                            |
 | IPC event payloads                                        | `src-tauri/src/events.rs`                                                                           |
 | Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
-| Whisper transcription + progress                          | `src-tauri/src/transcribe.rs`                                                                       |
+| Whisper transcription + Streaming progress                | `src-tauri/src/transcribe.rs`                                                                       |
 | SQLite meeting library                                    | `src-tauri/src/store.rs`                                                                            |
 | Meeting persistence facade / DTOs                         | `src-tauri/src/meetings/` (`mod.rs` facade, `dto.rs` DTOs + coalesce)                               |
 | Error type                                                | `src-tauri/src/error.rs`                                                                            |

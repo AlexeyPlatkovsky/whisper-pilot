@@ -107,17 +107,17 @@ Scenario: One file at a time, shown in the status bar
   Then the file is detached
 ```
 
-### F004-S8: Transcribe blocks the UI and can be stopped
+### F004-S8: Transcribe blocks the UI and runs to completion
 
 Covers: F004-R8
 
 ```gherkin
-Scenario: Stopping a transcription leaves the library unchanged
+Scenario: A transcription completes as one guarded run
   Given a meeting with a file attached
   When the user presses Transcribe
-  Then the UI is blocked except the Stop control
-  When the user presses Stop
-  Then no meeting transcript is persisted and the library is unchanged
+  Then the UI is blocked until transcription and diarization complete
+    And no Meeting Stop control is offered
+    And the completed transcript is persisted
 ```
 
 ### F004-S9: Status bar reflects state
@@ -125,9 +125,9 @@ Scenario: Stopping a transcription leaves the library unchanged
 Covers: F004-R9
 
 ```gherkin
-Scenario: The status bar shows progress or a timer
+Scenario: The status bar shows an indeterminate running state
   Given a transcription is running
-  Then the status bar shows a progress bar, or a spinner with a per-second timer
+  Then the status bar shows a spinner with a per-second timer
   When transcription finishes
   Then the status bar shows the finished state and Create MFU becomes enabled
 ```
@@ -200,10 +200,10 @@ Scenario: Re-running Transcribe warns before replacing
 - [ ] (F004-R3) Rename rejects empty and >120-char titles; delete confirms.
 - [ ] (F004-R5) With no model installed, the switcher is hidden and the status bar
       warns.
-- [ ] (F004-R8) During a run the UI is blocked except Stop; cancel leaves no
-      partial meeting.
-- [ ] (F004-R9) The progress bar advances roughly with the file, or a spinner
-      timer ticks each second.
+- [ ] (F004-R8) During a run the UI is blocked, no Meeting Stop control is
+      offered, and the finished transcript is persisted.
+- [ ] (F004-R9) A spinner timer ticks each second through transcription and
+      speaker identification.
 - [ ] (F004-R12) Renaming/moving the source on disk yields the source-missing note
       on next open.
 - [ ] (F004-R13) Exported Markdown renders correctly in a Markdown viewer.

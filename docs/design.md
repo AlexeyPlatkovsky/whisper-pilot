@@ -16,9 +16,8 @@ The unit of work is a **Meeting** (one transcription of one source file; see
 - **One meeting in focus.** The right pane always shows exactly one meeting:
   header, status bar, transcript, then MFU beneath it.
 - **Explicit, honest actions.** Transcription and MFU generation are **manual**
-  (a button each) and long-running. While one runs, the UI is blocked except the
-  control that stops/tracks it, and progress is always shown — a bar with real
-  progress, or a spinner with a live timer when real progress isn't available.
+  (a button each) and long-running. While one runs, the UI is blocked and an
+  indeterminate spinner with a live timer shows that work is continuing.
 - **Edit in place, saved automatically.** Transcript segments and MFU text are
   edited where they are read and persist as you go — no save button, no lost work.
 - **English UI, detected transcription language.** The app **UI language defaults
@@ -35,7 +34,7 @@ The unit of work is a **Meeting** (one transcription of one source file; see
 │ ◎◎◎  [⇤ panel]  [logo]                                  [⚙ settings]   │  ← header row 1 (traffic lights, fixed left controls, gear far right)
 ├───────────────┬───────────────────────────────────────────────────────┤
 │  Meetings      │  ⟨Meeting title⟩  [edit][copy][delete]   [model ▾]     │  ← header row 2 (meeting header)
-│  ───────────   │                               [Transcribe][Stop][MFU]  │
+│  ───────────   │                                     [Transcribe][MFU]  │
 │  [+ New]       ├───────────────────────────────────────────────────────┤
 │                │  status bar: waiting / files / transcribing / done …   │  ← status bar
 │  • Meeting A   ├───────────────────────────────────────────────────────┤
@@ -85,9 +84,8 @@ Row 2 — the active meeting's header:
   If **no model is available**, the switcher shows nothing and the status bar
   shows a warning.
 - **Transcribe** — icon button with hover text. **Disabled** when no file is
-  attached.
-- **Stop transcribe** — icon button with hover text. **Disabled by default**;
-  enabled only while a transcription is running.
+  attached. Meeting transcription runs to completion; safe cancellation is
+  deferred to the isolated-worker design tracked by WP-87.
 - **Create MFU** — icon button with hover text. **Disabled** until a
   transcription has **finished** (mirrors the button inside the MFU section).
 
@@ -99,7 +97,7 @@ Single line reflecting the meeting's current state:
 | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                                                                                                                                                                                                                      |
 | **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting                                                                                                                                                                                                                                                                                                                                              |
-| **Transcribing**     | spinner + live timer (updates every second), plus a determinate progress **bar** with a percent label during the transcribing pass — whisper reports real percent-complete there. Once the run moves into **identifying speakers**, the bar disappears (no equivalent figure for that pass) and the persisted transcript appears read-only while the spinner+timer remain. Actions stay blocked; Stop disables because it only reaches the transcription pass (WP-19; see architecture.md). |
+| **Transcribing**     | indeterminate spinner + live timer (updates every second). When the run moves into **identifying speakers**, the persisted transcript appears read-only while the spinner+timer remain. Actions stay blocked until the complete run returns. |
 | **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                                                                                                                                                                                                                 |
 | **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                                                                                                                                                                                                                        |
 | **No model**         | warning that no Whisper model is available                                                                                                                                                                                                                                                                                                                                                                                                   |
@@ -179,16 +177,16 @@ Whisper model; diarization degrades without its models).
    meeting's title defaults to the file name (renamable any time).
 3. (Optional) pick the **model**. The language is detected from the audio — there
    is nothing to choose (ADR-012).
-4. Press **Transcribe** → the status bar shows a progress bar (or spinner+timer)
+4. Press **Transcribe** → the status bar shows an indeterminate spinner+timer
    across two phases: **transcribing**, then **identifying speakers** (diarization
    runs automatically — there is no separate diarize action). When speaker
    identification begins, the persisted transcript appears read-only; action
-   controls stay blocked and Stop disables.
+   controls stay blocked.
 5. On completion the transcript updates to **colored per-speaker
    bubbles**; status bar shows **Finished**; **Create MFU** enables. Everything
    auto-saves to the library.
-   - **Stop** during a run cancels it (transcription and diarization together); no
-     partial transcript is kept.
+   - Meeting transcription currently runs to completion. Safe cancellation is
+     tracked separately in WP-87 as an isolated-worker process.
    - If diarization is unavailable, the transcript still appears as plain segments
      with a note; the run does not fail.
    - Pressing **Transcribe** again on a meeting that already has a transcript
@@ -233,7 +231,7 @@ Whisper model; diarization degrades without its models).
 - **Empty meeting, waiting for file** — status bar prompts to attach; Transcribe
   disabled.
 - **File attached** — status bar lists the file with ×; Transcribe enabled.
-- **Transcribing** — UI blocked except Stop; progress bar or spinner+timer.
+- **Transcribing** — UI blocked; indeterminate spinner+timer.
 - **Transcription error** — a banner with the `AppError` message (ffmpeg missing,
   model missing); the meeting is otherwise unchanged.
 - **Finished** — transcript populated; Create MFU enabled.
@@ -259,16 +257,15 @@ Whisper model; diarization degrades without its models).
   to empty. Generation is manual and UI-blocking.
 - **Meeting rename** — modal, ≤120 chars, non-empty, Save/Cancel.
 - **Deletes** — both the list-row delete and the header delete confirm first.
-- **Blocking feedback** — a running Transcribe or Create MFU blocks the UI (only
-  Stop stays live during Transcribe); progress/spinner is always visible;
-  failures are shown, not swallowed.
+- **Blocking feedback** — a running Transcribe or Create MFU blocks the UI; a
+  spinner and live timer stay visible; failures are shown, not swallowed.
 
 ## Accessibility
 
 - Full keyboard operability; editable regions are standard fields in reading
   order; the rename modal traps focus and closes on Escape (= Cancel).
 - Icon buttons carry hover text and accessible labels (panel toggle, transcribe,
-  stop, create MFU, edit/copy/delete/clear).
+  create MFU, edit/copy/delete/clear).
 - Adequate contrast in light and dark schemes (follows the OS color scheme).
 - Speaker distinction (M2) never relies on color alone — each bubble carries the
   speaker name as text.

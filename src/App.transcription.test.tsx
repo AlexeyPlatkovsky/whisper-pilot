@@ -119,62 +119,9 @@ describe("App — English strings", () => {
     }
   });
 
-  it("shows no progress bar before any transcription_progress event, then a determinate bar once one arrives", async () => {
+  it("keeps the status indeterminate when the run moves into diarizing", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(new Promise(() => {}));
-    let progressHandler: (p: {
-      id: number;
-      percent: number;
-    }) => void = () => {};
-    vi.mocked(ipc.onTranscriptionProgress).mockImplementation(
-      async (handler) => {
-        progressHandler = handler;
-        return () => {};
-      },
-    );
-    const user = userEvent.setup();
-    render(<App />);
-
-    await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
-    const transcribe = await screen.findByRole("button", {
-      name: "Transcribe",
-    });
-    await waitFor(() => expect(transcribe).not.toBeDisabled());
-    await user.click(transcribe);
-
-    const status = await screen.findByRole("status");
-    await waitFor(() => expect(status).toHaveTextContent("Transcribing"));
-    expect(
-      status.querySelector(".wp-status-progress-bar"),
-    ).not.toBeInTheDocument();
-
-    progressHandler({ id: 100, percent: 42 });
-
-    const bar = await waitFor(() => {
-      const el = status.querySelector(".wp-status-progress-bar");
-      expect(el).not.toBeNull();
-      return el as HTMLProgressElement;
-    });
-    expect(bar.value).toBe(42);
-    expect(status.querySelector(".wp-status-progress-label")).toHaveTextContent(
-      "42%",
-    );
-  });
-
-  it("clears the progress bar once the run moves into the diarizing phase", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeMeeting).mockReturnValue(new Promise(() => {}));
-    let progressHandler: (p: {
-      id: number;
-      percent: number;
-    }) => void = () => {};
-    vi.mocked(ipc.onTranscriptionProgress).mockImplementation(
-      async (handler) => {
-        progressHandler = handler;
-        return () => {};
-      },
-    );
     let phaseHandler: (p: {
       id: number;
       phase: "diarizing";
@@ -195,19 +142,12 @@ describe("App — English strings", () => {
     await user.click(transcribe);
 
     const status = await screen.findByRole("status");
-    progressHandler({ id: 100, percent: 80 });
-    await waitFor(() =>
-      expect(
-        status.querySelector(".wp-status-progress-bar"),
-      ).toBeInTheDocument(),
-    );
+    expect(within(status).queryByRole("progressbar")).not.toBeInTheDocument();
 
     phaseHandler({ id: 100, phase: "diarizing" });
 
     await waitFor(() => expect(status).toHaveTextContent("Diarizing"));
-    expect(
-      status.querySelector(".wp-status-progress-bar"),
-    ).not.toBeInTheDocument();
+    expect(within(status).queryByRole("progressbar")).not.toBeInTheDocument();
   });
 });
 

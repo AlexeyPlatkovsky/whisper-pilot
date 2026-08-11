@@ -82,21 +82,11 @@ pub struct Segment {
 /// Load the whisper model from the WP-39 download location under
 /// `app_support_dir`; override with `WHISPERPILOT_MODEL_PATH`.
 pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
-    load_model_with_gpu(app_support_dir, true)
-}
-
-/// Load the CPU-only context used by Meeting transcription.
-pub fn load_model_cpu(app_support_dir: &Path) -> Result<WhisperContext> {
-    load_model_with_gpu(app_support_dir, false)
-}
-
-fn load_model_with_gpu(app_support_dir: &Path, use_gpu: bool) -> Result<WhisperContext> {
     let path = model_path(app_support_dir);
     if !path.exists() {
         return Err(AppError::ModelNotFound(path.display().to_string()));
     }
     let mut params = WhisperContextParameters::default();
-    params.use_gpu(use_gpu);
     params.flash_attn(true);
     let path_str = path
         .to_str()
@@ -134,9 +124,9 @@ unsafe extern "C" fn progress_trampoline<F: FnMut(i32)>(
     unsafe { (*user_data.cast::<F>())(progress) }
 }
 
-/// Progress uses a raw callback so the concrete closure remains valid for the
-/// synchronous decode. Metal Meeting decodes deliberately have no abort
-/// callback; see WP-86.
+/// Streaming progress uses a raw callback so the concrete closure remains
+/// valid for the synchronous decode. Meeting does not install this callback;
+/// see WP-86.
 fn install_progress_callback<F: FnMut(i32)>(params: &mut FullParams, on_progress: &mut F) {
     unsafe {
         params.set_progress_callback(Some(progress_trampoline::<F>));
@@ -146,15 +136,11 @@ fn install_progress_callback<F: FnMut(i32)>(params: &mut FullParams, on_progress
 
 /// Transcribe 16 kHz mono samples into timestamped, auto-detected segments.
 /// A fresh state suits one-shot Meeting decode; Streaming reuses its state.
-pub fn transcribe(
-    ctx: &WhisperContext,
-    samples: &[f32],
-    on_progress: impl FnMut(i32),
-) -> Result<Transcription> {
+pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription> {
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_with_state(&mut state, samples, on_progress)
+    transcribe_state(&mut state, samples, None::<fn(i32)>)
 }
 
 /// [`transcribe`] with a caller-owned state. Reusing one state across calls
@@ -165,7 +151,15 @@ pub fn transcribe(
 pub fn transcribe_with_state(
     state: &mut WhisperState,
     samples: &[f32],
-    mut on_progress: impl FnMut(i32),
+    on_progress: impl FnMut(i32),
+) -> Result<Transcription> {
+    transcribe_state(state, samples, Some(on_progress))
+}
+
+fn transcribe_state<F: FnMut(i32)>(
+    state: &mut WhisperState,
+    samples: &[f32],
+    mut on_progress: Option<F>,
 ) -> Result<Transcription> {
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
         beam_size: 5,
@@ -194,8 +188,13 @@ pub fn transcribe_with_state(
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
-    install_progress_callback(&mut params, &mut on_progress);
+    if let Some(callback) = on_progress.as_mut() {
+        install_progress_callback(&mut params, callback);
+    }
 
+    // `FullParams` holds a raw pointer to `on_progress`. Keep the Option (and
+    // therefore the closure storage) in this frame until the synchronous
+    // native decode returns.
     state
         .full(params, samples)
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
@@ -231,19 +230,10 @@ pub fn transcribe_with_state(
     })
 }
 
-/// Run the one Meeting decode supplied by the caller. Keeping this boundary
-/// explicit prevents the failed Metal attempt from being hidden in the
-/// Meeting path; Streaming retains its separate cached-context path.
-pub fn decode_meeting_once(
-    cpu_decode: impl FnOnce() -> Result<Transcription>,
-) -> Result<Transcription> {
-    cpu_decode()
-}
-
 /// Full path from a picked file to timestamped segments.
 pub fn transcribe_file(ctx: &WhisperContext, input: &Path) -> Result<Transcription> {
     let samples = crate::audio::load_samples(input)?;
-    transcribe(ctx, &samples, |_| {})
+    transcribe(ctx, &samples)
 }
 
 #[cfg(test)]
@@ -321,26 +311,8 @@ mod tests {
     }
 
     #[test]
-    fn meeting_decode_runs_one_cpu_attempt() {
-        let transcript = || Transcription {
-            segments: vec![Segment {
-                start_ms: 0,
-                end_ms: 1_000,
-                text: "hello".to_string(),
-                speaker_id: None,
-            }],
-            language: "en".to_string(),
-        };
-
-        let mut attempts = 0;
-        let result = decode_meeting_once(|| {
-            attempts += 1;
-            Ok(transcript())
-        })
-        .expect("the CPU decode succeeds");
-
-        assert_eq!(result.segments.len(), 1);
-        assert_eq!(attempts, 1);
+    fn meeting_transcribe_api_does_not_require_a_progress_callback() {
+        let _meeting_transcribe: fn(&WhisperContext, &[f32]) -> Result<Transcription> = transcribe;
     }
 
     #[test]

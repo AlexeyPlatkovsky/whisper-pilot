@@ -62,7 +62,7 @@ Scenario: Bubbles appear at the end of a normal Transcribe run
   When the user presses Transcribe and the run completes
   Then the transcript is shown as per-speaker colored bubbles
     And no separate diarize action was needed
-    And Stop during the run cancels transcription and diarization together
+    And the status changed to identifying speakers before completion
 ```
 
 ### F002-S6: Graceful degradation when diarization is unavailable

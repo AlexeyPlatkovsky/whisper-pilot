@@ -108,6 +108,10 @@ before production edits; UI work uses the manual verification selected by
 `task-complete` own their respective procedures. Do not report completion with
 failed required evidence or unsafe/unimplemented behavior.
 
+Significant transcription changes require the real-Metal transcription gate
+and its own validation-report row. `test-runner` owns the impact boundary,
+execution, environment handling, reporting procedure, and CI exclusion.
+
 ## Final Response Gate
 
 For non-trivial work, use `task-complete` to report the selected route's

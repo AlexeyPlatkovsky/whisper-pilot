@@ -29,9 +29,7 @@ WhisperPilot is pre-1.0 and under active development. A persisted meeting
 library (reopen, rename, delete) and speaker-attributed transcripts (colored
 per-speaker chat) are implemented. Planned next: auto-saved edits, a
 source-missing state for meetings whose file has moved, Markdown/plain-text
-export, and — after that — local AI-generated meeting notes. Meeting
-transcription reports progress and currently runs to completion; cancellable
-transcription is tracked separately in WP-87.
+export, and — after that — local AI-generated meeting notes.
 
 ## Requirements
 

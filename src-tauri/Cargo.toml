@@ -56,7 +56,7 @@ encoding_rs = "0.8"
 # compatibility libraries — see streaming_audio.rs's module doc comment.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
-llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal"] }
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal", "dynamic-link"] }
 screencapturekit = "8.0.1"
 cpal = "0.17.3"
 [target.'cfg(not(target_os = "macos"))'.dependencies]

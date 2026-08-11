@@ -1,20 +1,7 @@
-//! WP-60 regression: a `.app` built from this configuration must be able to
-//! find its native dylibs.
+//! macOS native-dylib packaging invariants (WP-60/WP-86).
 //!
-//! `sherpa-rs-sys` (feature `download-binaries`) drops
-//! `libsherpa-onnx-c-api.dylib` and `libonnxruntime.<version>.dylib` into the
-//! cargo profile directory, and the linker records them as
-//! `@rpath/…`. Two things then have to be true for a packaged build to launch:
-//! the dylibs have to reach `Contents/Frameworks`, and the executable has to
-//! carry an `LC_RPATH` that points there. Before this work neither was true —
-//! `tauri.conf.json` had no `bundle.macOS.frameworks` entry and the binary had
-//! zero `LC_RPATH` load commands — so a DMG-installed build aborted at dyld
-//! with `Library not loaded: @rpath/libonnxruntime.1.17.1.dylib … Reason: no
-//! LC_RPATH's found`, which macOS reports as a vague "works with this version
-//! of macOS" dialog.
-//!
-//! These run by default: they need no models, media, or network, only the
-//! artifacts a build has already produced.
+//! These default tests need no model, media, network, or prior Tauri bundle.
+//! See `docs/architecture.md` §Build Notes for staging and rpath rationale.
 
 #![cfg(target_os = "macos")]
 
@@ -70,6 +57,19 @@ fn declared_frameworks() -> Vec<String> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+#[test]
+fn bundle_stages_native_dylibs_after_cargo_build() {
+    let path = manifest_dir().join("tauri.conf.json");
+    let raw = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("reading {}: {e}", path.display()));
+    let conf: serde_json::Value =
+        serde_json::from_str(&raw).unwrap_or_else(|e| panic!("parsing {}: {e}", path.display()));
+    assert_eq!(
+        conf["build"]["beforeBundleCommand"], "sh scripts/stage-native-dylibs.sh",
+        "native dylibs must be staged after Cargo produces them and before Tauri bundles"
+    );
 }
 
 /// The dylibs the shipped executable loads through `@rpath`, by file name.
@@ -202,10 +202,11 @@ fn os_provided_dylibs_have_their_system_rpath() {
     );
 }
 
-/// A declared framework path that does not exist when the bundler runs fails
-/// the build at best and silently ships a broken `.app` at worst.
+/// Every declared framework must have a source dylib in Cargo's profile
+/// directory. The ignored `src-tauri/frameworks/` directory is generated only
+/// by `beforeBundleCommand`, so a default test must not require a prior bundle.
 #[test]
-fn declared_bundle_frameworks_exist_on_disk() {
+fn declared_bundle_framework_sources_exist_in_profile() {
     let declared = declared_frameworks();
     assert!(
         !declared.is_empty(),
@@ -213,10 +214,13 @@ fn declared_bundle_frameworks_exist_on_disk() {
     );
 
     for entry in &declared {
-        let path = manifest_dir().join(entry);
+        let name = Path::new(entry)
+            .file_name()
+            .expect("framework entry has a file name");
+        let path = profile_dir().join(name);
         assert!(
             path.is_file(),
-            "declared framework {entry} resolves to {}, which does not exist",
+            "declared framework {entry} has no post-Cargo source at {}",
             path.display()
         );
     }
