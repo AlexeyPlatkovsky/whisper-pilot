@@ -1,6 +1,6 @@
 //! WP-50 regression evidence: reproduces the before/after cluster-count
 //! comparisons (and the crash-safety finding) that justified
-//! `diarize.rs::build_config`'s tuned auto-detect threshold/min_duration
+//! `diarize/mod.rs` tests' `build_config`'s tuned auto-detect threshold/min_duration
 //! values (see its doc comment). Ignored by default, same convention as
 //! `diarize_integration.rs` — needs the diarization models downloaded plus
 //! one or more real audio fixtures. Run with:
@@ -96,7 +96,7 @@ fn tuned_config_reduces_clusters_without_merging_the_two_known_real_speakers() {
          duration_by_speaker(desc)={baseline_durations:?}"
     );
 
-    // Tuned: diarize.rs::build_config's current auto-detect constants.
+    // Tuned: diarize/mod.rs's build_config auto-detect constants.
     let (tuned_count, tuned_durations) = run_once(&dir, &samples, 0.9, 1.0, 1.0);
     eprintln!(
         "tuned (threshold=0.90 min_on=1.0 min_off=1.0): {tuned_count} distinct speakers, \

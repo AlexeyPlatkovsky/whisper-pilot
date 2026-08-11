@@ -9,16 +9,17 @@ core unit is a **Meeting** (one transcription of one source file).
 
 ```
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
-  meetings list                    lib.rs        command + event registration, AppState
-  meeting workspace                audio.rs      ffmpeg normalize + WAV decode
-  transcript editor                transcribe.rs whisper (Metal) full-file decode, progress
-  MFU panel                        store.rs      SQLite meeting library (meetings, segments, notes)
-  settings screen                  meetings.rs   create/list/open/rename/delete meeting commands
-  ipc.ts / events                  error.rs      AppError → serialized to JS
-  theming / i18n
-  [WP-68] StreamingView.tsx        settings.rs   key–value settings store (theme, ui_language, active models)
-                                   models.rs     model catalog: download + SHA verify + delete
-                                   [M2] diarize.rs   sherpa-onnx speaker turns + merge
+  meetings list                    lib.rs        crate root; `run()` registration
+  meeting workspace                commands/     thin Tauri command layer (per-domain modules)
+  transcript editor                audio.rs      ffmpeg normalize + WAV decode
+  MFU panel                        transcribe.rs whisper (Metal) decode; Streaming progress callback
+  settings screen                  store.rs      SQLite meeting library (meetings, segments, notes)
+  ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
+  theming / i18n                   state.rs      AppState (model cache, running-run slots)
+  [WP-68] StreamingView.tsx        error.rs      AppError → serialized to JS
+                                   settings.rs   key–value settings store (theme, ui_language, active models)
+                                   models/       model catalog (`catalog.rs`) + download (`download.rs`)
+                                   [M2] diarize/   sherpa-onnx speaker turns + merge (clustering/segmentation/speakers/pipeline)
                                    [M3] notes.rs     llama.cpp structured meeting notes
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
@@ -30,43 +31,53 @@ The Rust core does all heavy work and owns persistence; the React layer is a
 two-pane shell — a meetings list plus the active meeting's workspace. Blocking,
 CPU/GPU-heavy work (model load,
 transcription, diarization, note generation) runs on `tokio::task::spawn_blocking`
-so IPC and the UI stay responsive. Long operations report progress and are
-cancellable via Tauri events.
+so IPC and the UI stay responsive. Long operations report progress; Streaming
+capture has its own stop command, while Meeting transcription runs to completion.
 
 ## Meeting Model & Persistence (`store.rs`)
 
 The library is a local **SQLite** database (`whisperpilot.sqlite3` in the app
 support directory, via bundled `rusqlite`). WP-16 implements the idempotent
 schema and Rust CRUD store. WP-21/WP-22 expose create/list/open/rename/delete
-commands and hydrate the workspace from persisted meetings; attaching files,
-transcription, and UI auto-save wiring remain follow-on work. A **meeting** is
+commands and hydrate the workspace from persisted meetings. A **meeting** is
 one transcription of one source file. Meetings
 **reference the original file path** — audio is not copied — so a meeting whose
 source has moved or been deleted is readable but cannot be re-transcribed (a
-defined "source missing" state).
+defined "source missing" state). `MeetingDto.source_missing` (WP-23) is
+computed fresh on every DTO build — `to_dto` in `meetings/dto.rs` checks
+`Path::exists()` on the stored `source_path` — rather than stored, so it
+always reflects the file's current state instead of a snapshot from whenever
+it was last attached or transcribed. The front end disables **Transcribe**
+and shows an explanatory note when set; the transcript and notes stay
+readable and editable either way.
 
 Entities (indicative):
 
-| Entity | Key fields |
-|---|---|
+| Entity     | Key fields                                                                        |
+| ---------- | --------------------------------------------------------------------------------- |
 | `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
-| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2) |
-| `notes` | meeting_id, summary, decisions, action_items, open_questions, participants (M3) |
+| `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2)     |
+| `notes`    | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
 
 The store replaces/reads segments in ordinal order, upserts a single notes
-record per meeting, and cascades meeting deletion to dependent rows. Follow-on
-UI edits (segment text, speaker labels, notes) are **auto-saved**: each edit
-will persist to the DB immediately; there is no explicit save state. Export is
-a separate, explicit write to an external file.
+record per meeting, and cascades meeting deletion to dependent rows. Segment
+text and notes edits are **auto-saved** (WP-17): the front end debounces each
+edit (500ms idle) and calls `update_segment`/`update_notes`, which persist to
+the DB immediately; there is no explicit save state or button. Export is a
+separate, explicit write to an external file.
 
-Stored `segments` rows stay whisper's original fine-grained spans — `to_dto`
-(`meetings.rs`, WP-48) coalesces consecutive same-speaker rows into larger
-display blocks on every read path (see Speaker Diarization below); the
-ordinal-keyed rows themselves are never merged or rewritten. **Not yet
-designed:** WP-17's auto-save wiring will edit whatever the UI renders, which
-after WP-48 is a coalesced block that can span multiple underlying
-ordinal-keyed rows — the write-back mapping from an edited coalesced block
-back to its source row(s) still needs a design before WP-17 is implemented.
+Stored `segments` rows start as whisper's original fine-grained spans —
+`to_dto` (`meetings/dto.rs`, WP-48) coalesces consecutive same-speaker rows into
+larger display blocks on every read path (see Speaker Diarization below), and
+that is what the UI renders and edits as one block. `update_segment` (WP-17)
+therefore writes back at the same granularity the user edited: it re-derives
+the current coalesced list, replaces the edited block's text, and rewrites
+_all_ segment rows for the meeting to match it. This means editing any one
+coalesced block also collapses the other, untouched blocks in that meeting to
+one row per display block from that point on — the fine-grained pre-edit
+ordinals are not preserved once an auto-save has happened. Speaker labels
+(the user-facing rename in `SpeakerLabelEditor`) remain session-only, not
+persisted; only segment text and notes are in WP-17's scope.
 
 ## Audio Ingestion (`audio.rs`)
 
@@ -83,10 +94,9 @@ whisper-rs with the `metal` feature; the context is created once and cached in
 auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
 language argument, so no caller can force one. The code Whisper decoded with is
 read back from decoder state and stored on the meeting, making
-`meetings.language` an *output* of a run rather than an input to one. Detection
+`meetings.language` an _output_ of a run rather than an input to one. Detection
 uses the first 30 seconds of audio, so a recording that opens with silence can
-misdetect — a known limitation. Whisper's progress callback drives a progress
-event; a cancel flag checked in the callback aborts a run. Output is timestamped
+misdetect — a known limitation. Meeting output is timestamped
 `Segment`s persisted to the meeting.
 
 Forcing a language is deliberately unreachable rather than merely defaulted:
@@ -96,19 +106,33 @@ configuration as plain data so it can be asserted in a unit test — notably
 `detect_language_only`, which must stay `false` because whisper.cpp returns
 immediately after detection when it is set, yielding an empty transcript.
 
+Meeting does not install a Whisper progress or abort callback: the bundled
+Metal path is kept identical to the known-good main-branch decode (WP-86).
+Streaming retains its separate state-reuse path. A percent-progress event is
+therefore not emitted during Meeting decode; the UI uses its indeterminate status.
+
+On macOS, `llama-cpp-2` is dynamically linked while Whisper remains static.
+Both engines embed incompatible ggml versions with the same exported symbol
+names; linking both statically can resolve Whisper's Metal calls to llama.cpp's
+ggml implementation and corrupt encoder output. The llama/ggml dylibs are
+staged into the app bundle alongside the sherpa-onnx native libraries.
+
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
-+ merge** (M2, `diarize.rs`). The transcript is persisted between the two phases,
-so the meeting is already marked finished while diarization is still running (see
-Speaker Diarization below). Progress and Stop span both phases; if diarization is
-unavailable or fails, the run still finishes with plain (speaker-less) segments.
-Re-running Transcribe on a meeting that already has a transcript replaces it (and
-any notes) after a confirmation.
+
+- merge** (M2, `diarize/`). The transcript is persisted between the two phases,
+  so the meeting is already marked finished while diarization is still running (see
+  Speaker Diarization below). A progress spinner spans both phases; Meeting
+  transcription runs to completion and the isolated worker design for restoring
+  Stop is tracked separately (WP-87). If diarization is unavailable or fails,
+  the run still finishes with plain (speaker-less) segments. Re-running
+  Transcribe on a meeting that already has
+  a transcript replaces it (and any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
-Settings AI models section (F005, `models.rs`) into the app support directory;
+Settings AI models section (F005, `models/`) into the app support directory;
 override the path for development with `WHISPERPILOT_MODEL_PATH`.
 
-## Speaker Diarization (M2, `diarize.rs`)
+## Speaker Diarization (M2, `diarize/`)
 
 sherpa-onnx segmentation + embedding models produce speaker turns, merged onto
 segments by time overlap to set each segment's `speaker_id`. Speaker count is
@@ -117,7 +141,25 @@ English per ADR-011) and user-renamed within the current session. The
 transcript renders as a per-speaker chat of colored bubbles (10 shades).
 Reassigning or merging speakers is out of scope for M2.
 
-`diarize.rs` resolves the configured model artifacts, then produces ordered
+**Standalone "Diarize" action** (`diarize_meeting` command, Transcript
+header, next to the Editable indicator): re-runs speaker identification
+alone on an already-transcribed meeting, without re-transcribing. Re-decodes
+the source audio (samples are never persisted) and re-runs the same
+`diarize_process::diarize_with_fallback` pass `transcribe_meeting` uses
+internally, then assigns the resulting turns onto the meeting's
+already-persisted segments by time overlap
+(`meetings::diarize_meeting_segments` → `diarize::assign_speaker_ids`) and
+saves the result. Unlike the diarization folded into a Transcribe run, a
+failure here is a real error surfaced to the user, not a fail-open warning —
+diarization is what was explicitly asked for, so there is no already-safe
+transcript to fail open onto. Requires an active diarization model, an
+existing transcript, and a readable source file (disabled client-side
+otherwise); reuses the same time-overlap assignment as the automatic pass,
+so it re-diarizes at whatever segment granularity currently exists —
+full per-utterance precision on a never-diarized meeting, or the coarser,
+already-coalesced per-speaker blocks on one diarized before.
+
+`diarize/` resolves the configured model artifacts, then produces ordered
 `SpeakerTurn`s from raw 16 kHz samples. Since WP-62, the production route is
 owned in Rust: `ort` v1.16.3 dynamically loads the packaged ONNX Runtime 1.17.1
 dylib and runs the downloaded pyannote segmentation model directly. Rust
@@ -149,7 +191,7 @@ without the 0.75 over-clustering outcome.
 The full evidence and metric definition are in
 `plans/2026-07-27-wp-62-clustering-feasibility-spike.md`.
 
-### Diarization Process Isolation (WP-53, `diarize_process.rs`)
+### Diarization Process Isolation (WP-53, `diarize_process/`)
 
 A fatal signal is not a catchable Rust `Err` or panic. Although WP-62 removes
 the known vendored fast-clustering abort from the production route, inference
@@ -196,7 +238,7 @@ resolve `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api` without help
 from the environment — which matters because a hardened-runtime build strips
 `DYLD_*` unless entitled. See §Build Notes for how the dylibs reach the bundle.
 
-`diarize.rs` also (WP-7) has the turn↔segment merge algorithm:
+`diarize/` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
 maximally overlap it, deterministically tie-broken (lowest speaker id) and
 falling back to the nearest turn for a segment in an uncovered gap. `Segment`
@@ -206,7 +248,7 @@ existing consumers see no shape change), flowing through
 
 Because whisper's own segmentation is not speaker-aware, one continuous turn
 routinely comes back from `transcribe.rs` as many short (~2-3s) fragments that
-all land on the same `speaker_id`. `meetings.rs`'s `to_dto` (WP-48) coalesces
+all land on the same `speaker_id`. `meetings/dto.rs`'s `to_dto` (WP-48) coalesces
 consecutive segments sharing the same present `speaker_id` into one display
 block — text joined, spanning the first segment's start to the last segment's
 end — as long as the gap between them stays within a small tolerance (a
@@ -226,9 +268,8 @@ exposed yet) and, on success, `assign_speaker_ids` writes each segment's
 `speaker_id` in place. Diarization failure of any kind — missing models, an
 engine error, or the blocking task itself panicking — is fail-open: it is
 logged and the transcription still returns its (speaker-less) segments,
-never failing `transcribe_file`. There is still no Stop control, no progress event
-spanning both phases, and no persisted meeting entity (those remain the
-not-yet-built M2 library epic, F004/WP-11).
+never failing `transcribe_file`. Meeting transcription has no in-process Stop;
+the isolated worker design for restoring it is tracked separately (WP-87).
 
 **The active diarization embedding model is user-selectable** (WP-52): Settings
 offers a three-way choice — None (skip diarization), CAM++ (3D-Speaker,
@@ -252,7 +293,7 @@ native sherpa-onnx code that can abort the process it runs in (see the
 clustering crash risk and Diarization Process Isolation above), and such an
 abort is invisible to
 `apply_diarization_outcome`'s fail-open contract, so anything unpersisted at
-that moment is lost outright. Saving first bounds the cost of *any* diarization
+that moment is lost outright. Saving first bounds the cost of _any_ diarization
 failure to the speaker labels: the whisper pass survives. The diarization pass
 is therefore built as a deferred future, so nothing in it — including the
 `transcription_phase` event — can run before the transcript is safe. Two
@@ -328,21 +369,27 @@ permissions and running the packaged `.app` is outside what this environment
 can do, so the OS-level capture wrappers are compiled, linked, and reviewed,
 not exercised end-to-end.
 
-Mutual exclusion with an active Meeting transcription (both would share the
-one cached Whisper `AppState` context) is WP-71's concern, not implemented
-here — this module only captures and mixes audio, it does not decode it.
+Mutual exclusion with an active Meeting transcription is WP-71's concern, not
+implemented here — this module only captures and mixes audio, it does not
+decode it.
 
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
 
 Decodes the continuous sample stream `streaming_audio.rs` produces on fixed,
 non-overlapping ~7s windows (`WINDOW_SECONDS`, the midpoint of WP-68's
-approved 5-10s latency budget) by calling `transcribe::transcribe` per
-window — a window is just a short slice of samples, decoded exactly like a
-(short) Meeting file, so no new whisper-rs FFI was needed. Each window gets
-its own language detection, unlike Meeting's once-per-file detection
-(ADR-012), since a live session has no single fixed language the way a
-finished file does. A word can split across a window boundary — an accepted,
-documented trade-off for non-overlapping windows, not a silent one.
+approved 5-10s latency budget). One session decodes every window through a
+single `WhisperState` (WP-82): `run_windowed_decode` builds one
+`WhisperSessionDecoder` when the loop starts and reuses it via
+`transcribe::transcribe_with_state`, because each state owns a full GPU
+backend plus its KV/compute buffers — one state per window was one backend
+init/free cycle per window. State reuse across calls is upstream's own
+`whisper_full` pattern (each call clears results, recomputes the mel, and
+clears the self-attention KV cache); Meeting keeps one state per whole-file
+run. Each window gets its own language detection, unlike Meeting's
+once-per-file detection (ADR-012), since a live session has no single fixed
+language the way a finished file does. A word can split across a window
+boundary — an accepted, documented trade-off for non-overlapping windows,
+not a silent one.
 
 **Fail-open per window** (mirroring diarization, ADR-013): a window whose
 decode errors is skipped — logged, no text emitted for that span — rather
@@ -351,19 +398,20 @@ rather than the loop propagating it.
 
 **Mutual exclusion** (`WhisperUsageGuard`, backed by a new `AppState.
 whisper_busy: AtomicU8`): a Meeting transcription and a Streaming session
-cannot run concurrently, because both would contend for the one cached
-Whisper context and `whisper-rs`'s `WhisperState` is not proven safe for two
-concurrent `.full()` calls against the same `WhisperContext`. `transcribe_
-meeting` now acquires this guard for its whole duration, released on drop;
+cannot run concurrently. Both use the one cached Metal context, with a fresh
+Whisper state for each whole-file Meeting run and a reused state for each
+Streaming session. Concurrent native model work remains intentionally
+serialized. `transcribe_meeting` acquires this guard for its whole duration,
+released on drop;
 Streaming's own session start will do the same once wired to IPC. This
-guard is deliberately not narrowed to "only block the *other* kind" — two
+guard is deliberately not narrowed to "only block the _other_ kind" — two
 concurrent Meeting transcriptions are serialized by the same guard, a small,
 disclosed safety tightening beyond WP-68's literal Streaming-vs-Meeting
 ask, since the underlying safety property (one decode at a time against the
 shared context) does not depend on which caller is asking.
 
 Wired to Tauri IPC via `start_streaming_session`/`stop_streaming_session` in
-`lib.rs` (WP-73) — see the Streaming Runtime & UI section below for the
+`commands/streaming.rs` (WP-73) — see the Streaming Runtime & UI section below for the
 command/event layer that ties this module to `streaming_audio.rs` and
 `streaming_store.rs`.
 
@@ -405,14 +453,15 @@ session's transcript can render "this span failed to decode" instead of
 silently reading as a span with no speech at all.
 
 `streaming.rs` is the IPC-facing facade over this store (WP-73), mirroring
-`meetings.rs`'s "open the store fresh per call" convention: `list_
+`meetings/`'s "open the store fresh per call" convention: `list_
 streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
 `delete_streaming_session`, `create_streaming_session`. Its DTOs
 (`StreamingSessionDto`, `StreamingWindowDto`) are the JSON shape the
 Streaming tab consumes.
 
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
-`stop_streaming_session` in `lib.rs`, `src/StreamingView.tsx`)
+
+`stop_streaming_session` in `commands/streaming.rs`, `src/StreamingView.tsx`)
 
 Starting a session ties `streaming_audio.rs` (capture), `streaming_
 session.rs` (decode/mutual-exclusion), and `streaming_store.rs`
@@ -550,15 +599,15 @@ exists, stopped, non-empty transcript); Accept and Revert operate on an
 existing session row. Craft and Prettify are mutually exclusive in flight
 (both are LLM calls against the same shared model).
 
-## Settings & Model Management (`settings.rs`, `models.rs`) — M2 beta, M3 release
+## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
 (theme, `ui_language`, and each task's active model), applied immediately and
 across restarts. The React layer owns **theming** (light / dark / system, plus
 release themes) and **i18n** (English default, release languages); the OS scheme
-drives the *System* theme.
+drives the _System_ theme.
 
-`models.rs` manages a **fixed, app-defined catalog** of the model(s) each task
+`models/` manages a **fixed, app-defined catalog** of the model(s) each task
 needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
 selectable embedding, notes = llama/Qwen at M3). **Download** fetches from a
 known URL, streams progress, and marks a model ready only after **SHA
@@ -578,54 +627,70 @@ deferred model management" note.
 ## Export
 
 **As actually built, not as originally planned:** there is no `export.rs`
-Rust module. A meeting's transcript is rendered client-side (`App.tsx`'s
-`transcriptText`, `"Label: text"` per line) and written to a user-chosen
-destination via the generic `save_text_dialog(content, default_name)`
-command — plain text only; Markdown rendering and copy-to-clipboard for
-Meeting were never built (WP-24, still `backlog`). Streaming's export/copy
-(WP-74, `StreamingView.tsx`) follows this same real pattern — render
-client-side, reuse `save_text_dialog` — rather than a nonexistent Rust
-export path, and is the first place either capability actually ships in
-this app: **Copy** calls the browser `navigator.clipboard.writeText` API
-directly (no Tauri clipboard plugin was added — the web API works in the
-WKWebView and avoids a new plugin/capability-permission surface for a
-one-line need); **Export** renders a minimal Markdown document (`# title`
-+ the plain transcript) through `save_text_dialog`. Both reuse
-`windowText`'s `[unavailable]` marker for a fail-open window, so exported
-output matches what the live view showed rather than silently dropping or
-blanking a failed span.
+Rust module. A meeting's transcript (and, for Markdown, its notes) is
+rendered client-side and written to a user-chosen destination via the
+generic `save_text_dialog(content, default_name)` command — `save_text_dialog`
+itself is format-agnostic; it just writes whatever string it is given.
+
+**Meeting export** (`src/export.ts`, WP-15/WP-24): a persisted
+`export_file_type` setting (`"plain_text"` | `"markdown"`, Settings → Export)
+selects the rendering. `renderForExport` is the one function both **Save**
+(`handleSave`) and the header **copy** action (`CopyButton`,
+`src/CopyButton.tsx`) call, so file export and clipboard copy can
+never render differently. Plain text (`renderPlainText`) is unchanged from
+before this setting existed — transcript only, `"Label: text"` per line, no
+notes. Markdown (`renderMarkdown`) adds a `# Transcript` heading, bold speaker
+labels, `[m:ss]` timestamps, and — only when the meeting has notes — a
+`## Notes` section with one `### <field>` subsection per non-empty notes
+field.
+
+Streaming's export/copy (WP-74, `StreamingView.tsx`) is a separate,
+older implementation following the same real pattern — render client-side,
+reuse `save_text_dialog` — but does not share `export.ts`'s rendering or its
+file-type setting. Both screens' **Copy** buttons share `CopyButton`
+(`src/CopyButton.tsx`), which calls `navigator.clipboard.writeText` directly
+(no Tauri clipboard plugin was added — the web API works in the WKWebView and
+avoids a new plugin/capability-permission surface for a one-line need) and
+confirms a successful write with a transient checked button state plus a
+top-center "Copied" toast that rolls back automatically after ~2.5
+seconds;
+**Export** always renders a minimal Markdown document (`# title` - the plain
+transcript) through `save_text_dialog`. Both reuse `windowText`'s
+`[unavailable]` marker for a fail-open window, so exported output matches
+what the live view showed rather than silently dropping or blanking a failed
+span.
 
 ## IPC Contract
 
-| Command | Purpose | Milestone |
-|---|---|---|
-| `open_file_dialog` | Pick a source audio/video file | M1 |
-| `create_meeting()` | Create an empty meeting; returns its id | M2 |
-| `attach_file(meeting, path)` | Attach the source file to a meeting | M2 |
-| `create_transcription(meeting, model)` | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012) | M2 |
-| `cancel_transcription(meeting)` | Abort a running transcription (Stop) | M2 |
-| `list_meetings()` | Meetings list (summaries) | M2 |
-| `open_meeting(id)` | Full meeting (segments, notes, meta) | M2 |
-| `rename_meeting(id, title)` / `delete_meeting(id)` | Library management | M2 |
-| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)` | Auto-saved edits | M2/M3 |
-| `export_meeting(id, format, target)` | Write Markdown / plain text | M2 |
-| `list_models()` | Available (downloaded) Whisper models for the switcher | M2 |
-| `diarize_meeting(id)` | Produce + merge speaker turns | M2 |
-| `get_settings()` / `set_setting(key, value)` | Read/update settings (theme, ui_language, active model) | M2 |
-| `list_task_models()` | Per-task model catalog with download state | M2 |
-| `download_model(id)` / `delete_model(id)` | Fetch (SHA-verified, progress) / remove a model | M2 |
-| `set_active_model(task, id)` | Choose the active model for a task | M3 |
-| `check_update()` / `apply_update()` | App update | M3 |
-| `generate_notes(id)` | Generate structured MFU notes (Create MFU) | M3 |
-| `list_streaming_sessions()` | Streaming sessions list (summaries) | WP-68 |
-| `open_streaming_session(id)` | Full session (all decoded windows) | WP-68 |
-| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's | WP-68 |
-| `start_streaming_session()` | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68 |
-| `stop_streaming_session()` | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only) | WP-68 |
+| Command                                                                | Purpose                                                                                                                                                                                       | Milestone |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| `open_file_dialog`                                                     | Pick a source audio/video file                                                                                                                                                                | M1        |
+| `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
+| `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
+| `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes; Meeting decode emits no percent-progress event.                                           | M2        |
+| `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
+| `open_meeting(id)`                                                     | Full meeting (segments, notes, meta)                                                                                                                                                          | M2        |
+| `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
+| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)`  | Auto-saved edits                                                                                                                                                                              | M2/M3     |
+| `export_meeting(id, format, target)`                                   | Write Markdown / plain text                                                                                                                                                                   | M2        |
+| `list_models()`                                                        | Available (downloaded) Whisper models for the switcher                                                                                                                                        | M2        |
+| `diarize_meeting(id)`                                                  | Produce + merge speaker turns                                                                                                                                                                 | M2        |
+| `get_settings()` / `set_setting(key, value)`                           | Read/update settings (theme, ui_language, active model)                                                                                                                                       | M2        |
+| `list_task_models()`                                                   | Per-task model catalog with download state                                                                                                                                                    | M2        |
+| `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
+| `set_active_model(task, id)`                                           | Choose the active model for a task                                                                                                                                                            | M3        |
+| `check_update()` / `apply_update()`                                    | App update                                                                                                                                                                                    | M3        |
+| `generate_notes(id)`                                                   | Generate structured MFU notes (Create MFU)                                                                                                                                                    | M3        |
+| `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
+| `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
+| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
+| `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
+| `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 
-Events: `transcription_progress { id, fraction }`, `transcription_done`,
-`transcription_error`,
-`model_download_progress { id, fraction, stage }` — where `stage` is
+Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
+between the Meeting run's two passes; completion and errors return through the
+`transcribe_meeting` invoke promise. `model_download_progress { id, fraction,
+stage }` uses `stage` =
 `downloading` while bytes arrive and `verifying` while the fetched file is
 SHA-hashed, a pass long enough on a large model that the UI must name it rather
 than show a full bar. `Segment` is
@@ -668,28 +733,38 @@ directory, downloaded model files, and user-chosen export destinations. No
   Capture above.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
-- Native dylib packaging (WP-60): `sherpa-rs-sys` leaves
-  `libsherpa-onnx-c-api.dylib` and `libonnxruntime.<version>.dylib` in the cargo
-  profile directory, and the linker records them as `@rpath/…`. `build.rs`
-  therefore does two things on macOS — links every binary with
-  `@executable_path/../Frameworks` and `@executable_path` rpaths, and stages
-  both dylibs into the generated `src-tauri/frameworks/` for
+- Native dylib packaging (WP-60/WP-86): sherpa-rs-sys and dynamically linked
+  llama-cpp place eight runtime libraries in the Cargo profile directory:
+  sherpa-onnx, ONNX Runtime, and six llama/ggml dylibs. The linker records them
+  as `@rpath/…`. `build.rs` links every binary with
+  `@executable_path/../Frameworks` and `@executable_path` rpaths. After Cargo
+  compilation and immediately before bundling, Tauri's `beforeBundleCommand`
+  runs `scripts/stage-native-dylibs.sh`; the script stages all eight dylibs into
+  the generated `src-tauri/frameworks/` for
   `bundle.macOS.frameworks` to copy into `Contents/Frameworks`. Without both, a
   packaged build aborts at dyld before `main` while `cargo run` keeps working,
   because cargo supplies a fallback search path the `.app` never gets.
-  `src-tauri/tests/packaging.rs` asserts the config, staging, and rpaths.
-  Signing and notarizing the bundled dylibs is not solved.
+  `src-tauri/tests/packaging.rs` asserts the config, staging, and rpaths. Tauri's
+  local/debug bundle signs each staged dylib and deep signature verification is
+  part of validation; release identity signing and Apple notarization remain a
+  release operation rather than a build-time guarantee.
 - Run: `npm install`, then `npm run tauri:dev`.
 
 ## Ownership
 
-| Concern | Owner |
-|---|---|
-| Command/event registration, app state, model cache | `src-tauri/src/lib.rs` |
-| Audio normalize + decode | `src-tauri/src/audio.rs` |
-| Whisper transcription + progress | `src-tauri/src/transcribe.rs` |
-| SQLite meeting library | `src-tauri/src/store.rs` |
-| Error type | `src-tauri/src/error.rs` |
-| Two-pane shell: meetings list, meeting workspace, editors | `src/` |
-| Streaming capture / decode / persistence / IPC facade | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
-| Streaming tab | `src/StreamingView.tsx` |
+| Concern                                                   | Owner                                                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Tauri command layer (per-domain) + registration in `run()`| `src-tauri/src/commands/` + `src-tauri/src/lib.rs`                                                   |
+| App state, model cache, running-run slots                  | `src-tauri/src/state.rs`                                                                            |
+| IPC event payloads                                        | `src-tauri/src/events.rs`                                                                           |
+| Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
+| Whisper transcription + Streaming progress                | `src-tauri/src/transcribe.rs`                                                                       |
+| SQLite meeting library                                    | `src-tauri/src/store.rs`                                                                            |
+| Meeting persistence facade / DTOs                         | `src-tauri/src/meetings/` (`mod.rs` facade, `dto.rs` DTOs + coalesce)                               |
+| Error type                                                | `src-tauri/src/error.rs`                                                                            |
+| Model catalog + download                                  | `src-tauri/src/models/` (`catalog.rs` catalog + state, `download.rs` fetch/verify)                  |
+| Speaker diarization                                       | `src-tauri/src/diarize/` (`clustering.rs`, `segmentation.rs`, `speakers.rs`, `pipeline.rs`)         |
+| Diarization process isolation                             | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                      |
+| Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
+| Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
+| Streaming tab                                             | `src/StreamingView.tsx`                                                                             |

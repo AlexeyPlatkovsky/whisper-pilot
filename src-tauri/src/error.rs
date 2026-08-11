@@ -22,6 +22,9 @@ pub enum AppError {
     #[error("transcription failed: {0}")]
     Transcribe(String),
 
+    #[error("transcription stopped")]
+    Cancelled,
+
     #[error("invalid setting: {0}")]
     InvalidSetting(String),
 

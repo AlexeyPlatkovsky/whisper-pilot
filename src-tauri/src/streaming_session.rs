@@ -1,19 +1,13 @@
-//! Streaming decode/session pipeline: rolling-window Whisper decode over the
-//! continuous sample stream `streaming_audio.rs` produces, reusing
-//! `transcribe::transcribe` unchanged per window. Wired to Tauri IPC via
-//! `start_streaming_session`/`stop_streaming_session` in `lib.rs` (WP-73).
-//! See docs/architecture.md's Streaming Decode/Session Pipeline section for
-//! the windowing trade-off, fail-open behavior, `WhisperUsageGuard` mutual
-//! exclusion with Meeting transcription, and the still-open real-hardware
-//! latency measurement this module leaves for WP-71's feasibility spike.
+//! Rolling-window Streaming decode. See `docs/architecture.md`'s Streaming
+//! Decode/Session Pipeline section for lifecycle and trade-off details.
 
 use crate::audio::SAMPLE_RATE;
+use crate::error::AppError;
 use crate::transcribe::{self, Transcription};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
-use whisper_rs::WhisperContext;
+use whisper_rs::{WhisperContext, WhisperState};
 
 /// Target window length. The midpoint of WP-68's approved 5-10s latency
 /// budget — not itself the measured, finalized threshold (that's the
@@ -122,6 +116,36 @@ pub struct WindowResult {
     pub outcome: crate::error::Result<Transcription>,
 }
 
+/// Decodes one window at a time for a streaming session's whole lifetime.
+/// The seam that lets the decode loop own "one whisper state per session"
+/// (WP-82) while tests substitute a model-free double.
+pub trait SessionDecoder {
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription>;
+}
+
+/// The production [`SessionDecoder`]: owns the session's single
+/// `WhisperState`, created once via [`WhisperSessionDecoder::new`] and reused
+/// for every window (`transcribe::transcribe_with_state`; state reuse across
+/// calls is upstream's own `whisper_full` pattern).
+pub struct WhisperSessionDecoder {
+    state: WhisperState,
+}
+
+impl WhisperSessionDecoder {
+    pub fn new(ctx: &WhisperContext) -> crate::error::Result<Self> {
+        let state = ctx
+            .create_state()
+            .map_err(|e| AppError::Transcribe(e.to_string()))?;
+        Ok(Self { state })
+    }
+}
+
+impl SessionDecoder for WhisperSessionDecoder {
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        transcribe::transcribe_with_state(&mut self.state, samples, |_| {})
+    }
+}
+
 /// Take exactly one window's worth of samples off the front of `buffer` when
 /// enough have accumulated, leaving any remainder for the next call. Pure —
 /// no I/O, no time — so windowing math is unit-testable without a model.
@@ -138,22 +162,24 @@ fn window_start_ms(window_index: u64) -> u64 {
     window_index * (WINDOW_SECONDS * 1000.0) as u64
 }
 
-/// Runs the rolling-window decode loop until `samples_rx` disconnects or a
-/// result fails to send. Blocking — call from `tokio::task::spawn_blocking`.
-/// Takes `ctx` already-acquired: the caller must hold a live
-/// [`WhisperUsageGuard`] for [`WhisperUser::Streaming`] for the loop's whole
-/// duration. `starting_window_index` offsets window numbering for a resumed
-/// session (see `streaming::resume_streaming_session` and
-/// docs/architecture.md's Streaming Runtime & UI section) so a paused
-/// interval doesn't appear as a gap in the timeline.
-pub fn run_windowed_decode(
-    ctx: Arc<WhisperContext>,
+/// Blocking decode loop; call from `spawn_blocking` while holding the Streaming
+/// claim. Its decoder is created once and creation failure fails open per window.
+/// `starting_window_index` preserves timeline continuity after a resume.
+pub fn run_windowed_decode<D, F>(
+    make_decoder: F,
     samples_rx: Receiver<Vec<f32>>,
     results_tx: Sender<WindowResult>,
     starting_window_index: u64,
-) {
+) where
+    D: SessionDecoder,
+    F: FnOnce() -> crate::error::Result<D>,
+{
     let mut buffer: Vec<f32> = Vec::new();
     let mut window_index: u64 = starting_window_index;
+    // Kept as the message rather than the AppError (not Clone): a creation
+    // failure is rebuilt per window so each fail-open result reads exactly
+    // like a per-window decode failure.
+    let mut decoder = make_decoder().map_err(|e| e.to_string());
 
     loop {
         match samples_rx.recv_timeout(RECV_POLL) {
@@ -168,7 +194,10 @@ pub fn run_windowed_decode(
             // Fail-open (module doc): an Err here is forwarded, not
             // propagated — the caller skips this window's text and the loop
             // keeps running on the next one.
-            let outcome = transcribe::transcribe(&ctx, &window);
+            let outcome = match &mut decoder {
+                Ok(decoder) => decoder.decode_window(&window),
+                Err(message) => Err(AppError::Transcribe(message.clone())),
+            };
             let decode_ms = decode_start.elapsed().as_millis() as u64;
 
             if results_tx
@@ -190,6 +219,7 @@ pub fn run_windowed_decode(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn take_window_returns_none_below_the_threshold() {
@@ -297,5 +327,131 @@ mod tests {
     #[test]
     fn window_ms_matches_window_seconds_in_milliseconds() {
         assert_eq!(WINDOW_MS, (WINDOW_SECONDS * 1000.0) as u64);
+    }
+
+    // WP-82: the decode loop must create ONE decoder (one WhisperState, one
+    // Metal backend) per session and reuse it for every window — not one per
+    // window, which put a full Metal init/free cycle on every 7s window.
+    struct FakeDecoder {
+        decoded: Vec<usize>,
+    }
+
+    impl SessionDecoder for FakeDecoder {
+        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+            self.decoded.push(samples.len());
+            Ok(Transcription {
+                segments: vec![],
+                language: "en".to_string(),
+            })
+        }
+    }
+
+    fn two_windows_channel() -> (
+        std::sync::mpsc::Sender<Vec<f32>>,
+        std::sync::mpsc::Receiver<Vec<f32>>,
+    ) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(vec![0.0_f32; WINDOW_SAMPLES * 2])
+            .expect("send two windows of samples");
+        (tx, rx)
+    }
+
+    #[test]
+    fn decode_loop_creates_one_decoder_for_a_multi_window_session() {
+        let creations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (samples_tx, samples_rx) = two_windows_channel();
+        let (results_tx, results_rx) = std::sync::mpsc::channel();
+        drop(samples_tx);
+
+        let counter = Arc::clone(&creations);
+        run_windowed_decode(
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(FakeDecoder {
+                    decoded: Vec::new(),
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert_eq!(
+            creations.load(Ordering::SeqCst),
+            1,
+            "a session creates its decoder exactly once, however many windows it decodes"
+        );
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(results.len(), 2);
+        assert!(
+            results.iter().all(|r| r.outcome.is_ok()),
+            "every window decoded through the one session decoder"
+        );
+        assert_eq!(results[0].window_index, 0);
+        assert_eq!(results[1].window_index, 1);
+    }
+
+    #[test]
+    fn decode_loop_fail_opens_every_window_when_decoder_creation_fails() {
+        let (samples_tx, samples_rx) = two_windows_channel();
+        let (results_tx, results_rx) = std::sync::mpsc::channel();
+        drop(samples_tx);
+
+        run_windowed_decode(
+            || -> crate::error::Result<FakeDecoder> {
+                Err(crate::error::AppError::Transcribe(
+                    "Metal backend init failed".to_string(),
+                ))
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(
+            results.len(),
+            2,
+            "a session whose decoder cannot be created still answers every window"
+        );
+        for result in &results {
+            assert!(
+                matches!(result.outcome, Err(crate::error::AppError::Transcribe(_))),
+                "creation failure must fail each window open, not end the session"
+            );
+        }
+    }
+
+    // A session stopped before one full window accumulates: the decoder is
+    // still created once up front, the partial window is dropped (unchanged
+    // pre-WP-82 behavior), and the loop returns cleanly on disconnect.
+    #[test]
+    fn decode_loop_creates_the_decoder_once_even_when_no_window_completes() {
+        let creations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(vec![0.0_f32; WINDOW_SAMPLES - 1])
+            .expect("send a partial window");
+        drop(samples_tx);
+        let (results_tx, results_rx) = std::sync::mpsc::channel();
+
+        let counter = Arc::clone(&creations);
+        run_windowed_decode(
+            move || {
+                counter.fetch_add(1, Ordering::SeqCst);
+                Ok(FakeDecoder {
+                    decoded: Vec::new(),
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert_eq!(creations.load(Ordering::SeqCst), 1);
+        assert!(
+            results_rx.try_iter().next().is_none(),
+            "a partial trailing window is not decoded"
+        );
     }
 }

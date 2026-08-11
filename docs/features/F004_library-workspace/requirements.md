@@ -6,7 +6,7 @@ Turn the stateless M1 transcription flow into a persisted, **two-pane workspace*
 a left **Meetings** list and a right meeting workspace (header, status bar,
 transcript, MFU section). Meetings persist in a local SQLite library with
 reopen/rename/delete and **auto-saved** edits. Transcription is a **manual**,
-UI-blocking action with progress and **Stop**, with the language auto-detected.
+UI-blocking action with an indeterminate running status, with the language auto-detected.
 Includes a model switcher, a source-missing state, and Markdown/plain-text
 export. One file
 per meeting. Detailed layout is owned by `design.md`; this feature specifies the
@@ -33,8 +33,8 @@ behavior.
 | F004-R5 | The system shall provide a **model switcher** (default the `large` model); when no model is available it shall hide the switcher and show a warning in the status bar. | must |
 | F004-R6 | The system shall **auto-detect** the transcription **language** on every run and shall not offer the user any language choice; the detected code is stored on the meeting (ADR-012). | must |
 | F004-R7 | The system shall let the user **attach one** source file to a meeting, shown in the status bar with an **×** to detach (no confirmation); transcription does not start on attach. | must |
-| F004-R8 | The system shall transcribe only on the **Transcribe** action (disabled with no file attached) and allow **Stop** (disabled unless a run is active); while a run is active the UI is blocked except Stop, and a cancelled run persists no meeting transcript. The run includes diarization (F002); the meeting is **finished** only once transcription and speaker attribution are both done. | must |
-| F004-R9 | The system shall reflect state in a **status bar**: waiting-for-file, attached-file(s), transcribing (progress bar spanning transcription **and** the speaker-identification phase, else spinner + live 1-second timer), finished, creating-MFU (UI-blocked spinner + timer), and no-model warning. | must |
+| F004-R8 | The system shall transcribe only on the **Transcribe** action (disabled with no file attached); while a run is active the UI is blocked and the Meeting run proceeds to completion. The run includes diarization (F002); the meeting is **finished** only once transcription and speaker attribution are both done. Safe cancellation is deferred to WP-87's isolated worker. | must |
+| F004-R9 | The system shall reflect state in a **status bar**: waiting-for-file, attached-file(s), transcribing (indeterminate spinner + live 1-second timer), identifying speakers (the same spinner + timer), finished, creating-MFU (UI-blocked spinner + timer), and no-model warning. | must |
 | F004-R10 | The system shall auto-save edits (segment text, and later speaker labels and notes) to the library without an explicit save action. | must |
 | F004-R11 | The system shall provide the editable transcript surface in the center pane (auto-sizing `m:ss` segments); per-speaker **colored bubble** grouping/coloring is rendered by F002 (also M2). | must |
 | F004-R12 | The system shall open a meeting whose source file is missing, disable re-transcribe, and show an explanatory note. | must |
@@ -57,11 +57,11 @@ behavior.
   transcribes as English and the meeting records the detected code.
 - **F004-R7:** attaching shows the file with an ×; × detaches it; a second file
   replaces the first (one at a time); attach alone starts nothing.
-- **F004-R8:** Transcribe is disabled with no file; during a run only Stop is
-  active; Stop leaves the library unchanged with no partial transcript; the
-  meeting reaches finished only after transcription and diarization both complete.
-- **F004-R9:** the status bar advances a progress bar across the transcription and
-  speaker-identification phases, or shows a spinner with a per-second timer; it
+- **F004-R8:** Transcribe is disabled with no file; during a run the UI is
+  blocked and the meeting reaches finished only after transcription and
+  diarization both complete.
+- **F004-R9:** the status bar shows an indeterminate spinner with a per-second
+  timer across the transcription and speaker-identification phases; it
   shows finished, creating-MFU, and the no-model warning in the right states.
 - **F004-R10:** an edited segment persists and is present after reopening with no
   save action.
@@ -81,9 +81,10 @@ behavior.
   list mirrors VoicePilot's Sessions list.
 - Reference the original source path; audio is not copied (ADR-008).
 - Auto-save model — no explicit save/discard (ADR-008).
-- Manual, UI-blocking Transcribe with Stop; MFU trigger is manual too (ADR-010,
+- Manual, UI-blocking Transcribe that runs to completion; MFU trigger is manual too (ADR-010,
   F003).
-- Heavy work off the async reactor; progress/cancel via Tauri events
+- Heavy work off the async reactor; a Tauri phase event marks the move into
+  diarization, while completion or failure returns through the invoke result
   (`architecture.md`).
 
 ## Out of Scope

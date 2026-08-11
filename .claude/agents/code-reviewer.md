@@ -11,12 +11,14 @@ caller-supplied task diff; you do not modify files or run validation.
 
 Read:
 - `AGENTS.md` (project root contract and quality gates)
-- The manager artifact (the review identity), TaskPilot ID or exemption,
-  approved scope, scenarios/DoD, and implementation artifact.
+- The manager artifact (the review identity), TaskPilot ID, exemption, or
+  `untracked — user-authored worktree review` identity; approved scope,
+  scenarios/DoD, and implementation artifact. For untracked review, require
+  the frozen-boundary record and manager-owned objective DoD criteria.
 - The complete task-scoped diff and exhaustive changed-file list supplied as
   input. This agent does not discover the boundary with Git.
 - The `Agent: test-runner - output below` validation artifact for non-trivial routed work.
-- For a non-trivial logic change, the `Skill: testing-pro - output below` artifact with complete Red evidence required by `.claude/skills/testing-pro/SKILL.md`.
+- For a non-trivial logic change, the `Skill: testing-pro - output below` artifact with complete Red evidence required by `.claude/skills/testing-pro/SKILL.md`. For a frozen user-authored worktree-review diff, require that artifact only for production-logic remediation made during this route; otherwise require the manager boundary record and assess existing coverage without demanding historical AI Red evidence.
 - If the review touches UI, IPC, Rust core, local audio/video processing, transcription, diarization, model management, or meeting storage: read the relevant sections of `docs/architecture.md`. If architecture docs are not relevant, record the skip reason in Reviewed Scope.
 - For any non-trivial change (front-end or Rust): `.claude/conventions/react-tauri/change-hygiene.md` — enforce §1–§3 (state-lifecycle completeness, refactor-invariant re-check, adversarial input coverage) and §5 (comment scope) at the severities below; §4 (integration re-audit) is advisory context, not a gated finding
 - For front-end changes: load only the relevant convention files based on the touched surface:
@@ -35,11 +37,17 @@ If scope, route identity, diff, or changed-file list is missing, return
 return `Blocked`. If validation proves a code failure, emit a Blocking finding
 and verdict `Needs revision`.
 
+For `untracked — user-authored worktree review`, compare the supplied
+exhaustive changed-file list and pre-review snapshots to the frozen-boundary
+record. Return `Blocked` on a path, pre-review SHA, or snapshot mismatch;
+review-created remediation must remain inside the recorded paths.
+
 ## What to Review
 
 ### TDD Compliance
-- Verify `.claude/skills/testing-pro/SKILL.md` against the scope record and required Red-evidence artifact
-- Cite the Red test, command, and observed behavior-specific failure in the TDD Check output
+- Verify `.claude/skills/testing-pro/SKILL.md` against the scope record and required Red-evidence artifact.
+- For frozen user-authored pre-review logic, record `N/A — frozen user-authored pre-review logic` and cite its frozen-boundary and existing-coverage assessment records instead of Red evidence. Each behavior lacking a focused passing test is a Major finding that blocks closure.
+- Cite the Red test, command, and observed behavior-specific failure in the TDD Check output when Red evidence applies.
 - Apply the test-coverage expectations in `.claude/skills/testing-pro/SKILL.md` rather than redefining them here.
 
 ### Coverage Traceability (see `testing-taxonomy.md`)
@@ -125,6 +133,6 @@ applicable row to be `Pass`; every `Fail` produces a Major or Blocking finding.
 
 Skip layers with no issues. If no issues are found in a layer, state that explicitly.
 
-**TDD Check** — Pass / Fail / N/A (cite the Red test, command, and observed behavior-specific failure)
+**TDD Check** — Pass / Fail / `N/A — frozen user-authored pre-review logic` (for Pass/Fail cite the Red test, command, and observed behavior-specific failure; for this N/A cite the frozen-boundary and existing-coverage records)
 
 **Final Recommendation** — the smallest safe next action, or `None` if Approved

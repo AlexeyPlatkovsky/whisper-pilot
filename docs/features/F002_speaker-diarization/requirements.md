@@ -24,7 +24,7 @@ speaker ids and label renames are stored on the meeting and auto-saved.
 | F002-R3 | The system shall render the transcript as a per-speaker chat of **colored bubbles** (10 predefined shades cycled across speakers), grouped and labelled by speaker, preserving in-place text editing. | must |
 | F002-R4 | The system shall let the user rename a speaker once so the label applies to all that speaker's segments and persists on save. | must |
 | F002-R5 | The system shall support a provided speaker count or auto-detect it when none is given. | should |
-| F002-R6 | The system shall run diarization **automatically as part of the Transcribe flow** (after transcription, before the meeting is marked finished), report its progress within the same run, and honor Stop; there is no separate diarize action. | must |
+| F002-R6 | The system shall run diarization **automatically as part of the Transcribe flow** (after transcription, before the meeting is marked finished) and expose the phase transition within the same run. | must |
 | F002-R7 | If diarization is unavailable or fails (missing models, engine error), the system shall still present the transcript as plain segments (no bubbles) with a note, rather than failing the run. | must |
 
 ## Acceptance Criteria
@@ -42,8 +42,8 @@ speaker ids and label renames are stored on the meeting and auto-saved.
 - **F002-R5:** given N, exactly N speakers are used; without N, a plausible count
   is detected.
 - **F002-R6:** bubbles appear at the end of a normal Transcribe run with no extra
-  user action; the run's progress covers the diarization phase and Stop cancels
-  it.
+  user action; the status changes to identifying speakers for the diarization
+  phase and the Meeting run completes as one operation.
 - **F002-R7:** with diarization models absent, the transcript still renders (plain
   segments) and the meeting is finished, with a note explaining speakers are
   unavailable.

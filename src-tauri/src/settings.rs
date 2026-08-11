@@ -18,10 +18,16 @@ const KEY_UI_LANGUAGE: &str = "ui_language";
 const KEY_ACTIVE_MODEL_TRANSCRIPTION: &str = "active_model.transcription";
 const KEY_ACTIVE_MODEL_DIARIZATION: &str = "active_model.diarization";
 const KEY_ACTIVE_MODEL_LLM: &str = "active_model.llm";
+const KEY_EXPORT_FILE_TYPE: &str = "export_file_type";
 const NONE_DIARIZATION_MODEL: &str = "none";
+const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 
 fn default_active_model_diarization() -> String {
     NONE_DIARIZATION_MODEL.to_string()
+}
+
+fn default_export_file_type() -> String {
+    DEFAULT_EXPORT_FILE_TYPE.to_string()
 }
 
 /// All persisted settings, always fully populated with defaults for unset keys.
@@ -35,6 +41,11 @@ pub struct Settings {
     pub active_model_diarization: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_model_llm: Option<String>,
+    /// `"plain_text"` or `"markdown"` (WP-15): governs how export-to-file and
+    /// the header label's clipboard copy render a meeting's transcript and
+    /// notes.
+    #[serde(default = "default_export_file_type")]
+    pub export_file_type: String,
 }
 
 impl Default for Settings {
@@ -45,6 +56,7 @@ impl Default for Settings {
             active_model_transcription: None,
             active_model_diarization: default_active_model_diarization(),
             active_model_llm: None,
+            export_file_type: default_export_file_type(),
         }
     }
 }
@@ -120,6 +132,14 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 settings.active_model_llm = Some(value.to_string());
             }
         }
+        KEY_EXPORT_FILE_TYPE => {
+            if !matches!(value, "plain_text" | "markdown") {
+                return Err(AppError::InvalidSetting(format!(
+                    "export_file_type must be plain_text or markdown, got {value}"
+                )));
+            }
+            settings.export_file_type = value.to_string();
+        }
         other => {
             return Err(AppError::InvalidSetting(format!(
                 "unknown setting key: {other}"
@@ -186,6 +206,34 @@ mod tests {
             settings.active_model_transcription,
             Some("transcription".to_string())
         );
+    }
+
+    #[test]
+    fn export_file_type_defaults_to_plain_text() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(get_settings(dir.path()).export_file_type, "plain_text");
+    }
+
+    #[test]
+    fn set_setting_persists_export_file_type_and_is_readable_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+
+        set_setting(dir.path(), KEY_EXPORT_FILE_TYPE, "markdown").unwrap();
+        let settings = get_settings(dir.path());
+
+        assert_eq!(settings.export_file_type, "markdown");
+    }
+
+    #[test]
+    fn set_setting_rejects_invalid_export_file_type_and_leaves_store_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_EXPORT_FILE_TYPE, "markdown").unwrap();
+
+        let err = set_setting(dir.path(), KEY_EXPORT_FILE_TYPE, "pdf").unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidSetting(_)));
+        assert_eq!(get_settings(dir.path()).export_file_type, "markdown");
     }
 
     #[test]

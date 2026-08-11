@@ -36,6 +36,9 @@ export interface Meeting {
   status: string;
   segments: Segment[];
   notes?: MeetingNotes;
+  /** `true` when an attached source file is no longer readable at its saved
+   * path (moved or deleted). `false` when there is no source at all. */
+  source_missing: boolean;
 }
 
 export function createMeeting(): Promise<Meeting> {
@@ -56,6 +59,21 @@ export function renameMeeting(id: number, title: string): Promise<Meeting> {
 
 export function deleteMeeting(id: number): Promise<void> {
   return invoke<void>("delete_meeting", { id });
+}
+
+/** Auto-save an edited segment's text; `index` addresses the displayed
+ * (speaker-coalesced) segment list. No explicit save action is required. */
+export function updateSegment(
+  id: number,
+  index: number,
+  text: string,
+): Promise<Meeting> {
+  return invoke<Meeting>("update_segment", { id, index, text });
+}
+
+/** Auto-save the meeting notes fields as the user edits them. */
+export function updateNotes(notes: MeetingNotes): Promise<Meeting> {
+  return invoke<Meeting>("update_notes", { notes });
 }
 
 export function openFileDialog(): Promise<string | null> {
@@ -87,6 +105,15 @@ export function transcribeMeeting(
   return invoke<TranscribeMeetingResult>("transcribe_meeting", { id });
 }
 
+/**
+ * Re-run speaker identification alone on an already-transcribed meeting,
+ * leaving the transcript text untouched. Requires an active diarization
+ * model and a readable source file.
+ */
+export function diarizeMeeting(id: number): Promise<TranscribeMeetingResult> {
+  return invoke<TranscribeMeetingResult>("diarize_meeting", { id });
+}
+
 export function generateNotes(id: number): Promise<Meeting> {
   return invoke<Meeting>("generate_notes", { id });
 }
@@ -104,6 +131,7 @@ export interface Settings {
   active_model_transcription?: string;
   active_model_diarization: string;
   active_model_llm?: string;
+  export_file_type: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -166,6 +194,20 @@ export function onTranscriptionPhase(
   handler: (phase: TranscriptionPhase) => void,
 ): Promise<UnlistenFn> {
   return listen<TranscriptionPhase>("transcription_phase", (event) =>
+    handler(event.payload),
+  );
+}
+
+export interface TranscriptionProgress {
+  id: number;
+  percent: number;
+}
+
+/** Fired with Whisper's 0–100 estimate while a Meeting is transcribing. */
+export function onTranscriptionProgress(
+  handler: (progress: TranscriptionProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<TranscriptionProgress>("transcription_progress", (event) =>
     handler(event.payload),
   );
 }

@@ -22,16 +22,16 @@ Adopt a **persistent two-pane shell**, mirroring VoicePilot's Sessions layout:
   collapsible via a header **toggle** placed immediately after the macOS traffic
   lights; the collapsed state persists across restarts.
 - **Right pane** — the active meeting: a header (meeting label with
-  edit/copy/delete, model switcher, Transcribe, Stop, Create MFU), a **status
+  edit/copy/delete, model switcher, Transcribe, Create MFU), a **status
   bar**, the transcript, and the **MFU section** beneath it. (The language
   selector listed here originally was withdrawn by ADR-012.)
 - **"Meeting"** is the single product noun — UI copy, data model, and IPC all use
   it (supersedes "document"; see ADR-008 wording).
 - **Manual, explicit, UI-blocking operations.** Transcription runs only on
-  **Transcribe** and can be stopped; MFU is generated only on **Create MFU**
+  **Transcribe** and currently runs to completion; MFU is generated only on **Create MFU**
   (enabled after transcription finishes) and cannot be cancelled. While either
-  runs, the UI is blocked except the control that tracks/stops it, and progress
-  is always shown (a real progress bar, or a spinner with a live 1-second timer).
+  runs, the UI is blocked and an indeterminate spinner with a live 1-second timer
+  is shown. Safe Meeting cancellation is deferred to WP-87's isolated worker.
 - **Transcript rendering.** The transcript renders as a per-speaker chat of
   **colored bubbles** (10 predefined shades) from **M2**, since diarization
   (F002) is now part of M2. F004 owns the editable segment surface; F002 owns the

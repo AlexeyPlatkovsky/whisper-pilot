@@ -62,6 +62,7 @@ beforeEach(() => {
     theme: "system",
     ui_language: "en",
     active_model_diarization: "none",
+    export_file_type: "plain_text",
   });
 });
 
@@ -383,6 +384,7 @@ describe("AiModelsSection", () => {
         theme: "system",
         ui_language: "en",
         active_model_diarization: "campplus",
+        export_file_type: "plain_text",
       });
       const user = userEvent.setup();
 
@@ -404,11 +406,13 @@ describe("AiModelsSection", () => {
         theme: "system",
         ui_language: "en",
         active_model_diarization: "campplus",
+        export_file_type: "plain_text",
       });
       vi.mocked(ipc.setSetting).mockResolvedValue({
         theme: "system",
         ui_language: "en",
         active_model_diarization: "none",
+        export_file_type: "plain_text",
       });
       const user = userEvent.setup();
 
@@ -447,11 +451,13 @@ describe("AiModelsSection", () => {
           theme: "system",
           ui_language: "en",
           active_model_diarization: "campplus",
+          export_file_type: "plain_text",
         })
         .mockResolvedValueOnce({
           theme: "system",
           ui_language: "en",
           active_model_diarization: "none",
+          export_file_type: "plain_text",
         });
       vi.mocked(ipc.listTaskModels)
         .mockResolvedValueOnce([CAMPPLUS_DOWNLOADED, TITANET_NOT_DOWNLOADED])

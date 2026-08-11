@@ -28,7 +28,6 @@ markers is never touched. Full contract:
 | `development.md` | Developer guide: prerequisites, build/dev/test commands, project layout | You need to build or run WhisperPilot from source |
 | `designbook.md` | UI design contract: design tokens (source of truth `src/tokens.css`), themes, component patterns | You do UI work and need tokens or patterns |
 | `decisions/` | One ADR per significant decision (rationale) | You need why a choice was made |
-| `plans/` | Dated one-off analyses (e.g. testing-pyramid gap analysis); not authoritative for any owned fact | You want the working notes behind a past analysis |
 <!-- sdd-index-sync:end documents -->
 
 ## Feature Registry
@@ -42,7 +41,7 @@ milestones).
 | F001 | Transcription core | M1 (done) | R1–R6 | T1–T6 | S1–S5 | — (as-built) |
 | F004 | Library & workspace | M2 (next) | R1–R14 | T1–T15 | S1–S14 | epic WP-11 (WP-16…WP-30, WP-32) |
 | F002 | Speaker diarization | M2 (next) | R1–R7 | T1–T7 | S1–S6 | epic WP-1 (WP-5…WP-10, WP-31) |
-| F005 | Settings | M2 beta / M3 release | R1–R10 | T1–T10 | S1–S10 | epic WP-33 (WP-34…WP-42); release unscheduled |
+| F005 | Settings | M2 beta / M3 release | R1–R11 | T1–T11 | S1–S11 | epic WP-33 (WP-34…WP-42); release unscheduled |
 | F003 | Structured meeting notes | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
 <!-- sdd-index-sync:end features -->
 

@@ -25,6 +25,11 @@ Do not use for:
   must instead state an objective instruction-system DoD and record its
   structural validation in `task-complete`; do not invent a TaskPilot item just
   to invoke this skill.
+- Untracked user-authored worktree review. Its manager-declared direct route
+  must instead state objective DoD criteria for the frozen boundary and record
+  validation and code-review evidence in `task-complete`, plus commit evidence
+  only when the manager-declared route includes a user-authorized commit; do
+  not invent a TaskPilot item to invoke this skill.
 - Validating an item at creation time. An item is born in `backlog`; its description and DoD must be completed before its discovery run can transition it to `ready`. Running a DoR check at creation would falsely block newly scoped work.
 
 ## Required Input

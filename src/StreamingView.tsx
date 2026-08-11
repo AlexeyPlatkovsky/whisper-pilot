@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptStreamingPrettify,
   deleteStreamingSession,
@@ -20,67 +20,25 @@ import {
 } from "./ipc";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
+import { CopyButton } from "./CopyButton";
 import { ModeToggle } from "./ModeToggle";
 import { formatElapsedClock } from "./format";
 import { computeWordDiff } from "./diff";
 import { groupWindowsIntoParagraphs } from "./paragraphs";
+import { StreamingSessionRow } from "./StreamingSessionRow";
+import {
+  fileNameFor,
+  formatClockTime,
+  plainTranscript,
+  sourcesLabel,
+  toMarkdown,
+  upsertWindow,
+  windowText,
+} from "./streamingText";
 import {
   resolveStreamingRowStatus,
   resolveStreamingWidgetStatus,
-  type StreamingStatusView,
 } from "./streamingStatus";
-
-function formatClockTime(ms: number): string {
-  const total = Math.floor(ms / 1000);
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, "0")}`;
-}
-
-/** Merge a live window into the ordered list, replacing a prior result for
- * the same index rather than duplicating it — the decode loop can, in
- * principle, resend an index (e.g. a future retry), and window order in the
- * transcript must always follow `window_index`, not arrival order. */
-function upsertWindow(
-  windows: StreamingWindow[],
-  incoming: StreamingWindow,
-): StreamingWindow[] {
-  const next = windows.filter((w) => w.window_index !== incoming.window_index);
-  next.push(incoming);
-  next.sort((a, b) => a.window_index - b.window_index);
-  return next;
-}
-
-function sourcesLabel(sources: {
-  mic: boolean;
-  system_audio: boolean;
-}): string {
-  if (sources.mic && sources.system_audio) return "Mic + System audio";
-  if (sources.mic) return "Mic only";
-  if (sources.system_audio) return "System audio only";
-  return "No audio source";
-}
-
-/** A window's text for display/export — the same `[unavailable]` marker the
- * live transcript shows for a fail-open window, so copy/export output
- * matches what's on screen rather than silently dropping or blanking a
- * failed span. */
-function windowText(w: StreamingWindow): string {
-  return w.outcome_ok ? w.text : "[unavailable]";
-}
-
-function plainTranscript(windows: StreamingWindow[]): string {
-  return windows.map(windowText).join(" ").replace(/\s+/g, " ").trim();
-}
-
-function toMarkdown(title: string, text: string): string {
-  return `# ${title}\n\n${text}\n`;
-}
-
-function fileNameFor(title: string): string {
-  const slug = title.replace(/[^\w\- ]+/g, "").trim();
-  return `${slug || "streaming-session"}.md`;
-}
 
 export function StreamingView({
   onClose,
@@ -90,6 +48,7 @@ export function StreamingView({
   onOpenSettings: () => void;
 }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
+  const [sessionSearch, setSessionSearch] = useState("");
   const [activeId, setActiveId] = useState<number | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>("Streaming Session");
   const [windows, setWindows] = useState<StreamingWindow[]>([]);
@@ -101,7 +60,6 @@ export function StreamingView({
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [copyStatus, setCopyStatus] = useState<"idle" | "copied">("idle");
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [craftingId, setCraftingId] = useState<number | null>(null);
@@ -158,6 +116,13 @@ export function StreamingView({
               ? "prettify-failed"
               : "ready";
   const widget = resolveStreamingWidgetStatus(widgetStatus);
+  const filteredSessions = useMemo(() => {
+    const query = sessionSearch.trim().toLocaleLowerCase();
+    if (query.length < 3) return sessions;
+    return sessions.filter((session) =>
+      session.title.toLocaleLowerCase().includes(query),
+    );
+  }, [sessionSearch, sessions]);
 
   // Recomputed from Date.now() each tick, not incremented, so a throttled
   // setInterval can't drift the displayed value. Shared by On Air, Crafting,
@@ -242,7 +207,6 @@ export function StreamingView({
         setActiveTitle(summary.title);
         if (resumeId === null) setWindows([]);
         setSources(null);
-        setCopyStatus("idle");
         setNotes(null);
         setCraftFailed(false);
         setPrettifiedText(null);
@@ -296,7 +260,6 @@ export function StreamingView({
       setWindows(session.windows);
       setIsRunning(false);
       setSources(null);
-      setCopyStatus("idle");
       setNotes(session.notes ?? null);
       setCraftFailed(false);
       setPrettifiedText(session.prettified_text ?? null);
@@ -374,16 +337,6 @@ export function StreamingView({
   // Once accepted, the cleaned text is what gets copied/exported — that's
   // the point of prettifying.
   const exportText = prettifiedText ?? plainTranscript(windows);
-
-  const handleCopy = useCallback(async () => {
-    setError(null);
-    try {
-      await navigator.clipboard.writeText(exportText);
-      setCopyStatus("copied");
-    } catch (e) {
-      setError(String(e));
-    }
-  }, [exportText]);
 
   const handleExport = useCallback(async () => {
     setError(null);
@@ -619,10 +572,11 @@ export function StreamingView({
               disabled={canPrettify}
             />
             <span className="wp-sep" />
-            <ActionIcon
-              icon="copy"
-              label={copyStatus === "copied" ? "Copied" : "Copy transcript"}
-              onClick={() => void handleCopy()}
+            <CopyButton
+              text={exportText}
+              resetKey={activeId}
+              onError={setError}
+              onCopied={() => setError(null)}
               disabled={!hasText}
             />
             <span className="wp-sep" />
@@ -677,14 +631,18 @@ export function StreamingView({
                 className="wp-search-input"
                 placeholder="Search sessions..."
                 aria-label="Search sessions"
+                value={sessionSearch}
+                onChange={(event) => setSessionSearch(event.target.value)}
               />
             </div>
 
             {sessions.length === 0 ? (
               <p className="wp-info-muted">No sessions yet</p>
+            ) : filteredSessions.length === 0 ? (
+              <p className="wp-info-muted">No matches</p>
             ) : (
               <ul className="wp-meeting-list" role="list">
-                {sessions.map((s) => (
+                {filteredSessions.map((s) => (
                   <StreamingSessionRow
                     key={s.id}
                     title={s.title}
@@ -959,85 +917,5 @@ export function StreamingView({
         </div>
       )}
     </div>
-  );
-}
-
-function StreamingSessionRow({
-  title,
-  when,
-  dur,
-  status,
-  selected,
-  onSelect,
-  onRename,
-  onDelete,
-}: {
-  title: string;
-  when: string;
-  dur: string;
-  status: StreamingStatusView;
-  selected?: boolean;
-  onSelect: () => void;
-  onRename: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <li
-      className={`wp-meeting-row${selected ? " is-selected" : ""}`}
-      role="listitem"
-      aria-label={title}
-    >
-      <span
-        className={`wp-meeting-dot wp-tone--${status.tone}`}
-        role="img"
-        aria-label={status.label}
-        title={status.label}
-      />
-      <button
-        type="button"
-        className="wp-meeting-open"
-        aria-label={`Open ${title}`}
-        aria-current={selected ? "page" : undefined}
-        onClick={onSelect}
-      >
-        <div className="wp-meeting-text">
-          <span className="wp-meeting-title" title={title}>
-            {title}
-          </span>
-          <div className="wp-meeting-meta">
-            <span>{when}</span>
-            <span>{dur}</span>
-          </div>
-        </div>
-      </button>
-      <span className="wp-meeting-actions">
-        {status.spinning ? (
-          <span className="wp-meeting-busy" aria-hidden="true">
-            <Icon
-              name="refresh-cw"
-              size={13}
-              className={`wp-spin wp-tone--${status.tone}`}
-            />
-          </span>
-        ) : (
-          <>
-            <button
-              type="button"
-              aria-label={`Rename ${title}`}
-              onClick={onRename}
-            >
-              <Icon name="pencil" size={13} />
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete ${title}`}
-              onClick={onDelete}
-            >
-              <Icon name="trash-2" size={13} />
-            </button>
-          </>
-        )}
-      </span>
-    </li>
   );
 }

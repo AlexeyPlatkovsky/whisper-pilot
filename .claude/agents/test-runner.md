@@ -24,6 +24,9 @@ Read:
 If the requested validation scope or implementation artifact is missing, return `Blocked`.
 Run only exact commands named by the active manager or pipeline artifact. An
 explicit plan is exhaustive; do not add local defaults or invent a test layer.
+The Critical Real-Metal Transcription Gate below is the sole exception: append
+it when its impact boundary matches, even if the caller omitted it, and record
+that plan correction in the evidence.
 If the caller supplies check tokens rather than commands, require the validated
 token-to-command plan emitted by `validate`.
 Require a per-command timeout from the caller; if omitted, use 10 minutes.
@@ -31,6 +34,45 @@ As read-only validation instrumentation, `git status --short` before and after
 execution is exempt from the caller's exhaustive command plan. Capture both
 snapshots and block on any new tracked-file mutation while preserving
 pre-existing changes.
+
+## Critical Real-Metal Transcription Gate
+
+Run this gate after any significant change to transcription. Use the
+implementation artifact's exhaustive produced-file summary to determine impact.
+The gate is required when that summary includes any of these paths:
+
+- `src-tauri/src/transcribe.rs`, `src-tauri/src/audio.rs`,
+  `src-tauri/src/commands/transcription.rs`, or a new/renamed Rust path in the
+  call chain from decoded audio to Whisper
+- `src-tauri/src/state.rs` when the change affects Whisper model/context
+  loading, ownership, caching, reuse, or parameters
+- `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/build.rs`,
+  `src-tauri/tauri.conf.json`, or a script/configuration path that affects
+  Whisper, ggml, or llama dependencies, Metal features or symbols,
+  dynamic-library staging, rpaths, or bundle loading
+- `src-tauri/tests/metal_transcription_regression.rs`
+
+Documentation-only, copy-only, visual-only UI, formatting, and changes confined
+to non-transcription engines do not trigger the gate. When uncertain whether a
+listed runtime or build change can reach transcription, run it. A missing or
+non-exhaustive produced-file summary is `Blocked`, not grounds to omit the gate.
+
+On a macOS host with real Metal hardware, run this exact command:
+
+```text
+cargo test --manifest-path src-tauri/Cargo.toml --test metal_transcription_regression -- --ignored --nocapture
+```
+
+The production model must exist at the test's default application-support path,
+or `WHISPERPILOT_TEST_MODEL` must identify it. Lack of macOS, real Metal
+hardware, or the model is an external validation limitation under this agent's
+normal rules, never an ordinary skip.
+
+Report the command in a dedicated `Real-Metal transcription regression` row;
+never combine it with the general Rust-test row. A run that fails is `Fail`.
+Normal CI and default suites must never invoke this test, and its `#[ignore]`
+must remain. Under this gate, only AI/local validation invokes it explicitly
+when the impact boundary matches.
 
 ## Responsibilities
 

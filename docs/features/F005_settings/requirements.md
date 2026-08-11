@@ -33,6 +33,7 @@ per requirement below.
 | F005-R8 | The **App language** section shall set the **UI language**, defaulting to **English** (the only option in Beta); this is independent of the transcription language. | M2 | must |
 | F005-R9 | At release, App language shall add **Russian, Turkish, Spanish, German, French**. | M3 | should |
 | F005-R10 | At release, an **Update app** section shall let the user check for and apply application updates. | M3 | should |
+| F005-R11 | The **Appearance** section shall list each current semantic Meeting and Streaming status once and allow the user to save an opaque `#RRGGBB` color for it. Each saved color applies to every current matching status surface and persists locally. The picker opens in an anchored popover; Cancel changes nothing; Save checks WCAG AA 4.5:1 contrast against the active status-widget background and requires explicit confirmation for a lower-contrast color. **Reset all colors** restores the documented built-in mapping. | M2 | should |
 
 ## Acceptance Criteria
 
@@ -55,6 +56,10 @@ per requirement below.
   transcript never changes the UI language.
 - **F005-R9 / R7 / R10:** (release) the added languages/themes are selectable and
   apply; Update can check for and apply an update.
+- **F005-R11:** every current status has one color control; valid saved colors apply
+  consistently to matching Meeting/Streaming widgets and indicators and persist;
+  Cancel and rejected input leave the prior mapping intact; low contrast requires
+  confirmation; Reset all restores the built-in mapping.
 
 ## Constraints
 
@@ -74,4 +79,6 @@ per requirement below.
 - Adding arbitrary/third-party models or editing the catalog.
 - Per-meeting theme or language overrides (settings are app-wide).
 - Cloud sync of settings or models.
+- Custom status labels, icons, ordering, creation, or colors for statuses added after
+  the delivered registry.
 - Auto-update without user action (Update is user-initiated).

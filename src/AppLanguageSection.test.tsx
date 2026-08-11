@@ -13,6 +13,7 @@ describe("AppLanguageSection", () => {
       theme: "system",
       ui_language: "en",
       active_model_diarization: "none",
+      export_file_type: "plain_text",
     });
 
     render(<AppLanguageSection />);

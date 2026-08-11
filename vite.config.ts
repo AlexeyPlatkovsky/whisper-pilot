@@ -20,6 +20,7 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     setupFiles: ["./src/test/setup.ts"],
     coverage: {
+      exclude: ["src/test/**"],
       thresholds: {
         statements: 95,
         lines: 95,

@@ -1,6 +1,6 @@
 ---
 name: sync-pen-code
-description: Bidirectional sync between WhisperPilot's Pencil design source (pencil/*.pen) and the real React/Rust UI code. Direction pen-to-code translates an approved design into implementer-ready facts; direction code-to-pen updates the design file after UI code changed, via the pencil CLI only.
+description: Bidirectional sync between WhisperPilot's Pencil design source (pencil/*.pen) and the real React/Rust UI code. Direction pen-to-code translates an approved design into implementer-ready facts; direction code-to-pen updates the design file after UI code changed, via the pencil MCP (primary) or the pen CLI (fallback).
 ---
 
 # Skill: sync-pen-code
@@ -31,30 +31,42 @@ Do not use:
   `.claude/skills/design-in-pen/SKILL.md` instead.
 - for a `.pen` structural fix unrelated to a code change (e.g. renumbering
   component IDs, fixing a broken `ref`) — route `design-in-pen`. There is no
-  third "trivial fix" path that bypasses the CLI; see that skill's Hard Rule.
+  third "trivial fix" path that bypasses tool-mediated mutation; see that
+  skill's Hard Rule.
 
-## Hard Rule: CLI-Only Mutation, No Exceptions
+## Hard Rule: Tool-Mediated Mutation Only, No Exceptions
 
 Every mutation to a `pencil/*.pen` file (the `code-to-pen` direction) goes
-through the `pencil` CLI. Never use `Edit` or `Write` on the raw JSON — see
+through the pencil MCP — or, in a host where the MCP is not available, the
+`pen` CLI. Never use `Edit` or `Write` on the raw JSON — see
 `.claude/skills/design-in-pen/SKILL.md` §Hard Rule for the incident that
 established this rule; it applies identically here. Reading a `.pen` file
 with `Read` is fine in either direction — only mutation is restricted, and
-`pen-to-code` never invokes the CLI's mutating write at all (see its
-Procedure step 2 below for the one CLI call it does make, which is
-structurally read-only).
+`pen-to-code` never mutates at all (see its Procedure step 2 below for the
+one render it may optionally produce, which is structurally read-only).
 
 ## Required Environment
 
-- The `pencil` CLI on `PATH`; an authenticated session (`pencil status`). If
-  not authenticated, stop and tell the user to run `pencil login` themselves,
-  then retry.
+- **Primary — pencil MCP.** The `mcp__pencil__*` tools are available in the
+  host. Before the first mutation, call `get_app_state` with
+  `include_canvas_design` and `include_schema` to load the canvas-editor
+  instructions and the `.pen` schema, and `get_guidelines` for any
+  task-specific guide the mutation needs.
+- **Fallback — `pen` CLI.** When the MCP is not available in the host, or its
+  environment-level calls fail before any mutation lands (e.g. the Pencil app
+  session is unreachable): the `pen` CLI on `PATH` and an authenticated
+  session (`pen status`). If not authenticated, stop and tell the user to run
+  `pen login` themselves, then retry. If neither the MCP nor an authenticated
+  `pen` CLI is available, stop with `Status: blocked` naming the missing tool
+  path — never fall back to raw file mutation.
 - `code-to-pen` only: confirm no other process is expected to hold the target
-  file open for editing at the same time (ask the user if unsure).
+  file open for editing at the same time (ask the user if unsure). The MCP's
+  own Pencil app session is the expected holder of the file; the concern is a
+  second interactive editing session racing the mutation.
 
 ## Procedure — `pen-to-code`
 
-This direction never invokes the `pencil` CLI's mutating call; it only reads.
+This direction never mutates the `.pen` file; it only reads.
 
 1. **Read the approved frame(s).** Use `Read` on the target `.pen` file to
    locate the frame(s)/component(s) that define the approved design for this
@@ -62,16 +74,22 @@ This direction never invokes the `pencil` CLI's mutating call; it only reads.
    yet approved (no confirmed `design-in-pen` output or user confirmation),
    stop and route `design-in-pen` or `.claude/skills/brainstorm/SKILL.md`
    first.
-2. **Optionally render for a visual read.** `pencil` requires `--prompt` on
-   every invocation (there is no prompt-free pure-export mode), so a
-   read-only render uses a neutral no-op prompt against a **scratch output
-   path distinct from the source file** — never the same path for `--in` and
-   `--out` here, since compliance with a "do not change anything" prompt is
-   the mutating agent's best effort, not a structural guarantee, and this
-   direction must never risk the source file:
-   ```
-   pencil --in <file> --out <scratch-copy.pen> --prompt "Do not change anything; render only." --export <preview.png>
-   ```
+2. **Optionally render for a visual read.**
+   - **Primary (MCP):** export the approved frame(s) with
+     `mcp__pencil__export_nodes` (the frame node IDs, PNG format) into a
+     scratch directory outside the working tree (e.g. an OS temp directory),
+     so the export never dirties the repository. This is a pure export — no
+     mutation of the source file is involved.
+   - **Fallback (CLI):** `pen` requires `--prompt` on every invocation (there
+     is no prompt-free pure-export mode), so a read-only render uses a
+     neutral no-op prompt against a **scratch output path distinct from the
+     source file** — never the same path for `--in` and `--out` here, since
+     compliance with a "do not change anything" prompt is the mutating
+     agent's best effort, not a structural guarantee, and this direction must
+     never risk the source file:
+     ```
+     pen --in <file> --out <scratch-copy.pen> --prompt "Do not change anything; render only." --export <preview.png>
+     ```
    Skip this entirely if the JSON facts alone are sufficient — most
    `pen-to-code` runs should skip it.
 3. **Produce a translation.** Extract concrete, implementer-ready facts from
@@ -98,27 +116,38 @@ This direction never invokes the `pencil` CLI's mutating call; it only reads.
    triggering implementation artifact (the standalone `task-routing` entry
    point), instead inspect the current `git diff`/working tree for the
    affected UI files and confirm the resulting visual-delta description with
-   the user before composing the prompt — do not guess from file names alone
+   the user before composing the brief — do not guess from file names alone
    here either.
-2. **Compose the prompt.** State the exact visual delta as a brief a design
-   agent with no other context could apply correctly (e.g. "the header
+2. **Compose the brief.** State the exact visual delta as a brief a reviewer
+   with no other context could check the result against (e.g. "the header
    action group lost its Re-run icon and gained a Copy icon between Craft and
    Export"), naming the affected frame(s).
-3. **Mutate and render in one call.**
-   ```
-   pencil --in <file> --out <file> --prompt "<prompt>" --agent claude \
-     --export <preview.png> --export-type png
-   ```
+3. **Mutate and render.**
+   - **Primary (MCP):** apply the brief with `mcp__pencil__execute` snippets
+     against the file (pass its path as `filePath`). Prefer several small,
+     verifiable snippets over one large one. When a snippet fails, retry it
+     with the `edits`/`editId` patch mechanism instead of resending it
+     unchanged. Render the affected frame with `get_screenshot` for your own
+     read of the result, and produce the reviewer's PNG with `export_nodes`
+     (the affected frame's node ID, PNG format) into a scratch directory
+     outside the working tree (e.g. an OS temp directory), so the export
+     never dirties the repository.
+   - **Fallback (CLI):** mutate and render in one call:
+     ```
+     pen --in <file> --out <file> --prompt "<brief>" --agent claude \
+       --export <preview.png> --export-type png
+     ```
 4. **Verify before reporting success.**
    Agent: `.claude/agents/pencil-vision-reviewer.md`
-   Required input: the produced `export_path`, `comparison_mode:
+   Required input: the produced `export_path` (the `export_nodes` PNG, or the
+   CLI `--export` PNG in fallback mode), `comparison_mode:
    counterpart-image`, `counterpart_path` set to a current screenshot of the
    running app for the affected view, and `caller: sync-pen-code /
    code-to-pen`. If no current screenshot is available, obtain one (e.g. via
    the manual UI verification already run for the triggering change) rather
    than skipping the check — do not report success with an unverified
    mutation.
-5. **On `Deviations found`**, refine the prompt and repeat from step 3
+5. **On `Deviations found`**, refine the brief and repeat from step 3
    (increment an attempt counter, maximum 3). After 3 attempts without a
    `Match`, stop and report the gap to the user.
 6. **Sanity-check structure** — valid JSON, unique IDs — same as
@@ -160,8 +189,10 @@ Then, for `pen-to-code`, emit:
   verification is deferred to the calling pipeline's later steps.
 
 For `code-to-pen`, emit:
-- **Prompt used** — the exact text sent to `pencil --prompt`.
-- **CLI invocation** — the exact command run.
+- **Brief used** — the exact visual-delta brief applied in step 3 (in CLI
+  fallback mode, the exact text sent to `pen --prompt`).
+- **Mutation record** — the `execute` snippets applied (or a faithful summary
+  of them), or the exact CLI command run in fallback mode.
 - **Export** — the produced PNG path.
 - **Vision review** — the `pencil-vision-reviewer` verdict and a link/summary
   of its output.
@@ -169,4 +200,5 @@ For `code-to-pen`, emit:
   ID-uniqueness pass/fail.
 
 `blocked` requires the exact missing input, unapproved design, failed auth,
-or unresolved deviation, and does not claim a mutation succeeded.
+an unavailable mutation tool (neither MCP nor authenticated `pen` CLI), or
+unresolved deviation, and does not claim a mutation succeeded.

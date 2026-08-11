@@ -1,0 +1,20 @@
+schema_version: 1
+id: WP-83
+title: Standalone Diarize action for Meeting transcript header
+priority: normal
+type: task
+status: done
+created_at: '2026-08-08T20:06:07Z'
+updated_at: '2026-08-08T20:07:03Z'
+parent_id: WP-11
+description: 'Add a separate "Diarize" icon button to the Meeting transcript panel header, at the same position as Streaming''s Prettify button in its own transcript header (next to the Editable indicator). Clicking it re-runs speaker identification alone on the current meeting''s already- transcribed segments, without re-transcribing: re-decodes the source audio, runs the same diarization pass transcribe_meeting uses internally, and assigns the resulting speaker turns onto the existing persisted segments by time overlap. Unlike the diarization folded into a Transcribe run, a failure here is a real error shown to the user (not a fail-open warning) — diarization is what was explicitly requested. Icon: a two-bubble dialogue/chat glyph (user-referenced flaticon chat_5569627), implemented as an inline lucide-style "messages-square" SVG matching this project''s existing icon set.
+
+  Disabled until: a transcript exists, an active diarization model is selected and downloaded, the source file is still readable, and no other meeting-blocking run (Transcribe, Craft notes, Diarize itself) is in flight.
+
+  Target surfaces: src-tauri/src/meetings.rs (diarize_meeting_segments), src-tauri/src/lib.rs (diarize_meeting command), src/ipc.ts, src/App.tsx, src/Icon.tsx.'
+dod:
+- diarize_meeting_segments assigns speaker turns onto a meeting's existing persisted segments by time overlap without changing segment text, covered by Rust unit tests (undiarized transcript, unknown meeting, empty turns).
+- The diarize_meeting Tauri command errors (does not fail open) when the meeting has no transcript, its source file is missing, or no diarization model is active.
+- The header Diarize button is disabled until a transcript exists, a diarization model is active/downloaded, the source file is readable, and no other meeting-blocking run is in flight; clicking it calls diarize_meeting and applies the returned speaker ids; a failure surfaces as an error without discarding the transcript. Covered by React/vitest component tests.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+created_by: Aleksei_Platkovskii

@@ -1,0 +1,35 @@
+schema_version: 1
+id: WP-85
+title: 'Empty decode is persisted as a finished meeting: no guard against zero-segment whisper output'
+priority: high
+type: bug
+status: done
+created_at: '2026-08-10T12:56:57Z'
+updated_at: '2026-08-10T13:10:30Z'
+description: 'Observed on Apple M5 Pro, macOS 26.6, whisper.cpp 1.8.3, 2026-08-10, on branch task/wp-19-stop-cancel-transcription with the WP-84 fix included: a Meeting Transcribe run completed both phases (transcription, then diarization) with no error, yet the workspace showed only the empty-state label ''Add an audio or video file to get a transcript.''. Store evidence: the meeting row was persisted as language=''af'', duration_ms=NULL, status=''finished'' with ZERO segment rows - the exact signature of the known upstream ggml Metal encoder fault (auto-detected language: af (p = nan)) manifesting as EMPTY OUTPUT instead of error -6. Diarization then ran on the decoded samples regardless, which is why both phases appeared to complete.
+
+
+  Root cause location: src-tauri/src/transcribe.rs transcribe_with_state checks full_result for Err but treats a successful decode with full_n_segments()==0 as a valid Transcription. The Meeting path (commands/transcription.rs decode_and_transcribe -> persist_transcript_then_diarize) therefore persists an empty transcript, marks the meeting finished, stores the bogus detected language, and burns a diarization run on it - silent data loss: the run looks successful and the transcript is gone.
+
+
+  Scope: reject a zero-segment decode in the Meeting decode path (decode_and_transcribe, meeting-only) with an AppError::Transcribe whose message tells the user the decode produced nothing and to retry (intermittent Metal fault). The run must fail BEFORE persist and BEFORE the diarization pass is constructed, so no empty finished meeting, no bogus language, no wasted diarization. The shared low-level decode (transcribe/transcribe_with_state) stays tolerant: Streaming windows legitimately contain silence and must keep returning Ok with zero segments. Non-goal: the upstream Metal fault itself (documented known limitation, whisper.cpp 1.8.3); NaN-probability detection beyond the empty-output guard.
+
+
+  Happy path: Given a file with speech and a healthy decode, when Transcribe runs, then segments persist and display exactly as today. Given a decode that returns Ok with zero segments (Metal empty-output fault or a genuinely speechless file), when the Meeting decode finishes, then the command fails with a retry-guidance error, nothing is persisted, the meeting is not marked finished, and diarization never starts. Given a silent Streaming window, when its decode returns zero segments, then the session continues unaffected.
+
+
+  Edge cases: decode whose raw segments are all blank/whitespace (filtered to zero after trimming) is treated the same as zero raw segments; Stop/cancel semantics (WP-19) unchanged - a cancelled run still reports AppError::Cancelled, never the empty-output error; progress events unchanged.
+
+
+  Constraints: no change to decode parameters, the whisper-rs version, Streaming behavior, or the persistence schema; the guard lives in the Meeting command path, not in the shared transcribe module.'
+dod:
+- An empty (zero-segment) Meeting decode is rejected with AppError::Transcribe whose message says the decode produced nothing and advises a retry - proven by a Rust unit test on the guard.
+- A non-empty transcription passes the guard untouched - proven by a Rust unit test.
+- The guard runs in the Meeting path (decode_and_transcribe) before persist and before the diarization pass is constructed - verified by code placement and review; the shared transcribe/transcribe_with_state decode stays tolerant of zero segments so silent Streaming windows are unaffected.
+- 'Stop/cancel semantics are unchanged: a cancelled run still reports AppError::Cancelled, never the empty-output error - covered by the existing WP-84/WP-19 tests staying green.'
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the coverage gate.'
+- 'docs/architecture.md updated: the Metal known-limitation note records that an empty-output decode now fails the run instead of persisting an empty finished meeting.'
+links:
+  relates_to:
+  - WP-84
+  - WP-82

@@ -20,10 +20,11 @@ Emit status `blocked` (not `completed`) when the code cannot be tested at an obs
 
 ## Required Inputs
 
-Require the manager route, active TaskPilot scenarios/DoD or exempt-work
-objective criteria, target behavior, affected layer, existing test surface, and
-the pre-Red production diff. Block rather than invent behavior when any required
-scope input is absent.
+Require the manager route; exactly one scope source — active TaskPilot
+scenarios/DoD, exempt-work objective criteria, or untracked user-authored-
+worktree-review objective criteria plus frozen boundary; and target behavior,
+affected layer, existing test surface, and the pre-Red production diff. Block
+rather than invent behavior when any required scope input is absent.
 
 ## Core Instructions
 

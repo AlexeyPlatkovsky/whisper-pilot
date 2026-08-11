@@ -3,9 +3,9 @@ id: WP-24
 title: export_meeting to Markdown/plain text + header copy-transcript
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T10:28:01Z'
-updated_at: '2026-07-21T11:04:23Z'
+updated_at: '2026-08-08T16:15:30Z'
 parent_id: WP-15
 description: export_meeting renders transcript/notes to .md/.txt at a chosen destination; the header meeting-label copy places the full transcript on the clipboard.
 created_by: M2 planning

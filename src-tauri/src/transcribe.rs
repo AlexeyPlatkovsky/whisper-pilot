@@ -9,8 +9,11 @@
 
 use crate::error::{AppError, Result};
 use serde::Serialize;
+use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
+use whisper_rs::{
+    FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
+};
 
 /// The language of audio that has not been decoded yet, and the fallback when
 /// whisper reports an id we cannot name. Doubles as the value handed to whisper
@@ -110,9 +113,67 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
         .expect("\"transcription\" is a static CATALOG entry with at least one asset")
 }
 
-/// Transcribe an entire file of 16 kHz mono samples into timestamped segments,
-/// letting whisper detect the language.
+unsafe extern "C" fn progress_trampoline<F: FnMut(i32)>(
+    _ctx: *mut whisper_rs::WhisperSysContext,
+    _state: *mut whisper_rs::WhisperSysState,
+    progress: std::ffi::c_int,
+    user_data: *mut c_void,
+) {
+    // user_data is the `*mut F` installed by install_progress_callback; the
+    // closure outlives the synchronous decode it is invoked during.
+    unsafe { (*user_data.cast::<F>())(progress) }
+}
+
+/// Streaming progress uses a raw callback so the concrete closure remains
+/// valid for the synchronous decode. Meeting does not install this callback;
+/// see WP-86.
+fn install_progress_callback<F: FnMut(i32)>(params: &mut FullParams, on_progress: &mut F) {
+    unsafe {
+        params.set_progress_callback(Some(progress_trampoline::<F>));
+        params.set_progress_callback_user_data(on_progress as *mut F as *mut c_void);
+    }
+}
+
+/// Transcribe 16 kHz mono samples into timestamped, auto-detected segments.
+/// A fresh state suits one-shot Meeting decode; Streaming reuses its state.
 pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription> {
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    transcribe_state(&mut state, samples, None::<fn(i32)>)
+}
+
+/// [`transcribe`] with Whisper's own 0–100 completion estimate. The callback
+/// remains alive through the synchronous native decode in `transcribe_state`.
+pub fn transcribe_with_progress(
+    ctx: &WhisperContext,
+    samples: &[f32],
+    on_progress: impl FnMut(i32),
+) -> Result<Transcription> {
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    transcribe_state(&mut state, samples, Some(on_progress))
+}
+
+/// [`transcribe`] with a caller-owned state. Reusing one state across calls
+/// is upstream's own pattern (`whisper_full` reuses `ctx->state`; each call
+/// clears its results, recomputes the mel spectrogram, and clears the
+/// self-attention KV cache), so a sequential caller may keep one state for as
+/// long as it likes.
+pub fn transcribe_with_state(
+    state: &mut WhisperState,
+    samples: &[f32],
+    on_progress: impl FnMut(i32),
+) -> Result<Transcription> {
+    transcribe_state(state, samples, Some(on_progress))
+}
+
+fn transcribe_state<F: FnMut(i32)>(
+    state: &mut WhisperState,
+    samples: &[f32],
+    mut on_progress: Option<F>,
+) -> Result<Transcription> {
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
         beam_size: 5,
         patience: -1.0,
@@ -140,10 +201,13 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
+    if let Some(callback) = on_progress.as_mut() {
+        install_progress_callback(&mut params, callback);
+    }
 
-    let mut state = ctx
-        .create_state()
-        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    // `FullParams` holds a raw pointer to `on_progress`. Keep the Option (and
+    // therefore the closure storage) in this frame until the synchronous
+    // native decode returns.
     state
         .full(params, samples)
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
@@ -257,6 +321,33 @@ mod tests {
     #[test]
     fn undetected_language_is_the_auto_sentinel() {
         assert_eq!(UNDETECTED_LANGUAGE, "auto");
+    }
+
+    #[test]
+    fn meeting_transcribe_api_does_not_require_a_progress_callback() {
+        let _meeting_transcribe: fn(&WhisperContext, &[f32]) -> Result<Transcription> = transcribe;
+    }
+
+    #[test]
+    fn progress_trampoline_forwards_the_exact_progress_value() {
+        // The generic helper mirrors how install_progress_callback monomorphizes
+        // the trampoline over the caller's closure type (WP-84).
+        fn drive<F: FnMut(i32)>(sink: &mut F) {
+            unsafe {
+                progress_trampoline::<F>(
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    42,
+                    sink as *mut F as *mut std::ffi::c_void,
+                );
+            }
+        }
+
+        let mut seen = Vec::new();
+        let mut sink = |p: i32| seen.push(p);
+        drive(&mut sink);
+
+        assert_eq!(seen, vec![42]);
     }
 
     #[test]

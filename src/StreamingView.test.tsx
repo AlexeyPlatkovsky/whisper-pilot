@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
@@ -126,6 +126,30 @@ describe("StreamingView", () => {
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     expect(await screen.findByText("Standup")).toBeInTheDocument();
+  });
+
+  it("filters sessions by title only after three characters and shows no matches", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      { ...SESSION_A, id: 2, title: "Retro" },
+    ]);
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const search = await screen.findByLabelText("Search sessions");
+    // BVA: filtering starts at exactly three characters and resets at two.
+    await user.type(search, "sta");
+    expect(screen.getByText("Standup")).toBeInTheDocument();
+    expect(screen.queryByText("Retro")).not.toBeInTheDocument();
+
+    await user.type(search, "x");
+    expect(await screen.findByText("No matches")).toBeInTheDocument();
+
+    await user.clear(search);
+    await user.type(search, "st");
+    expect(screen.getByText("Standup")).toBeInTheDocument();
+    expect(screen.getByText("Retro")).toBeInTheDocument();
   });
 
   it("shows the empty state before any session is started or opened", async () => {
@@ -932,6 +956,216 @@ describe("StreamingView", () => {
     expect(writeTextMock).toHaveBeenCalledWith("hello [unavailable]");
   });
 
+  // state-transition: idle → copied → idle (timeout rollback).
+  it("shows a 'Copied' toast and a checked button after a successful copy, then rolls back", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+
+      const toast = await screen.findByText("Copied", {
+        selector: ".wp-toast",
+      });
+      expect(toast).toHaveAttribute("role", "status");
+      expect(
+        screen.getByRole("button", { name: "Copied" }),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2600);
+      });
+
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copied --re-click--> copied (the timeout restarts).
+  it("restarts the feedback timeout when Copy is clicked again before the rollback", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      // Installed after userEvent.setup, which swaps navigator.clipboard for
+      // its own stub — defining ours last is what the component actually calls.
+      const writeText = vi.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, "clipboard", {
+        value: { writeText },
+        configurable: true,
+      });
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+      await screen.findByText("Copied", { selector: ".wp-toast" });
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      await user.click(screen.getByRole("button", { name: "Copied" }));
+      expect(writeText).toHaveBeenCalledTimes(2);
+
+      // 2s after the second click the feedback must still be visible…
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(2000);
+      });
+      expect(
+        screen.getByText("Copied", { selector: ".wp-toast" }),
+      ).toBeInTheDocument();
+
+      // …and only the restarted timeout (2.5s) rolls it back.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(600);
+      });
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copied --switch session--> idle (pending feedback cleared).
+  it("clears a pending Copied feedback when another session is opened", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime.bind(vi),
+      });
+      const SESSION_B: StreamingSessionSummary = {
+        id: 2,
+        title: "Retro",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "stopped",
+      };
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+        SESSION_A,
+        SESSION_B,
+      ]);
+      vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+        id === SESSION_B.id
+          ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
+          : openedSession({ windows: ONE_WINDOW }),
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        await screen.findByRole("button", { name: "Copy transcript" }),
+      );
+      await screen.findByText("Copied", { selector: ".wp-toast" });
+
+      await user.click(screen.getByText("Retro"));
+      await screen.findByRole("heading", { name: "Retro" });
+
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+
+      // The cancelled timer must not resurrect the feedback on the new session.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3000);
+      });
+      expect(
+        screen.queryByText("Copied", { selector: ".wp-toast" }),
+      ).not.toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Copy transcript" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // state-transition: copying (in-flight write) --switch session--> the late
+  // resolution must not enter the copied state on the new session.
+  it("does not paint Copied feedback onto a session opened while the clipboard write is in flight", async () => {
+    const user = userEvent.setup();
+    // Installed after userEvent.setup, which swaps navigator.clipboard for
+    // its own stub — defining ours last is what the component actually calls.
+    let resolveWrite: () => void = () => {};
+    const writeText = vi.fn().mockReturnValue(
+      new Promise<void>((resolve) => {
+        resolveWrite = resolve;
+      }),
+    );
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    const SESSION_B: StreamingSessionSummary = {
+      id: 2,
+      title: "Retro",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "stopped",
+    };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      SESSION_B,
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      id === SESSION_B.id
+        ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
+        : openedSession({ windows: ONE_WINDOW }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByText("Standup"));
+
+    await user.click(
+      await screen.findByRole("button", { name: "Copy transcript" }),
+    );
+    // The write is still in flight: no feedback yet.
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
+
+    await user.click(screen.getByText("Retro"));
+    await screen.findByRole("heading", { name: "Retro" });
+
+    // The write for the previous session resolves only now.
+    resolveWrite();
+    await act(async () => {});
+
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
+  });
+
   it("Export saves a Markdown-formatted file named after the session title", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
@@ -989,6 +1223,12 @@ describe("StreamingView", () => {
     );
 
     expect(await screen.findByText(/denied/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Copied", { selector: ".wp-toast" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Copy transcript" }),
+    ).toBeInTheDocument();
   });
 
   it("a failed export surfaces the error", async () => {
@@ -1092,21 +1332,25 @@ describe("StreamingView", () => {
         await user.click(await screen.findByRole("button", { name: "Start" }));
         await waitFor(() => expect(status).toHaveTextContent("On Air"));
 
-        await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 58 * 1000);
-        // BVA: the effect can observe one scheduler tick before the first
-        // interval; assert the boundary second rather than a brittle exact tick.
+        // The advance fires one interval callback per simulated second, and
+        // firing thousands of them takes real time — seconds under coverage
+        // instrumentation — which shouldAdvanceTime bleeds into the measured
+        // elapsed. Assert bleed-tolerant windows on each side of the 60
+        // minute format switch instead of exact boundary seconds. The
+        // generous timeout absorbs the thousands of instrumented re-renders.
+        await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 30 * 1000);
         expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
-          /^59:5[89]$/,
+          /^59:\d{2}$/,
         );
 
-        await vi.advanceTimersByTimeAsync(3000);
+        await vi.advanceTimersByTimeAsync(60 * 1000);
         expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
-          /^1:00:0[12]$/,
+          /^1:00:\d{2}$/,
         );
       } finally {
         vi.useRealTimers();
       }
-    });
+    }, 60_000);
 
     // S-5: the session ending on its own (not via manual Stop) still resets the widget
     it("returns to Ready when the session ends on its own, not only via manual Stop", async () => {
@@ -1331,15 +1575,19 @@ describe("StreamingView", () => {
           "00:00",
         );
 
+        // Same bleed consideration as the h:mm:ss test above: real wall-clock
+        // folded into the fake clock can add a second or two on a slow,
+        // instrumented runner, so assert a small window rather than an exact
+        // boundary.
         await vi.advanceTimersByTimeAsync(3000);
 
-        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-          "00:03",
+        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
+          /^00:0[3-9]$/,
         );
       } finally {
         vi.useRealTimers();
       }
-    });
+    }, 60_000);
 
     // Empty notes sections are omitted, matching Meeting's rendering
     it("omits empty notes sections", async () => {

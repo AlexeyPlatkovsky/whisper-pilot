@@ -22,6 +22,10 @@ final `Skill: taskpilot-work - output below` artifact proving a reloaded `done`
 item. A discovery closure requires the corresponding artifact proving a reloaded
 `ready` item. For the `AGENTS.md` AI-governance exemption, state that lifecycle
 verification is not applicable and do not require a TaskPilot artifact.
+For an untracked user-authored worktree review, require the manager-declared
+objective DoD and frozen-boundary record; TaskPilot lifecycle verification is
+not applicable. Require successful local-commit evidence only when the
+manager-declared route includes a user-authorized commit step.
 
 ## Rules
 
@@ -89,6 +93,12 @@ For tracked implementation/fix work, also require the route's successful
 paths. For TaskPilot-exempt AI-governance work, require the manager-declared
 objective DoD with stable criterion IDs and one structural-validation evidence
 row per criterion.
+For untracked user-authored worktree review, require stable manager-declared
+objective DoD criteria, the `HEAD`-based frozen-boundary artifact, accepted
+validation and code-review artifacts. When the manager-declared route includes
+a user-authorized commit step, also require successful `Local commit evidence -
+output below` with staged paths limited to the frozen boundary and direct
+remediation within it; otherwise require its explicit skip condition.
 
 Any unplanned state-changing handoff blocks closure until the manager explicitly
 re-routes it.

@@ -1,273 +1,193 @@
 # AGENTS.md — WhisperPilot Root Contract
 
-This file is the root operational contract for the WhisperPilot project.
-All AI tools working on this project must read this file before starting any
-work. This file overrides any tool-specific adapter on conflict. It states
-root invariants and routing triggers only; each referenced skill, agent, or
-pipeline owns its own procedure.
+All AI tools must read this file before working in WhisperPilot. It defines
+project-wide policy, exceptions, authoritative sources, and a portable
+capability-discovery index. Referenced skills, agents, pipelines, and
+conventions are the sole authorities for their procedures.
 
 ## Agent And Subagent Execution
 
-Distinct-agent handoffs must preserve the invoked agent's declared
-state-mutation boundary and must not be executed inline;
-`.claude/skills/agent-handoff/SKILL.md` owns runner selection, eligibility,
-and recovery. An applicable project instruction, pipeline, or routed handoff
-that explicitly names an agent or subagent is standing user authorization to
-invoke that agent — do not request separate approval for the invocation.
-
----
+An applicable project instruction, pipeline, or routed handoff that names an
+agent or subagent is standing user authorization to invoke it. A routed agent
+handoff must use a distinct agent and must not run inline. Preserve the invoked
+agent's declared state-mutation boundary; `agent-handoff` owns runner
+selection, eligibility, and recovery.
 
 ## Project
 
-WhisperPilot is a macOS desktop application for **offline transcription of
-local audio and video files**, with speaker attribution and a local-LLM
-summary. There is no live capture and no cloud. Product scope, milestones,
-and engines are owned by `docs/idea.md`; technical architecture is owned by
-`docs/architecture.md`. Do not restate them here.
-
----
+WhisperPilot is a macOS application for offline transcription of local audio
+and video, with speaker attribution and local-LLM summaries. It has no live
+capture or cloud service. `docs/idea.md` owns product scope; `docs/architecture.md`
+owns technical architecture.
 
 ## Question Before Action
 
-When the user asks a question, requests an assessment or review, or asks
-whether something is possible, answer the question before taking
-implementation action. Read-only inspection is permitted when needed to
-answer accurately; do not create, edit, or delete files, run state-changing
-commands, or initiate work unless the user explicitly asks to proceed. If one
-message contains both a question and an explicit implementation request,
-answer the question briefly first, then follow classification and routing.
-
----
+Answer questions, assessments, and reviews before implementation. Read-only
+inspection is permitted to answer accurately; mutate files or state only when
+the user explicitly asks to proceed. A mixed question and implementation
+request follows this order, then the applicable gates below.
 
 ## Task Classification
 
-Stating the task classification is a required output. Before any file is
-created, edited, or deleted, state it explicitly in your response as
-`<complexity>; <risk>; <domain>`. If that line is absent, the classification
-gate has not been satisfied and no file may be touched. The classification
-line uses the complexity/risk/domain vocabulary and trivial-boundary
-definition in `.claude/skills/task-routing/SKILL.md` §Classification, even
-when the work is trivial; that skill's gates still apply only to non-trivial
-work.
+Before creating, editing, or deleting a file, state `<complexity>; <risk>;
+<domain>`. Use the vocabulary and boundary in
+`.claude/skills/task-routing/SKILL.md` §Classification.
 
-- **Trivial work** — execute directly, invoking the applicable skills from
-  the catalog in §Instruction System. No TaskPilot item is required.
-- **Non-trivial work** — load `.claude/skills/task-routing/SKILL.md` and
-  follow it; do not implement until it emits
-  `Manager: manager - output below`. That skill owns the trivial/non-trivial
-  boundary definition, risk selection, Quality Tier statement, and route
-  selection.
-- When unsure whether work is trivial, treat it as non-trivial.
-- TaskPilot-only administration is exempt from routing;
-  `.claude/skills/taskpilot-work/SKILL.md` owns that procedure. The exemption
-  covers metadata-only administration; the underlying non-trivial work still
-  requires its TaskPilot identity and branch decision.
-
----
+- For trivial work, execute directly and load a matching capability from the
+  discovery index. No TaskPilot item is required.
+- For non-trivial or uncertain work, load `task-routing` and do not implement
+  before its `Manager: manager - output below` artifact.
+- TaskPilot-only administration is exempt from routing; `taskpilot-work` owns
+  it. Underlying work remains subject to its normal identity and Git gates.
 
 ## Non-Negotiable Gates And User Waivers
 
-The classification gate, the `task-routing` gate for non-trivial work
-(subject only to the trivial fork and routing exemption in §Task
-Classification), the Git
-branch decision gate for non-trivial work, and the system-level approval stop
-are mandatory stop gates. They may not be skipped, deferred, or collapsed for
-convenience. For trivial work the branch gate resolves by defaulting to the
-current branch per §Git Operation Authority.
+Classification, non-trivial routing, non-trivial Git branch decisions, and
+system-level approval are mandatory stop gates. A waiver applies only to the
+named obligation; broad wording such as “just fix it” does not waive a gate.
 
-A user waiver is interpreted literally and minimally: it removes only the
-specific obligation the user named, and nothing adjacent. A terse instruction
-("just fix it", "no ticket", "quick change") waives nothing; treat a broad
-instruction as authorization to do the work through the gates, not permission
-to skip them. To skip a mandatory gate the user must name that specific gate.
-An operating mode that biases toward action (for example, Auto Mode) changes
-only whether to ask optional clarifying questions; when bias-to-action and a
-stop gate conflict, the stop gate wins.
+### Explicit No-TaskPilot Override
 
----
+An explicit instruction not to create or use TaskPilot items is binding for
+that request. It waives the work-process gates that exist to prepare, require,
+validate, or close TaskPilot-tracked work, including routing, lifecycle,
+branch-decision, quality, review, commit, and closure artifacts. It does not
+authorize destructive Git operations, external writes, or actions beyond the
+user's stated scope.
 
 ## Task Identity And Tracking
 
 TaskPilot (project key **WP**) is the source of truth for non-trivial product
-work and product/documentation maintenance; an existing TaskPilot item is
-required before implementation for that work.
-`.claude/skills/taskpilot-work/SKILL.md` owns item lookup, approval, record
-structure, commands, and lifecycle procedure.
+and product-documentation work; an existing item is required before
+implementation. `taskpilot-work` owns record lookup, approval, fields, and
+lifecycle.
 
-**AI-governance maintenance is TaskPilot-exempt.** The exemption covers this
-root `AGENTS.md` and the operational materials under `.claude/` when the
-change governs AI execution rather than product behavior or product
-documentation; it never exempts `docs/`, feature specifications, or any
-product/runtime artifact. Exempt work still requires classification, the
-routed quality gates, the Git-operation decision, and closure evidence.
-**TaskPilot-exempt is not the Quality Tier `Exempt`:** non-trivial
-AI-governance work remains Full tier.
+When the user explicitly designates existing paths as user-authored worktree
+changes for review, validation, remediation, commit, or push, use identity
+`untracked — user-authored worktree review` and do not create or reopen a
+TaskPilot item solely for that closure work. The direct review route in
+`task-routing` owns its frozen boundary, coverage, remediation, validation,
+review, and commit requirements. Scope expansion or new behavior returns to
+normal tracked work.
+
+AI-governance maintenance of `AGENTS.md` or `.claude/` is TaskPilot-exempt
+when it governs AI execution only; it never exempts `docs/`, feature
+specifications, or product/runtime artifacts. Exempt non-trivial work remains
+Full tier and uses its routed quality, Git, and closure gates.
 
 ### Git Operation Authority
 
-Do not create, switch to, publish, delete, merge, or otherwise mutate a Git
-branch without the user's explicit approval; approval of a TaskPilot item is
-never approval of a Git operation. Without branch approval, trivial work
-remains on the current branch; for non-trivial work, stop and ask before
-editing. Never discard, overwrite, or history-rewrite uncommitted user
-changes; any destructive Git operation requires explicit user approval. User
-approval to create a new task branch also authorizes exactly one immediate
-`git push -u origin <branch>` after that branch is actually created,
-establishing the matching `origin/<branch>` upstream. That initial publication
-does not authorize any subsequent push.
-`.claude/skills/work-with-git/SKILL.md` owns branch selection and reporting.
+Do not create, switch, publish, delete, merge, or otherwise mutate a branch
+without explicit user approval. Never discard, overwrite, or rewrite
+uncommitted user changes without explicit approval. Approval to create a task
+branch authorizes exactly one immediate `git push -u origin <branch>` after
+creation; every other push needs an explicit request in the current
+instruction. `work-with-git` owns branch selection, commit composition, and
+recovery.
 
----
+Tracked task code and related TaskPilot records form one atomic task-scoped
+local commit. AI-governance maintenance commits require an explicit user
+request.
 
 ## Quality Tiers
 
-- **Full** — all non-trivial product, engineering, instruction-system,
-  high-risk, or system-level work. Apply every routed quality gate.
-- **Lite** — low/medium-risk non-trivial reference documentation or
-  visual-only work with no runtime behavior change. Require a defined target
-  and Definition of Done (the Lite readiness confirmation), the routed git
-  gate, relevant validation, and task-complete.
-- **Exempt** — trivial work only. Trivial fixes and changes need no TaskPilot
-  item.
-- When work qualifies for more than one tier, use the higher tier.
+| Tier | Applies to | Minimum policy |
+|---|---|---|
+| Full | Non-trivial product, engineering, instruction-system, high-risk, or system-level work | Apply every routed quality gate. |
+| Lite | Low/medium-risk reference documentation or visual-only work with no runtime behavior change | Defined target, Lite readiness confirmation, DoD, routed Git gate, relevant validation, and closure. |
+| Exempt | Trivial work only | No TaskPilot item. |
 
----
+Use the higher tier when more than one applies.
 
-## Quality Gates
+## Quality And Closure Gates
 
-These apply to all non-trivial work and may not be skipped:
+Every non-trivial route applies its required test, validation, documentation,
+review, and DoD gates. Non-trivial logic needs `testing-pro` TDD provenance
+before production edits; UI work uses the manual verification selected by
+`validate`. `documentation-maintenance`, `validate`, `task-quality`, and
+`task-complete` own their respective procedures. Do not report completion with
+failed required evidence or unsafe/unimplemented behavior.
 
-- Non-trivial logic must satisfy the TDD provenance gate in
-  `.claude/skills/testing-pro/SKILL.md` before production edits.
-- UI changes require the manual verification selected by
-  `.claude/skills/validate/SKILL.md`.
-- Documentation maintenance
-  (`.claude/skills/documentation-maintenance/SKILL.md`), local validation
-  (`.claude/skills/validate/SKILL.md`), and DoD closure
-  (`.claude/skills/task-quality/SKILL.md`) must use their routed owning
-  skills.
-
----
-
-## Commit And Push Boundary
-
-- Except for the one initial publication authorized by §Git Operation
-  Authority for an actually newly created task branch, never push unless the
-  user explicitly requests a push in the current instruction. Pipeline
-  execution, review cycles, validation runs, and task completion never
-  authorize a push.
-- A tracked task's code and its related TaskPilot records belong in one
-  atomic task-scoped local commit. AI-governance maintenance commits only on
-  an explicit user request.
-- `.claude/skills/work-with-git/SKILL.md` owns commit composition, message
-  format, staging verification, and failure recovery.
-
----
+Significant transcription changes require the real-Metal transcription gate
+and its own validation-report row. `test-runner` owns the impact boundary,
+execution, environment handling, reporting procedure, and CI exclusion.
 
 ## Final Response Gate
 
-For non-trivial work, use `.claude/skills/task-complete/SKILL.md` to report
-the selected route's required evidence. A failed check, missing requirement,
-or unsafe/unimplemented behavior blocks completion. An external
-post-implementation check that is explicitly documented as a verification
-limitation is not missing evidence.
-
----
+For non-trivial work, use `task-complete` to report the selected route's
+required evidence, including any documented external-verification limitation.
 
 ## Instruction System
 
-The instruction system is a curated engineering core plus the Spec-Driven
-Development (SDD) tooling. Its capabilities live under `.claude/skills/`,
-`.claude/agents/`, `.claude/pipelines/`, `.claude/conventions/`, and
-`.claude/sdd/` (doc templates); `.claude/skills/task-routing/SKILL.md` is the
-authoritative router and lists every available route. Material
-instruction-system changes are themselves non-trivial and route through
-`task-routing`. The tables below list each capability and its trigger only;
-each entry's own file is its sole behavioral authority.
+This discovery index keeps the project usable by AI tools without
+platform-specific skill discovery. It is an index only: the referenced file is
+the procedural authority. `task-routing` is the canonical route-selection map.
+Unless an entry states otherwise, a skill resolves to
+`.claude/skills/<name>/SKILL.md` and an agent resolves to
+`.claude/agents/<name>.md`.
 
 ### Skills
 
-| Skill | Trigger |
+| Capability | Trigger |
 |---|---|
-| `agent-handoff` | A routed handoff to a distinct agent or subagent needs a runner selected or recovered |
-| `brainstorm` | An open design decision with meaningful trade-offs needs structured discussion |
-| `design-in-pen` | A UI design mockup needs creating or iterating on in `pencil/*.pen`, before implementation |
-| `discover-requirements` | Feature, epic, or task scope is unclear and requirements must be elicited before work |
-| `documentation-maintenance` | A feature, refactor, or non-trivial bug fix has landed and documentation may be stale |
-| `implement-tauri-feature` | Routed feature or confirmed bug-fix scope is ready to implement after its gates |
-| `react-tauri-expert` | A React/TypeScript/Tauri approach or convention question needs read-only advice |
-| `record-discovered-spec` | A user-approved discovery specification must become a canonical TaskPilot record |
-| `sdd-doc-author` | One SDD main or extension document must be created or updated |
-| `sdd-feature-author` | One SDD feature folder must be scaffolded or updated |
-| `sdd-index-sync` | A doc, feature, or ADR change requires rebuilding `docs/INDEX.md` |
-| `sync-pen-code` | `pencil/*.pen` needs syncing with the real UI code, in either direction |
-| `task-complete` | Non-trivial routed work is ready for closure reporting |
-| `task-quality` | Completion evidence must be mapped against the Definition of Done before closure |
-| `task-routing` | Work is (or may be) non-trivial and needs classification and a route |
-| `taskpilot-work` | A TaskPilot item needs lookup, creation, field changes, lifecycle, or validation |
-| `testing-pro` | Vitest or Rust test code must be written or improved |
-| `triage-bug` | A reported bug or unexpected behavior has an unknown root cause |
-| `validate` | The working tree needs local CI-equivalent checks with a pass/fail report |
-| `verify-readiness` | A routed item needs its Definition-of-Ready check before implementation |
-| `work-with-git` | A routed task needs its branch decision or commit/push boundary applied |
+| `agent-handoff` | Run a routed distinct-agent handoff. |
+| `brainstorm` | Discuss an open design decision with trade-offs. |
+| `design-in-pen` | Create or iterate on a pre-implementation `pencil/*.pen` mockup. |
+| `discover-requirements` | Elicit unclear feature, epic, or task requirements. |
+| `documentation-maintenance` | Check documentation after a feature, refactor, or non-trivial fix. |
+| `implement-tauri-feature` | Implement routed feature or confirmed-fix work. |
+| `react-tauri-expert` | Give read-only React/TypeScript/Tauri advice. |
+| `record-discovered-spec` | Persist an approved discovery specification to TaskPilot. |
+| `sdd-doc-author` | Create or update one SDD document. |
+| `sdd-feature-author` | Scaffold or update one SDD feature folder. |
+| `sdd-index-sync` | Rebuild `docs/INDEX.md` after an SDD change. |
+| `sync-pen-code` | Synchronize `pencil/*.pen` and UI code outside implementation. |
+| `task-complete` | Close non-trivial routed work. |
+| `task-quality` | Map completion evidence to the DoD. |
+| `task-routing` | Classify and route non-trivial work. |
+| `taskpilot-work` | Manage TaskPilot records. |
+| `testing-pro` | Write or improve Vitest or Rust tests. |
+| `triage-bug` | Find an unknown cause of a reported bug. |
+| `validate` | Run local CI-equivalent checks. |
+| `verify-readiness` | Check the Definition of Ready before implementation. |
+| `work-with-git` | Apply a routed branch, commit, or push boundary. |
 
 ### Agents
 
 | Agent | Trigger |
 |---|---|
-| `code-reviewer` | A completed, validated implementation diff needs review before closure |
-| `instruction-evaluator` | A changed AI-governance instruction artifact needs isolated review |
-| `pencil-vision-reviewer` | A `pencil` CLI mutation needs its rendered result checked against design intent or a counterpart image |
-| `scope-verifier` | A draft requirements specification needs a structural completeness check |
-| `sdd-gap-analyzer` | SDD adoption or expansion needs a docs-versus-code gap inventory |
-| `sdd-spec-reviewer` | An SDD docs tree needs a completeness and traceability review |
-| `test-runner` | Routed work needs build, test, or manual validation executed and reported |
-
----
+| `code-reviewer` | Review a completed, validated implementation diff. |
+| `instruction-evaluator` | Review one changed AI-governance artifact. |
+| `pencil-vision-reviewer` | Check a rendered `pencil/*.pen` mutation. |
+| `scope-verifier` | Check structural completeness of a draft requirements specification. |
+| `sdd-gap-analyzer` | Inventory docs-versus-code SDD gaps. |
+| `sdd-spec-reviewer` | Review SDD completeness and traceability. |
+| `test-runner` | Execute and report routed validation. |
 
 ## Version Management
 
-Before every commit, run `scripts/bump-version.sh` with the appropriate bump
-type for the work being committed:
-
-| Bump type | When to use |
-|---|---|
-| `patch` | Bug fix, refactor, chore, or any change that does not add a user-facing feature |
-| `major` | New task, feature, or epic that adds user-facing functionality |
-| `release` | Only when the user explicitly asks for a release version bump |
-
-The script updates the version in both `src-tauri/Cargo.toml` and
-`src-tauri/tauri.conf.json`. Run it before staging; the version change becomes
-part of the same commit as the feature or fix it describes. If multiple
-uncommitted changes of different bump types are present, use the highest
-applicable bump type among them.
-
----
+Before every commit, run `scripts/bump-version.sh` before staging: `patch` for
+fixes/refactors/chores, `major` for user-facing features, and `release` only
+when explicitly requested. Use the highest applicable bump for the pending
+commit; the script updates both Tauri version files.
 
 ## Spec-Driven Development
 
-The project adopts the **Standard** SDD tier. The authoritative spec lives in
-`docs/` and is mapped by `docs/INDEX.md`. The `.claude/conventions/sdd-doc-set.md`
-convention defines document ownership, tiers, the feature-folder schema, the ID
-scheme, and the traceability spine. Keep `docs/INDEX.md` in sync after any
-doc/feature change via `.claude/skills/sdd-index-sync/SKILL.md`.
-
----
+`.claude/conventions/sdd-doc-set.md` owns the Standard SDD document set,
+structure, identifiers, and traceability.
 
 ## Authoritative Sources
 
 | Source | Purpose |
 |---|---|
-| `docs/INDEX.md` | Live map of the SDD docs tree, feature registry, and decision log |
-| `docs/idea.md` | Problem, users, value, scope, non-goals, principles, success signals |
-| `docs/architecture.md` | Technical architecture — layer map, pipeline, IPC contract, models, build |
-| `docs/design.md` | Product/UX design — flows, screens, states |
-| `docs/testing.md` | Test strategy, levels, quality gates |
-| `docs/roadmap.md` | Milestones M1–M3, sequencing, non-goals over time |
-| `docs/decisions/` | ADRs — rationale for the key decisions |
-| `docs/features/F*/` | Per-feature requirements, tasks (TaskPilot-linked), scenarios |
-| `README.md` | User-facing overview — description, released features, requirements, how to run |
-| `docs/development.md` | Developer guide — prerequisites, build/dev/test commands, layout |
-| `src-tauri/src/lib.rs` | Tauri core — command registration, app state, module map |
-| `src-tauri/src/main.rs` | Tauri/Rust entry point |
-| `src/App.tsx` | React UI root |
+| `docs/INDEX.md` | Documentation and feature registry map. |
+| `docs/idea.md` | Product scope and principles. |
+| `docs/architecture.md` | Technical architecture. |
+| `docs/design.md` | UX flows, screens, and states. |
+| `docs/testing.md` | Test strategy and quality gates. |
+| `docs/roadmap.md` | Milestones and sequencing. |
+| `docs/decisions/` | Architecture decision records. |
+| `docs/features/F*/` | Feature requirements, tasks, and scenarios. |
+| `README.md` | User-facing overview and setup. |
+| `docs/development.md` | Developer setup and commands. |
+| `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src/App.tsx` | Application entry points. |

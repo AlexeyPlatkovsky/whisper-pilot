@@ -3,9 +3,9 @@ id: WP-25
 title: Workspace shell, header & status bar (UI)
 priority: normal
 type: feature
-status: in_progress
+status: done
 created_at: '2026-07-21T11:04:33Z'
-updated_at: '2026-07-23T10:31:49Z'
+updated_at: '2026-08-08T15:24:07Z'
 parent_id: WP-11
 description: 'The persistent two-pane shell: collapsible left Meetings pane, header controls (meeting label edit/copy/delete, model switcher, language, Transcribe/Stop, Create MFU), the status bar states, and the transcript render. Owns the shell/header/status-bar UI for M2 (design.md, ADR-010).'
 created_by: M2 UI planning

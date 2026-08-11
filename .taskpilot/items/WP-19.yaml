@@ -3,9 +3,9 @@ id: WP-19
 title: cancel_transcription (Stop) via abort flag; UI blocked except Stop
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-07-21T10:27:59Z'
-updated_at: '2026-07-21T11:04:21Z'
+updated_at: '2026-08-08T15:54:06Z'
 parent_id: WP-13
 description: Cancellable run; the whisper progress/abort callback checks a per-run flag; on cancel no document is created.
 created_by: M2 planning

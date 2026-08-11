@@ -1,0 +1,41 @@
+schema_version: 1
+id: WP-82
+title: 'Streaming windows fail with whisper error -6: reuse one WhisperState per session instead of per-window Metal init/free'
+priority: high
+type: bug
+status: done
+created_at: '2026-08-08T18:59:27Z'
+updated_at: '2026-08-08T19:32:01Z'
+description: 'Observed on Apple M5 Pro, whisper.cpp 1.8.3 (whisper-rs 0.16.0 / whisper-rs-sys 0.15.0), 2026-08-08: after starting a Streaming session, every 7-second window fails to transcribe. Per window the log shows a full Metal backend init (`ggml_metal_init: allocating ... use fusion = true, use graph optimize = true`), a successful language detection, then `whisper_full_with_state: failed to encode` (whisper error code -6: `whisper_full_with_state` returns -6 when `whisper_encode_internal` fails after language detection succeeded on the same audio), then `ggml_metal_free: deallocating`. The session fail-opens per window (lib.rs WARN "fail-open"), so the transcript area fills with `[unavailable]` placeholders while capture keeps running and the user gets no error signal.
+
+
+  Root cause location: `transcribe::transcribe` (src-tauri/src/transcribe.rs) creates a fresh `WhisperState` per call (`ctx.create_state()`), and the streaming decode loop (`run_windowed_decode`, src-tauri/src/streaming_session.rs) calls it once per 7-second window. In whisper.cpp 1.8.x every state owns a full Metal backend plus ~240 MB of KV/compute buffers (`whisper_init_state` -> `whisper_backend_init`), so streaming performs a complete Metal init/free cycle every 7 seconds; on the affected machine the encoder-graph compute fails at the ggml Metal level inside these repeatedly re-created states.
+
+
+  Scope: reuse ONE `WhisperState` across all windows of a streaming session - create it once when the decode loop starts, decode every window through it, drop it when the loop ends. Reusing a state across `whisper_full_with_state` calls is a supported upstream pattern: `whisper_full` itself and the stream example reuse `ctx->state`, and each call clears `result_all`, recomputes the mel spectrogram, and clears `kv_self`. Meeting (file) transcription keeps its current one-state-per-run behavior, unchanged. Per-window fail-open semantics are unchanged: a window that fails to decode still yields outcome_ok=false and `[unavailable]` in the UI.
+
+
+  Happy path: Given a running streaming session, when multiple windows are decoded, then the WhisperState is created exactly once for the session and reused for every window, each window still producing its own WindowResult (ok or fail-open), and the session log shows a single Metal backend init for the whole decode loop.
+
+
+  Failure behavior: if the one-time state creation fails at loop start, every window of the session fails open exactly as today (the window result carries the error, the loop keeps consuming samples until capture stops) - the decode loop must not panic, deadlock, or leak the sample channel.
+
+
+  Edge cases: session stopped before the first full window accumulates (state created, zero windows decoded, clean teardown); session resumed with a starting window index (same single-state behavior); back-to-back sessions (each session gets its own fresh state; no state crosses sessions).
+
+
+  Target surfaces: src-tauri/src/transcribe.rs (split state creation out of `transcribe` into a reusable-state variant), src-tauri/src/streaming_session.rs (`run_windowed_decode` owns the per-session state), src-tauri/src/lib.rs streaming wiring only if the seam requires it. The module docs in both files and docs/architecture.md''s Streaming Decode/Session Pipeline section describe per-window state reuse and must be checked in the documentation-maintenance step.
+
+
+  Constraints: no change to decode parameters, windowing, IPC events, persistence schema, or UI. The decode loop stays sequential on its blocking thread. Non-goal: fixing the upstream ggml Metal fault itself, or changing whisper-rs/whisper.cpp versions.'
+dod:
+- A streaming session creates its WhisperState exactly once, at decode-loop start, and reuses it for every window - proven by a Rust unit test that decodes multiple windows through a state-creation-counting seam and asserts one creation.
+- If the one-time state creation fails, every window of that session still completes fail-open (error forwarded per window, the loop keeps consuming samples, and it terminates cleanly when capture stops) - covered by a test.
+- Meeting (file) transcription behavior is unchanged (one state per run, same decode parameters) - the existing transcribe tests pass unmodified.
+- A streaming session log shows exactly one `whisper_backend_init_gpu`/`ggml_metal_init` cycle for the whole decode loop, not one per window.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, vitest, lint, typecheck, and the 95% coverage gate.'
+- On the machine that reproduced the bug, a new streaming session decodes windows without the -6 fail-open spam; if the Metal fault persists after the fix, the residual failure is documented as a follow-up instead of silently closing.
+links:
+  relates_to:
+  - WP-71
+created_by: Aleksei_Platkovskii
