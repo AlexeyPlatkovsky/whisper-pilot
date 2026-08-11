@@ -3853,8 +3853,8 @@
     {
       "type": "frame",
       "id": "j3frv",
-      "x": 0,
-      "y": 2664,
+      "x": 1046,
+      "y": -663,
       "name": "Status Widget — States",
       "fill": "$panel",
       "cornerRadius": 12,
