@@ -4,9 +4,8 @@
 use crate::audio::SAMPLE_RATE;
 use crate::error::AppError;
 use crate::transcribe::{self, Transcription};
-use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use whisper_rs::{WhisperContext, WhisperState};
 
@@ -121,11 +120,7 @@ pub struct WindowResult {
 /// The seam that lets the decode loop own "one whisper state per session"
 /// (WP-82) while tests substitute a model-free double.
 pub trait SessionDecoder {
-    fn decode_window(
-        &mut self,
-        samples: &[f32],
-        cancel: &Arc<AtomicBool>,
-    ) -> crate::error::Result<Transcription>;
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription>;
 }
 
 /// The production [`SessionDecoder`]: owns the session's single
@@ -146,12 +141,8 @@ impl WhisperSessionDecoder {
 }
 
 impl SessionDecoder for WhisperSessionDecoder {
-    fn decode_window(
-        &mut self,
-        samples: &[f32],
-        cancel: &Arc<AtomicBool>,
-    ) -> crate::error::Result<Transcription> {
-        transcribe::transcribe_with_state(&mut self.state, samples, cancel, |_| {})
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        transcribe::transcribe_with_state(&mut self.state, samples, |_| {})
     }
 }
 
@@ -185,10 +176,6 @@ pub fn run_windowed_decode<D, F>(
 {
     let mut buffer: Vec<f32> = Vec::new();
     let mut window_index: u64 = starting_window_index;
-    // Streaming windows have no per-window Stop control (WP-19 targets
-    // Meeting transcription only); a session ends by dropping capture, so
-    // each window's decode always runs to completion.
-    let never_cancel = Arc::new(AtomicBool::new(false));
     // Kept as the message rather than the AppError (not Clone): a creation
     // failure is rebuilt per window so each fail-open result reads exactly
     // like a per-window decode failure.
@@ -208,7 +195,7 @@ pub fn run_windowed_decode<D, F>(
             // propagated — the caller skips this window's text and the loop
             // keeps running on the next one.
             let outcome = match &mut decoder {
-                Ok(decoder) => decoder.decode_window(&window, &never_cancel),
+                Ok(decoder) => decoder.decode_window(&window),
                 Err(message) => Err(AppError::Transcribe(message.clone())),
             };
             let decode_ms = decode_start.elapsed().as_millis() as u64;
@@ -232,6 +219,7 @@ pub fn run_windowed_decode<D, F>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     #[test]
     fn take_window_returns_none_below_the_threshold() {
@@ -349,11 +337,7 @@ mod tests {
     }
 
     impl SessionDecoder for FakeDecoder {
-        fn decode_window(
-            &mut self,
-            samples: &[f32],
-            _cancel: &Arc<AtomicBool>,
-        ) -> crate::error::Result<Transcription> {
+        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
             self.decoded.push(samples.len());
             Ok(Transcription {
                 segments: vec![],

@@ -1,5 +1,5 @@
-//! Transcription IPC commands: transcribe a meeting's source file, cancel an
-//! in-flight run (WP-19), and re-run speaker diarization alone.
+//! Transcription IPC commands: transcribe a meeting's source file and re-run
+//! speaker diarization alone.
 
 use crate::audio;
 use crate::diarize;
@@ -13,9 +13,7 @@ use crate::streaming_session;
 use crate::transcribe;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use std::sync::Arc;
 use tauri::{Emitter, State};
-use whisper_rs::WhisperContext;
 
 /// `transcribe_meeting`'s result: the persisted meeting plus a non-fatal
 /// warning when diarization was requested but degraded (its active model's
@@ -57,13 +55,9 @@ type PendingDiarization =
 /// Decode and transcribe the file at `path`, returning the transcription and
 /// the samples it was decoded from so diarization can reuse them.
 ///
-/// Checked against `cancel` both before spawning the (potentially long) whisper
-/// decode and inside it (WP-19), so a Stop clicked while the file is still
-/// being decoded to samples is not lost waiting for whisper to start.
 async fn decode_and_transcribe(
-    ctx: Arc<WhisperContext>,
+    app_support_dir: PathBuf,
     path: String,
-    cancel: Arc<std::sync::atomic::AtomicBool>,
     on_progress: impl FnMut(i32) + Send + 'static,
 ) -> Result<(transcribe::Transcription, Vec<f32>)> {
     let input = PathBuf::from(&path);
@@ -73,13 +67,13 @@ async fn decode_and_transcribe(
     let samples = tokio::task::spawn_blocking(move || audio::load_samples(&input))
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
-    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-        return Err(AppError::Cancelled);
-    }
     let transcription = {
         let samples = samples.clone();
         tokio::task::spawn_blocking(move || {
-            transcribe::transcribe(&ctx, &samples, &cancel, on_progress)
+            transcribe::decode_meeting_once(|| {
+                let cpu_ctx = transcribe::load_model_cpu(&app_support_dir)?;
+                transcribe::transcribe(&cpu_ctx, &samples, on_progress)
+            })
         })
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??
@@ -108,42 +102,6 @@ fn ensure_non_empty_transcript(transcription: &transcribe::Transcription) -> Res
         ));
     }
     Ok(())
-}
-
-/// Registers `id`'s abort flag in `AppState.running_transcription` for this
-/// run's lifetime and clears the slot on every exit path (success, error, or
-/// unwind), so `cancel_transcription` can never target a run that has already
-/// finished — and never clears a *different*, already-started run's slot.
-pub(crate) struct TranscriptionCancelGuard<'a> {
-    state: &'a AppState,
-    id: i64,
-}
-
-impl<'a> TranscriptionCancelGuard<'a> {
-    pub(crate) fn register(
-        state: &'a AppState,
-        id: i64,
-    ) -> (Self, Arc<std::sync::atomic::AtomicBool>) {
-        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        *state
-            .running_transcription
-            .lock()
-            .expect("running_transcription lock poisoned") = Some((id, Arc::clone(&flag)));
-        (Self { state, id }, flag)
-    }
-}
-
-impl Drop for TranscriptionCancelGuard<'_> {
-    fn drop(&mut self) {
-        let mut guard = self
-            .state
-            .running_transcription
-            .lock()
-            .expect("running_transcription lock poisoned");
-        if matches!(guard.as_ref(), Some((running_id, _)) if *running_id == self.id) {
-            *guard = None;
-        }
-    }
 }
 
 /// Persist `transcription` immediately, then run `diarization` (when a
@@ -238,9 +196,8 @@ pub(crate) async fn transcribe_meeting(
     id: i64,
     state: State<'_, AppState>,
 ) -> Result<TranscribeMeetingResult> {
-    // WP-71: a Streaming session and a Meeting transcription share the one
-    // cached Whisper context and cannot run concurrently. Held for this
-    // whole command, released on return via Drop.
+    // WP-71: serialize Meeting work with Streaming and other Meeting runs.
+    // Held for this whole command, released on return via Drop.
     let _whisper_guard = streaming_session::WhisperUsageGuard::acquire(
         &state.whisper_busy,
         streaming_session::WhisperUser::Meeting,
@@ -265,8 +222,6 @@ pub(crate) async fn transcribe_meeting(
     )
     .map(str::to_string);
 
-    let (_cancel_guard, cancel) = TranscriptionCancelGuard::register(state.inner(), id);
-    let ctx = state.model(app_support_dir.clone()).await?;
     let progress_app = app.clone();
     let on_progress = move |percent: i32| {
         let _ = progress_app.emit(
@@ -274,7 +229,8 @@ pub(crate) async fn transcribe_meeting(
             TranscriptionProgressEvent { id, percent },
         );
     };
-    let (transcription, samples) = decode_and_transcribe(ctx, path, cancel, on_progress).await?;
+    let (transcription, samples) =
+        decode_and_transcribe(app_support_dir.clone(), path, on_progress).await?;
 
     let diarization: Option<PendingDiarization> = active_diarization_variant.map(|variant| {
         let app = app.clone();
@@ -376,42 +332,10 @@ pub(crate) async fn diarize_meeting(
     }
 }
 
-/// Stop the meeting's in-flight transcription (WP-19): flips its abort flag,
-/// which whisper's abort callback (or the pre-decode check in
-/// `decode_and_transcribe`) turns into `AppError::Cancelled` — the run then
-/// returns before any transcript is persisted, so no document is created.
-#[tauri::command]
-pub(crate) fn cancel_transcription(id: i64, state: State<'_, AppState>) -> Result<()> {
-    let guard = state
-        .running_transcription
-        .lock()
-        .expect("running_transcription lock poisoned");
-    match running_transcription_flag(&guard, id) {
-        Some(flag) => {
-            flag.store(true, std::sync::atomic::Ordering::Relaxed);
-            Ok(())
-        }
-        None => Err(AppError::Transcribe(format!(
-            "no transcription is running for meeting {id}"
-        ))),
-    }
-}
-
-/// Pure decision behind `cancel_transcription`: `id`'s abort flag, only when
-/// it is the currently running transcription.
-fn running_transcription_flag(
-    running: &Option<(i64, Arc<std::sync::atomic::AtomicBool>)>,
-    id: i64,
-) -> Option<Arc<std::sync::atomic::AtomicBool>> {
-    match running {
-        Some((running_id, flag)) if *running_id == id => Some(Arc::clone(flag)),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
 
     // EP: "none" is the sole class that skips diarization; every other
     // string (however it got there) names a variant to run.
@@ -717,51 +641,5 @@ mod tests {
             !ran.load(std::sync::atomic::Ordering::SeqCst),
             "diarization must not run once persisting the transcript has failed"
         );
-    }
-
-    #[test]
-    fn running_transcription_flag_matches_only_the_running_meeting_id() {
-        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let running = Some((7, Arc::clone(&flag)));
-
-        let found = running_transcription_flag(&running, 7).expect("flag for the running id");
-        assert!(Arc::ptr_eq(&found, &flag));
-
-        assert!(running_transcription_flag(&running, 8).is_none());
-        assert!(running_transcription_flag(&None, 7).is_none());
-    }
-
-    #[test]
-    fn cancel_guard_registers_and_clears_its_own_slot_on_drop() {
-        let state = AppState::default();
-
-        let (guard, flag) = TranscriptionCancelGuard::register(&state, 1);
-        assert!(!flag.load(std::sync::atomic::Ordering::Relaxed));
-        {
-            let running = state.running_transcription.lock().unwrap();
-            assert_eq!(running.as_ref().map(|(id, _)| *id), Some(1));
-        }
-
-        drop(guard);
-
-        let running = state.running_transcription.lock().unwrap();
-        assert!(running.is_none());
-    }
-
-    #[test]
-    fn cancel_guard_drop_does_not_clear_a_different_runs_slot() {
-        // Simulates run A's guard.drop() firing after run B has already
-        // registered in its slot (e.g. a delayed unwind) — A's drop must not
-        // clobber B's slot, or `cancel_transcription` could stop targeting
-        // the run actually in flight.
-        let state = AppState::default();
-        let (guard_a, _flag_a) = TranscriptionCancelGuard::register(&state, 1);
-        *state.running_transcription.lock().unwrap() =
-            Some((2, Arc::new(std::sync::atomic::AtomicBool::new(false))));
-
-        drop(guard_a);
-
-        let running = state.running_transcription.lock().unwrap();
-        assert_eq!(running.as_ref().map(|(id, _)| *id), Some(2));
     }
 }

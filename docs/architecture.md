@@ -31,8 +31,8 @@ The Rust core does all heavy work and owns persistence; the React layer is a
 two-pane shell — a meetings list plus the active meeting's workspace. Blocking,
 CPU/GPU-heavy work (model load,
 transcription, diarization, note generation) runs on `tokio::task::spawn_blocking`
-so IPC and the UI stay responsive. Long operations report progress and are
-cancellable via Tauri events.
+so IPC and the UI stay responsive. Long operations report progress; Streaming
+capture has its own stop command, while Meeting transcription runs to completion.
 
 ## Meeting Model & Persistence (`store.rs`)
 
@@ -89,15 +89,16 @@ ffmpeg is a required external dependency (system binary on PATH for now).
 
 ## Transcription (`transcribe.rs`)
 
-whisper-rs with the `metal` feature; the context is created once and cached in
-`AppState`. Decoding is **full-file** with beam search. **Language is always
+whisper-rs with the `metal` feature; the Streaming context is created once and
+cached in `AppState`, while Meeting loads a CPU-only context per run. Decoding
+is **full-file** with beam search. **Language is always
 auto-detected and can never be chosen** (ADR-012): `transcribe()` takes no
 language argument, so no caller can force one. The code Whisper decoded with is
 read back from decoder state and stored on the meeting, making
 `meetings.language` an _output_ of a run rather than an input to one. Detection
 uses the first 30 seconds of audio, so a recording that opens with silence can
 misdetect — a known limitation. Whisper's progress callback drives a progress
-event; a cancel flag checked in the callback aborts a run. Output is timestamped
+event. Meeting output is timestamped
 `Segment`s persisted to the meeting.
 
 Forcing a language is deliberately unreachable rather than merely defaulted:
@@ -107,31 +108,24 @@ configuration as plain data so it can be asserted in a unit test — notably
 `detect_language_only`, which must stay `false` because whisper.cpp returns
 immediately after detection when it is set, yielding an empty transcript.
 
-Decode callbacks (progress, abort) are installed through whisper-rs's raw
-callback setters, not its `_*_callback_safe` helpers: those helpers box the
-closure as a fat pointer but their FFI trampoline reinterprets it as a concrete
-type — undefined behavior that surfaced as intermittent `failed to encode`
-failures and segfaults (WP-84). A further known limitation is an intermittent
-upstream ggml Metal encoder fault on Apple M5 Pro (`auto-detected language: af
-(p = nan)`, then `failed to encode` or empty output); CPU decoding is
-unaffected and the fault is in whisper.cpp 1.8.3 itself, not in the decode
-setup (WP-82). Because the fault can make a decode return success with zero
-segments, the Meeting path rejects any empty decode with a retry-guidance
-error instead of persisting an empty, "finished" meeting (WP-85); the shared
-decode stays tolerant so silent Streaming windows still pass.
+Only the progress callback is installed through whisper-rs's raw callback
+setter; Meeting never installs an abort callback because the bundled Metal
+path changes scheduling when one is present (WP-86). An intermittent upstream
+ggml Metal encoder fault on Apple M5 Pro can return `failed to encode` or an
+empty result (WP-82). Meeting therefore uses a fresh CPU-only context directly;
+the shared Streaming decode retains its cached Metal context. If CPU returns no
+segments, the Meeting path returns retry guidance instead of persisting an
+empty, "finished" meeting (WP-85).
 
 The **Transcribe** run is a two-phase pipeline: transcription, then **diarization
 
 - merge** (M2, `diarize/`). The transcript is persisted between the two phases,
   so the meeting is already marked finished while diarization is still running (see
-  Speaker Diarization below). A progress spinner spans both phases; **Stop
-  (WP-19) only cancels the transcription phase** — it flips a per-run abort
-  flag that whisper's abort callback polls, so no transcript is persisted for
-  a stopped run. Once the run reaches diarization the transcript is already
-  saved and Stop disables (the UI has no cancel hook for the diarization
-  child process, a materially different mechanism — see below); if
-  diarization is unavailable or fails, the run still finishes with plain
-  (speaker-less) segments. Re-running Transcribe on a meeting that already has
+  Speaker Diarization below). A progress spinner spans both phases; Meeting
+  transcription runs to completion and the isolated worker design for restoring
+  Stop is tracked separately (WP-87). If diarization is unavailable or fails,
+  the run still finishes with plain (speaker-less) segments. Re-running
+  Transcribe on a meeting that already has
   a transcript replaces it (and any notes) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
@@ -274,8 +268,8 @@ exposed yet) and, on success, `assign_speaker_ids` writes each segment's
 `speaker_id` in place. Diarization failure of any kind — missing models, an
 engine error, or the blocking task itself panicking — is fail-open: it is
 logged and the transcription still returns its (speaker-less) segments,
-never failing `transcribe_file`. Stop (WP-19, see above) reaches only the
-transcription phase, not this diarization pass.
+never failing `transcribe_file`. Meeting transcription has no in-process Stop;
+the isolated worker design for restoring it is tracked separately (WP-87).
 
 **The active diarization embedding model is user-selectable** (WP-52): Settings
 offers a three-way choice — None (skip diarization), CAM++ (3D-Speaker,
@@ -375,9 +369,9 @@ permissions and running the packaged `.app` is outside what this environment
 can do, so the OS-level capture wrappers are compiled, linked, and reviewed,
 not exercised end-to-end.
 
-Mutual exclusion with an active Meeting transcription (both would share the
-one cached Whisper `AppState` context) is WP-71's concern, not implemented
-here — this module only captures and mixes audio, it does not decode it.
+Mutual exclusion with an active Meeting transcription is WP-71's concern, not
+implemented here — this module only captures and mixes audio, it does not
+decode it.
 
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
 
@@ -404,10 +398,10 @@ rather than the loop propagating it.
 
 **Mutual exclusion** (`WhisperUsageGuard`, backed by a new `AppState.
 whisper_busy: AtomicU8`): a Meeting transcription and a Streaming session
-cannot run concurrently, because both would contend for the one cached
-Whisper context and `whisper-rs`'s `WhisperState` is not proven safe for two
-concurrent `.full()` calls against the same `WhisperContext`. `transcribe_
-meeting` now acquires this guard for its whole duration, released on drop;
+cannot run concurrently. Meeting uses a per-run CPU context while Streaming
+uses the cached Metal context, but concurrent native model work remains
+intentionally serialized. `transcribe_meeting` acquires this guard for its
+whole duration, released on drop;
 Streaming's own session start will do the same once wired to IPC. This
 guard is deliberately not narrowed to "only block the _other_ kind" — two
 concurrent Meeting transcriptions are serialized by the same guard, a small,
@@ -673,7 +667,6 @@ span.
 | `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
 | `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
 | `create_transcription(meeting, model)`                                 | Transcribe the attached file into the meeting; emits progress. No language argument — it is always detected (ADR-012)                                                                         | M2        |
-| `cancel_transcription(meeting)`                                        | Abort a running transcription (Stop)                                                                                                                                                          | M2        |
 | `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
 | `open_meeting(id)`                                                     | Full meeting (segments, notes, meta)                                                                                                                                                          | M2        |
 | `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |

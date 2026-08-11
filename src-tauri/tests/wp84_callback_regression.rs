@@ -1,9 +1,4 @@
-//! WP-84 regression: the decode callbacks must not abort runs at random.
-//!
-//! whisper-rs's `set_abort_callback_safe` / `set_progress_callback_safe`
-//! reinterpret the boxed fat pointer as the concrete closure type (UB), so a
-//! cancel flag that stays `false` could still abort the encode loop with
-//! whisper error -6 — do not use them; see WP-84.
+//! Regression coverage for a normal decode with no abort callback.
 //!
 //! Ignored by default: needs the whisper model on disk and an audio fixture
 //! via WHISPERPILOT_TEST_AUDIO. Runs on the CPU backend deliberately — an
@@ -12,10 +7,7 @@
 //!   WHISPERPILOT_TEST_AUDIO=<sample.wav> cargo test --manifest-path src-tauri/Cargo.toml --test wp84_callback_regression -- --ignored --nocapture
 
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
 use whisper_rs::{WhisperContext, WhisperContextParameters};
-use whisperpilot_lib::error::AppError;
 
 /// A real audio file to exercise the decode, in any language.
 fn sample_path() -> Option<PathBuf> {
@@ -33,8 +25,7 @@ fn app_support_dir() -> PathBuf {
         .join("com.whisperpilot.dev")
 }
 
-/// A CPU-decode context over the production model, so the stress runs measure
-/// the callback wiring and not the unrelated intermittent Metal fault.
+/// A CPU-decode context over the production model for a repeatable stress run.
 fn cpu_context() -> Option<WhisperContext> {
     let model = app_support_dir()
         .join("models")
@@ -45,13 +36,10 @@ fn cpu_context() -> Option<WhisperContext> {
     WhisperContext::new_with_params(model.to_str()?, params).ok()
 }
 
-/// The WP-84 stress regression: five consecutive decodes with a cancel flag
-/// that stays `false` must all complete. Before the fix, the UB trampoline
-/// aborted the encode loop at random (`whisper_full_with_state: failed to
-/// encode`, error -6).
+/// Five consecutive decodes without a Stop callback must all complete.
 #[test]
 #[ignore]
-fn false_cancel_flag_never_aborts_the_decode() {
+fn decode_without_stop_callback_completes() {
     let (Some(audio), Some(ctx)) = (sample_path(), cpu_context()) else {
         eprintln!("SKIP: no sample audio or model (set WHISPERPILOT_TEST_AUDIO)");
         return;
@@ -59,31 +47,10 @@ fn false_cancel_flag_never_aborts_the_decode() {
     let samples = whisperpilot_lib::audio::load_samples(&audio).expect("samples");
 
     for run in 1..=5 {
-        let cancel = Arc::new(AtomicBool::new(false));
-        let result = whisperpilot_lib::transcribe::transcribe(&ctx, &samples, &cancel, |_| {});
+        let result = whisperpilot_lib::transcribe::transcribe(&ctx, &samples, |_| {});
         assert!(
             result.is_ok(),
-            "run {run}/5 aborted with a false cancel flag: {result:?}"
+            "run {run}/5 failed without a Stop callback: {result:?}"
         );
     }
-}
-
-/// The other half of the contract: a flag that is already `true` must still
-/// cancel the run, surfacing `AppError::Cancelled` rather than a transcript.
-#[test]
-#[ignore]
-fn set_cancel_flag_cancels_the_run() {
-    let (Some(audio), Some(ctx)) = (sample_path(), cpu_context()) else {
-        eprintln!("SKIP: no sample audio or model (set WHISPERPILOT_TEST_AUDIO)");
-        return;
-    };
-    let samples = whisperpilot_lib::audio::load_samples(&audio).expect("samples");
-
-    let cancel = Arc::new(AtomicBool::new(true));
-    let result = whisperpilot_lib::transcribe::transcribe(&ctx, &samples, &cancel, |_| {});
-
-    assert!(
-        matches!(result, Err(AppError::Cancelled)),
-        "a set cancel flag must yield AppError::Cancelled, got: {result:?}"
-    );
 }

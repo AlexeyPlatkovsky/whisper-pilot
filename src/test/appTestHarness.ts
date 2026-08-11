@@ -73,7 +73,6 @@ export function createIpcMock() {
     renameMeeting: vi.fn(),
     updateSegment: vi.fn(),
     updateNotes: vi.fn(),
-    cancelTranscription: vi.fn(),
     generateNotes: vi.fn(),
     saveTextDialog: vi.fn(async () => null),
     listTaskModels: vi.fn(),
@@ -148,8 +147,6 @@ export function resetAppMocks() {
     notes,
   }));
   vi.mocked(ipc.generateNotes).mockReset();
-  vi.mocked(ipc.cancelTranscription).mockReset();
-  vi.mocked(ipc.cancelTranscription).mockResolvedValue(undefined);
   vi.mocked(ipc.diarizeMeeting).mockReset();
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",

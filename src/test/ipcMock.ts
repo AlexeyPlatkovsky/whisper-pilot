@@ -11,7 +11,6 @@ export const mockCreateIpc = () => ({
   renameMeeting: vi.fn(),
   updateSegment: vi.fn(),
   updateNotes: vi.fn(),
-  cancelTranscription: vi.fn(),
   generateNotes: vi.fn(),
   saveTextDialog: vi.fn(async () => null),
   listTaskModels: vi.fn(),

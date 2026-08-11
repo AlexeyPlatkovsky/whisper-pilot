@@ -1,6 +1,5 @@
 //! Tauri app state: the cached Whisper context, the mutual-exclusion flag
-//! shared with Streaming, the running Meeting transcription slot (WP-19), and
-//! the running Streaming capture runtime.
+//! shared with Streaming and the running Streaming capture runtime.
 
 use crate::error::{AppError, Result};
 #[cfg(target_os = "macos")]
@@ -29,25 +28,19 @@ pub(crate) fn now_ms() -> Result<i64> {
         })
 }
 
-/// The whisper model is loaded lazily on first use and cached for the
-/// session — loading ~800 MB should not block app launch.
+/// Streaming's whisper model is loaded lazily on first use and cached for the
+/// session — loading ~800 MB should not block app launch. Meeting loads its
+/// CPU-only context inside its blocking transcription task.
 ///
-/// `whisper_busy` enforces WP-71's mutual exclusion (Meeting transcription
-/// vs. Streaming session, both contending for `model`'s one cached context)
-/// via `streaming_session::WhisperUsageGuard`. It's a plain field, not
-/// wrapped alongside `model`, so acquiring it stays synchronous without
-/// holding `model`'s lock for the guard's whole lifetime.
+/// `whisper_busy` enforces WP-71's mutual exclusion between Meeting
+/// transcription and Streaming capture via `streaming_session::WhisperUsageGuard`.
+/// Streaming owns the cached Metal context; Meeting loads a CPU-only context
+/// for each run. It's a plain field, not wrapped alongside `model`, so
+/// acquiring it stays synchronous without holding `model`'s lock.
 #[derive(Default)]
 pub(crate) struct AppState {
     pub(crate) model: Mutex<Option<Arc<WhisperContext>>>,
     pub(crate) whisper_busy: std::sync::atomic::AtomicU8,
-    /// The meeting id and abort flag of the one Meeting transcription
-    /// currently running, if any (WP-19). Only one can run at a time
-    /// (`whisper_busy`), so a single slot — not a map — is enough.
-    /// `cancel_transcription` flips the flag; `transcribe_meeting` clears
-    /// this slot on every exit path via `TranscriptionCancelGuard`.
-    pub(crate) running_transcription:
-        std::sync::Mutex<Option<(i64, Arc<std::sync::atomic::AtomicBool>)>>,
     /// The running Streaming session's audio capture, present only while a
     /// session is active. Dropping it (via `stop_streaming_session` taking
     /// it out, or app shutdown dropping `AppState` itself) stops both

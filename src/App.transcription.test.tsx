@@ -211,45 +211,9 @@ describe("App — English strings", () => {
   });
 });
 
-describe("App — cancel transcription (Stop)", () => {
-  it("keeps Stop disabled until a transcription is running, then wires it to cancelTranscription", async () => {
+describe("App — transcription without Stop", () => {
+  it("does not offer Stop while a Meeting transcription is running", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
-    vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise((resolve) => {
-        resolveTranscribe = resolve;
-      }),
-    );
-    const user = userEvent.setup();
-    render(<App />);
-
-    const stop = screen.getByRole("button", { name: "Stop" });
-    expect(stop).toBeDisabled();
-
-    await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
-    const transcribe = await screen.findByRole("button", {
-      name: "Transcribe",
-    });
-    await waitFor(() => expect(transcribe).not.toBeDisabled());
-    await user.click(transcribe);
-
-    await waitFor(() => expect(stop).not.toBeDisabled());
-    await user.click(stop);
-    expect(ipc.cancelTranscription).toHaveBeenCalledWith(100);
-    void resolveTranscribe;
-  });
-
-  it("disables Stop once the run reaches the diarizing phase, which has no cancel hook", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    let phaseHandler: (p: {
-      id: number;
-      phase: "diarizing";
-    }) => void = () => {};
-    vi.mocked(ipc.onTranscriptionPhase).mockImplementation(async (handler) => {
-      phaseHandler = handler;
-      return () => {};
-    });
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(new Promise(() => {}));
     const user = userEvent.setup();
     render(<App />);
@@ -262,70 +226,9 @@ describe("App — cancel transcription (Stop)", () => {
     await waitFor(() => expect(transcribe).not.toBeDisabled());
     await user.click(transcribe);
 
-    const stop = screen.getByRole("button", { name: "Stop" });
-    await waitFor(() => expect(stop).not.toBeDisabled());
-
-    phaseHandler({ id: 100, phase: "diarizing" });
-
-    await waitFor(() => expect(stop).toBeDisabled());
-  });
-
-  it("surfaces a cancelled run as a message, creates no document, and re-enables Transcribe", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    vi.mocked(ipc.transcribeMeeting).mockRejectedValue(
-      new Error("transcription stopped"),
-    );
-    const user = userEvent.setup();
-    render(<App />);
-
-    await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
-    const transcribe = await screen.findByRole("button", {
-      name: "Transcribe",
-    });
-    await waitFor(() => expect(transcribe).not.toBeDisabled());
-    await user.click(transcribe);
-
-    await screen.findByText(/transcription stopped/);
-    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled(),
-    );
     expect(
-      screen.getByRole("button", { name: "Transcribe" }),
-    ).not.toBeDisabled();
-  });
-
-  it("surfaces a cancel-request failure without disturbing the in-flight run", async () => {
-    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
-    let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
-    vi.mocked(ipc.transcribeMeeting).mockReturnValue(
-      new Promise((resolve) => {
-        resolveTranscribe = resolve;
-      }),
-    );
-    vi.mocked(ipc.cancelTranscription).mockRejectedValue(
-      new Error("no transcription is running for meeting 100"),
-    );
-    const user = userEvent.setup();
-    render(<App />);
-
-    await waitForAddFileEnabled();
-    await user.click(screen.getByRole("button", { name: "Choose file" }));
-    const transcribe = await screen.findByRole("button", {
-      name: "Transcribe",
-    });
-    await waitFor(() => expect(transcribe).not.toBeDisabled());
-    await user.click(transcribe);
-
-    const stop = screen.getByRole("button", { name: "Stop" });
-    await waitFor(() => expect(stop).not.toBeDisabled());
-    await user.click(stop);
-
-    await screen.findByText(/no transcription is running/);
-    // The run itself is still in flight — resolving it completes normally.
-    resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
-    await screen.findByDisplayValue("Hello");
+      screen.queryByRole("button", { name: "Stop" }),
+    ).not.toBeInTheDocument();
   });
 });
 

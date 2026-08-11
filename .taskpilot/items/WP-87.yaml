@@ -1,0 +1,49 @@
+schema_version: 1
+id: WP-87
+title: Run Meeting transcription in an isolated worker process to restore Stop
+priority: normal
+type: task
+status: backlog
+created_at: '2026-08-10T18:39:22Z'
+updated_at: '2026-08-10T18:40:13Z'
+description: >-
+  Restore cancellable Meeting transcription without installing whisper.cpp's
+  in-process Metal abort callback. The parent application must run the
+  full-file Whisper decode in a re-executed worker mode of the same bundled
+  executable, using a hidden worker argument. The worker loads the selected
+  model and source audio, decodes with Metal and no abort callback, reports
+  progress through a parent-controlled transport, and returns the completed
+  transcription through a validated temporary result artifact. The parent owns
+  Meeting persistence and diarization and must create neither until it receives
+  a complete successful worker result. Stop terminates the worker, removes its
+  temporary artifacts, returns AppError::Cancelled, and leaves the Meeting
+  transcript unchanged. The parent must distinguish worker cancellation, native
+  crash/signal, non-zero engine failure, malformed result, and timeout. Reuse
+  the project’s existing child-process supervision conventions where applicable,
+  but do not route audio samples or transcript content through logs. The worker
+  must not expose a second UI or accept ordinary Tauri IPC commands. This is a
+  standalone future task with no parent item. Happy path: Given a Meeting
+  transcription starts, when the worker returns a validated non-empty result,
+  then the parent persists it and starts diarization exactly as it does for a
+  successful in-process decode. Failure behavior: Given Stop or a supervised
+  worker failure, when the parent handles it, then it preserves the prior
+  Meeting data and returns the corresponding error. Edge cases include Stop
+  before worker readiness, Stop after a successful result but before
+  persistence, app shutdown, back-to-back runs, and a worker that exits without
+  a result. Target surfaces include src-tauri/src/commands/transcription.rs,
+  the app entry-point worker dispatch, AppState, the existing diarize_process
+  supervision conventions, src/App.tsx, src/ipc.ts, focused Rust/React tests,
+  and docs/architecture.md. Constraints: retain macOS Metal acceleration for
+  ordinary decode, use only local files and process IPC, and do not log audio
+  samples or transcript text.
+dod:
+- A Meeting decode runs in the hidden worker mode with no Metal abort callback, while the parent retains ownership of persistence and diarization.
+- Stop terminates only the active Meeting worker, reports AppError::Cancelled, cleans temporary artifacts, and never persists a partial or empty transcript.
+- The parent surfaces distinct, actionable errors for worker signal exit, non-zero engine exit, malformed/missing result, and inactivity timeout.
+- Progress from the worker continues to drive the existing transcription-progress UI contract without writing transcript/audio content to logs.
+- Rust tests cover successful result transport, cancellation cleanup, each supervised worker-failure class, and the invariant that no persistence/diarization occurs before a validated result.
+- Manual macOS verification shows each of the four regression files transcribes and Stop cancels an in-flight Meeting decode.
+- cargo test, cargo clippy -- -D warnings, cargo fmt --check, npm run typecheck, npm run lint, npm run format:check, and npm run test:run pass.
+links:
+  relates_to:
+  - WP-86

@@ -47,7 +47,6 @@ pub fn run() {
             commands::meetings::update_notes,
             commands::transcription::set_meeting_source,
             commands::transcription::transcribe_meeting,
-            commands::transcription::cancel_transcription,
             commands::transcription::diarize_meeting,
             commands::streaming::list_streaming_sessions,
             commands::streaming::open_streaming_session,

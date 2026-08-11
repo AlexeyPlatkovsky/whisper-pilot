@@ -11,8 +11,6 @@ use crate::error::{AppError, Result};
 use serde::Serialize;
 use std::ffi::c_void;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
 };
@@ -84,11 +82,21 @@ pub struct Segment {
 /// Load the whisper model from the WP-39 download location under
 /// `app_support_dir`; override with `WHISPERPILOT_MODEL_PATH`.
 pub fn load_model(app_support_dir: &Path) -> Result<WhisperContext> {
+    load_model_with_gpu(app_support_dir, true)
+}
+
+/// Load the CPU-only context used by Meeting transcription.
+pub fn load_model_cpu(app_support_dir: &Path) -> Result<WhisperContext> {
+    load_model_with_gpu(app_support_dir, false)
+}
+
+fn load_model_with_gpu(app_support_dir: &Path, use_gpu: bool) -> Result<WhisperContext> {
     let path = model_path(app_support_dir);
     if !path.exists() {
         return Err(AppError::ModelNotFound(path.display().to_string()));
     }
     let mut params = WhisperContextParameters::default();
+    params.use_gpu(use_gpu);
     params.flash_attn(true);
     let path_str = path
         .to_str()
@@ -115,41 +123,22 @@ fn resolve_model_path(app_support_dir: &Path, override_path: Option<String>) -> 
         .expect("\"transcription\" is a static CATALOG entry with at least one asset")
 }
 
-/// Sound FFI trampolines for the decode callbacks. whisper-rs's
-/// `set_abort_callback_safe` / `set_progress_callback_safe` reinterpret the
-/// boxed fat pointer as the concrete closure type (UB) — do not use them;
-/// see WP-84. user_data here is a plain pointer to the live [`AtomicBool`] /
-/// the concrete progress closure, borrowed for the whole synchronous
-/// `state.full` call they are installed for.
-unsafe extern "C" fn abort_trampoline(user_data: *mut c_void) -> bool {
-    // user_data is the `*const AtomicBool` installed by install_run_callbacks;
-    // the flag outlives the synchronous decode it is read during.
-    unsafe { (*user_data.cast::<AtomicBool>()).load(Ordering::Relaxed) }
-}
-
 unsafe extern "C" fn progress_trampoline<F: FnMut(i32)>(
     _ctx: *mut whisper_rs::WhisperSysContext,
     _state: *mut whisper_rs::WhisperSysState,
     progress: std::ffi::c_int,
     user_data: *mut c_void,
 ) {
-    // user_data is the `*mut F` installed by install_run_callbacks; the
+    // user_data is the `*mut F` installed by install_progress_callback; the
     // closure outlives the synchronous decode it is invoked during.
     unsafe { (*user_data.cast::<F>())(progress) }
 }
 
-/// Wire cancel/progress into `params` through whisper-rs's raw setters,
-/// bypassing the UB safe trampolines above. `cancel` and `on_progress` are
-/// borrowed stack/caller values that outlive the synchronous `state.full`
-/// call these params are built for; the raw pointers never escape it.
-fn install_run_callbacks<F: FnMut(i32)>(
-    params: &mut FullParams,
-    cancel: &AtomicBool,
-    on_progress: &mut F,
-) {
+/// Progress uses a raw callback so the concrete closure remains valid for the
+/// synchronous decode. Metal Meeting decodes deliberately have no abort
+/// callback; see WP-86.
+fn install_progress_callback<F: FnMut(i32)>(params: &mut FullParams, on_progress: &mut F) {
     unsafe {
-        params.set_abort_callback(Some(abort_trampoline));
-        params.set_abort_callback_user_data(cancel as *const AtomicBool as *mut c_void);
         params.set_progress_callback(Some(progress_trampoline::<F>));
         params.set_progress_callback_user_data(on_progress as *mut F as *mut c_void);
     }
@@ -157,17 +146,15 @@ fn install_run_callbacks<F: FnMut(i32)>(
 
 /// Transcribe 16 kHz mono samples into timestamped, auto-detected segments.
 /// A fresh state suits one-shot Meeting decode; Streaming reuses its state.
-/// Cancellation returns [`AppError::Cancelled`] rather than a partial result.
 pub fn transcribe(
     ctx: &WhisperContext,
     samples: &[f32],
-    cancel: &Arc<AtomicBool>,
-    on_progress: impl FnMut(i32) + 'static,
+    on_progress: impl FnMut(i32),
 ) -> Result<Transcription> {
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_with_state(&mut state, samples, cancel, on_progress)
+    transcribe_with_state(&mut state, samples, on_progress)
 }
 
 /// [`transcribe`] with a caller-owned state. Reusing one state across calls
@@ -178,13 +165,8 @@ pub fn transcribe(
 pub fn transcribe_with_state(
     state: &mut WhisperState,
     samples: &[f32],
-    cancel: &Arc<AtomicBool>,
-    mut on_progress: impl FnMut(i32) + 'static,
+    mut on_progress: impl FnMut(i32),
 ) -> Result<Transcription> {
-    if cancel.load(Ordering::Relaxed) {
-        return Err(AppError::Cancelled);
-    }
-
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
         beam_size: 5,
         patience: -1.0,
@@ -212,17 +194,11 @@ pub fn transcribe_with_state(
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
-    install_run_callbacks(&mut params, cancel, &mut on_progress);
+    install_progress_callback(&mut params, &mut on_progress);
 
-    let full_result = state.full(params, samples);
-    // The abort callback stops whisper's decode loop, but whisper.cpp still
-    // returns success with whatever partial output it had, not a distinct
-    // error code — so cancellation is detected from our own flag, checked
-    // before the decode's own Err (a real decode failure), not after it.
-    if cancel.load(Ordering::Relaxed) {
-        return Err(AppError::Cancelled);
-    }
-    full_result.map_err(|e| AppError::Transcribe(e.to_string()))?;
+    state
+        .full(params, samples)
+        .map_err(|e| AppError::Transcribe(e.to_string()))?;
 
     let n = state.full_n_segments();
     let mut segments = Vec::with_capacity(n as usize);
@@ -255,10 +231,19 @@ pub fn transcribe_with_state(
     })
 }
 
+/// Run the one Meeting decode supplied by the caller. Keeping this boundary
+/// explicit prevents the failed Metal attempt from being hidden in the
+/// Meeting path; Streaming retains its separate cached-context path.
+pub fn decode_meeting_once(
+    cpu_decode: impl FnOnce() -> Result<Transcription>,
+) -> Result<Transcription> {
+    cpu_decode()
+}
+
 /// Full path from a picked file to timestamped segments.
 pub fn transcribe_file(ctx: &WhisperContext, input: &Path) -> Result<Transcription> {
     let samples = crate::audio::load_samples(input)?;
-    transcribe(ctx, &samples, &Arc::new(AtomicBool::new(false)), |_| {})
+    transcribe(ctx, &samples, |_| {})
 }
 
 #[cfg(test)]
@@ -336,20 +321,31 @@ mod tests {
     }
 
     #[test]
-    fn abort_trampoline_returns_the_exact_flag_value() {
-        // EP: flag false / flag true partitions — the trampoline must read
-        // back the exact flag it was handed (WP-84).
-        let flag = AtomicBool::new(false);
-        let data = &flag as *const AtomicBool as *mut std::ffi::c_void;
+    fn meeting_decode_runs_one_cpu_attempt() {
+        let transcript = || Transcription {
+            segments: vec![Segment {
+                start_ms: 0,
+                end_ms: 1_000,
+                text: "hello".to_string(),
+                speaker_id: None,
+            }],
+            language: "en".to_string(),
+        };
 
-        assert!(!unsafe { abort_trampoline(data) });
-        flag.store(true, Ordering::Relaxed);
-        assert!(unsafe { abort_trampoline(data) });
+        let mut attempts = 0;
+        let result = decode_meeting_once(|| {
+            attempts += 1;
+            Ok(transcript())
+        })
+        .expect("the CPU decode succeeds");
+
+        assert_eq!(result.segments.len(), 1);
+        assert_eq!(attempts, 1);
     }
 
     #[test]
     fn progress_trampoline_forwards_the_exact_progress_value() {
-        // The generic helper mirrors how install_run_callbacks monomorphizes
+        // The generic helper mirrors how install_progress_callback monomorphizes
         // the trampoline over the caller's closure type (WP-84).
         fn drive<F: FnMut(i32)>(sink: &mut F) {
             unsafe {
