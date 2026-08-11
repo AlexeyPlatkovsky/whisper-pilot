@@ -16,6 +16,7 @@ F003.
 | F005-T8 | Appearance: 3–4 extra themes, each light + dark | F005-R7 | M3 | F005-T5 | — (unscheduled) |
 | F005-T9 | App language: add Russian, Turkish, Spanish, German, French | F005-R9 | M3 | F005-T6 | — (unscheduled) |
 | F005-T10 | Update app: check for and apply updates | F005-R10 | M3 | F005-T2 | — (unscheduled) |
+| F005-T11 | Appearance: configure current Meeting and Streaming status colors | F005-R11 | M2 | F005-T1, F005-T2 | WP-88 |
 
 ## Notes
 

@@ -71,14 +71,20 @@ describe("App — English strings", () => {
     ).toBeInTheDocument();
   });
 
-  it("shows a compact transcribing status — label plus a ticking timer, no filename or blurb", async () => {
+  it("shows transcription progress with a stable 100-percent value slot", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
+    let progressHandler: (progress: { id: number; percent: number }) => void =
+      () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
       new Promise((resolve) => {
         resolveTranscribe = resolve;
       }),
     );
+    vi.mocked(ipc.onTranscriptionProgress).mockImplementation(async (handler) => {
+      progressHandler = handler;
+      return () => {};
+    });
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({
@@ -98,7 +104,7 @@ describe("App — English strings", () => {
       const status = await screen.findByRole("status");
       await waitFor(() => expect(status).toHaveTextContent("Transcribing"));
 
-      // No filename, no "minutes" blurb — just the label and a mm:ss timer.
+      // No filename or blurb — the header owns the compact run state.
       expect(status.textContent).not.toContain("meeting.mp3");
       expect(status.textContent).not.toContain("minutes");
       expect(status.querySelector("b")).toBeNull();
@@ -112,6 +118,16 @@ describe("App — English strings", () => {
         "00:02",
       );
 
+      progressHandler({ id: 100, percent: 10 });
+      const progress = await within(status).findByRole("progressbar", {
+        name: "Transcription progress",
+      });
+      expect(progress).toHaveValue(10);
+      expect(status).toHaveTextContent("10%");
+      expect(
+        status.querySelector(".wp-status-progress-label"),
+      ).toHaveClass("wp-status-progress-label");
+
       resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
       await screen.findByDisplayValue("Hello");
     } finally {
@@ -119,7 +135,7 @@ describe("App — English strings", () => {
     }
   });
 
-  it("keeps the status indeterminate when the run moves into diarizing", async () => {
+  it("shows progress only for transcription, then hides it for diarizing", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(new Promise(() => {}));
     let phaseHandler: (p: {
@@ -142,7 +158,11 @@ describe("App — English strings", () => {
     await user.click(transcribe);
 
     const status = await screen.findByRole("status");
-    expect(within(status).queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(
+      within(status).getByRole("progressbar", {
+        name: "Transcription progress",
+      }),
+    ).toHaveValue(0);
 
     phaseHandler({ id: 100, phase: "diarizing" });
 

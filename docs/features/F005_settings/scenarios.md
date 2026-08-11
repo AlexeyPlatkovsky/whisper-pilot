@@ -125,6 +125,24 @@ Scenario: Check for and apply an update
   Then the user can apply it
 ```
 
+### F005-S11: Configure a status color
+
+Covers: F005-R11
+
+```gherkin
+Scenario: Save, confirm, or cancel a status color
+  Given Settings lists the current semantic statuses with their built-in colors
+  When the user opens a status color popover, selects a valid #RRGGBB value,
+    and saves it with sufficient contrast
+  Then every matching Meeting and Streaming status surface uses the new color
+    and it persists after restart
+  When the selected color has insufficient contrast and the user cancels the
+    confirmation
+  Then the prior mapping remains unchanged
+  When the user clicks Reset all colors
+  Then every status returns to its documented built-in color
+```
+
 ## Manual Verification Checklist
 
 - [ ] (F005-R1) The gear sits in a fixed header position and opens Settings.
@@ -136,3 +154,8 @@ Scenario: Check for and apply an update
       rule (Transcribe disabled; diarization degrades).
 - [ ] (F005-R6) System theme tracks a live OS light↔dark switch.
 - [ ] (F005-R8) No stray non-English UI strings with the default settings.
+- [ ] (F005-R11) Canceling a color popover changes neither visible statuses nor
+      stored values; malformed/alpha values are rejected; a low-contrast save needs
+      confirmation; an individual persistence failure or Reset-all persistence failure
+      restores the full prior mapping; missing/malformed legacy mappings silently use
+      built-in defaults; and a later save wins over stale pending responses.

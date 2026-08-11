@@ -80,6 +80,7 @@ export function createIpcMock() {
     deleteModel: vi.fn(),
     onModelDownloadProgress: vi.fn(async () => () => {}),
     onTranscriptionPhase: vi.fn(async () => () => {}),
+    onTranscriptionProgress: vi.fn(async () => () => {}),
     getSettings: vi.fn(async () => ({
       theme: "system",
       ui_language: "en",

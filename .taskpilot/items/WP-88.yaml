@@ -1,0 +1,33 @@
+schema_version: 1
+id: WP-88
+title: Configure colors for current status widgets
+priority: normal
+type: task
+status: ready
+created_at: '2026-08-11T12:10:38Z'
+updated_at: '2026-08-11T15:00:05Z'
+dod:
+- 'Settings lists each current semantic status exactly once with the built-in opaque hex mapping: No files #8A5F10; Ready #5A7684; Transcribing #176C8F; Diarizing #176C8F; Crafting notes #176C8F; Finished #46704C; Error #B82B2F; No model #C65D2E; Unknown #5A7684; Starting… #5A7684; On Air #B82B2F; Crafting MFU… #176C8F; MFU Failed #B82B2F; Prettifying… #176C8F; Prettify Failed #B82B2F.'
+- 'Each current-status row opens an anchored color-picker popover with its current saved color, a visual picker, a #RRGGBB input, Save, and Cancel; Cancel closes it without changing any global UI or persistence.'
+- Saving a valid opaque six-digit hex color with at least WCAG AA 4.5:1 contrast against the active theme’s status-widget background updates every current visible use of that semantic status immediately, including the applicable header widget and sidebar indicator, and the same color remains after an app restart.
+- A selected color for shared Ready, Finished, or Unknown is applied consistently in both Meeting and Streaming surfaces.
+- The Settings UI offers Reset all colors; activating it restores every status to the explicit built-in mapping immediately and persists that mapping across restart.
+- Saving a valid opaque color below WCAG AA 4.5:1 opens a warning with Confirm and Cancel; Confirm applies and persists it, while Cancel returns to the picker with the prior global and persisted mapping unchanged.
+- The Settings UI accepts only opaque six-digit hexadecimal colors; malformed, shorthand, and alpha-bearing values are rejected without changing the active or persisted mapping.
+- If persisting an individual color change or Reset all fails, the UI displays an error and restores the complete prior saved mapping on every visible status surface.
+- If the saved mapping is absent, malformed, unreadable, or from a version before this setting existed, startup silently uses the explicit built-in mapping.
+- With overlapping color-save requests, including Reset all, the latest user action is the only action that may determine the final visible and persisted mapping; stale responses are ignored.
++description: 'Users can open Settings and configure an opaque color independently for each current semantic status used by the Meeting and Streaming status widgets. The controls list the current statuses only: No files, Ready, Transcribing, Diarizing, Crafting notes, Finished, Error, No model, Unknown, Starting…, On Air, Crafting MFU…, MFU Failed, Prettifying…, and Prettify Failed. Ready, Finished, and Unknown are shared semantic statuses across Meeting and Streaming; each configured color applies everywhere that semantic status is visible. Each row has a color control that opens an anchored popover showing the current saved color, a visual color picker, and a hex input. Edits preview only inside that popover. Cancel closes it without changing any visible status or persistence. Save validates opaque six-digit hexadecimal input, then checks WCAG AA 4.5:1 contrast against the active theme’s status-widget background. A passing value applies immediately to every matching header widget, sidebar indicator, and equivalent status display and persists automatically in the existing local Settings store. A low-contrast value opens a warning that requires explicit Confirm or Cancel; Confirm saves it, Cancel returns to the picker with no persisted or global UI change. A Reset all colors action restores the complete built-in color mapping. If persistence fails, the app shows an error and restores the prior saved color rather than claiming the new value was retained.
+
+
+  Non-goals:
+
+  - Configuring colors for statuses introduced after WP-88 ships; they retain their built-in colors until explicitly added in later scope.
+
+  - Renaming, reordering, adding, or removing statuses, or changing their icons.
+
+  - Per-widget, per-meeting, per-streaming-session, per-theme, cloud-synced, or alpha/transparency color overrides.
+
+  - Changing the existing theme selection or any other Appearance setting.
+
+  '

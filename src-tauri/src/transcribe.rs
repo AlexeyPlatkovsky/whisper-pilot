@@ -143,6 +143,19 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
     transcribe_state(&mut state, samples, None::<fn(i32)>)
 }
 
+/// [`transcribe`] with Whisper's own 0–100 completion estimate. The callback
+/// remains alive through the synchronous native decode in `transcribe_state`.
+pub fn transcribe_with_progress(
+    ctx: &WhisperContext,
+    samples: &[f32],
+    on_progress: impl FnMut(i32),
+) -> Result<Transcription> {
+    let mut state = ctx
+        .create_state()
+        .map_err(|e| AppError::Transcribe(e.to_string()))?;
+    transcribe_state(&mut state, samples, Some(on_progress))
+}
+
 /// [`transcribe`] with a caller-owned state. Reusing one state across calls
 /// is upstream's own pattern (`whisper_full` reuses `ctx->state`; each call
 /// clears its results, recomputes the mel spectrogram, and clears the

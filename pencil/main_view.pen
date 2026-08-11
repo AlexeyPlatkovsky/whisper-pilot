@@ -989,7 +989,7 @@
       "y": -1878,
       "name": "Status Widget",
       "reusable": true,
-      "width": 180,
+      "width": 280,
       "height": 32,
       "fill": "$canvas-bg",
       "cornerRadius": 8,
@@ -1236,7 +1236,7 @@
                   "type": "frame",
                   "id": "I63vl",
                   "name": "Status Widget New",
-                  "width": 180,
+                  "width": 280,
                   "height": 32,
                   "fill": "$canvas-bg",
                   "cornerRadius": 8,
@@ -1281,6 +1281,40 @@
                       "fontFamily": "$font-body",
                       "fontSize": 11,
                       "fontWeight": "normal"
+                    },
+                    {
+                      "type": "frame",
+                      "id": "gE75Z",
+                      "name": "Progress Track New",
+                      "clip": true,
+                      "width": 64,
+                      "height": 4,
+                      "fill": "#C65D2E1A",
+                      "cornerRadius": 2,
+                      "children": [
+                        {
+                          "type": "rectangle",
+                          "cornerRadius": 2,
+                          "id": "dqwRN",
+                          "name": "Progress Fill New",
+                          "fill": "$accent",
+                          "width": 40,
+                          "height": "fill_container"
+                        }
+                      ]
+                    },
+                    {
+                      "type": "text",
+                      "id": "wIXSq",
+                      "name": "Progress Percent New",
+                      "fill": "$text-label",
+                      "textGrowth": "fixed-width",
+                      "width": 32,
+                      "content": "62%",
+                      "textAlign": "right",
+                      "fontFamily": "$font-body",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
                     }
                   ]
                 },
@@ -1312,24 +1346,6 @@
                       "type": "rectangle",
                       "id": "CvegW",
                       "name": "Sep Start",
-                      "fill": "$border",
-                      "width": 1,
-                      "height": 16
-                    },
-                    {
-                      "type": "icon",
-                      "id": "hcULb",
-                      "name": "Stop",
-                      "width": 17,
-                      "height": 17,
-                      "icon": "square",
-                      "library": "lucide",
-                      "fill": "$text-secondary"
-                    },
-                    {
-                      "type": "rectangle",
-                      "id": "rtBP0",
-                      "name": "Sep Stop",
                       "fill": "$border",
                       "width": 1,
                       "height": 16
@@ -2268,7 +2284,7 @@
                   "type": "ref",
                   "ref": "gCpI1",
                   "name": "Status Widget Instance",
-                  "width": 180,
+                  "width": 280,
                   "height": 32
                 },
                 {
@@ -2299,24 +2315,6 @@
                       "type": "rectangle",
                       "id": "DFTTx",
                       "name": "Sep Start",
-                      "fill": "$border",
-                      "width": 1,
-                      "height": 16
-                    },
-                    {
-                      "type": "icon",
-                      "id": "awEG6",
-                      "name": "Stop",
-                      "width": 17,
-                      "height": 17,
-                      "icon": "square",
-                      "library": "lucide",
-                      "fill": "$text-secondary"
-                    },
-                    {
-                      "type": "rectangle",
-                      "id": "yAlYp",
-                      "name": "Sep Stop",
                       "fill": "$border",
                       "width": 1,
                       "height": 16
@@ -3747,57 +3745,209 @@
           "id": "mMTEj",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Ready",
-          "width": 180,
-          "height": 32
+          "name": "No files",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#8A5F10"
+            },
+            "cycUZ": {
+              "content": "No files",
+              "fill": "#8A5F10"
+            }
+          }
         },
         {
           "id": "j0lEPE",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Starting…",
-          "width": 180,
-          "height": 32
+          "name": "Ready",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#5A7684"
+            },
+            "cycUZ": {
+              "content": "Ready",
+              "fill": "#5A7684"
+            }
+          }
         },
         {
-          "id": "apfSH",
-          "type": "ref",
-          "ref": "gCpI1",
-          "name": "On Air",
-          "width": 180,
-          "height": 32
+          "type": "frame",
+          "id": "Qjwba",
+          "name": "Transcribing",
+          "width": 282,
+          "height": 32,
+          "fill": "$canvas-bg",
+          "cornerRadius": 8,
+          "gap": 8,
+          "justifyContent": "center",
+          "alignItems": "center",
+          "children": [
+            {
+              "type": "icon",
+              "id": "gUo9H",
+              "name": "State Icon",
+              "width": 14,
+              "height": 14,
+              "icon": "refresh-cw",
+              "library": "lucide",
+              "fill": "#176C8F"
+            },
+            {
+              "type": "text",
+              "id": "IovBl",
+              "name": "Status Label",
+              "fill": "#176C8F",
+              "content": "Transcribing",
+              "fontFamily": "$font-body",
+              "fontSize": 12,
+              "fontWeight": "500"
+            },
+            {
+              "type": "text",
+              "id": "a8kyk",
+              "name": "Status Timer",
+              "fill": "$text-label",
+              "content": "04:32",
+              "fontFamily": "$font-body",
+              "fontSize": 11,
+              "fontWeight": "normal"
+            },
+            {
+              "type": "frame",
+              "id": "ye7Ra",
+              "name": "Transcription Progress",
+              "width": 98,
+              "height": 16,
+              "gap": 6,
+              "alignItems": "center",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "duZIc",
+                  "name": "Progress Track",
+                  "clip": true,
+                  "width": 64,
+                  "height": 4,
+                  "fill": "$border",
+                  "cornerRadius": 2,
+                  "children": [
+                    {
+                      "type": "rectangle",
+                      "cornerRadius": 2,
+                      "id": "ut0rt",
+                      "name": "Progress Fill",
+                      "fill": "$accent",
+                      "width": 6.4,
+                      "height": 4
+                    }
+                  ]
+                },
+                {
+                  "type": "text",
+                  "id": "taM44",
+                  "name": "Progress Value",
+                  "fill": "$text-label",
+                  "textGrowth": "fixed-width-height",
+                  "width": 28,
+                  "height": 13,
+                  "content": "10%",
+                  "textAlign": "right",
+                  "textAlignVertical": "middle",
+                  "fontFamily": "$font-body",
+                  "fontSize": 11,
+                  "fontWeight": "normal"
+                }
+              ]
+            }
+          ]
         },
         {
           "id": "CJh2F",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Crafting MFU…",
-          "width": 180,
-          "height": 32
+          "name": "Diarizing",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#176C8F"
+            },
+            "cycUZ": {
+              "content": "Diarizing",
+              "fill": "#176C8F"
+            }
+          }
         },
         {
           "id": "QoZF4",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Prettifying…",
-          "width": 180,
-          "height": 32
+          "name": "Crafting notes",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#176C8F"
+            },
+            "cycUZ": {
+              "content": "Crafting notes",
+              "fill": "#176C8F"
+            }
+          }
         },
         {
           "id": "Wm1rR",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "MFU Failed",
-          "width": 180,
-          "height": 32
+          "name": "Finished",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#46704C"
+            },
+            "cycUZ": {
+              "content": "Finished",
+              "fill": "#46704C"
+            }
+          }
         },
         {
           "id": "tcI0I",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Prettify Failed",
-          "width": 180,
-          "height": 32
+          "name": "Error",
+          "width": 280,
+          "height": 32,
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#B82B2F"
+            },
+            "cycUZ": {
+              "content": "Error",
+              "fill": "#B82B2F"
+            }
+          }
+        },
+        {
+          "id": "ePmAe",
+          "type": "ref",
+          "ref": "gCpI1",
+          "name": "No model",
+          "descendants": {
+            "iOWGP": {
+              "stroke": "#C65D2E"
+            },
+            "cycUZ": {
+              "content": "No model",
+              "fill": "#C65D2E"
+            }
+          }
         }
       ]
     }

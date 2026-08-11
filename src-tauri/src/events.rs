@@ -14,6 +14,14 @@ pub(crate) struct TranscriptionPhaseEvent {
     pub(crate) phase: &'static str,
 }
 
+/// Whisper's 0–100 completion estimate for the transcription phase of one
+/// Meeting run. Diarization has no equivalent estimate.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct TranscriptionProgressEvent {
+    pub(crate) id: i64,
+    pub(crate) percent: i32,
+}
+
 /// Emitted once per decoded Streaming window (`streaming_window`), whether
 /// it succeeded or fail-open-skipped — `outcome_ok` distinguishes the two so
 /// the UI can show "this span failed" rather than reading a skip as silence.
@@ -74,5 +82,18 @@ mod tests {
             2,
             "unexpected extra key in the transcription_phase payload"
         );
+    }
+
+    #[test]
+    fn transcription_progress_event_serializes_with_the_keys_and_casing_the_frontend_expects() {
+        let event = TranscriptionProgressEvent {
+            id: 42,
+            percent: 10,
+        };
+        let json = serde_json::to_value(&event).unwrap();
+
+        assert_eq!(json["id"], serde_json::json!(42));
+        assert_eq!(json["percent"], serde_json::json!(10));
+        assert_eq!(json.as_object().unwrap().len(), 2);
     }
 }

@@ -314,6 +314,49 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* The percent column is always four characters wide (`100%`). The bar/value
+   group therefore keeps the status widget's geometry stable at 0%, 1%, 10%,
+   and 100%. */
+.wp-status-progress {
+  display: grid;
+  grid-template-columns: 64px 4ch;
+  align-items: center;
+  gap: 6px;
+}
+
+.wp-status-progress-bar {
+  width: 64px;
+  height: 4px;
+  appearance: none;
+  border: none;
+  border-radius: var(--wp-radius-xs);
+  overflow: hidden;
+}
+
+.wp-status-progress-bar::-webkit-progress-bar {
+  background: var(--border);
+  border-radius: var(--wp-radius-xs);
+}
+
+.wp-status-progress-bar::-webkit-progress-value {
+  background: var(--accent);
+  border-radius: var(--wp-radius-xs);
+}
+
+.wp-status-progress-bar::-moz-progress-bar {
+  background: var(--accent);
+  border-radius: var(--wp-radius-xs);
+}
+
+.wp-status-progress-label {
+  width: 4ch;
+  text-align: right;
+  color: var(--muted);
+  font-weight: normal;
+  font-size: var(--wp-font-size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .wp-spin {
   /* Falls back to the accent for the non-status spinners (model download);
      a spinner that also carries a .wp-tone--* class takes that tone instead. */

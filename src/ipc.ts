@@ -198,6 +198,20 @@ export function onTranscriptionPhase(
   );
 }
 
+export interface TranscriptionProgress {
+  id: number;
+  percent: number;
+}
+
+/** Fired with Whisper's 0–100 estimate while a Meeting is transcribing. */
+export function onTranscriptionProgress(
+  handler: (progress: TranscriptionProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<TranscriptionProgress>("transcription_progress", (event) =>
+    handler(event.payload),
+  );
+}
+
 export interface StreamingSessionSummary {
   id: number;
   title: string;

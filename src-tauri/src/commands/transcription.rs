@@ -5,7 +5,7 @@ use crate::audio;
 use crate::diarize;
 use crate::diarize_process;
 use crate::error::{AppError, Result};
-use crate::events::TranscriptionPhaseEvent;
+use crate::events::{TranscriptionPhaseEvent, TranscriptionProgressEvent};
 use crate::meetings::MeetingDto;
 use crate::settings;
 use crate::state::{app_data_dir, AppState};
@@ -58,6 +58,8 @@ type PendingDiarization =
 /// the samples it was decoded from so diarization can reuse them.
 ///
 async fn decode_and_transcribe(
+    app: tauri::AppHandle,
+    id: i64,
     ctx: Arc<WhisperContext>,
     path: String,
 ) -> Result<(transcribe::Transcription, Vec<f32>)> {
@@ -70,9 +72,16 @@ async fn decode_and_transcribe(
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
     let transcription = {
         let samples = samples.clone();
-        tokio::task::spawn_blocking(move || transcribe::transcribe(&ctx, &samples))
-            .await
-            .map_err(|e| AppError::Transcribe(e.to_string()))??
+        tokio::task::spawn_blocking(move || {
+            transcribe::transcribe_with_progress(&ctx, &samples, move |percent| {
+                let _ = app.emit(
+                    "transcription_progress",
+                    TranscriptionProgressEvent { id, percent },
+                );
+            })
+        })
+        .await
+        .map_err(|e| AppError::Transcribe(e.to_string()))??
     };
     ensure_non_empty_transcript(&transcription)?;
 
@@ -212,7 +221,7 @@ pub(crate) async fn transcribe_meeting(
     .map(str::to_string);
 
     let ctx = state.model(app_support_dir.clone()).await?;
-    let (transcription, samples) = decode_and_transcribe(ctx, path).await?;
+    let (transcription, samples) = decode_and_transcribe(app.clone(), id, ctx, path).await?;
 
     let diarization: Option<PendingDiarization> = active_diarization_variant.map(|variant| {
         let app = app.clone();

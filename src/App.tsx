@@ -12,6 +12,7 @@ import {
   transcribeMeeting,
   diarizeMeeting,
   onTranscriptionPhase,
+  onTranscriptionProgress,
   saveTextDialog,
   renameMeeting,
   updateSegment,
@@ -102,6 +103,9 @@ export function App() {
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
+  const [transcribingProgress, setTranscribingProgress] = useState<
+    number | null
+  >(null);
   const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(
     null,
   );
@@ -227,6 +231,7 @@ export function App() {
       if (event.id !== transcribingIdRef.current) return;
 
       setTranscribingPhase(event.phase);
+      setTranscribingProgress(null);
 
       // Transcription persists its segments before diarization begins. Reload
       // the meeting so the user can read that completed work immediately.
@@ -253,6 +258,24 @@ export function App() {
     });
     return () => unlisten?.();
   }, [upsertSummary]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    onTranscriptionProgress((event) => {
+      if (event.id !== transcribingIdRef.current) return;
+      setTranscribingProgress(Math.max(0, Math.min(100, event.percent)));
+    })
+      .then((cleanup) => {
+        if (disposed) cleanup();
+        else unlisten = cleanup;
+      })
+      .catch(() => {});
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -326,6 +349,7 @@ export function App() {
     try {
       setTranscribingId(id);
       setTranscribingPhase("transcribing");
+      setTranscribingProgress(0);
       setStatus({ kind: "idle" });
       setSegments([]);
       setSpeakerLabels({});
@@ -345,6 +369,7 @@ export function App() {
       if (activeMeetingIdRef.current === id)
         setStatus({ kind: "error", message: String(e) });
     } finally {
+      setTranscribingProgress(null);
       setTranscribingId(null);
     }
   }
@@ -725,6 +750,19 @@ export function App() {
                     {formatClock(elapsed)}
                   </span>
                 )}
+                {activeIsTranscribing && transcribingProgress !== null && (
+                  <span className="wp-status-progress">
+                    <progress
+                      className="wp-status-progress-bar"
+                      value={transcribingProgress}
+                      max={100}
+                      aria-label="Transcription progress"
+                    />
+                    <span className="wp-status-progress-label">
+                      {transcribingProgress}%
+                    </span>
+                  </span>
+                )}
               </>
             )}
           </div>
@@ -745,7 +783,6 @@ export function App() {
             >
               <Icon name="play" size={17} />
             </button>
-            <span className="wp-sep" />
             <span className="wp-sep" />
             <ActionIcon
               icon="sparkles"
