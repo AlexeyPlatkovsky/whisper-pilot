@@ -74,17 +74,21 @@ describe("App — English strings", () => {
   it("shows transcription progress with a stable 100-percent value slot", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     let resolveTranscribe: (result: TranscribeMeetingResult) => void = () => {};
-    let progressHandler: (progress: { id: number; percent: number }) => void =
-      () => {};
+    let progressHandler: (progress: {
+      id: number;
+      percent: number;
+    }) => void = () => {};
     vi.mocked(ipc.transcribeMeeting).mockReturnValue(
       new Promise((resolve) => {
         resolveTranscribe = resolve;
       }),
     );
-    vi.mocked(ipc.onTranscriptionProgress).mockImplementation(async (handler) => {
-      progressHandler = handler;
-      return () => {};
-    });
+    vi.mocked(ipc.onTranscriptionProgress).mockImplementation(
+      async (handler) => {
+        progressHandler = handler;
+        return () => {};
+      },
+    );
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({
@@ -124,9 +128,9 @@ describe("App — English strings", () => {
       });
       expect(progress).toHaveValue(10);
       expect(status).toHaveTextContent("10%");
-      expect(
-        status.querySelector(".wp-status-progress-label"),
-      ).toHaveClass("wp-status-progress-label");
+      expect(status.querySelector(".wp-status-progress-label")).toHaveClass(
+        "wp-status-progress-label",
+      );
 
       resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
       await screen.findByDisplayValue("Hello");
