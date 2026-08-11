@@ -1,0 +1,8 @@
+schema_version: 1
+id: WP-89
+title: 'Diarization: configurable CPU core count (default 4)'
+priority: normal
+type: task
+status: backlog
+created_at: '2026-08-11T15:07:24Z'
+updated_at: '2026-08-11T15:07:24Z'
