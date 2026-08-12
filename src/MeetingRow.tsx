@@ -35,7 +35,7 @@ export function MeetingRow({
       {/* The dot is the row's whole status surface: colour for a glance, the
           `title` tooltip on hover, and the same words to a screen reader. */}
       <span
-        className={`wp-meeting-dot wp-tone--${status.tone}`}
+        className={`wp-meeting-dot wp-tone--${status.tone} wp-status--${status.statusKey}`}
         role="img"
         aria-label={status.label}
         title={status.label}
@@ -71,7 +71,7 @@ export function MeetingRow({
             <Icon
               name="refresh-cw"
               size={13}
-              className={`wp-spin wp-tone--${status.tone}`}
+              className={`wp-spin wp-tone--${status.tone} wp-status--${status.statusKey}`}
             />
           </span>
         ) : (

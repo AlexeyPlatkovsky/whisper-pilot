@@ -6,16 +6,19 @@ describe("resolveMeetingStatus — persisted statuses", () => {
   it("maps every persisted status the store can produce to one label and tone", () => {
     expect(resolveMeetingStatus("no_files")).toEqual({
       tone: "no-files",
+      statusKey: "no-files",
       label: "No files",
       icon: "info",
     });
     expect(resolveMeetingStatus("ready")).toEqual({
       tone: "ready",
+      statusKey: "ready",
       label: "Ready",
       icon: "check",
     });
     expect(resolveMeetingStatus("finished")).toEqual({
       tone: "finished",
+      statusKey: "finished",
       label: "Finished",
       icon: "check",
     });
@@ -28,11 +31,13 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     // in-flight activity — not the store — decides what the UI shows.
     expect(resolveMeetingStatus("ready", "transcribing")).toEqual({
       tone: "transcribing",
+      statusKey: "transcribing",
       label: "Transcribing",
       icon: "refresh-cw",
     });
     expect(resolveMeetingStatus("finished", "transcribing")).toEqual({
       tone: "transcribing",
+      statusKey: "transcribing",
       label: "Transcribing",
       icon: "refresh-cw",
     });
@@ -43,11 +48,13 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
     // meeting, so it gets its own tone/label distinct from "transcribing".
     expect(resolveMeetingStatus("ready", "diarizing")).toEqual({
       tone: "diarizing",
+      statusKey: "diarizing",
       label: "Diarizing",
       icon: "refresh-cw",
     });
     expect(resolveMeetingStatus("finished", "diarizing")).toEqual({
       tone: "diarizing",
+      statusKey: "diarizing",
       label: "Diarizing",
       icon: "refresh-cw",
     });
@@ -56,6 +63,7 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
   it("reports the no-model tone when a transcription model is not available", () => {
     expect(resolveMeetingStatus("ready", "no-model")).toEqual({
       tone: "no-model",
+      statusKey: "no-model",
       label: "No model",
       icon: "alert-circle",
     });
@@ -64,6 +72,7 @@ describe("resolveMeetingStatus — transient activity overrides", () => {
   it("reports the error tone when the last action on the meeting failed", () => {
     expect(resolveMeetingStatus("ready", "error")).toEqual({
       tone: "error",
+      statusKey: "error",
       label: "Error",
       icon: "alert-circle",
     });
@@ -81,6 +90,7 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
   it("does not invent a status for an unrecognised store value", () => {
     expect(resolveMeetingStatus("transmogrifying")).toEqual({
       tone: "unknown",
+      statusKey: "unknown",
       label: "Unknown",
       icon: "alert-circle",
     });
@@ -90,11 +100,13 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
   it("does not invent a status when the meeting has none", () => {
     expect(resolveMeetingStatus(undefined)).toEqual({
       tone: "unknown",
+      statusKey: "unknown",
       label: "Unknown",
       icon: "alert-circle",
     });
     expect(resolveMeetingStatus("")).toEqual({
       tone: "unknown",
+      statusKey: "unknown",
       label: "Unknown",
       icon: "alert-circle",
     });
@@ -105,11 +117,13 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
   it("does not resolve a prototype key as if it were a status", () => {
     expect(resolveMeetingStatus("constructor")).toEqual({
       tone: "unknown",
+      statusKey: "unknown",
       label: "Unknown",
       icon: "alert-circle",
     });
     expect(resolveMeetingStatus("toString")).toEqual({
       tone: "unknown",
+      statusKey: "unknown",
       label: "Unknown",
       icon: "alert-circle",
     });
@@ -118,6 +132,7 @@ describe("resolveMeetingStatus — invalid and missing input", () => {
   it("still honours a transient override on an unrecognised value", () => {
     expect(resolveMeetingStatus("transmogrifying", "transcribing")).toEqual({
       tone: "transcribing",
+      statusKey: "transcribing",
       label: "Transcribing",
       icon: "refresh-cw",
     });

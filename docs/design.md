@@ -150,7 +150,10 @@ Opened from the header **gear**; a screen with these sections:
   and non-interactive because there is nothing to switch to; at release each
   task may list 3–4 models, each with a selectable **Active** radio.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
-  OS). At release, 3–4 extra named themes, each in a light and dark variant.
+  OS), and **Status Colors**: one configurable color per current semantic
+  Meeting/Streaming status (anchored picker popover, per-row revert to the
+  built-in default, Reset all behind a confirmation). At release, 3–4 extra
+  named themes, each in a light and dark variant.
 - **App language** — the **UI** language; **English** by default (only option in
   beta). At release: Russian, Turkish, Spanish, German, French. Independent of the
   transcription language.

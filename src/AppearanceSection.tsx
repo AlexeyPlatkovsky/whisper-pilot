@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { getSettings, setSetting } from "./ipc";
+import { getSettings, setSetting, type Settings } from "./ipc";
 import { applyTheme, type Theme } from "./theme";
+import { StatusColorsSection } from "./StatusColorsSection";
 
 const THEMES: { value: Theme; label: string }[] = [
   { value: "light", label: "Light" },
@@ -9,15 +10,16 @@ const THEMES: { value: Theme; label: string }[] = [
 ];
 
 export function AppearanceSection() {
-  const [theme, setTheme] = useState<Theme | null>(null);
+  const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [changeError, setChangeError] = useState<string | null>(null);
+  const theme = (settings?.theme ?? null) as Theme | null;
 
   useEffect(() => {
     let cancelled = false;
     getSettings()
       .then((s) => {
-        if (!cancelled) setTheme(s.theme as Theme);
+        if (!cancelled) setSettings(s);
       })
       .catch((e) => {
         if (!cancelled) setLoadError(String(e));
@@ -30,13 +32,13 @@ export function AppearanceSection() {
   async function handleChange(value: Theme) {
     const previous = theme;
     setChangeError(null);
-    setTheme(value);
+    setSettings((s) => (s ? { ...s, theme: value } : s));
     applyTheme(value);
     try {
       await setSetting("theme", value);
     } catch (e) {
       if (previous) {
-        setTheme(previous);
+        setSettings((s) => (s ? { ...s, theme: previous } : s));
         applyTheme(previous);
       }
       setChangeError(String(e));
@@ -44,7 +46,7 @@ export function AppearanceSection() {
   }
 
   if (loadError) return <p role="alert">{loadError}</p>;
-  if (!theme) return <p>Loading…</p>;
+  if (!settings || !theme) return <p>Loading…</p>;
 
   return (
     <>
@@ -64,6 +66,7 @@ export function AppearanceSection() {
         ))}
       </fieldset>
       {changeError && <p role="alert">{changeError}</p>}
+      <StatusColorsSection statusColorsRaw={settings.status_colors} />
     </>
   );
 }

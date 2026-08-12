@@ -1,6 +1,7 @@
-//! Local key-value settings store: theme, ui_language, and the active
-//! transcription model, persisted as JSON in the app support directory and
-//! applied immediately and across restarts (F005-R2, F005-T1).
+//! Local key-value settings store: theme, ui_language, the active
+//! transcription model, export file type, and the configurable status colors
+//! (WP-88), persisted as JSON in the app support directory and applied
+//! immediately and across restarts (F005-R2, F005-T1).
 
 use crate::error::{AppError, Result};
 use crate::models::CATALOG;
@@ -19,6 +20,10 @@ const KEY_ACTIVE_MODEL_TRANSCRIPTION: &str = "active_model.transcription";
 const KEY_ACTIVE_MODEL_DIARIZATION: &str = "active_model.diarization";
 const KEY_ACTIVE_MODEL_LLM: &str = "active_model.llm";
 const KEY_EXPORT_FILE_TYPE: &str = "export_file_type";
+// WP-88: the user-configured per-status color mapping, stored as one JSON
+// object string (`{"ready":"#112233",…}`) so the front-end-owned status key
+// set can grow without a settings-store schema change.
+const KEY_STATUS_COLORS: &str = "status_colors";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 
@@ -46,6 +51,11 @@ pub struct Settings {
     /// notes.
     #[serde(default = "default_export_file_type")]
     pub export_file_type: String,
+    /// WP-88: JSON object mapping each configurable status key to an opaque
+    /// `#RRGGBB` color; `None` before the setting is first saved (startup
+    /// then uses the built-in mapping).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_colors: Option<String>,
 }
 
 impl Default for Settings {
@@ -57,8 +67,16 @@ impl Default for Settings {
             active_model_diarization: default_active_model_diarization(),
             active_model_llm: None,
             export_file_type: default_export_file_type(),
+            status_colors: None,
         }
     }
+}
+
+/// Opaque six-digit `#RRGGBB` only — shorthand and alpha-bearing values are
+/// rejected (WP-88 non-goals).
+fn is_opaque_hex_color(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 7 && bytes[0] == b'#' && bytes[1..].iter().all(u8::is_ascii_hexdigit)
 }
 
 fn settings_path(app_support_dir: &Path) -> PathBuf {
@@ -140,6 +158,31 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
             }
             settings.export_file_type = value.to_string();
         }
+        KEY_STATUS_COLORS => {
+            let parsed: serde_json::Value = serde_json::from_str(value).map_err(|_| {
+                AppError::InvalidSetting(
+                    "status_colors must be a JSON object of #RRGGBB colors".to_string(),
+                )
+            })?;
+            let map = parsed.as_object().ok_or_else(|| {
+                AppError::InvalidSetting(
+                    "status_colors must be a JSON object of #RRGGBB colors".to_string(),
+                )
+            })?;
+            for (status, color) in map {
+                let color = color.as_str().ok_or_else(|| {
+                    AppError::InvalidSetting(format!(
+                        "status_colors[{status}] must be a #RRGGBB string"
+                    ))
+                })?;
+                if !is_opaque_hex_color(color) {
+                    return Err(AppError::InvalidSetting(format!(
+                        "status_colors[{status}] must be an opaque six-digit hex color, got {color}"
+                    )));
+                }
+            }
+            settings.status_colors = Some(value.to_string());
+        }
         other => {
             return Err(AppError::InvalidSetting(format!(
                 "unknown setting key: {other}"
@@ -161,6 +204,71 @@ fn write_settings(app_support_dir: &Path, settings: &Settings) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn get_settings_defaults_status_colors_to_none() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert_eq!(get_settings(dir.path()).status_colors, None);
+    }
+
+    #[test]
+    fn set_setting_persists_status_colors_and_is_readable_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let mapping = r##"{"ready":"#112233","error":"#B82B2F"}"##;
+
+        set_setting(dir.path(), KEY_STATUS_COLORS, mapping).unwrap();
+        let settings = get_settings(dir.path());
+
+        assert_eq!(settings.status_colors, Some(mapping.to_string()));
+    }
+
+    #[test]
+    fn set_setting_rejects_status_colors_that_is_not_a_json_object() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // EP: invalid partition — syntactically bad JSON, and valid JSON of
+        // the wrong kind (array, bare string).
+        for bad in ["not json", "[\"#112233\"]", "\"#112233\""] {
+            let err = set_setting(dir.path(), KEY_STATUS_COLORS, bad).unwrap_err();
+            assert!(matches!(err, AppError::InvalidSetting(_)), "input: {bad}");
+        }
+        assert_eq!(get_settings(dir.path()).status_colors, None);
+    }
+
+    #[test]
+    fn set_setting_rejects_status_colors_with_a_non_opaque_hex_value() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_STATUS_COLORS, r##"{"ready":"#112233"}"##).unwrap();
+
+        // EP: invalid value partition — shorthand, alpha-bearing, missing '#',
+        // non-hex digits, empty. Every rejection must leave the prior valid
+        // write untouched.
+        for bad_value in ["#123", "#11223344", "112233", "#GGGGGG", ""] {
+            let payload = format!(r#"{{"ready":"{bad_value}"}}"#);
+            let err = set_setting(dir.path(), KEY_STATUS_COLORS, &payload).unwrap_err();
+            assert!(
+                matches!(err, AppError::InvalidSetting(_)),
+                "value: {bad_value}"
+            );
+        }
+        // The prior valid write must survive the rejected writes.
+        assert_eq!(
+            get_settings(dir.path()).status_colors,
+            Some(r##"{"ready":"#112233"}"##.to_string())
+        );
+    }
+
+    #[test]
+    fn set_setting_rejects_status_colors_with_a_non_string_entry() {
+        let dir = tempfile::tempdir().unwrap();
+
+        // EP: wrong-kind partition — an entry whose value is not a string.
+        let err = set_setting(dir.path(), KEY_STATUS_COLORS, r#"{"ready":123}"#).unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidSetting(_)));
+        assert_eq!(get_settings(dir.path()).status_colors, None);
+    }
 
     #[test]
     fn get_settings_returns_defaults_when_no_store_file_exists() {

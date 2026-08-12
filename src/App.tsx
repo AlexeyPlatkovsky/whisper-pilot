@@ -26,6 +26,7 @@ import { SettingsScreen } from "./SettingsScreen";
 import { StreamingView } from "./StreamingView";
 import { ModeToggle } from "./ModeToggle";
 import { applyTheme, type Theme } from "./theme";
+import { applyStatusColors, parseStatusColors } from "./statusColors";
 import { t } from "./i18n";
 import { formatClock, formatDuration, formatRange } from "./format";
 import { AppLogo, Icon } from "./Icon";
@@ -200,7 +201,10 @@ export function App() {
 
   useEffect(() => {
     getSettings()
-      .then((s) => applyTheme(s.theme as Theme))
+      .then((s) => {
+        applyTheme(s.theme as Theme);
+        applyStatusColors(parseStatusColors(s.status_colors));
+      })
       .catch(() => {});
     void refreshExportFileType();
   }, [refreshExportFileType]);
@@ -736,10 +740,10 @@ export function App() {
                 <Icon
                   name={headerStatus.icon}
                   size={14}
-                  className={`${activeIsTranscribing || activeIsGeneratingNotes || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone}`}
+                  className={`${activeIsTranscribing || activeIsGeneratingNotes || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
                 />
                 <span
-                  className={`wp-status-label wp-tone--${headerStatus.tone}`}
+                  className={`wp-status-label wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
                 >
                   {headerStatus.label}
                 </span>

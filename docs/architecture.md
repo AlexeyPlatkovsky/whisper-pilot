@@ -602,7 +602,9 @@ existing session row. Craft and Prettify are mutually exclusive in flight
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
-(theme, `ui_language`, and each task's active model), applied immediately and
+(theme, `ui_language`, each task's active model, export file type, and the
+WP-88 `status_colors` JSON mapping of each configurable status to an opaque
+`#RRGGBB` color), applied immediately and
 across restarts. The React layer owns **theming** (light / dark / system, plus
 release themes) and **i18n** (English default, release languages); the OS scheme
 drives the _System_ theme.

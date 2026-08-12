@@ -33,7 +33,7 @@ per requirement below.
 | F005-R8 | The **App language** section shall set the **UI language**, defaulting to **English** (the only option in Beta); this is independent of the transcription language. | M2 | must |
 | F005-R9 | At release, App language shall add **Russian, Turkish, Spanish, German, French**. | M3 | should |
 | F005-R10 | At release, an **Update app** section shall let the user check for and apply application updates. | M3 | should |
-| F005-R11 | The **Appearance** section shall list each current semantic Meeting and Streaming status once and allow the user to save an opaque `#RRGGBB` color for it. Each saved color applies to every current matching status surface and persists locally. The picker opens in an anchored popover; Cancel changes nothing; Save checks WCAG AA 4.5:1 contrast against the active status-widget background and requires explicit confirmation for a lower-contrast color. **Reset all colors** restores the documented built-in mapping. | M2 | should |
+| F005-R11 | The **Appearance** section shall list each current semantic Meeting and Streaming status once and allow the user to save an opaque `#RRGGBB` color for it. Each saved color applies to every current matching status surface and persists locally. The picker opens in an anchored popover; Cancel changes nothing; a picked color below WCAG AA 4.5:1 contrast against the active status-widget background shows an inline warning label in the popover but may still be saved. **Reset all colors** asks for confirmation and restores the documented built-in mapping; a non-default row shows a revert icon after its hex code that restores the default without confirmation. | M2 | should |
 
 ## Acceptance Criteria
 

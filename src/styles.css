@@ -407,6 +407,92 @@ body {
   color: var(--tone);
 }
 
+/* Configurable per-status colors (WP-88). The built-in mapping lives here as
+   the fallback; src/statusColors.ts `applyStatusColors()` writes the saved
+   mapping inline on :root, so a `.wp-status--*` class always resolves to the
+   user's color. These classes must stay AFTER the `.wp-tone--*` classes: a
+   status surface carries both, and the per-status value wins by source order.
+   Keys match the `statusKey` values produced by src/meetingStatus.ts and
+   src/streamingStatus.ts. */
+:root {
+  --status-color-no-files: #8a5f10;
+  --status-color-ready: #5a7684;
+  --status-color-transcribing: #176c8f;
+  --status-color-diarizing: #176c8f;
+  --status-color-crafting-notes: #176c8f;
+  --status-color-finished: #46704c;
+  --status-color-error: #b82b2f;
+  --status-color-no-model: #c65d2e;
+  --status-color-unknown: #5a7684;
+  --status-color-starting: #5a7684;
+  --status-color-on-air: #b82b2f;
+  --status-color-crafting-mfu: #176c8f;
+  --status-color-mfu-failed: #b82b2f;
+  --status-color-prettifying: #176c8f;
+  --status-color-prettify-failed: #b82b2f;
+}
+
+.wp-status--no-files {
+  --tone: var(--status-color-no-files);
+  color: var(--tone);
+}
+.wp-status--ready {
+  --tone: var(--status-color-ready);
+  color: var(--tone);
+}
+.wp-status--transcribing {
+  --tone: var(--status-color-transcribing);
+  color: var(--tone);
+}
+.wp-status--diarizing {
+  --tone: var(--status-color-diarizing);
+  color: var(--tone);
+}
+.wp-status--crafting-notes {
+  --tone: var(--status-color-crafting-notes);
+  color: var(--tone);
+}
+.wp-status--finished {
+  --tone: var(--status-color-finished);
+  color: var(--tone);
+}
+.wp-status--error {
+  --tone: var(--status-color-error);
+  color: var(--tone);
+}
+.wp-status--no-model {
+  --tone: var(--status-color-no-model);
+  color: var(--tone);
+}
+.wp-status--unknown {
+  --tone: var(--status-color-unknown);
+  color: var(--tone);
+}
+.wp-status--starting {
+  --tone: var(--status-color-starting);
+  color: var(--tone);
+}
+.wp-status--on-air {
+  --tone: var(--status-color-on-air);
+  color: var(--tone);
+}
+.wp-status--crafting-mfu {
+  --tone: var(--status-color-crafting-mfu);
+  color: var(--tone);
+}
+.wp-status--mfu-failed {
+  --tone: var(--status-color-mfu-failed);
+  color: var(--tone);
+}
+.wp-status--prettifying {
+  --tone: var(--status-color-prettifying);
+  color: var(--tone);
+}
+.wp-status--prettify-failed {
+  --tone: var(--status-color-prettify-failed);
+  color: var(--tone);
+}
+
 @keyframes wp-spin {
   to {
     transform: rotate(360deg);
@@ -1373,6 +1459,187 @@ body {
   align-items: center;
   gap: 8px;
   color: var(--text);
+}
+
+/* ==========================================================================
+   Settings → Appearance → Status Colors (WP-88). Mirrors the pencil frame
+   "Settings Appearance — Status Colors": a header row with the Reset-all
+   action, then a card listing one row per status in two columns.
+   ========================================================================== */
+.wp-status-colors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+  margin-top: var(--wp-space-xl);
+}
+
+.wp-status-colors-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wp-space-md);
+}
+
+.wp-status-colors-title {
+  margin: 0;
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wp-status-colors-description {
+  margin: 2px 0 0;
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-status-colors-reset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  color: var(--text-secondary) !important;
+  font-size: var(--wp-font-size-body) !important;
+  font-weight: 500;
+}
+
+.wp-status-color-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--panel);
+  border-radius: var(--wp-radius-sm);
+  overflow: hidden;
+}
+
+.wp-status-color-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.wp-status-color-column .wp-status-color-row + .wp-status-color-row {
+  border-top: 1px solid var(--border);
+}
+
+.wp-status-color-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  height: 36px;
+  padding: 0 var(--wp-space-md);
+}
+
+/* The row's main hit target opens the picker popover; it is styled as plain
+   content, not as one of the settings screen's bordered buttons. */
+.wp-status-color-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  min-width: 0;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wp-status-color-name {
+  font-size: var(--wp-font-size-md);
+  font-weight: 500;
+}
+
+.wp-status-color-spacer {
+  flex: 1;
+}
+
+.wp-status-color-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px #0000001f;
+}
+
+.wp-status-color-hex {
+  width: 76px;
+  text-align: right;
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+/* Fixed-size slot: the row's dimensions stay identical whether or not the
+   revert icon is shown (WP-88 DoD). */
+.wp-status-color-revert-slot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.wp-status-color-revert {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px !important;
+  border: none !important;
+  background: none !important;
+  color: var(--muted) !important;
+  cursor: pointer;
+}
+
+.wp-status-color-popover {
+  position: absolute;
+  top: 38px;
+  right: var(--wp-space-md);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 232px;
+  padding: var(--wp-space-sm);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  box-shadow: 0 12px 32px color-mix(in srgb, #0a2e3d 12%, transparent);
+}
+
+.wp-status-color-popover-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wp-status-color-popover-inputs input[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--wp-space-xs);
+  background: none;
+  cursor: pointer;
+}
+
+.wp-status-color-popover-inputs input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--wp-font-size-body);
+}
+
+.wp-status-color-warning {
+  margin: 0;
+  font-size: var(--wp-font-size-sm);
+  color: var(--accent);
+}
+
+.wp-status-color-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 /* Buttons inside the settings screen keep a conventional bordered look. */

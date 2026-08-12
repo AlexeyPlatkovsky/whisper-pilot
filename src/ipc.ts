@@ -132,6 +132,9 @@ export interface Settings {
   active_model_diarization: string;
   active_model_llm?: string;
   export_file_type: string;
+  /** JSON mapping of status key → opaque #RRGGBB color (WP-88); absent before
+   * the setting is first saved. */
+  status_colors?: string;
 }
 
 export function getSettings(): Promise<Settings> {

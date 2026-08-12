@@ -41,7 +41,10 @@ Palette (see `tokens.css` for exact values):
 - one meeting status is shown in two places at once — the sidebar row's dot and
   the header status widget. Both resolve through `src/meetingStatus.ts` and are
   coloured by the `--tone-*` semantic variables via the `.wp-tone--*` classes,
-  so a status has exactly one colour and one label wherever it appears.
+  so a status has exactly one colour and one label wherever it appears. Each
+  status's colour is user-configurable (Settings → Appearance → Status Colors,
+  WP-88): the saved color is written to a per-status `--status-color-*`
+  variable that a `.wp-status--*` class resolves ahead of the tone default.
 - rounded corners 6–16px (`--wp-radius-*`)
 - dense information layout, desktop-first, keyboard-first
 - avoid mobile spacing

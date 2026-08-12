@@ -532,11 +532,13 @@ export function StreamingView({
               size={14}
               className={
                 widget.spinning
-                  ? `wp-spin wp-tone--${widget.tone}`
-                  : `wp-tone--${widget.tone}`
+                  ? `wp-spin wp-tone--${widget.tone} wp-status--${widget.statusKey}`
+                  : `wp-tone--${widget.tone} wp-status--${widget.statusKey}`
               }
             />
-            <span className={`wp-status-label wp-tone--${widget.tone}`}>
+            <span
+              className={`wp-status-label wp-tone--${widget.tone} wp-status--${widget.statusKey}`}
+            >
               {widget.label}
             </span>
             {widget.showTimer && (
