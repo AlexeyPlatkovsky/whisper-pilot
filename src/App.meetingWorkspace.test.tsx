@@ -449,7 +449,7 @@ describe("App — source file missing", () => {
     source_missing: true,
   };
 
-  it("disables Transcribe and shows an explanatory note, but keeps the transcript editable", async () => {
+  it("disables Transcribe and shows an explanatory message, but keeps the transcript editable", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.listMeetings).mockResolvedValue([
       {
@@ -471,7 +471,7 @@ describe("App — source file missing", () => {
     expect(textarea).not.toBeDisabled();
   });
 
-  it("does not show the note and keeps Transcribe available when the source file exists", async () => {
+  it("does not show the message and keeps Transcribe available when the source file exists", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     vi.mocked(ipc.listMeetings).mockResolvedValue([
       {

@@ -7,6 +7,7 @@
  */
 
 import type { IconName } from "./Icon";
+import type { StatusColorKey } from "./statusColors";
 
 export type StreamingStatusTone = "finished" | "unknown" | "error" | "crafting";
 
@@ -17,6 +18,9 @@ export interface StreamingStatusView {
   spinning: boolean;
   /** Whether the elapsed-time readout is shown alongside the label. */
   showTimer: boolean;
+  /** Which configurable status color (WP-88) this view resolves to — drives
+   * the `wp-status--*` class that overrides the tone's default color. */
+  statusKey: StatusColorKey;
 }
 
 export type StreamingWidgetState =
@@ -37,6 +41,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "check",
       spinning: false,
       showTimer: false,
+      statusKey: "ready",
     },
   ],
   [
@@ -47,6 +52,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "refresh-cw",
       spinning: true,
       showTimer: false,
+      statusKey: "starting",
     },
   ],
   [
@@ -57,16 +63,18 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "refresh-cw",
       spinning: true,
       showTimer: true,
+      statusKey: "on-air",
     },
   ],
   [
     "crafting",
     {
       tone: "crafting",
-      label: "Crafting MFU…",
+      label: "Crafting MFU",
       icon: "refresh-cw",
       spinning: true,
       showTimer: true,
+      statusKey: "crafting-mfu",
     },
   ],
   [
@@ -77,6 +85,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "alert-circle",
       spinning: false,
       showTimer: false,
+      statusKey: "mfu-failed",
     },
   ],
   [
@@ -87,6 +96,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "refresh-cw",
       spinning: true,
       showTimer: true,
+      statusKey: "prettifying",
     },
   ],
   [
@@ -97,6 +107,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
       icon: "alert-circle",
       spinning: false,
       showTimer: false,
+      statusKey: "prettify-failed",
     },
   ],
 ]);
@@ -122,6 +133,7 @@ export function resolveStreamingRowStatus(
       icon: "check",
       spinning: false,
       showTimer: false,
+      statusKey: "finished",
     };
   }
   // A session left "active" that is not the one currently running in this
@@ -132,5 +144,6 @@ export function resolveStreamingRowStatus(
     icon: "alert-circle",
     spinning: false,
     showTimer: false,
+    statusKey: "unknown",
   };
 }

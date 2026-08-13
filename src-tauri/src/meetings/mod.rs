@@ -4,7 +4,7 @@ pub(crate) mod dto;
 
 use crate::diarize::SpeakerTurn;
 use crate::error::{AppError, Result};
-use crate::store::{MeetingId, MeetingNotes, NewMeeting, NewSegment, Store};
+use crate::store::{MeetingId, MeetingMfu, NewMeeting, NewSegment, Store};
 use std::path::Path;
 
 pub(crate) use dto::{coalesce_by_speaker, to_dto};
@@ -47,8 +47,8 @@ pub fn open_meeting(app_support_dir: &Path, id: MeetingId) -> Result<MeetingDto>
         .get_meeting(id)?
         .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
     let segments = store.list_segments(id)?;
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, segments, notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, segments, mfu)
 }
 
 /// Attach a source file to a meeting, or clear it when `source_path` is `None`.
@@ -90,8 +90,8 @@ pub fn set_meeting_source(
     meeting.language = crate::transcribe::UNDETECTED_LANGUAGE.to_string();
     store.update_meeting(&meeting)?;
 
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, Vec::new(), notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, Vec::new(), mfu)
 }
 
 /// Persist a freshly produced transcript against a meeting, marking it
@@ -132,8 +132,8 @@ pub fn save_transcript(
     store.update_meeting(&meeting)?;
 
     let stored = store.list_segments(id)?;
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, stored, notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, stored, mfu)
 }
 
 pub fn rename_meeting(app_support_dir: &Path, id: MeetingId, title: String) -> Result<MeetingDto> {
@@ -145,8 +145,8 @@ pub fn rename_meeting(app_support_dir: &Path, id: MeetingId, title: String) -> R
     meeting.title = title;
     store.update_meeting(&meeting)?;
     let segments = store.list_segments(id)?;
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, segments, notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, segments, mfu)
 }
 
 pub fn delete_meeting(app_support_dir: &Path, id: MeetingId) -> Result<()> {
@@ -201,20 +201,20 @@ pub fn update_segment(
     store.replace_segments(id, &rows)?;
 
     let saved = store.list_segments(id)?;
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, saved, notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, saved, mfu)
 }
 
-/// Auto-save the meeting notes fields as the user edits them.
-pub fn update_notes(app_support_dir: &Path, notes: MeetingNotes) -> Result<MeetingDto> {
+/// Auto-save the meeting mfu fields as the user edits them.
+pub fn update_mfu(app_support_dir: &Path, mfu: MeetingMfu) -> Result<MeetingDto> {
     let store = Store::open(app_support_dir)?;
     let meeting = store
-        .get_meeting(notes.meeting_id)?
-        .ok_or_else(|| AppError::Store(format!("meeting {} was not found", notes.meeting_id)))?;
-    store.upsert_notes(&notes)?;
-    let segments = store.list_segments(notes.meeting_id)?;
-    let saved_notes = store.get_notes(notes.meeting_id)?;
-    to_dto(meeting, segments, saved_notes)
+        .get_meeting(mfu.meeting_id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {} was not found", mfu.meeting_id)))?;
+    store.upsert_mfu(&mfu)?;
+    let segments = store.list_segments(mfu.meeting_id)?;
+    let saved_mfu = store.get_mfu(mfu.meeting_id)?;
+    to_dto(meeting, segments, saved_mfu)
 }
 
 /// Assign `turns` onto the meeting's already-persisted segments (by their
@@ -261,8 +261,8 @@ pub fn diarize_meeting_segments(
     store.replace_segments(id, &rows)?;
 
     let saved = store.list_segments(id)?;
-    let notes = store.get_notes(id)?;
-    to_dto(meeting, saved, notes)
+    let mfu = store.get_mfu(id)?;
+    to_dto(meeting, saved, mfu)
 }
 
 fn validate_title(title: String) -> Result<String> {
@@ -723,7 +723,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
 
-        let notes = MeetingNotes {
+        let mfu = MeetingMfu {
             meeting_id: created.id,
             summary: "Summary".to_string(),
             decisions: "Decided X".to_string(),
@@ -731,17 +731,17 @@ mod tests {
             open_questions: "".to_string(),
             participants: "Alice, Bob".to_string(),
         };
-        let updated = update_notes(temp.path(), notes.clone()).expect("update notes");
-        assert_eq!(updated.notes, Some(notes.clone()));
+        let updated = update_mfu(temp.path(), mfu.clone()).expect("update mfu");
+        assert_eq!(updated.mfu, Some(mfu.clone()));
 
         let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
-        assert_eq!(reopened.notes, Some(notes));
+        assert_eq!(reopened.mfu, Some(mfu));
     }
 
     #[test]
     fn given_an_unknown_meeting_when_notes_are_edited_then_a_typed_error_returns() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
-        let notes = MeetingNotes {
+        let mfu = MeetingMfu {
             meeting_id: 999_999,
             summary: String::new(),
             decisions: String::new(),
@@ -750,7 +750,7 @@ mod tests {
             participants: String::new(),
         };
         assert!(matches!(
-            update_notes(temp.path(), notes),
+            update_mfu(temp.path(), mfu),
             Err(AppError::Store(_))
         ));
     }
@@ -799,7 +799,7 @@ mod tests {
 
         let reopened = open_meeting(temp.path(), created.id).expect("reopen meeting");
         assert!(reopened.source_missing);
-        // Transcript/notes access is unaffected — this only gates re-transcribing.
+        // Transcript/mfu access is unaffected — this only gates re-transcribing.
         assert_eq!(reopened.status, "ready");
     }
 

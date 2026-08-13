@@ -1039,6 +1039,66 @@
     },
     {
       "type": "frame",
+      "id": "QcmBV",
+      "x": 0,
+      "y": -1994,
+      "name": "Status Color Row",
+      "reusable": true,
+      "width": 500,
+      "height": 36,
+      "gap": 12,
+      "padding": [
+        0,
+        16
+      ],
+      "alignItems": "center",
+      "children": [
+        {
+          "type": "text",
+          "id": "MFZv4",
+          "name": "Status Name",
+          "fill": "$text-primary",
+          "content": "Status",
+          "fontFamily": "$font-body",
+          "fontSize": 14,
+          "fontWeight": "500"
+        },
+        {
+          "type": "frame",
+          "id": "v9JZR",
+          "name": "Status Row Spacer",
+          "width": "fill_container",
+          "height": 1
+        },
+        {
+          "type": "ellipse",
+          "id": "Y9hPhi",
+          "name": "Status Swatch",
+          "fill": "$text-primary",
+          "width": 14,
+          "height": 14,
+          "stroke": "#0000001F",
+          "strokeWidth": 1,
+          "strokeAlignment": "inner"
+        },
+        {
+          "type": "text",
+          "id": "Mynei",
+          "name": "Status Hex",
+          "fill": "$text-label",
+          "textGrowth": "fixed-width",
+          "width": 76,
+          "content": "#000000",
+          "textAlign": "right",
+          "fontFamily": "$font-body",
+          "fontSize": 12,
+          "fontWeight": "500",
+          "letterSpacing": 0.5
+        }
+      ]
+    },
+    {
+      "type": "frame",
       "id": "SYhN7",
       "x": 0,
       "y": 0,
@@ -2636,7 +2696,7 @@
                           "fill": "$success"
                         },
                         "ds2R4": {
-                          "content": "Personal Notes"
+                          "content": "Personal MFU"
                         },
                         "bSjKI": {
                           "content": "Yesterday"
@@ -4020,7 +4080,7 @@
           "id": "QoZF4",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Crafting notes",
+          "name": "Crafting MFU",
           "width": 280,
           "height": 32,
           "descendants": {
@@ -4028,7 +4088,7 @@
               "stroke": "#176C8F"
             },
             "cycUZ": {
-              "content": "Crafting notes",
+              "content": "Crafting MFU",
               "fill": "#176C8F"
             }
           }
@@ -4081,66 +4141,6 @@
               "fill": "#C65D2E"
             }
           }
-        }
-      ]
-    },
-    {
-      "type": "frame",
-      "id": "QcmBV",
-      "x": 0,
-      "y": -1994,
-      "name": "Status Color Row",
-      "reusable": true,
-      "width": 500,
-      "height": 36,
-      "gap": 12,
-      "padding": [
-        0,
-        16
-      ],
-      "alignItems": "center",
-      "children": [
-        {
-          "type": "text",
-          "id": "MFZv4",
-          "name": "Status Name",
-          "fill": "$text-primary",
-          "content": "Status",
-          "fontFamily": "$font-body",
-          "fontSize": 14,
-          "fontWeight": "500"
-        },
-        {
-          "type": "frame",
-          "id": "v9JZR",
-          "name": "Status Row Spacer",
-          "width": "fill_container",
-          "height": 1
-        },
-        {
-          "type": "ellipse",
-          "id": "Y9hPhi",
-          "name": "Status Swatch",
-          "fill": "$text-primary",
-          "width": 14,
-          "height": 14,
-          "stroke": "#0000001F",
-          "strokeWidth": 1,
-          "strokeAlignment": "inner"
-        },
-        {
-          "type": "text",
-          "id": "Mynei",
-          "name": "Status Hex",
-          "fill": "$text-label",
-          "textGrowth": "fixed-width",
-          "width": 76,
-          "content": "#000000",
-          "textAlign": "right",
-          "fontFamily": "$font-body",
-          "fontSize": 12,
-          "fontWeight": "500",
-          "letterSpacing": 0.5
         }
       ]
     },
@@ -4676,11 +4676,11 @@
                                   "id": "f4eWx8",
                                   "type": "ref",
                                   "ref": "QcmBV",
-                                  "name": "Crafting notes Row",
+                                  "name": "Crafting MFU Row",
                                   "width": "fill_container",
                                   "descendants": {
                                     "MFZv4": {
-                                      "content": "Crafting notes",
+                                      "content": "Crafting MFU",
                                       "fill": "#176C8F"
                                     },
                                     "Y9hPhi": {
@@ -4690,16 +4690,15 @@
                                       "content": "#176C8F"
                                     }
                                   }
-                                }
-                              ]
-                            },
-                            {
-                              "type": "frame",
-                              "id": "wJKue",
-                              "name": "Right Column",
-                              "width": "fill_container",
-                              "layout": "vertical",
-                              "children": [
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "rCE6o",
+                                  "name": "Left Sep 5",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
                                 {
                                   "id": "Kv5HU",
                                   "type": "ref",
@@ -4721,8 +4720,8 @@
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "MKJSx",
-                                  "name": "Right Sep 1",
+                                  "id": "xM7V5",
+                                  "name": "Left Sep 6",
                                   "fill": "$border",
                                   "width": "fill_container",
                                   "height": 1
@@ -4748,8 +4747,8 @@
                                 },
                                 {
                                   "type": "rectangle",
-                                  "id": "kHegw",
-                                  "name": "Right Sep 2",
+                                  "id": "eoS1k",
+                                  "name": "Left Sep 7",
                                   "fill": "$border",
                                   "width": "fill_container",
                                   "height": 1
@@ -4772,15 +4771,16 @@
                                       "content": "#C65D2E"
                                     }
                                   }
-                                },
-                                {
-                                  "type": "rectangle",
-                                  "id": "obUpZ",
-                                  "name": "Right Sep 3",
-                                  "fill": "$border",
-                                  "width": "fill_container",
-                                  "height": 1
-                                },
+                                }
+                              ]
+                            },
+                            {
+                              "type": "frame",
+                              "id": "wJKue",
+                              "name": "Right Column",
+                              "width": "fill_container",
+                              "layout": "vertical",
+                              "children": [
                                 {
                                   "id": "WNDut",
                                   "type": "ref",
@@ -4797,6 +4797,168 @@
                                     },
                                     "Mynei": {
                                       "content": "#5A7684"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "Ttpju",
+                                  "name": "Right Sep 4",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "Z75ciU",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "Starting… Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "Starting…",
+                                      "fill": "#5A7684"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#5A7684"
+                                    },
+                                    "Mynei": {
+                                      "content": "#5A7684"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "AIS5u",
+                                  "name": "Right Sep 5",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "oJomQ",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "On Air Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "On Air",
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Mynei": {
+                                      "content": "#B82B2F"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "tbBKw",
+                                  "name": "Right Sep 6",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "D7J1LS",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "Crafting MFU Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "Crafting MFU",
+                                      "fill": "#176C8F"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#176C8F"
+                                    },
+                                    "Mynei": {
+                                      "content": "#176C8F"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "d4e8z2",
+                                  "name": "Right Sep 7",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "LR2VO",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "MFU Failed Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "MFU Failed",
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Mynei": {
+                                      "content": "#B82B2F"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "YqfDx",
+                                  "name": "Right Sep 8",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "IfTt6",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "Prettifying… Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "Prettifying…",
+                                      "fill": "#176C8F"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#176C8F"
+                                    },
+                                    "Mynei": {
+                                      "content": "#176C8F"
+                                    }
+                                  }
+                                },
+                                {
+                                  "type": "rectangle",
+                                  "id": "WHIaG",
+                                  "name": "Right Sep 9",
+                                  "fill": "$border",
+                                  "width": "fill_container",
+                                  "height": 1
+                                },
+                                {
+                                  "id": "yBlpN",
+                                  "type": "ref",
+                                  "ref": "QcmBV",
+                                  "name": "Prettify Failed Row",
+                                  "width": "fill_container",
+                                  "descendants": {
+                                    "MFZv4": {
+                                      "content": "Prettify Failed",
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Y9hPhi": {
+                                      "fill": "#B82B2F"
+                                    },
+                                    "Mynei": {
+                                      "content": "#B82B2F"
                                     }
                                   }
                                 }

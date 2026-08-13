@@ -20,7 +20,7 @@ const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   },
   llm: {
     title: "MFU Models",
-    subtitle: "Choose the language model used to generate meeting notes.",
+    subtitle: "Choose the language model used to generate meeting mfu.",
   },
 };
 

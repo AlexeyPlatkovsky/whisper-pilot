@@ -25,7 +25,7 @@ per requirement below.
 | --- | --- | --- | --- |
 | F005-R1 | The system shall provide a **Settings** screen, reachable from a fixed entry point (a gear control in the header), with sections **AI models**, **Appearance**, and **App language** (and **Update app** at release). | M2 | must |
 | F005-R2 | The system shall persist all settings locally and apply them immediately and across restarts. | M2 | must |
-| F005-R3 | The **AI models** section shall list, per task type (transcription, diarization; notes at M3), the model(s) that task needs, each with **Download** and **Delete** actions; Download fetches the model and **verifies it (SHA)** with visible progress, Delete removes the local file. In Beta there is exactly **one model per task**. | M2 | must |
+| F005-R3 | The **AI models** section shall list, per task type (transcription, diarization; MFU at M3), the model(s) that task needs, each with **Download** and **Delete** actions; Download fetches the model and **verifies it (SHA)** with visible progress, Delete removes the local file. In Beta there is exactly **one model per task**. | M2 | must |
 | F005-R4 | When a task's required model is **not downloaded**, the system shall make that obvious in the section and reflect it in the task's availability (its action is disabled or degrades per that feature's rules). | M2 | must |
 | F005-R5 | At release, a task may list **several models (3–4)**; each downloaded model shall carry an **Active** radio selecting which one the task uses. | M3 | should |
 | F005-R6 | The **Appearance** section shall offer **Light**, **Dark**, and **System** themes; the choice applies immediately and persists (System follows the OS scheme). | M2 | must |
@@ -33,7 +33,7 @@ per requirement below.
 | F005-R8 | The **App language** section shall set the **UI language**, defaulting to **English** (the only option in Beta); this is independent of the transcription language. | M2 | must |
 | F005-R9 | At release, App language shall add **Russian, Turkish, Spanish, German, French**. | M3 | should |
 | F005-R10 | At release, an **Update app** section shall let the user check for and apply application updates. | M3 | should |
-| F005-R11 | The **Appearance** section shall list each current semantic Meeting and Streaming status once and allow the user to save an opaque `#RRGGBB` color for it. Each saved color applies to every current matching status surface and persists locally. The picker opens in an anchored popover; Cancel changes nothing; Save checks WCAG AA 4.5:1 contrast against the active status-widget background and requires explicit confirmation for a lower-contrast color. **Reset all colors** restores the documented built-in mapping. | M2 | should |
+| F005-R11 | The **Appearance** section shall list each current semantic Meeting and Streaming status once and allow the user to save an opaque `#RRGGBB` color for it. The two-column list sorts statuses alphabetically and fills each row from left to right. Each saved color applies to every current matching status surface and persists locally. The picker opens in an anchored popover; Cancel changes nothing; the contrast ratio is rounded half-up to two decimal places before comparison to `4.50:1`. A value below that practical threshold shows an inline warning in the form `Low contrast (2.49<4.50:1) against the current theme background.`; the color may still be saved. **Reset all colors** asks for confirmation and restores the documented built-in mapping; a non-default row shows a revert icon after its hex code that restores the default without confirmation. | M2 | should |
 
 ## Acceptance Criteria
 
@@ -56,9 +56,11 @@ per requirement below.
   transcript never changes the UI language.
 - **F005-R9 / R7 / R10:** (release) the added languages/themes are selectable and
   apply; Update can check for and apply an update.
-- **F005-R11:** every current status has one color control; valid saved colors apply
-  consistently to matching Meeting/Streaming widgets and indicators and persist;
-  Cancel and rejected input leave the prior mapping intact; low contrast requires
+- **F005-R11:** every current status has one color control; the alphabetized list
+  fills rows left-to-right across two columns; valid saved colors apply consistently
+  to matching Meeting/Streaming widgets and indicators and persist; Cancel and
+  rejected input leave the prior mapping intact; a low-contrast warning uses the
+  half-up rounded two-decimal ratio and compares it to 4.50:1 without requiring
   confirmation; Reset all restores the built-in mapping.
 
 ## Constraints

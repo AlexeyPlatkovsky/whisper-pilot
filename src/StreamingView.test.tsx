@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
 import type {
-  StreamingNotes,
+  StreamingMfu,
   StreamingSession,
   StreamingSessionSummary,
 } from "./ipc";
@@ -24,9 +24,10 @@ vi.mock("./ipc", () => ({
   openStreamingSession: vi.fn(),
   renameStreamingSession: vi.fn(),
   deleteStreamingSession: vi.fn(),
+  createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
-  generateStreamingNotes: vi.fn(),
+  generateStreamingMfu: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: revertPrettifyMock,
@@ -75,7 +76,7 @@ function openedSession(
   };
 }
 
-const NOTES: StreamingNotes = {
+const MFU: StreamingMfu = {
   summary: "Discussed Q3 roadmap.",
   decisions: "Ship M1 by Friday.",
   action_items: "Alex: update deck",
@@ -392,7 +393,7 @@ describe("StreamingView", () => {
             window_index: 0,
             start_ms: 0,
             end_ms: 7000,
-            text: "past meeting notes",
+            text: "past meeting mfu",
             language: "en",
             outcome_ok: true,
           },
@@ -403,7 +404,7 @@ describe("StreamingView", () => {
 
     await user.click(await screen.findByText("Standup"));
 
-    expect(await screen.findByText(/past meeting notes/)).toBeInTheDocument();
+    expect(await screen.findByText(/past meeting mfu/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
 
@@ -493,19 +494,26 @@ describe("StreamingView", () => {
       expect(screen.getByText(/hello there/)).toBeInTheDocument();
     });
 
-    // S-12: the "+" (New) icon always starts fresh, even with a stopped
-    // session open — it must not be redirected into a resume.
-    it("the New icon always starts a brand-new session, not a resume", async () => {
+    // State transition: New creates an inactive session; only Start moves it
+    // into the active, capturing state.
+    it("the New icon creates an inactive session without starting capture", async () => {
       const user = userEvent.setup();
       vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      vi.mocked(ipc.createStreamingSession).mockResolvedValue({
         id: 2,
         title: "New Streaming Session",
         created_at_ms: 200,
         updated_at_ms: 200,
+        status: "stopped",
+      });
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        id: 2,
+        title: "New Streaming Session",
+        created_at_ms: 200,
+        updated_at_ms: 201,
         status: "active",
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
@@ -516,8 +524,17 @@ describe("StreamingView", () => {
         screen.getByRole("button", { name: "New streaming session" }),
       );
 
-      expect(ipc.startStreamingSession).toHaveBeenCalledWith(undefined);
+      expect(ipc.createStreamingSession).toHaveBeenCalledOnce();
+      expect(ipc.startStreamingSession).not.toHaveBeenCalled();
       expect(screen.queryByText(/hello there/)).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("button", { name: "Start" }),
+      ).toBeEnabled();
+      expect(screen.getByRole("status")).toHaveTextContent("Ready");
+
+      await user.click(screen.getByRole("button", { name: "Start" }));
+
+      expect(ipc.startStreamingSession).toHaveBeenCalledWith(2);
       expect(await screen.findByText("Listening…")).toBeInTheDocument();
     });
 
@@ -883,7 +900,7 @@ describe("StreamingView", () => {
             window_index: 0,
             start_ms: 0,
             end_ms: 7000,
-            text: "notes to be cleared",
+            text: "mfu to be cleared",
             language: "en",
             outcome_ok: true,
           },
@@ -893,14 +910,14 @@ describe("StreamingView", () => {
     vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByText("Standup"));
-    await screen.findByText(/notes to be cleared/);
+    await screen.findByText(/mfu to be cleared/);
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
 
     await user.click(screen.getByRole("button", { name: "Delete Standup" }));
     const dialog = screen.getByRole("alertdialog", { name: "Delete Standup" });
     await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
-    expect(screen.queryByText(/notes to be cleared/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/mfu to be cleared/)).not.toBeInTheDocument();
     expect(
       await screen.findByText(/Start a session, or open one/),
     ).toBeInTheDocument();
@@ -1448,9 +1465,7 @@ describe("StreamingView", () => {
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
 
-      expect(
-        screen.getByRole("button", { name: "Craft MFU notes" }),
-      ).toBeDisabled();
+      expect(screen.getByRole("button", { name: "Craft MFU" })).toBeDisabled();
 
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
@@ -1463,7 +1478,7 @@ describe("StreamingView", () => {
       );
 
       expect(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       ).not.toBeDisabled();
     });
 
@@ -1491,7 +1506,7 @@ describe("StreamingView", () => {
       await user.click(await screen.findByText("Standup"));
 
       expect(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       ).toBeDisabled();
     });
 
@@ -1510,19 +1525,19 @@ describe("StreamingView", () => {
       windowHandler!({ ...ONE_WINDOW[0], session_id: 2 });
 
       expect(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       ).toBeDisabled();
     });
 
     // S-1: happy path
-    it("shows the placeholder before Craft, then the generated notes after", async () => {
+    it("shows the placeholder before Craft, then the generated mfu after", async () => {
       const user = userEvent.setup();
       vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
       let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingNotes).mockReturnValue(
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
         new Promise((resolve) => {
           resolveCraft = resolve;
         }),
@@ -1533,13 +1548,13 @@ describe("StreamingView", () => {
       const status = await screen.findByRole("status");
 
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
 
-      expect(status).toHaveTextContent("Crafting MFU…");
-      expect(ipc.generateStreamingNotes).toHaveBeenCalledWith(1);
+      expect(status).toHaveTextContent("Crafting MFU");
+      expect(ipc.generateStreamingMfu).toHaveBeenCalledWith(1);
 
-      resolveCraft(openedSession({ windows: ONE_WINDOW, notes: NOTES }));
+      resolveCraft(openedSession({ windows: ONE_WINDOW, mfu: MFU }));
 
       expect(
         await screen.findByText("Discussed Q3 roadmap."),
@@ -1549,7 +1564,7 @@ describe("StreamingView", () => {
       await waitFor(() => expect(status).toHaveTextContent("Ready"));
     });
 
-    it("ticks an elapsed timer once per second while Crafting MFU…", async () => {
+    it("ticks an elapsed timer once per second while Crafting MFU", async () => {
       vi.useFakeTimers({ shouldAdvanceTime: true });
       try {
         const user = userEvent.setup({
@@ -1559,7 +1574,7 @@ describe("StreamingView", () => {
         vi.mocked(ipc.openStreamingSession).mockResolvedValue(
           openedSession({ windows: ONE_WINDOW }),
         );
-        vi.mocked(ipc.generateStreamingNotes).mockReturnValue(
+        vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
           new Promise(() => {
             // Never resolves — only the ticking timer is under test here.
           }),
@@ -1569,7 +1584,7 @@ describe("StreamingView", () => {
         const status = await screen.findByRole("status");
 
         await user.click(
-          await screen.findByRole("button", { name: "Craft MFU notes" }),
+          await screen.findByRole("button", { name: "Craft MFU" }),
         );
         expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
           "00:00",
@@ -1589,36 +1604,36 @@ describe("StreamingView", () => {
       }
     }, 60_000);
 
-    // Empty notes sections are omitted, matching Meeting's rendering
-    it("omits empty notes sections", async () => {
+    // Empty mfu sections are omitted, matching Meeting's rendering
+    it("omits empty mfu sections", async () => {
       const user = userEvent.setup();
       vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockResolvedValue(
+      vi.mocked(ipc.generateStreamingMfu).mockResolvedValue(
         openedSession({
           windows: ONE_WINDOW,
-          notes: { ...NOTES, participants: "" },
+          mfu: { ...MFU, participants: "" },
         }),
       );
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
 
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
 
       await screen.findByText("Discussed Q3 roadmap.");
       expect(screen.queryByText("Participants")).not.toBeInTheDocument();
     });
 
-    // S-7: notes persist across reopen
-    it("shows previously generated notes when reopening a session", async () => {
+    // S-7: mfu persist across reopen
+    it("shows previously generated mfu when reopening a session", async () => {
       const user = userEvent.setup();
       vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW, notes: NOTES }),
+        openedSession({ windows: ONE_WINDOW, mfu: MFU }),
       );
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
@@ -1627,7 +1642,7 @@ describe("StreamingView", () => {
       expect(
         await screen.findByText("Discussed Q3 roadmap."),
       ).toBeInTheDocument();
-      expect(ipc.generateStreamingNotes).not.toHaveBeenCalled();
+      expect(ipc.generateStreamingMfu).not.toHaveBeenCalled();
     });
 
     // S-2: failure surfaces in the error banner and the widget
@@ -1637,7 +1652,7 @@ describe("StreamingView", () => {
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockRejectedValue(
+      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue(
         "no LLM model selected in Settings",
       );
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
@@ -1645,7 +1660,7 @@ describe("StreamingView", () => {
       const status = await screen.findByRole("status");
 
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
 
       expect(
@@ -1661,12 +1676,12 @@ describe("StreamingView", () => {
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockRejectedValueOnce("failed");
+      vi.mocked(ipc.generateStreamingMfu).mockRejectedValueOnce("failed");
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
       const status = await screen.findByRole("status");
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
       await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
 
@@ -1674,11 +1689,11 @@ describe("StreamingView", () => {
       await new Promise((resolve) => setTimeout(resolve, 50));
       expect(status).toHaveTextContent("MFU Failed");
 
-      vi.mocked(ipc.generateStreamingNotes).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW, notes: NOTES }),
+      vi.mocked(ipc.generateStreamingMfu).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW, mfu: MFU }),
       );
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
 
       expect(status).not.toHaveTextContent("MFU Failed");
@@ -1692,7 +1707,7 @@ describe("StreamingView", () => {
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockRejectedValue("failed");
+      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue("failed");
       vi.mocked(ipc.startStreamingSession).mockResolvedValue({
         id: 1,
         title: "Standup",
@@ -1704,7 +1719,7 @@ describe("StreamingView", () => {
       await user.click(await screen.findByText("Standup"));
       const status = await screen.findByRole("status");
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
       await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
 
@@ -1722,13 +1737,13 @@ describe("StreamingView", () => {
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockRejectedValue("failed");
+      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue("failed");
       vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
       const status = await screen.findByRole("status");
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
       await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
 
@@ -1752,7 +1767,7 @@ describe("StreamingView", () => {
         openedSession({ windows: ONE_WINDOW }),
       );
       let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingNotes).mockReturnValue(
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
         new Promise((resolve) => {
           resolveCraft = resolve;
         }),
@@ -1760,13 +1775,13 @@ describe("StreamingView", () => {
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
       const craftButton = await screen.findByRole("button", {
-        name: "Craft MFU notes",
+        name: "Craft MFU",
       });
 
       await user.click(craftButton);
       expect(craftButton).toBeDisabled();
 
-      resolveCraft(openedSession({ windows: ONE_WINDOW, notes: NOTES }));
+      resolveCraft(openedSession({ windows: ONE_WINDOW, mfu: MFU }));
       await waitFor(() => expect(craftButton).not.toBeDisabled());
     });
 
@@ -1785,7 +1800,7 @@ describe("StreamingView", () => {
         }),
       );
       let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingNotes).mockReturnValue(
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
         new Promise((resolve) => {
           resolveCraft = resolve;
         }),
@@ -1793,7 +1808,7 @@ describe("StreamingView", () => {
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
 
       await user.click(await screen.findByText("Design Review"));
@@ -1802,7 +1817,7 @@ describe("StreamingView", () => {
           id: 1,
           title: "Standup",
           windows: ONE_WINDOW,
-          notes: NOTES,
+          mfu: MFU,
         }),
       );
 
@@ -2001,7 +2016,7 @@ describe("StreamingView", () => {
       vi.mocked(ipc.openStreamingSession).mockResolvedValue(
         openedSession({ windows: ONE_WINDOW }),
       );
-      vi.mocked(ipc.generateStreamingNotes).mockReturnValue(
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
         new Promise(() => {}),
       );
       vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
@@ -2011,7 +2026,7 @@ describe("StreamingView", () => {
       await user.click(await screen.findByText("Standup"));
 
       await user.click(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       );
       expect(
         await screen.findByRole("button", { name: "Prettify transcript" }),
@@ -2037,7 +2052,7 @@ describe("StreamingView", () => {
       );
 
       expect(
-        await screen.findByRole("button", { name: "Craft MFU notes" }),
+        await screen.findByRole("button", { name: "Craft MFU" }),
       ).toBeDisabled();
     });
 

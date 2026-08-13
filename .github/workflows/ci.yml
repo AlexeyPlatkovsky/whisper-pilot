@@ -65,6 +65,26 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # sherpa-rs-sys downloads onnxruntime/sherpa-onnx libs into
+      # dirs::cache_dir()/sherpa-rs (NOT target/), so rust-cache never
+      # preserves them. On a warm rust-cache hit the build script does not
+      # rerun, the download never happens, and linking fails with
+      # "unable to find library -lonnxruntime". Cache that directory
+      # separately; on a miss, force the build script to rerun so it
+      # re-downloads (this also self-heals a poisoned warm target cache).
+      - name: Cache sherpa-onnx native libraries
+        if: matrix.check == 'rust-clippy' || matrix.check == 'rust-test'
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/sherpa-rs
+          key: sherpa-rs-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: sherpa-rs-${{ runner.os }}-
+
+      - name: Rebuild sherpa-rs-sys on sherpa cache miss
+        if: (matrix.check == 'rust-clippy' || matrix.check == 'rust-test') && steps.sherpa-cache.outputs.cache-hit != 'true'
+        run: cargo clean --manifest-path src-tauri/Cargo.toml -p sherpa-rs-sys
+
       - name: Install cargo-nextest
         if: matrix.check == 'rust-test'
         uses: taiki-e/install-action@nextest

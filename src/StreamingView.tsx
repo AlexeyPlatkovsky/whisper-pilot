@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   acceptStreamingPrettify,
+  createStreamingSession,
   deleteStreamingSession,
-  generateStreamingNotes,
+  generateStreamingMfu,
   generateStreamingPrettify,
   listStreamingSessions,
   onStreamingSessionEnded,
@@ -14,7 +15,7 @@ import {
   saveTextDialog,
   startStreamingSession,
   stopStreamingSession,
-  type StreamingNotes,
+  type StreamingMfu,
   type StreamingSessionSummary,
   type StreamingWindow,
 } from "./ipc";
@@ -63,7 +64,7 @@ export function StreamingView({
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [craftingId, setCraftingId] = useState<number | null>(null);
-  const [notes, setNotes] = useState<StreamingNotes | null>(null);
+  const [mfu, setMfu] = useState<StreamingMfu | null>(null);
   const [craftFailed, setCraftFailed] = useState(false);
   const [prettifyingId, setPrettifyingId] = useState<number | null>(null);
   const [prettifyFailed, setPrettifyFailed] = useState(false);
@@ -193,7 +194,7 @@ export function StreamingView({
   }, [refreshSessions]);
 
   // `resumeId` is the session to continue capturing into, or null for a
-  // brand-new one. Either way, any LLM-result state (notes/prettified/failed
+  // brand-new one. Either way, any LLM-result state (MFU/prettified/failed
   // flags) is stale the moment new audio starts arriving, so it's cleared in
   // both cases — only `windows` survives a resume, since preserving the
   // session's transcript-so-far is the whole point of resuming into it.
@@ -207,7 +208,7 @@ export function StreamingView({
         setActiveTitle(summary.title);
         if (resumeId === null) setWindows([]);
         setSources(null);
-        setNotes(null);
+        setMfu(null);
         setCraftFailed(false);
         setPrettifiedText(null);
         setPrettifyFailed(false);
@@ -223,18 +224,37 @@ export function StreamingView({
     [refreshSessions],
   );
 
-  // Reads as "continue what's on screen": resumes the currently open session
-  // when it's a past, stopped one, otherwise starts fresh — bound to the
-  // header's Start icon.
+  // Reads as "continue what's on screen": resumes the currently open stopped
+  // session, otherwise starts fresh — bound to the header's Start icon.
   const handleStart = useCallback(() => {
     const resumeId = activeId !== null && !isRunning ? activeId : null;
     return startSession(resumeId);
   }, [startSession, activeId, isRunning]);
 
-  // Always starts a brand-new session regardless of what's currently open —
-  // bound to the "+"/New icon, which is unambiguously "create", not
-  // "continue".
-  const handleStartNew = useCallback(() => startSession(null), [startSession]);
+  // Creates a brand-new, stopped session regardless of what's open. The
+  // separate Start action is the only path that begins audio capture.
+  const handleCreateNew = useCallback(async () => {
+    setError(null);
+    setBusy(true);
+    try {
+      const summary = await createStreamingSession();
+      setActiveId(summary.id);
+      setActiveTitle(summary.title);
+      setWindows([]);
+      setIsRunning(false);
+      setSources(null);
+      setMfu(null);
+      setCraftFailed(false);
+      setPrettifiedText(null);
+      setPrettifyFailed(false);
+      setPendingPrettify(null);
+      await refreshSessions();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [refreshSessions]);
 
   const handleStop = useCallback(async () => {
     setError(null);
@@ -260,7 +280,7 @@ export function StreamingView({
       setWindows(session.windows);
       setIsRunning(false);
       setSources(null);
-      setNotes(session.notes ?? null);
+      setMfu(session.mfu ?? null);
       setCraftFailed(false);
       setPrettifiedText(session.prettified_text ?? null);
       setPrettifyFailed(false);
@@ -320,7 +340,7 @@ export function StreamingView({
       setActiveId((current) => {
         if (current !== target.id) return current;
         setWindows([]);
-        setNotes(null);
+        setMfu(null);
         setCraftFailed(false);
         setPrettifiedText(null);
         setPrettifyFailed(false);
@@ -358,9 +378,9 @@ export function StreamingView({
     setCraftFailed(false);
     setCraftingId(id);
     try {
-      const session = await generateStreamingNotes(id);
+      const session = await generateStreamingMfu(id);
       if (activeIdRef.current === id) {
-        setNotes(session.notes ?? null);
+        setMfu(session.mfu ?? null);
       }
     } catch (e) {
       if (activeIdRef.current === id) {
@@ -481,7 +501,7 @@ export function StreamingView({
                 className="wp-icon-btn"
                 aria-label="New streaming session"
                 title="New streaming session"
-                onClick={() => void handleStartNew()}
+                onClick={() => void handleCreateNew()}
                 disabled={busy || isRunning}
               >
                 <Icon name="plus" size={18} />
@@ -532,11 +552,13 @@ export function StreamingView({
               size={14}
               className={
                 widget.spinning
-                  ? `wp-spin wp-tone--${widget.tone}`
-                  : `wp-tone--${widget.tone}`
+                  ? `wp-spin wp-tone--${widget.tone} wp-status--${widget.statusKey}`
+                  : `wp-tone--${widget.tone} wp-status--${widget.statusKey}`
               }
             />
-            <span className={`wp-status-label wp-tone--${widget.tone}`}>
+            <span
+              className={`wp-status-label wp-tone--${widget.tone} wp-status--${widget.statusKey}`}
+            >
               {widget.label}
             </span>
             {widget.showTimer && (
@@ -552,7 +574,11 @@ export function StreamingView({
           <div className="wp-action-group">
             <ActionIcon
               icon="play"
-              label={activeId !== null && !isRunning ? "Resume" : "Start"}
+              label={
+                activeId !== null && !isRunning && windows.length > 0
+                  ? "Resume"
+                  : "Start"
+              }
               onClick={() => void handleStart()}
               disabled={busy || isRunning}
             />
@@ -566,7 +592,7 @@ export function StreamingView({
             <span className="wp-sep" />
             <ActionIcon
               icon="sparkles"
-              label="Craft MFU notes"
+              label="Craft MFU"
               accent
               onClick={() => void handleCraft()}
               disabled={canPrettify}
@@ -801,36 +827,36 @@ export function StreamingView({
 
           {/* MFU (summary) panel */}
           <aside className="wp-mfu">
-            {notes ? (
-              <div className="wp-mfu-notes">
-                {notes.summary && (
+            {mfu ? (
+              <div className="wp-mfu-content">
+                {mfu.summary && (
                   <section className="wp-mfu-section">
                     <h3 className="wp-mfu-heading">Summary</h3>
-                    <p className="wp-mfu-text">{notes.summary}</p>
+                    <p className="wp-mfu-text">{mfu.summary}</p>
                   </section>
                 )}
-                {notes.decisions && (
+                {mfu.decisions && (
                   <section className="wp-mfu-section">
                     <h3 className="wp-mfu-heading">Decisions</h3>
-                    <p className="wp-mfu-text">{notes.decisions}</p>
+                    <p className="wp-mfu-text">{mfu.decisions}</p>
                   </section>
                 )}
-                {notes.action_items && (
+                {mfu.action_items && (
                   <section className="wp-mfu-section">
                     <h3 className="wp-mfu-heading">Action Items</h3>
-                    <p className="wp-mfu-text">{notes.action_items}</p>
+                    <p className="wp-mfu-text">{mfu.action_items}</p>
                   </section>
                 )}
-                {notes.open_questions && (
+                {mfu.open_questions && (
                   <section className="wp-mfu-section">
                     <h3 className="wp-mfu-heading">Open Questions</h3>
-                    <p className="wp-mfu-text">{notes.open_questions}</p>
+                    <p className="wp-mfu-text">{mfu.open_questions}</p>
                   </section>
                 )}
-                {notes.participants && (
+                {mfu.participants && (
                   <section className="wp-mfu-section">
                     <h3 className="wp-mfu-heading">Participants</h3>
-                    <p className="wp-mfu-text">{notes.participants}</p>
+                    <p className="wp-mfu-text">{mfu.participants}</p>
                   </section>
                 )}
               </div>

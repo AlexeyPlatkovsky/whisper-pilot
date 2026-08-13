@@ -23,6 +23,21 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # Same as ci.yml: sherpa-rs-sys downloads native libs into
+      # dirs::cache_dir()/sherpa-rs, outside rust-cache's reach; cache it
+      # separately and force a rebuild on miss so warm rust-cache hits link.
+      - name: Cache sherpa-onnx native libraries
+        id: sherpa-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/sherpa-rs
+          key: sherpa-rs-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: sherpa-rs-${{ runner.os }}-
+
+      - name: Rebuild sherpa-rs-sys on sherpa cache miss
+        if: steps.sherpa-cache.outputs.cache-hit != 'true'
+        run: cargo clean --manifest-path src-tauri/Cargo.toml -p sherpa-rs-sys
+
       - run: npm ci
 
       - name: Read version

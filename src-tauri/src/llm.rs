@@ -14,7 +14,7 @@ const CTX_SIZE: u32 = 16384;
 const N_BATCH: u32 = 2048;
 
 #[derive(Debug, Deserialize)]
-struct NotesJson {
+struct MfuJson {
     summary: String,
     decisions: String,
     #[serde(rename = "action_items")]
@@ -24,10 +24,10 @@ struct NotesJson {
     participants: String,
 }
 
-/// Structured notes generation output, domain-agnostic — the caller (Meeting
+/// Structured mfu generation output, domain-agnostic — the caller (Meeting
 /// or Streaming) attaches its own id before persisting.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct GeneratedNotes {
+pub struct GeneratedMfu {
     pub summary: String,
     pub decisions: String,
     pub action_items: String,
@@ -59,7 +59,7 @@ fn build_prompt(transcript: &str) -> String {
         )
     } else {
         (
-            "You are a meeting notes assistant. Fill in the JSON template below with concise notes from the transcript.\n\
+            "You are a meeting mfu assistant. Fill in the JSON template below with concise mfu from the transcript.\n\
 \n\
 RULES:\n\
 - summary: 2-3 sentences covering the key topics discussed.\n\
@@ -98,7 +98,7 @@ fn strip_think_block(raw: &str) -> &str {
     raw
 }
 
-fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
+fn parse_notes_json(raw: &str) -> Result<GeneratedMfu> {
     let original = raw.trim();
     let cleaned = strip_think_block(original);
     let cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
@@ -114,8 +114,8 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
     let json_str = json_str.strip_suffix("```").unwrap_or(&json_str);
     let json_str = json_str.trim();
 
-    if let Ok(parsed) = serde_json::from_str::<NotesJson>(json_str) {
-        return Ok(GeneratedNotes {
+    if let Ok(parsed) = serde_json::from_str::<MfuJson>(json_str) {
+        return Ok(GeneratedMfu {
             summary: parsed.summary,
             decisions: parsed.decisions,
             action_items: parsed.action_items,
@@ -124,7 +124,7 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
         });
     }
 
-    let fallback = NotesJson {
+    let fallback = MfuJson {
         summary: cleaned.to_string(),
         decisions: String::new(),
         action_items: String::new(),
@@ -132,7 +132,7 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
         participants: String::new(),
     };
 
-    Ok(GeneratedNotes {
+    Ok(GeneratedMfu {
         summary: fallback.summary,
         decisions: String::new(),
         action_items: String::new(),
@@ -141,7 +141,7 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedNotes> {
     })
 }
 
-pub fn generate_notes(model_path: &Path, transcript: &str) -> Result<GeneratedNotes> {
+pub fn generate_mfu(model_path: &Path, transcript: &str) -> Result<GeneratedMfu> {
     let prompt = build_prompt(transcript);
     let raw_output = run_inference(model_path, &prompt)?;
     parse_notes_json(&raw_output)
@@ -368,41 +368,41 @@ mod tests {
     #[test]
     fn parse_notes_accepts_valid_json() {
         let raw = r#"{"summary": "Discussed Q3 roadmap.", "decisions": "Ship M1 by Friday.", "action_items": "Alex: update deck", "open_questions": "Budget for Q4?", "participants": "Alex, Sam"}"#;
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Discussed Q3 roadmap.");
-        assert_eq!(notes.decisions, "Ship M1 by Friday.");
-        assert_eq!(notes.action_items, "Alex: update deck");
-        assert_eq!(notes.open_questions, "Budget for Q4?");
-        assert_eq!(notes.participants, "Alex, Sam");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Discussed Q3 roadmap.");
+        assert_eq!(mfu.decisions, "Ship M1 by Friday.");
+        assert_eq!(mfu.action_items, "Alex: update deck");
+        assert_eq!(mfu.open_questions, "Budget for Q4?");
+        assert_eq!(mfu.participants, "Alex, Sam");
     }
 
     #[test]
     fn parse_notes_strips_markdown_fences() {
         let raw = "```json\n{\"summary\": \"Test.\", \"decisions\": \"\", \"action_items\": \"\", \"open_questions\": \"\", \"participants\": \"\"}\n```";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Test.");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Test.");
     }
 
     #[test]
     fn parse_notes_falls_back_to_raw_text() {
         let raw = "Not valid JSON at all.";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, raw);
-        assert!(notes.decisions.is_empty());
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, raw);
+        assert!(mfu.decisions.is_empty());
     }
 
     #[test]
     fn parse_notes_strips_think_block() {
         let raw = "<think>\nLet me think about this...\n</think>\n{\"summary\": \"Test.\", \"decisions\": \"\", \"action_items\": \"\", \"open_questions\": \"\", \"participants\": \"\"}";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Test.");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Test.");
     }
 
     #[test]
     fn parse_notes_strips_think_without_closing_tag() {
         let raw = "<think>\nreasoning here\n\n{\"summary\": \"Done.\", \"decisions\": \"\", \"action_items\": \"\", \"open_questions\": \"\", \"participants\": \"\"}";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Done.");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Done.");
     }
 
     #[test]
@@ -410,29 +410,29 @@ mod tests {
         let transcript = "Alex: Hello\nSam: Hi there";
         let prompt = build_prompt(transcript);
         assert!(prompt.contains("Alex: Hello"));
-        assert!(prompt.contains("meeting notes assistant"));
+        assert!(prompt.contains("meeting mfu assistant"));
         assert!(prompt.ends_with(ASSISTANT_PREFILL));
     }
 
     #[test]
     fn parse_notes_prefills_opening_brace_when_missing() {
         let raw = "Test summary\", \"decisions\": \"D\", \"action_items\": \"A\", \"open_questions\": \"Q\", \"participants\": \"P\"}";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Test summary");
-        assert_eq!(notes.decisions, "D");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Test summary");
+        assert_eq!(mfu.decisions, "D");
     }
 
     #[test]
     fn parse_notes_handles_full_json_when_model_regenerates_opening() {
         let raw = "{\"summary\": \"Test.\", \"decisions\": \"D\", \"action_items\": \"A\", \"open_questions\": \"Q\", \"participants\": \"P\"}";
-        let notes = parse_notes_json(raw).unwrap();
-        assert_eq!(notes.summary, "Test.");
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Test.");
     }
 
     #[test]
     fn build_prompt_uses_english_for_ascii_transcript() {
         let prompt = build_prompt("Hello, let us talk about Q3 roadmap.");
-        assert!(prompt.contains("meeting notes assistant"));
+        assert!(prompt.contains("meeting mfu assistant"));
         assert!(!prompt.contains("ассистент"));
     }
 
@@ -441,7 +441,7 @@ mod tests {
         let prompt = build_prompt("Алексей: Привет\nИван: Здравствуйте");
         assert!(prompt.contains("ассистент"));
         assert!(prompt.contains("ПРАВИЛА"));
-        assert!(!prompt.contains("meeting notes assistant"));
+        assert!(!prompt.contains("meeting mfu assistant"));
     }
 
     #[test]

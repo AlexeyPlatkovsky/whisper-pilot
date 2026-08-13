@@ -30,7 +30,7 @@ export function StreamingSessionRow({
       aria-label={title}
     >
       <span
-        className={`wp-meeting-dot wp-tone--${status.tone}`}
+        className={`wp-meeting-dot wp-tone--${status.tone} wp-status--${status.statusKey}`}
         role="img"
         aria-label={status.label}
         title={status.label}
@@ -58,7 +58,7 @@ export function StreamingSessionRow({
             <Icon
               name="refresh-cw"
               size={13}
-              className={`wp-spin wp-tone--${status.tone}`}
+              className={`wp-spin wp-tone--${status.tone} wp-status--${status.statusKey}`}
             />
           </span>
         ) : (

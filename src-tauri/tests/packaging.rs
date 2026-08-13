@@ -1,7 +1,7 @@
 //! macOS native-dylib packaging invariants (WP-60/WP-86).
 //!
 //! These default tests need no model, media, network, or prior Tauri bundle.
-//! See `docs/architecture.md` §Build Notes for staging and rpath rationale.
+//! See `docs/architecture.md` §Build Details for staging and rpath rationale.
 
 #![cfg(target_os = "macos")]
 

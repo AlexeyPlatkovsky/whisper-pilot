@@ -16,7 +16,7 @@ export interface MeetingSummary {
   status: string;
 }
 
-export interface MeetingNotes {
+export interface MeetingMfu {
   meeting_id: number;
   summary: string;
   decisions: string;
@@ -35,7 +35,7 @@ export interface Meeting {
   language: string;
   status: string;
   segments: Segment[];
-  notes?: MeetingNotes;
+  mfu?: MeetingMfu;
   /** `true` when an attached source file is no longer readable at its saved
    * path (moved or deleted). `false` when there is no source at all. */
   source_missing: boolean;
@@ -71,9 +71,9 @@ export function updateSegment(
   return invoke<Meeting>("update_segment", { id, index, text });
 }
 
-/** Auto-save the meeting notes fields as the user edits them. */
-export function updateNotes(notes: MeetingNotes): Promise<Meeting> {
-  return invoke<Meeting>("update_notes", { notes });
+/** Auto-save the meeting MFU fields as the user edits them. */
+export function updateMfu(mfu: MeetingMfu): Promise<Meeting> {
+  return invoke<Meeting>("update_mfu", { mfu });
 }
 
 export function openFileDialog(): Promise<string | null> {
@@ -114,8 +114,8 @@ export function diarizeMeeting(id: number): Promise<TranscribeMeetingResult> {
   return invoke<TranscribeMeetingResult>("diarize_meeting", { id });
 }
 
-export function generateNotes(id: number): Promise<Meeting> {
-  return invoke<Meeting>("generate_notes", { id });
+export function generateMfu(id: number): Promise<Meeting> {
+  return invoke<Meeting>("generate_mfu", { id });
 }
 
 export function saveTextDialog(
@@ -132,6 +132,9 @@ export interface Settings {
   active_model_diarization: string;
   active_model_llm?: string;
   export_file_type: string;
+  /** JSON mapping of status key → opaque #RRGGBB color (WP-88); absent before
+   * the setting is first saved. */
+  status_colors?: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -229,7 +232,7 @@ export interface StreamingWindow {
   outcome_ok: boolean;
 }
 
-export interface StreamingNotes {
+export interface StreamingMfu {
   summary: string;
   decisions: string;
   action_items: string;
@@ -244,12 +247,12 @@ export interface StreamingSession {
   updated_at_ms: number;
   status: string;
   windows: StreamingWindow[];
-  notes?: StreamingNotes;
+  mfu?: StreamingMfu;
   prettified_text?: string;
 }
 
-export function generateStreamingNotes(id: number): Promise<StreamingSession> {
-  return invoke<StreamingSession>("generate_streaming_notes", { id });
+export function generateStreamingMfu(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("generate_streaming_mfu", { id });
 }
 
 /** Returns the cleaned text for review — does not persist it. */
@@ -286,6 +289,11 @@ export function renameStreamingSession(
 
 export function deleteStreamingSession(id: number): Promise<void> {
   return invoke<void>("delete_streaming_session", { id });
+}
+
+/** Creates a stopped session record. It does not start audio capture. */
+export function createStreamingSession(): Promise<StreamingSessionSummary> {
+  return invoke<StreamingSessionSummary>("create_streaming_session");
 }
 
 /** Starts capture + rolling-window decode; returns once capture has begun.

@@ -136,7 +136,7 @@ Single line reflecting the meeting's current state:
 
 Opened from the header **gear**; a screen with these sections:
 
-- **AI models** — grouped by task (transcription, diarization; notes at release).
+- **AI models** — grouped by task (transcription, diarization; MFU at release).
   Each required model shows its state with **Download** and **Delete** buttons.
   **Download** opens a blocking dialog (progress bar, spinner, elapsed time),
   the same "blocked with progress shown" pattern as transcription/MFU; it names
@@ -150,7 +150,12 @@ Opened from the header **gear**; a screen with these sections:
   and non-interactive because there is nothing to switch to; at release each
   task may list 3–4 models, each with a selectable **Active** radio.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
-  OS). At release, 3–4 extra named themes, each in a light and dark variant.
+  OS), and **Status Colors**: one configurable color per current semantic
+  Meeting/Streaming status (anchored picker popover, per-row revert to the
+  built-in default, Reset all behind a confirmation). Statuses are alphabetized
+  and fill the two-column list left-to-right; a low-contrast picker warning
+  compares the half-up rounded two-decimal ratio against `4.50:1`. At release,
+  3–4 extra named themes, each in a light and dark variant.
 - **App language** — the **UI** language; **English** by default (only option in
   beta). At release: Russian, Turkish, Spanish, German, French. Independent of the
   transcription language.
@@ -188,7 +193,7 @@ Whisper model; diarization degrades without its models).
    - Meeting transcription currently runs to completion. Safe cancellation is
      tracked separately in WP-87 as an isolated-worker process.
    - If diarization is unavailable, the transcript still appears as plain segments
-     with a note; the run does not fail.
+     with a detail; the run does not fail.
    - Pressing **Transcribe** again on a meeting that already has a transcript
      **warns** it will replace the transcript and any MFU, and proceeds only on
      confirmation.
@@ -199,7 +204,7 @@ Whisper model; diarization degrades without its models).
 2. **Rename** (modal, ≤120 chars, non-empty) or **delete** (confirmation) from
    the list row or the header.
 3. If the source file is missing, the meeting still opens for reading/editing;
-   **Transcribe** is disabled with a "source file missing" note.
+   **Transcribe** is disabled with a "source file missing" detail.
 
 ### Review by speaker (M2)
 
@@ -218,7 +223,7 @@ Whisper model; diarization degrades without its models).
 ### Export (M2)
 
 1. Settings → Export sets the file type (Markdown or plain text) once; **Save**
-   then writes the transcript (and, for Markdown, the notes when present) to a
+   then writes the transcript (and, for Markdown, the MFU when present) to a
    chosen destination in that format, and the header **copy** action copies
    the same rendering to the clipboard (WP-15). Plain text stays
    transcript-only, matching the pre-WP-15 rendering; Markdown adds `#`/`##`
@@ -238,7 +243,7 @@ Whisper model; diarization degrades without its models).
 - **Creating MFU** — whole UI blocked; spinner+timer; no cancel.
 - **MFU populated** — MFU section at 30% with edit/copy/clear.
 - **Source file missing** — meeting opens; Transcribe disabled with an
-  explanatory note; transcript/MFU remain editable.
+  explanatory detail; transcript/MFU remain editable.
 - **No model available** — model switcher hidden; status-bar warning; the
   Settings → AI models section flags the missing model with a Download action.
 - **Settings open** — the Settings screen (models / appearance / app language);

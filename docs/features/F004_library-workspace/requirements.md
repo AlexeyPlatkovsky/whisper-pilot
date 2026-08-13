@@ -35,10 +35,10 @@ behavior.
 | F004-R7 | The system shall let the user **attach one** source file to a meeting, shown in the status bar with an **×** to detach (no confirmation); transcription does not start on attach. | must |
 | F004-R8 | The system shall transcribe only on the **Transcribe** action (disabled with no file attached); while a run is active the UI is blocked and the Meeting run proceeds to completion. The run includes diarization (F002); the meeting is **finished** only once transcription and speaker attribution are both done. Safe cancellation is deferred to WP-87's isolated worker. | must |
 | F004-R9 | The system shall reflect state in a **status bar**: waiting-for-file, attached-file(s), transcribing (indeterminate spinner + live 1-second timer), identifying speakers (the same spinner + timer), finished, creating-MFU (UI-blocked spinner + timer), and no-model warning. | must |
-| F004-R10 | The system shall auto-save edits (segment text, and later speaker labels and notes) to the library without an explicit save action. | must |
+| F004-R10 | The system shall auto-save edits (segment text, and later speaker labels and MFU) to the library without an explicit save action. | must |
 | F004-R11 | The system shall provide the editable transcript surface in the center pane (auto-sizing `m:ss` segments); per-speaker **colored bubble** grouping/coloring is rendered by F002 (also M2). | must |
-| F004-R12 | The system shall open a meeting whose source file is missing, disable re-transcribe, and show an explanatory note. | must |
-| F004-R13 | The system shall export a meeting to Markdown or plain text, including per-speaker labels and timestamps in the transcript and the MFU notes when present. | must |
+| F004-R12 | The system shall open a meeting whose source file is missing, disable re-transcribe, and show an explanatory detail. | must |
+| F004-R13 | The system shall export a meeting to Markdown or plain text, including per-speaker labels and timestamps in the transcript and the MFU MFU when present. | must |
 | F004-R14 | Re-running **Transcribe** on a meeting that already has a transcript shall warn that the existing transcript and any MFU will be replaced, and proceed only after confirmation. | should |
 
 ## Acceptance Criteria
@@ -68,9 +68,9 @@ behavior.
 - **F004-R11:** the center pane hosts editable `m:ss` segments; with F002's
   diarization those segments group into colored per-speaker bubbles.
 - **F004-R12:** with the source absent, the meeting opens, Transcribe is disabled,
-  and a note explains why.
+  and a detail explains why.
 - **F004-R13:** exported `.md`/`.txt` contains the current transcript with speaker
-  labels and timestamps, and the MFU notes when present.
+  labels and timestamps, and the MFU MFU when present.
 - **F004-R14:** pressing Transcribe on a meeting that already has a transcript
   prompts before replacing it (and any MFU); cancelling the prompt keeps the
   existing content.

@@ -42,7 +42,7 @@ milestones).
 | F004 | Library & workspace | M2 (next) | R1–R14 | T1–T15 | S1–S14 | epic WP-11 (WP-16…WP-30, WP-32) |
 | F002 | Speaker diarization | M2 (next) | R1–R7 | T1–T7 | S1–S6 | epic WP-1 (WP-5…WP-10, WP-31) |
 | F005 | Settings | M2 beta / M3 release | R1–R11 | T1–T11 | S1–S11 | epic WP-33 (WP-34…WP-42); release unscheduled |
-| F003 | Structured meeting notes | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
+| F003 | Structured meeting MFU | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
 <!-- sdd-index-sync:end features -->
 
 ## Decision Log
@@ -58,7 +58,7 @@ milestones).
 | ADR-006 | llama.cpp + Qwen2.5 for local summarization | accepted |
 | ADR-007 | Russian-first, English added later (auto-detect option) | partially superseded by ADR-012 (language mechanism only; Russian-first focus stands) |
 | ADR-008 | Persisted meeting library (SQLite), reference-only audio, auto-save | accepted |
-| ADR-009 | Structured meeting notes (full set), editable | accepted |
+| ADR-009 | Structured meeting MFU (full set), editable | accepted |
 | ADR-010 | Two-pane shell; manual Transcribe/MFU triggers; colored bubbles from M2 | accepted |
 | ADR-011 | Settings: in-app model management, theming, i18n, English-default UI | accepted |
 | ADR-012 | Transcription language is always auto-detected, never chosen (supersedes ADR-007 on the language mechanism) | accepted |
@@ -66,7 +66,7 @@ milestones).
 | ADR-014 | Streaming coexists with Meeting's batch-accuracy pipeline | accepted |
 <!-- sdd-index-sync:end decisions -->
 
-## Traceability Notes
+## Traceability MFU
 
 - Every F-requirement traces up to an `idea.md` scope item and a `roadmap.md`
   milestone, and down to at least one task and one scenario (see each feature
@@ -76,5 +76,5 @@ milestones).
   WP-16…WP-30 + WP-32), **F002 Speaker diarization** (epic WP-1, features
   WP-2…WP-4, tasks WP-5…WP-10 + WP-31), and **F005 Settings — beta** (epic WP-33,
   features WP-34…WP-36, tasks WP-37…WP-42). F001 is as-built (pre-tracking);
-  **M3 (Release)** = **F003 notes** and the **F005 release scope**, both
+  **M3 (Release)** = **F003 MFU** and the **F005 release scope**, both
   unscheduled in TaskPilot until M3 is picked up.

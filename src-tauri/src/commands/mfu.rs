@@ -1,4 +1,4 @@
-//! LLM notes and prettify IPC commands: structured meeting notes (Meeting and
+//! LLM MFU and prettify IPC commands: structured meeting MFU (Meeting and
 //! Streaming) and Streaming transcript prettify accept/revert.
 
 use crate::error::{AppError, Result};
@@ -32,11 +32,11 @@ fn resolve_llm_model_path(app_support_dir: &std::path::Path) -> Result<PathBuf> 
     Ok(model_path)
 }
 
-/// Generate structured meeting notes (summary, decisions, action items, open
+/// Generate structured meeting MFU (summary, decisions, action items, open
 /// questions, participants) from the current transcript using the active LLM
 /// model. Requires an LLM model to be downloaded and selected in Settings.
 #[tauri::command]
-pub(crate) async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+pub(crate) async fn generate_mfu(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
     let app_support_dir = app_data_dir(&app)?;
     let model_path = resolve_llm_model_path(&app_support_dir)?;
 
@@ -68,12 +68,12 @@ pub(crate) async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<Mee
     let model_path_clone = model_path.clone();
     let transcript_clone = transcript.clone();
     let generated = tokio::task::spawn_blocking(move || {
-        llm::generate_notes(&model_path_clone, &transcript_clone)
+        llm::generate_mfu(&model_path_clone, &transcript_clone)
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
 
-    store.upsert_notes(&store::MeetingNotes {
+    store.upsert_mfu(&store::MeetingMfu {
         meeting_id: id,
         summary: generated.summary,
         decisions: generated.decisions,
@@ -85,10 +85,10 @@ pub(crate) async fn generate_notes(app: tauri::AppHandle, id: i64) -> Result<Mee
     crate::meetings::open_meeting(&app_support_dir_clone, id)
 }
 
-/// Same local model/JSON contract as `generate_notes`, for a Streaming
+/// Same local model/JSON contract as `generate_mfu`, for a Streaming
 /// session — `streaming::build_streaming_transcript` owns its guards.
 #[tauri::command]
-pub(crate) async fn generate_streaming_notes(
+pub(crate) async fn generate_streaming_mfu(
     app: tauri::AppHandle,
     id: i64,
 ) -> Result<streaming::StreamingSessionDto> {
@@ -99,13 +99,13 @@ pub(crate) async fn generate_streaming_notes(
     let model_path_clone = model_path.clone();
     let transcript_clone = transcript.clone();
     let generated = tokio::task::spawn_blocking(move || {
-        llm::generate_notes(&model_path_clone, &transcript_clone)
+        llm::generate_mfu(&model_path_clone, &transcript_clone)
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
 
     let store = streaming_store::StreamingStore::open(&app_support_dir)?;
-    store.upsert_notes(&streaming_store::StreamingNotes {
+    store.upsert_mfu(&streaming_store::StreamingMfu {
         session_id: id,
         summary: generated.summary,
         decisions: generated.decisions,

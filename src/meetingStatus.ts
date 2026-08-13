@@ -4,6 +4,7 @@
 // src-tauri/src/meetings/ for the persisted status set.
 
 import type { IconName } from "./Icon";
+import type { StatusColorKey } from "./statusColors";
 
 export type MeetingStatusTone =
   | "no-files"
@@ -27,35 +28,92 @@ export interface MeetingStatusView {
   label: string;
   /** The same visual status cue used by Streaming's header widget. */
   icon: IconName;
+  /** Which configurable status color (WP-88) this view resolves to — drives
+   * the `wp-status--*` class that overrides the tone's default color. */
+  statusKey: StatusColorKey;
 }
 
 // A Map, not an object literal, so a meeting whose status happens to collide
 // with an Object.prototype key ("constructor", "toString") still falls through
 // to the unknown case instead of resolving to a prototype member.
 const PERSISTED = new Map<string, MeetingStatusView>([
-  ["no_files", { tone: "no-files", label: "No files", icon: "info" }],
-  ["ready", { tone: "ready", label: "Ready", icon: "check" }],
-  ["finished", { tone: "finished", label: "Finished", icon: "check" }],
+  [
+    "no_files",
+    {
+      tone: "no-files",
+      label: "No files",
+      icon: "info",
+      statusKey: "no-files",
+    },
+  ],
+  [
+    "ready",
+    { tone: "ready", label: "Ready", icon: "check", statusKey: "ready" },
+  ],
+  [
+    "finished",
+    {
+      tone: "finished",
+      label: "Finished",
+      icon: "check",
+      statusKey: "finished",
+    },
+  ],
 ]);
 
 const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
   [
     "transcribing",
-    { tone: "transcribing", label: "Transcribing", icon: "refresh-cw" },
+    {
+      tone: "transcribing",
+      label: "Transcribing",
+      icon: "refresh-cw",
+      statusKey: "transcribing",
+    },
   ],
-  ["diarizing", { tone: "diarizing", label: "Diarizing", icon: "refresh-cw" }],
+  [
+    "diarizing",
+    {
+      tone: "diarizing",
+      label: "Diarizing",
+      icon: "refresh-cw",
+      statusKey: "diarizing",
+    },
+  ],
   [
     "crafting",
-    { tone: "crafting", label: "Crafting notes", icon: "refresh-cw" },
+    {
+      tone: "crafting",
+      label: "Crafting MFU",
+      icon: "refresh-cw",
+      statusKey: "crafting-mfu",
+    },
   ],
-  ["error", { tone: "error", label: "Error", icon: "alert-circle" }],
-  ["no-model", { tone: "no-model", label: "No model", icon: "alert-circle" }],
+  [
+    "error",
+    {
+      tone: "error",
+      label: "Error",
+      icon: "alert-circle",
+      statusKey: "error",
+    },
+  ],
+  [
+    "no-model",
+    {
+      tone: "no-model",
+      label: "No model",
+      icon: "alert-circle",
+      statusKey: "no-model",
+    },
+  ],
 ]);
 
 const UNKNOWN: MeetingStatusView = {
   tone: "unknown",
   label: "Unknown",
   icon: "alert-circle",
+  statusKey: "unknown",
 };
 
 export function resolveMeetingStatus(

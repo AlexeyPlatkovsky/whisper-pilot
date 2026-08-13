@@ -18,7 +18,7 @@ Introduce a **Settings** screen (F005), reached from a fixed header **gear**, wi
 four sections, phased across milestones:
 
 - **AI models** — a **fixed, app-defined catalog** of the model(s) each task needs
-  (transcription, diarization, notes). Each model has **Download** (fetch from a
+  (transcription, diarization, MFU). Each model has **Download** (fetch from a
   known URL, stream progress, **SHA-verify**, mark ready only on success) and
   **Delete**. Beta: **one model per task**. Release: **3–4 per task** with an
   **Active** radio. A missing required model disables/degrades its task.
@@ -36,11 +36,11 @@ release adds only assets.
 
 ## Consequences
 
-- Supersedes the deferred "own model-management UI/catalog" note and the "manual
+- Supersedes the deferred "own model-management UI/catalog" detail and the "manual
   model placement" limitation: beta can download/delete each task's model in-app.
 - Introduces the **only** network egress in the product — model downloads (and the
   release app-update). It is user-initiated, to known URLs, SHA-verified; user
-  audio/transcripts/notes still never leave the device (`architecture.md`
+  audio/transcripts/MFU still never leave the device (`architecture.md`
   Security & Privacy).
 - The **UI language** default flips to **English**, superseding the earlier
   "Russian-first surface" wording. (This bullet also said transcription stays

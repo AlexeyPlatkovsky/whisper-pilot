@@ -3,21 +3,31 @@ id: WP-88
 title: Configure colors for current status widgets
 priority: normal
 type: task
-status: ready
+status: done
 created_at: '2026-08-11T12:10:38Z'
-updated_at: '2026-08-11T15:00:05Z'
+updated_at: '2026-08-12T17:47:39Z'
 dod:
 - 'Settings lists each current semantic status exactly once with the built-in opaque hex mapping: No files #8A5F10; Ready #5A7684; Transcribing #176C8F; Diarizing #176C8F; Crafting notes #176C8F; Finished #46704C; Error #B82B2F; No model #C65D2E; Unknown #5A7684; Starting… #5A7684; On Air #B82B2F; Crafting MFU… #176C8F; MFU Failed #B82B2F; Prettifying… #176C8F; Prettify Failed #B82B2F.'
 - 'Each current-status row opens an anchored color-picker popover with its current saved color, a visual picker, a #RRGGBB input, Save, and Cancel; Cancel closes it without changing any global UI or persistence.'
 - Saving a valid opaque six-digit hex color with at least WCAG AA 4.5:1 contrast against the active theme’s status-widget background updates every current visible use of that semantic status immediately, including the applicable header widget and sidebar indicator, and the same color remains after an app restart.
 - A selected color for shared Ready, Finished, or Unknown is applied consistently in both Meeting and Streaming surfaces.
-- The Settings UI offers Reset all colors; activating it restores every status to the explicit built-in mapping immediately and persists that mapping across restart.
-- Saving a valid opaque color below WCAG AA 4.5:1 opens a warning with Confirm and Cancel; Confirm applies and persists it, while Cancel returns to the picker with the prior global and persisted mapping unchanged.
+- Reset all colors first opens a confirmation modal; only confirming restores every status to the explicit built-in mapping immediately and persists that mapping across restart, while cancelling leaves the active and persisted mapping unchanged.
+- A picked color below WCAG AA 4.5:1 against the status-widget background shows an inline warning label inside the picker popover; saving it still applies and persists it without any additional confirmation step.
 - The Settings UI accepts only opaque six-digit hexadecimal colors; malformed, shorthand, and alpha-bearing values are rejected without changing the active or persisted mapping.
 - If persisting an individual color change or Reset all fails, the UI displays an error and restores the complete prior saved mapping on every visible status surface.
 - If the saved mapping is absent, malformed, unreadable, or from a version before this setting existed, startup silently uses the explicit built-in mapping.
 - With overlapping color-save requests, including Reset all, the latest user action is the only action that may determine the final visible and persisted mapping; stale responses are ignored.
-+description: 'Users can open Settings and configure an opaque color independently for each current semantic status used by the Meeting and Streaming status widgets. The controls list the current statuses only: No files, Ready, Transcribing, Diarizing, Crafting notes, Finished, Error, No model, Unknown, Starting…, On Air, Crafting MFU…, MFU Failed, Prettifying…, and Prettify Failed. Ready, Finished, and Unknown are shared semantic statuses across Meeting and Streaming; each configured color applies everywhere that semantic status is visible. Each row has a color control that opens an anchored popover showing the current saved color, a visual color picker, and a hex input. Edits preview only inside that popover. Cancel closes it without changing any visible status or persistence. Save validates opaque six-digit hexadecimal input, then checks WCAG AA 4.5:1 contrast against the active theme’s status-widget background. A passing value applies immediately to every matching header widget, sidebar indicator, and equivalent status display and persists automatically in the existing local Settings store. A low-contrast value opens a warning that requires explicit Confirm or Cancel; Confirm saves it, Cancel returns to the picker with no persisted or global UI change. A Reset all colors action restores the complete built-in color mapping. If persistence fails, the app shows an error and restores the prior saved color rather than claiming the new value was retained.
+- The status list lays out in two columns; each row's status-name label uses that status's current color; a row whose color differs from the built-in default shows a clickable revert icon immediately after the hex code that restores the default without confirmation, and the row keeps the same size whether the icon is visible or not; no separate Change label is shown.
++description: 'Users can open Settings and configure an opaque color independently for each current semantic status used by the Meeting and Streaming status widgets. The controls list the current statuses only: No files, Ready, Transcribing, Diarizing, Crafting notes, Finished, Error, No model, Unknown, Starting…, On Air, Crafting MFU…, MFU Failed, Prettifying…, and Prettify Failed. Ready, Finished, and Unknown are shared semantic statuses across Meeting and Streaming; each configured color applies everywhere that semantic status is visible. Each row has a color control that opens an anchored popover showing the current saved color, a visual color picker, and a hex input. Edits preview only inside that popover. Cancel closes it without changing any visible status or persistence. Save validates opaque six-digit hexadecimal input, then checks WCAG AA 4.5:1 contrast against the active theme’s status-widget background. A passing value applies immediately to every matching header widget, sidebar indicator, and equivalent status display and persists automatically in the existing local Settings store. A low-contrast value shows an inline warning label inside the popover and can still be saved without further confirmation. The Reset all colors action opens a confirmation modal and restores the complete built-in color mapping only on confirm. If persistence fails, the app shows an error and restores the prior saved color rather than claiming the new value was retained.
+
+
+  Layout and row behavior: the status list renders in two columns. Each row shows its status-name label in that status''s current color, a color swatch, and the current hex code. A row whose color differs from the built-in default shows a revert icon immediately after the hex code; clicking it restores the default color without confirmation. The row''s size does not change in any dimension when the revert icon appears or disappears. No separate Change label is shown.
+
+
+  Target surfaces: src/statusColors.ts (new), src/AppearanceSection.tsx, src/meetingStatus.ts, src/streamingStatus.ts, src/App.tsx, src/MeetingRow.tsx, src/StreamingView.tsx, src/StreamingSessionRow.tsx, src/styles.css, src/ipc.ts, src-tauri/src/settings.rs. Design reference: pencil/main_view.pen frame "Settings Appearance — Status Colors".
+
+
+  Constraints: colors persist as one JSON mapping value under a new status_colors key in the existing settings store; per-theme overrides, alpha transparency, and statuses introduced after WP-88 are out of scope.
 
 
   Non-goals:

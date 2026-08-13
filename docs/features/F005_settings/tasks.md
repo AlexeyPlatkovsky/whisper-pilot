@@ -18,13 +18,13 @@ F003.
 | F005-T10 | Update app: check for and apply updates | F005-R10 | M3 | F005-T2 | — (unscheduled) |
 | F005-T11 | Appearance: configure current Meeting and Streaming status colors | F005-R11 | M2 | F005-T1, F005-T2 | WP-88 |
 
-## Notes
+## MFU
 
 - TaskPilot **features** under epic WP-33: **WP-34** settings shell & persistence
   (WP-37, WP-38), **WP-35** AI model management (WP-39, WP-40), **WP-36**
   appearance & app language (WP-41, WP-42).
 - Model download/delete (T3/T4) supersedes the earlier "manual model placement"
-  limitation and the deferred model-management note; the catalog is fixed and
+  limitation and the deferred model-management detail; the catalog is fixed and
   app-defined (ADR-011).
 - Build the store (T1) first; the shell, model management, theme, and language all
   read/write through it.

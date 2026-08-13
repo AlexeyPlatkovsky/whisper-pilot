@@ -1,10 +1,10 @@
 //! Meeting-library IPC commands: create/list/open/rename/delete meetings and
-//! auto-save transcript segment and notes edits.
+//! auto-save transcript segment and MFU edits.
 
 use crate::error::Result;
 use crate::meetings::{MeetingDto, MeetingSummaryDto};
 use crate::state::{app_data_dir, now_ms};
-use crate::store::MeetingNotes;
+use crate::store::MeetingMfu;
 
 /// Create and return an empty persisted meeting. Attaching a file and starting
 /// transcription are separate, explicit actions.
@@ -48,8 +48,8 @@ pub(crate) fn update_segment(
     crate::meetings::update_segment(&app_data_dir(&app)?, id, index, text)
 }
 
-/// Auto-save the meeting notes fields as the user edits them.
+/// Auto-save the meeting MFU fields as the user edits them.
 #[tauri::command]
-pub(crate) fn update_notes(app: tauri::AppHandle, notes: MeetingNotes) -> Result<MeetingDto> {
-    crate::meetings::update_notes(&app_data_dir(&app)?, notes)
+pub(crate) fn update_mfu(app: tauri::AppHandle, mfu: MeetingMfu) -> Result<MeetingDto> {
+    crate::meetings::update_mfu(&app_data_dir(&app)?, mfu)
 }

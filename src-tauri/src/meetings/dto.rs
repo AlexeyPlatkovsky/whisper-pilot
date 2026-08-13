@@ -2,7 +2,7 @@
 //! speaker-coalescing transform that turns fine-grained stored rows into the
 //! per-speaker display blocks the workspace renders.
 
-use crate::store::{Meeting, MeetingId, MeetingNotes};
+use crate::store::{Meeting, MeetingId, MeetingMfu};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -39,10 +39,10 @@ pub struct MeetingDto {
     pub status: String,
     pub segments: Vec<SegmentDto>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub notes: Option<MeetingNotes>,
+    pub mfu: Option<MeetingMfu>,
     /// `true` when this meeting has an attached source file that is no longer
     /// readable at `source_path` (moved or deleted since it was attached).
-    /// `false` for a meeting with no source at all. The transcript and notes
+    /// `false` for a meeting with no source at all. The transcript and MFU
     /// stay readable/editable either way; only re-transcribing needs the file.
     pub source_missing: bool,
 }
@@ -85,7 +85,7 @@ pub(crate) fn coalesce_by_speaker(segments: Vec<SegmentDto>) -> Vec<SegmentDto> 
 pub(crate) fn to_dto(
     meeting: Meeting,
     segments: Vec<crate::store::StoredSegment>,
-    notes: Option<MeetingNotes>,
+    mfu: Option<MeetingMfu>,
 ) -> crate::error::Result<MeetingDto> {
     let segments = segments
         .into_iter()
@@ -110,7 +110,7 @@ pub(crate) fn to_dto(
         language: meeting.language,
         status: meeting.status,
         segments: coalesce_by_speaker(segments),
-        notes,
+        mfu,
         source_missing,
     })
 }
@@ -141,7 +141,7 @@ mod tests {
             language: "ru".to_string(),
             status: "finished".to_string(),
             segments: vec![dto(0, 1_000, "Saved transcript", Some(3))],
-            notes: None,
+            mfu: None,
             source_missing: false,
         };
 

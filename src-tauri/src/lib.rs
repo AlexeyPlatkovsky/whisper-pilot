@@ -44,7 +44,7 @@ pub fn run() {
             commands::meetings::rename_meeting,
             commands::meetings::delete_meeting,
             commands::meetings::update_segment,
-            commands::meetings::update_notes,
+            commands::meetings::update_mfu,
             commands::transcription::set_meeting_source,
             commands::transcription::transcribe_meeting,
             commands::transcription::diarize_meeting,
@@ -52,6 +52,7 @@ pub fn run() {
             commands::streaming::open_streaming_session,
             commands::streaming::rename_streaming_session,
             commands::streaming::delete_streaming_session,
+            commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,
             commands::dialogs::save_text_dialog,
@@ -60,11 +61,11 @@ pub fn run() {
             commands::models::list_task_models,
             commands::models::download_model,
             commands::models::delete_model,
-            commands::notes::generate_notes,
-            commands::notes::generate_streaming_notes,
-            commands::notes::generate_streaming_prettify,
-            commands::notes::accept_streaming_prettify,
-            commands::notes::revert_streaming_prettify
+            commands::mfu::generate_mfu,
+            commands::mfu::generate_streaming_mfu,
+            commands::mfu::generate_streaming_prettify,
+            commands::mfu::accept_streaming_prettify,
+            commands::mfu::revert_streaming_prettify
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

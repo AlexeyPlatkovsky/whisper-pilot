@@ -187,7 +187,7 @@ describe("App — diarize speakers", () => {
     expect(screen.getByDisplayValue("Hello")).toBeInTheDocument();
   });
 
-  it("disables Diarize while transcribing, generating notes, or itself running", async () => {
+  it("disables Diarize while transcribing, generating mfu, or itself running", async () => {
     const user = userEvent.setup();
     const diarizeButton = await transcribeWithDiarizationActive(user);
     await waitFor(() => expect(diarizeButton).not.toBeDisabled());
@@ -200,7 +200,7 @@ describe("App — diarize speakers", () => {
   });
 });
 
-describe("App — notes editing", () => {
+describe("App — mfu editing", () => {
   async function transcribeAndCraftNotes(
     user: ReturnType<typeof userEvent.setup>,
   ) {
@@ -222,9 +222,9 @@ describe("App — notes editing", () => {
       active_model_llm: "llm-1",
       export_file_type: "plain_text",
     });
-    vi.mocked(ipc.generateNotes).mockResolvedValue({
+    vi.mocked(ipc.generateMfu).mockResolvedValue({
       ...transcribedMeeting([HELLO_SEGMENT]),
-      notes: {
+      mfu: {
         meeting_id: 100,
         summary: "Summary text",
         decisions: "",
@@ -237,13 +237,13 @@ describe("App — notes editing", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    const craft = await screen.findByRole("button", { name: "Craft notes" });
+    const craft = await screen.findByRole("button", { name: "Craft MFU" });
     await waitFor(() => expect(craft).not.toBeDisabled());
     await user.click(craft);
     return screen.findByDisplayValue("Summary text");
   }
 
-  it("auto-saves an edited notes field after a debounce", async () => {
+  it("auto-saves an edited mfu field after a debounce", async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       const user = userEvent.setup({
@@ -253,12 +253,12 @@ describe("App — notes editing", () => {
 
       await user.clear(summaryField);
       await user.type(summaryField, "Updated summary");
-      expect(ipc.updateNotes).not.toHaveBeenCalled();
+      expect(ipc.updateMfu).not.toHaveBeenCalled();
 
       await vi.advanceTimersByTimeAsync(500);
 
-      expect(ipc.updateNotes).toHaveBeenCalledTimes(1);
-      expect(ipc.updateNotes).toHaveBeenCalledWith(
+      expect(ipc.updateMfu).toHaveBeenCalledTimes(1);
+      expect(ipc.updateMfu).toHaveBeenCalledWith(
         expect.objectContaining({
           meeting_id: 100,
           summary: "Updated summary",

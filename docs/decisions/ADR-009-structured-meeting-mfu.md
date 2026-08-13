@@ -1,4 +1,4 @@
-# ADR-009: Structured meeting notes (full set), editable
+# ADR-009: Structured meeting MFU (full set), editable
 
 - **Status:** accepted
 - **Date:** 2026-07-21
@@ -12,7 +12,7 @@ is less useful than an actionable follow-up.
 
 ## Decision
 
-Generate **structured meeting notes** (not a free-form blurb), in **Russian**, with
+Generate **structured meeting MFU** (not a free-form blurb), in **Russian**, with
 a fixed section set:
 
 - **Summary** — brief gist.
@@ -21,18 +21,18 @@ a fixed section set:
 - **Open questions.**
 - **Participants.**
 
-Notes are generated **on demand via the Create MFU action** (enabled after
+MFU are generated **on demand via the Create MFU action** (enabled after
 transcription finishes; UI-blocking — ADR-010), **editable in place**
 (auto-saved), **clearable**, and **regenerable** on demand. Generation is local
 (llama.cpp / Qwen2.5 — ADR-006).
 
 ## Consequences
 
-- The notes are directly useful as a meeting follow-up, not just a summary.
+- The MFU are directly useful as a meeting follow-up, not just a summary.
 - Requires a defined prompt/template producing the five sections reliably in
   Russian; prompt design becomes real work (part of M3).
 - The "Participants" and per-owner "Action items" sections benefit from speaker
-  labels (M2), so the M3 notes read better after M2 though they do not require it.
+  labels (M2), so the M3 MFU read better after M2 though they do not require it.
 
 ## Alternatives Considered
 

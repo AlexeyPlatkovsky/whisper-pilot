@@ -4,9 +4,9 @@
 use crate::error::{AppError, Result};
 #[cfg(target_os = "macos")]
 use crate::events::{StreamingSessionEndedEvent, StreamingSourcesEvent, StreamingWindowEvent};
-use crate::state::{app_data_dir, AppState};
 #[cfg(target_os = "macos")]
-use crate::state::{now_ms, StreamingRuntime};
+use crate::state::StreamingRuntime;
+use crate::state::{app_data_dir, now_ms, AppState};
 use crate::streaming;
 #[cfg(target_os = "macos")]
 use crate::streaming_audio;
@@ -50,6 +50,24 @@ pub(crate) fn rename_streaming_session(
 #[tauri::command]
 pub(crate) fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result<()> {
     streaming::delete_streaming_session(&app_data_dir(&app)?, id)
+}
+
+/// Create a stopped Streaming session record. Capture begins only when the
+/// user subsequently invokes `start_streaming_session` for this session.
+#[tauri::command]
+pub(crate) fn create_streaming_session(
+    app: tauri::AppHandle,
+) -> Result<streaming::StreamingSessionSummaryDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let id = streaming::create_streaming_session(&app_support_dir, now_ms()?)?;
+    let session = streaming::open_streaming_session(&app_support_dir, id)?;
+    Ok(streaming::StreamingSessionSummaryDto {
+        id: session.id,
+        title: session.title,
+        created_at_ms: session.created_at_ms,
+        updated_at_ms: session.updated_at_ms,
+        status: session.status,
+    })
 }
 
 /// Runs on its own blocking thread for a session's whole lifetime: persists
@@ -197,17 +215,10 @@ pub(crate) async fn start_streaming_session(
                 return Err(e);
             }
         },
-        None => match streaming::create_streaming_session(&app_support_dir, now) {
-            Ok(id) => (
-                streaming::StreamingSessionSummaryDto {
-                    id,
-                    title: "New Streaming Session".to_string(),
-                    created_at_ms: now,
-                    updated_at_ms: now,
-                    status: streaming_store::status::ACTIVE.to_string(),
-                },
-                0,
-            ),
+        None => match streaming::create_streaming_session(&app_support_dir, now)
+            .and_then(|id| streaming::resume_streaming_session(&app_support_dir, id, now))
+        {
+            Ok(result) => result,
             Err(e) => {
                 streaming_session::release_whisper_busy(&state.whisper_busy);
                 return Err(e);
