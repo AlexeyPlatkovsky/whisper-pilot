@@ -41,6 +41,12 @@
     "original_status": "done",
     "project_key": "WP"
   },
+  "WP-28": {
+    "archived_at": "2026-08-12T20:13:51Z",
+    "original_id": "WP-28",
+    "original_status": "done",
+    "project_key": "WP"
+  },
   "WP-29": {
     "archived_at": "2026-08-10T17:13:49Z",
     "original_id": "WP-29",
@@ -50,6 +56,12 @@
   "WP-3": {
     "archived_at": "2026-08-06T12:17:50Z",
     "original_id": "WP-3",
+    "original_status": "done",
+    "project_key": "WP"
+  },
+  "WP-30": {
+    "archived_at": "2026-08-12T20:13:51Z",
+    "original_id": "WP-30",
     "original_status": "done",
     "project_key": "WP"
   },
@@ -212,6 +224,12 @@
   "WP-57": {
     "archived_at": "2026-08-10T17:13:49Z",
     "original_id": "WP-57",
+    "original_status": "done",
+    "project_key": "WP"
+  },
+  "WP-59": {
+    "archived_at": "2026-08-12T20:13:51Z",
+    "original_id": "WP-59",
     "original_status": "done",
     "project_key": "WP"
   },
