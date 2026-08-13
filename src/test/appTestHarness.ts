@@ -72,8 +72,8 @@ export function createIpcMock() {
     openMeeting: vi.fn(),
     renameMeeting: vi.fn(),
     updateSegment: vi.fn(),
-    updateNotes: vi.fn(),
-    generateNotes: vi.fn(),
+    updateMfu: vi.fn(),
+    generateMfu: vi.fn(),
     saveTextDialog: vi.fn(async () => null),
     listTaskModels: vi.fn(),
     downloadModel: vi.fn(),
@@ -138,15 +138,15 @@ export function resetAppMocks() {
   vi.mocked(ipc.openMeeting).mockReset();
   vi.mocked(ipc.renameMeeting).mockReset();
   vi.mocked(ipc.updateSegment).mockReset();
-  vi.mocked(ipc.updateNotes).mockReset();
+  vi.mocked(ipc.updateMfu).mockReset();
   vi.mocked(ipc.updateSegment).mockResolvedValue(
     transcribedMeeting([HELLO_SEGMENT]),
   );
-  vi.mocked(ipc.updateNotes).mockImplementation(async (notes) => ({
+  vi.mocked(ipc.updateMfu).mockImplementation(async (mfu) => ({
     ...transcribedMeeting([HELLO_SEGMENT]),
-    notes,
+    mfu,
   }));
-  vi.mocked(ipc.generateNotes).mockReset();
+  vi.mocked(ipc.generateMfu).mockReset();
   vi.mocked(ipc.diarizeMeeting).mockReset();
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",

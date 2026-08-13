@@ -4,8 +4,8 @@ TaskPilot epic **WP-11** owns work status; each task references its `WP-<n>` ID.
 
 | ID | Task | Implements | Depends on | TaskPilot |
 | --- | --- | --- | --- | --- |
-| F004-T1 | SQLite store: meetings/segments/notes schema + CRUD (`store.rs`) | F004-R1 | — | WP-16 |
-| F004-T2 | Auto-save wiring for segment/label/notes edits | F004-R10 | F004-T1 | WP-17 |
+| F004-T1 | SQLite store: meetings/segments/MFU schema + CRUD (`store.rs`) | F004-R1 | — | WP-16 |
+| F004-T2 | Auto-save wiring for segment/label/MFU edits | F004-R10 | F004-T1 | WP-17 |
 | F004-T3 | `transcribe_meeting(id)` command with phase transition and completion through its invoke result | F004-R1, F004-R8 | F004-T1 | WP-18 |
 | F004-T4 | Remove unsafe in-process Meeting Stop/callback plumbing; isolated cancellation follows in WP-87 | F004-R8 | F004-T3 | WP-19, WP-86 |
 | F004-T5 | Transcription language auto-detection (no user selection) | F004-R6 | — | WP-20 |
@@ -20,7 +20,7 @@ TaskPilot epic **WP-11** owns work status; each task references its `WP-<n>` ID.
 | F004-T14 | Transcript surface: editable (`m:ss`) segments in the center pane (F002 groups them into colored speaker bubbles) | F004-R11 | F004-T10 | WP-30 |
 | F004-T15 | Re-transcribe guard: confirm before replacing an existing transcript/MFU | F004-R14 | F004-T3 | WP-32 |
 
-## Notes
+## MFU
 
 - TaskPilot **features** under epic WP-11: WP-12 persistence/meeting model,
   WP-13 transcription-to-meeting, WP-14 library UI, WP-15 export, and **WP-25

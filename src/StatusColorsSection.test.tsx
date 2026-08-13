@@ -30,7 +30,7 @@ describe("StatusColorsSection — listing", () => {
       ).toBeInTheDocument();
     }
     expect(screen.getByText("#8A5F10")).toBeInTheDocument();
-    expect(screen.getAllByText("#176C8F")).toHaveLength(5);
+    expect(screen.getAllByText("#176C8F")).toHaveLength(4);
     expect(screen.getAllByText("#B82B2F")).toHaveLength(4);
   });
 
@@ -43,8 +43,32 @@ describe("StatusColorsSection — listing", () => {
       ".wp-status-color-grid > .wp-status-color-column",
     );
     expect(columns).toHaveLength(2);
-    expect(columns[0].querySelectorAll(".wp-status-color-row")).toHaveLength(8);
+    expect(columns[0].querySelectorAll(".wp-status-color-row")).toHaveLength(7);
     expect(columns[1].querySelectorAll(".wp-status-color-row")).toHaveLength(7);
+  });
+
+  it("sorts statuses alphabetically and fills each row from left to right", () => {
+    const { container } = render(
+      <StatusColorsSection statusColorsRaw={undefined} />,
+    );
+    const columns = container.querySelectorAll(
+      ".wp-status-color-grid > .wp-status-color-column",
+    );
+    const alphabeticalLabels = [...STATUS_COLOR_SPECS]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map((spec) => spec.label);
+    const labelsIn = (column: Element) =>
+      Array.from(
+        column.querySelectorAll(".wp-status-color-name"),
+        (label) => label.textContent,
+      );
+
+    expect(labelsIn(columns[0])).toEqual(
+      alphabeticalLabels.filter((_, i) => i % 2 === 0),
+    );
+    expect(labelsIn(columns[1])).toEqual(
+      alphabeticalLabels.filter((_, i) => i % 2 === 1),
+    );
   });
 
   it("colors each status label with that status's current color", () => {
@@ -191,7 +215,9 @@ describe("StatusColorsSection — picker popover", () => {
     await user.type(hexInput, "#CCCCCC");
 
     expect(
-      await within(dialog).findByText(/low contrast/i),
+      await within(dialog).findByText(
+        "Low contrast (1.61<4.50:1) against the current theme background.",
+      ),
     ).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
 
@@ -201,6 +227,17 @@ describe("StatusColorsSection — picker popover", () => {
       "status_colors",
       savedMapping({ ready: "#CCCCCC" }),
     );
+  });
+
+  it("treats a ratio that rounds to 4.50 as passing", async () => {
+    render(<StatusColorsSection statusColorsRaw={undefined} />);
+    const { user, dialog } = await openPicker("Ready");
+
+    const hexInput = within(dialog).getByLabelText("Hex color");
+    await user.clear(hexInput);
+    await user.type(hexInput, "#A96800");
+
+    expect(within(dialog).queryByText(/low contrast/i)).not.toBeInTheDocument();
   });
 
   it("restores the prior mapping and shows an error when persisting fails", async () => {

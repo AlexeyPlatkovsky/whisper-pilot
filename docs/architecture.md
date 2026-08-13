@@ -1,8 +1,8 @@
 # WhisperPilot Architecture
 
-Technical architecture for the offline meeting-notes workspace. Product scope is
+Technical architecture for the offline meeting-mfu workspace. Product scope is
 owned by `docs/idea.md`; UX by `docs/design.md`. This document owns the layer
-map, pipeline, meeting/data model, IPC contract, models, and build notes. The
+map, pipeline, meeting/data model, IPC contract, models, and build MFU. The
 core unit is a **Meeting** (one transcription of one source file).
 
 ## Layer Map
@@ -13,14 +13,14 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meeting workspace                commands/     thin Tauri command layer (per-domain modules)
   transcript editor                audio.rs      ffmpeg normalize + WAV decode
   MFU panel                        transcribe.rs whisper (Metal) decode; Streaming progress callback
-  settings screen                  store.rs      SQLite meeting library (meetings, segments, notes)
+  settings screen                  store.rs      SQLite meeting library (meetings, segments, MFU)
   ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
   theming / i18n                   state.rs      AppState (model cache, running-run slots)
   [WP-68] StreamingView.tsx        error.rs      AppError → serialized to JS
                                    settings.rs   key–value settings store (theme, ui_language, active models)
                                    models/       model catalog (`catalog.rs`) + download (`download.rs`)
                                    [M2] diarize/   sherpa-onnx speaker turns + merge (clustering/segmentation/speakers/pipeline)
-                                   [M3] notes.rs     llama.cpp structured meeting notes
+                                   [M3] mfu.rs     llama.cpp structured meeting MFU
                                    [WP-68] streaming_audio.rs  mic + system-audio capture/mix (see below)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
                                    [WP-68] streaming_store.rs  SQLite streaming_sessions/streaming_segments
@@ -30,7 +30,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
 The Rust core does all heavy work and owns persistence; the React layer is a
 two-pane shell — a meetings list plus the active meeting's workspace. Blocking,
 CPU/GPU-heavy work (model load,
-transcription, diarization, note generation) runs on `tokio::task::spawn_blocking`
+transcription, diarization, detail generation) runs on `tokio::task::spawn_blocking`
 so IPC and the UI stay responsive. Long operations report progress; Streaming
 capture has its own stop command, while Meeting transcription runs to completion.
 
@@ -48,7 +48,7 @@ computed fresh on every DTO build — `to_dto` in `meetings/dto.rs` checks
 `Path::exists()` on the stored `source_path` — rather than stored, so it
 always reflects the file's current state instead of a snapshot from whenever
 it was last attached or transcribed. The front end disables **Transcribe**
-and shows an explanatory note when set; the transcript and notes stay
+and shows an explanatory detail when set; the transcript and MFU stay
 readable and editable either way.
 
 Entities (indicative):
@@ -57,12 +57,12 @@ Entities (indicative):
 | ---------- | --------------------------------------------------------------------------------- |
 | `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
 | `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2)     |
-| `notes`    | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
+| `MFU`    | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
 
-The store replaces/reads segments in ordinal order, upserts a single notes
+The store replaces/reads segments in ordinal order, upserts a single MFU
 record per meeting, and cascades meeting deletion to dependent rows. Segment
-text and notes edits are **auto-saved** (WP-17): the front end debounces each
-edit (500ms idle) and calls `update_segment`/`update_notes`, which persist to
+text and MFU edits are **auto-saved** (WP-17): the front end debounces each
+edit (500ms idle) and calls `update_segment`/`update_mfu`, which persist to
 the DB immediately; there is no explicit save state or button. Export is a
 separate, explicit write to an external file.
 
@@ -77,7 +77,7 @@ coalesced block also collapses the other, untouched blocks in that meeting to
 one row per display block from that point on — the fine-grained pre-edit
 ordinals are not preserved once an auto-save has happened. Speaker labels
 (the user-facing rename in `SpeakerLabelEditor`) remain session-only, not
-persisted; only segment text and notes are in WP-17's scope.
+persisted; only segment text and MFU are in WP-17's scope.
 
 ## Audio Ingestion (`audio.rs`)
 
@@ -126,7 +126,7 @@ The **Transcribe** run is a two-phase pipeline: transcription, then **diarizatio
   Stop is tracked separately (WP-87). If diarization is unavailable or fails,
   the run still finishes with plain (speaker-less) segments. Re-running
   Transcribe on a meeting that already has
-  a transcript replaces it (and any notes) after a confirmation.
+  a transcript replaces it (and any MFU) after a confirmation.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models/`) into the app support directory;
@@ -236,7 +236,7 @@ launcher. Since WP-60 that is a second line of defence rather than the only
 one: the binary carries its own `LC_RPATH` entries, so parent and child both
 resolve `@rpath/libonnxruntime` and `@rpath/libsherpa-onnx-c-api` without help
 from the environment — which matters because a hardened-runtime build strips
-`DYLD_*` unless entitled. See §Build Notes for how the dylibs reach the bundle.
+`DYLD_*` unless entitled. See §Build MFU for how the dylibs reach the bundle.
 
 `diarize/` also (WP-7) has the turn↔segment merge algorithm:
 `merge_segments_with_turns` assigns each segment span the speaker whose turns
@@ -535,7 +535,7 @@ timer, `h:mm:ss` past one hour) as `isRunning`/`busy`/`craftingId`/
 approach) that both the header widget and the sidebar row's status dot read,
 reusing `App.tsx`'s existing `.wp-status`/`.wp-tone--*` pattern; a Craft
 button (WP-77, in the header's Main Actions row) that generates structured
-notes into a `.wp-mfu` panel — see Structured Notes above; and a Prettify
+MFU into a `.wp-mfu` panel — see Structured MFU above; and a Prettify
 button (WP-75, in the transcript panel's own header actions, alongside its
 Accept/Cancel/Revert controls) — see Transcript Prettify below. A fail-open
 window renders as `[unavailable]`, not blank space, so a decode failure reads
@@ -560,27 +560,27 @@ paragraph, so this is purely a rendering grouping, not a change to the
 underlying transcript data. Prettify's LLM cleanup does not yet also emit
 paragraph breaks — a possible follow-on, not yet built.
 
-## Structured Notes (M3, `llm.rs`)
+## Structured MFU (M3, `llm.rs`)
 
 llama.cpp running quantized Qwen2.5-Instruct on Metal generates **structured
-notes** from a transcript: summary, key decisions, action items, open
+MFU** from a transcript: summary, key decisions, action items, open
 questions, participants — in Russian or English depending on which the
 transcript itself is in (Cyrillic-character detection in `llm::build_prompt`).
-`llm::generate_notes` returns a domain-agnostic `GeneratedNotes` (no id field);
+`llm::generate_mfu` returns a domain-agnostic `GeneratedNotes` (no id field);
 each caller attaches its own id before persisting. For Meeting, generation is
 manual (the **Create MFU** button, enabled only after transcription finishes)
 and UI-blocking; the result is copyable, not separately editable or
-clearable. Streaming reuses the same `generate_notes` call (WP-77,
+clearable. Streaming reuses the same `generate_mfu` call (WP-77,
 `generate_streaming_notes`) for a Streaming session's transcript, gated the
 same way (enabled only once the session is stopped) and persisted in its own
 `streaming_notes` table (`streaming_store.rs`), parallel to but independent
-of Meeting's `notes` table.
+of Meeting's `MFU` table.
 
 ## Transcript Prettify (WP-75, `llm.rs`, `src/diff.ts`) — Streaming only
 
 A second, distinct local-LLM use of the same model: `llm::prettify_transcript`
 performs conservative cleanup of a Streaming transcript, returning plain
-cleaned text (not the structured-notes JSON template `generate_notes` uses).
+cleaned text (not the structured-MFU JSON template `generate_mfu` uses).
 The backend rejects empty, language-dropping, excessively shortened or
 expanded candidates and candidates that omit protected numbers or technical
 terms, so an unsafe rewrite never reaches the review UI. Unlike Craft/MFU,
@@ -611,7 +611,7 @@ drives the _System_ theme.
 
 `models/` manages a **fixed, app-defined catalog** of the model(s) each task
 needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
-selectable embedding, notes = llama/Qwen at M3). **Download** fetches from a
+selectable embedding, MFU = llama/Qwen at M3). **Download** fetches from a
 known URL, streams progress, and marks a model ready only after **SHA
 verification**; **Delete** removes the local file. A task whose required model
 is absent is disabled or degrades (Transcribe needs the Whisper model;
@@ -624,12 +624,12 @@ by a synthetic `"diarization-<variant>"` id, with an `active_model.diarization`
 setting selecting which embedding is Active (or `"none"` to skip diarization
 entirely — the default for every user, including those upgrading from before
 this selection existed). This supersedes the earlier "manual model placement /
-deferred model management" note.
+deferred model management" detail.
 
 ## Export
 
 **As actually built, not as originally planned:** there is no `export.rs`
-Rust module. A meeting's transcript (and, for Markdown, its notes) is
+Rust module. A meeting's transcript (and, for Markdown, its MFU) is
 rendered client-side and written to a user-chosen destination via the
 generic `save_text_dialog(content, default_name)` command — `save_text_dialog`
 itself is format-agnostic; it just writes whatever string it is given.
@@ -641,9 +641,9 @@ selects the rendering. `renderForExport` is the one function both **Save**
 `src/CopyButton.tsx`) call, so file export and clipboard copy can
 never render differently. Plain text (`renderPlainText`) is unchanged from
 before this setting existed — transcript only, `"Label: text"` per line, no
-notes. Markdown (`renderMarkdown`) adds a `# Transcript` heading, bold speaker
-labels, `[m:ss]` timestamps, and — only when the meeting has notes — a
-`## Notes` section with one `### <field>` subsection per non-empty notes
+MFU. Markdown (`renderMarkdown`) adds a `# Transcript` heading, bold speaker
+labels, `[m:ss]` timestamps, and — only when the meeting has MFU — a
+`## MFU` section with one `### <field>` subsection per non-empty MFU
 field.
 
 Streaming's export/copy (WP-74, `StreamingView.tsx`) is a separate,
@@ -671,9 +671,9 @@ span.
 | `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
 | `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes; Meeting decode emits no percent-progress event.                                           | M2        |
 | `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
-| `open_meeting(id)`                                                     | Full meeting (segments, notes, meta)                                                                                                                                                          | M2        |
+| `open_meeting(id)`                                                     | Full meeting (segments, MFU, meta)                                                                                                                                                          | M2        |
 | `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
-| `update_segment(meeting, seg, text)` / `update_notes(meeting, notes)`  | Auto-saved edits                                                                                                                                                                              | M2/M3     |
+| `update_segment(meeting, seg, text)` / `update_mfu(meeting, MFU)`  | Auto-saved edits                                                                                                                                                                              | M2/M3     |
 | `export_meeting(id, format, target)`                                   | Write Markdown / plain text                                                                                                                                                                   | M2        |
 | `list_models()`                                                        | Available (downloaded) Whisper models for the switcher                                                                                                                                        | M2        |
 | `diarize_meeting(id)`                                                  | Produce + merge speaker turns                                                                                                                                                                 | M2        |
@@ -682,7 +682,7 @@ span.
 | `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
 | `set_active_model(task, id)`                                           | Choose the active model for a task                                                                                                                                                            | M3        |
 | `check_update()` / `apply_update()`                                    | App update                                                                                                                                                                                    | M3        |
-| `generate_notes(id)`                                                   | Generate structured MFU notes (Create MFU)                                                                                                                                                    | M3        |
+| `generate_mfu(id)`                                                   | Generate structured MFU MFU (Create MFU)                                                                                                                                                    | M3        |
 | `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
@@ -711,16 +711,16 @@ loop has fully ended after `stop_streaming_session`.
 
 ## Security And Privacy
 
-**Transcription and MFU note generation make no network calls** — they run
+**Transcription and MFU detail generation make no network calls** — they run
 entirely on-device, and there is **no telemetry**. The **only** networked
 operation is **user-initiated model downloads** (and, at release, the app
 update), fetched from known URLs and **SHA-verified**. Audio, transcripts, and
-notes never leave the device. File writes: the temporary ffmpeg WAV (deleted
+MFU never leave the device. File writes: the temporary ffmpeg WAV (deleted
 after use), the SQLite library and the settings store under the app support
 directory, downloaded model files, and user-chosen export destinations. No
 `.env` or secret handling.
 
-## Build Notes
+## Build MFU
 
 - Tauri v2 + React 19 + TypeScript; Vite dev server on port 1420.
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.

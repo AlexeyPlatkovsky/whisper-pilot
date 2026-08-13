@@ -164,7 +164,7 @@ Scenario: A meeting whose source is gone opens without re-transcribe
   Given a meeting whose source file has been moved or deleted
   When the user opens it
   Then the transcript is shown and editable
-    And Transcribe is disabled with an explanatory note
+    And Transcribe is disabled with an explanatory detail
 ```
 
 ### F004-S13: Export
@@ -176,7 +176,7 @@ Scenario: Export a meeting to Markdown and plain text
   Given an open meeting
   When the user exports it as Markdown, then as plain text
   Then each file contains the current transcript with speaker labels and
-       timestamps, plus the MFU notes when present
+       timestamps, plus the MFU MFU when present
 ```
 
 ### F004-S14: Re-transcribe guards existing content
@@ -204,6 +204,6 @@ Scenario: Re-running Transcribe warns before replacing
       offered, and the finished transcript is persisted.
 - [ ] (F004-R9) A spinner timer ticks each second through transcription and
       speaker identification.
-- [ ] (F004-R12) Renaming/moving the source on disk yields the source-missing note
+- [ ] (F004-R12) Renaming/moving the source on disk yields the source-missing detail
       on next open.
 - [ ] (F004-R13) Exported Markdown renders correctly in a Markdown viewer.

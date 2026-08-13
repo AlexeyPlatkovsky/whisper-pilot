@@ -22,7 +22,7 @@ summary.
 ## Value Proposition
 
 Drop in an audio or video file and get back an accurate, speaker-labelled,
-editable transcript plus structured meeting notes — kept in a local library you
+editable transcript plus structured meeting MFU — kept in a local library you
 can reopen and edit, entirely on-device, no cloud, with accuracy prioritized over
 speed because processing is offline and batch.
 
@@ -38,16 +38,16 @@ Meeting's batch-accuracy pipeline, which is unchanged.
 
 - Transcribing local **audio and video** files (audio extracted from video),
   **one file at a time**.
-- **Offline, on-device** transcription, speaker separation, and note generation.
+- **Offline, on-device** transcription, speaker separation, and detail generation.
 - **Russian** as the primary language the app is tuned and validated for; the
   transcription language itself is always **auto-detected** from the audio,
   never chosen (ADR-012). English added afterward as a focus.
 - A **speaker-attributed**, editable transcript.
-- Structured **meeting notes** generated locally — summary, key decisions,
+- Structured **meeting MFU** generated locally — summary, key decisions,
   action items, open questions, participants — editable and copyable.
 - A persisted **library** of **meetings** (one meeting = one transcription):
   reopen, rename, delete, with edits **auto-saved** locally.
-- **Export** of a meeting (transcript and/or notes) to Markdown and plain text.
+- **Export** of a meeting (transcript and/or MFU) to Markdown and plain text.
 - A **Settings** screen: **AI models** (download/delete the model each task needs;
   at release, choose an Active model among several per task), **Appearance**
   (light / dark / system themes; more themes at release), **App language** (the UI
@@ -83,7 +83,7 @@ Meeting's batch-accuracy pipeline, which is unchanged.
   quality-over-latency priority — it does not replace or dilute Meeting's
   batch-accuracy approach.
 - It will not depend on any network service for its **core processing**:
-  transcription (Meeting or Streaming) and MFU note generation make no network
+  transcription (Meeting or Streaming) and MFU detail generation make no network
   calls. The only network use is downloading models (and, at release, app
   updates).
 

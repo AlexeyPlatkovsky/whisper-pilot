@@ -64,10 +64,10 @@ pub struct StoredStreamingWindow {
     pub outcome_ok: bool,
 }
 
-/// Structured MFU/Craft notes for a Streaming session — parallel to
-/// `store::MeetingNotes`, one row per session (upserted on re-Craft).
+/// Structured MFU/Craft MFU for a Streaming session — parallel to
+/// `store::MeetingMfu`, one row per session (upserted on re-Craft).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StreamingNotes {
+pub struct StreamingMfu {
     pub session_id: StreamingSessionId,
     pub summary: String,
     pub decisions: String,
@@ -96,6 +96,7 @@ impl StreamingStore {
         connection
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
+        migrate_legacy_streaming_notes(&connection)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -108,7 +109,7 @@ impl StreamingStore {
             .execute(
                 "INSERT INTO streaming_sessions (title, created_at_ms, updated_at_ms, status)
                  VALUES (?1, ?2, ?2, ?3)",
-                params![session.title, session.created_at_ms, status::ACTIVE],
+                params![session.title, session.created_at_ms, status::STOPPED],
             )
             .map_err(store_error)?;
         let id = connection.last_insert_rowid();
@@ -251,10 +252,10 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
-    pub fn upsert_notes(&self, notes: &StreamingNotes) -> Result<()> {
+    pub fn upsert_mfu(&self, mfu: &StreamingMfu) -> Result<()> {
         self.connection()?
             .execute(
-                "INSERT INTO streaming_notes
+                "INSERT INTO streaming_mfu
                     (session_id, summary, decisions, action_items, open_questions, participants)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(session_id) DO UPDATE SET
@@ -264,34 +265,34 @@ impl StreamingStore {
                     open_questions = excluded.open_questions,
                     participants = excluded.participants",
                 params![
-                    notes.session_id,
-                    notes.summary,
-                    notes.decisions,
-                    notes.action_items,
-                    notes.open_questions,
-                    notes.participants,
+                    mfu.session_id,
+                    mfu.summary,
+                    mfu.decisions,
+                    mfu.action_items,
+                    mfu.open_questions,
+                    mfu.participants,
                 ],
             )
             .map_err(store_error)?;
         Ok(())
     }
 
-    pub fn get_notes(&self, session_id: StreamingSessionId) -> Result<Option<StreamingNotes>> {
+    pub fn get_mfu(&self, session_id: StreamingSessionId) -> Result<Option<StreamingMfu>> {
         self.connection()?
             .query_row(
                 "SELECT session_id, summary, decisions, action_items, open_questions, participants
-                 FROM streaming_notes WHERE session_id = ?1",
+                 FROM streaming_mfu WHERE session_id = ?1",
                 params![session_id],
-                notes_from_row,
+                mfu_from_row,
             )
             .optional()
             .map_err(store_error)
     }
 
-    pub fn delete_notes(&self, session_id: StreamingSessionId) -> Result<()> {
+    pub fn delete_mfu(&self, session_id: StreamingSessionId) -> Result<()> {
         self.connection()?
             .execute(
-                "DELETE FROM streaming_notes WHERE session_id = ?1",
+                "DELETE FROM streaming_mfu WHERE session_id = ?1",
                 params![session_id],
             )
             .map_err(store_error)?;
@@ -359,6 +360,23 @@ fn session_exists(connection: &Connection, id: StreamingSessionId) -> Result<boo
         .map_err(store_error)
 }
 
+/// Preserve existing pre-MFU Streaming data while replacing the legacy table name.
+fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
+    let has_legacy = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_notes')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if has_legacy {
+        connection
+            .execute_batch("ALTER TABLE streaming_notes RENAME TO streaming_mfu;")
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
 fn session_by_id(
     connection: &Connection,
     id: StreamingSessionId,
@@ -394,8 +412,8 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
     })
 }
 
-fn notes_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingNotes> {
-    Ok(StreamingNotes {
+fn mfu_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingMfu> {
+    Ok(StreamingMfu {
         session_id: row.get(0)?,
         summary: row.get(1)?,
         decisions: row.get(2)?,
@@ -437,7 +455,7 @@ CREATE TABLE IF NOT EXISTS streaming_segments (
     PRIMARY KEY (session_id, window_index)
 );
 
-CREATE TABLE IF NOT EXISTS streaming_notes (
+CREATE TABLE IF NOT EXISTS streaming_mfu (
     session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
     summary TEXT NOT NULL,
     decisions TEXT NOT NULL,
@@ -484,7 +502,7 @@ mod tests {
             .create_session(draft("Standup", 100))
             .expect("create session");
 
-        assert_eq!(created.status, status::ACTIVE);
+        assert_eq!(created.status, status::STOPPED);
         assert_eq!(
             store.get_session(created.id).expect("get session"),
             Some(created.clone())
@@ -496,7 +514,7 @@ mod tests {
                 title: "Standup".to_string(),
                 created_at_ms: 100,
                 updated_at_ms: 100,
-                status: status::ACTIVE.to_string(),
+                status: status::STOPPED.to_string(),
             }]
         );
     }
@@ -662,8 +680,8 @@ mod tests {
         assert_eq!(store.list_windows(b).unwrap().len(), 1);
     }
 
-    fn notes(session_id: StreamingSessionId) -> StreamingNotes {
-        StreamingNotes {
+    fn mfu(session_id: StreamingSessionId) -> StreamingMfu {
+        StreamingMfu {
             session_id,
             summary: "Discussed Q3 roadmap.".to_string(),
             decisions: "Ship M1 by Friday.".to_string(),
@@ -674,12 +692,12 @@ mod tests {
     }
 
     #[test]
-    fn given_no_notes_when_getting_then_result_is_none() {
+    fn given_no_mfu_when_getting_then_result_is_none() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
 
-        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+        assert_eq!(store.get_mfu(session_id).expect("get mfu"), None);
     }
 
     #[test]
@@ -713,76 +731,65 @@ mod tests {
     }
 
     #[test]
-    fn upserted_notes_round_trip() {
+    fn upserted_mfu_round_trip() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
 
-        store
-            .upsert_notes(&notes(session_id))
-            .expect("upsert notes");
+        store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
         assert_eq!(
-            store.get_notes(session_id).expect("get notes"),
-            Some(notes(session_id))
+            store.get_mfu(session_id).expect("get mfu"),
+            Some(mfu(session_id))
         );
     }
 
     #[test]
-    fn upserting_notes_twice_overwrites_rather_than_duplicates() {
+    fn upserting_mfu_twice_overwrites_rather_than_duplicates() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
-        store
-            .upsert_notes(&notes(session_id))
-            .expect("first upsert");
+        store.upsert_mfu(&mfu(session_id)).expect("first upsert");
 
-        let mut second = notes(session_id);
+        let mut second = mfu(session_id);
         second.summary = "Revised summary.".to_string();
-        store.upsert_notes(&second).expect("second upsert");
+        store.upsert_mfu(&second).expect("second upsert");
 
-        assert_eq!(
-            store.get_notes(session_id).expect("get notes"),
-            Some(second)
-        );
+        assert_eq!(store.get_mfu(session_id).expect("get mfu"), Some(second));
     }
 
     #[test]
-    fn upserting_notes_for_a_nonexistent_session_is_a_store_error() {
+    fn upserting_mfu_for_a_nonexistent_session_is_a_store_error() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
 
-        // The streaming_notes.session_id foreign key rejects this without
+        // The streaming_mfu.session_id foreign key rejects this without
         // any application-level existence check needed.
-        assert!(store.upsert_notes(&notes(999_999)).is_err());
+        assert!(store.upsert_mfu(&mfu(999_999)).is_err());
     }
 
     #[test]
-    fn deleting_a_session_cascades_its_notes() {
+    fn deleting_a_session_cascades_its_mfu() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
-        store
-            .upsert_notes(&notes(session_id))
-            .expect("upsert notes");
+        store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
         store.delete_session(session_id).expect("delete session");
 
-        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+        assert_eq!(store.get_mfu(session_id).expect("get mfu"), None);
     }
 
     #[test]
-    fn deleting_notes_directly_leaves_the_session_intact() {
+    fn deleting_mfu_directly_leaves_the_session_intact() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
-        store
-            .upsert_notes(&notes(session_id))
-            .expect("upsert notes");
+        store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
-        store.delete_notes(session_id).expect("delete notes");
+        store.delete_mfu(session_id).expect("delete mfu");
 
-        assert_eq!(store.get_notes(session_id).expect("get notes"), None);
+        assert_eq!(store.get_mfu(session_id).expect("get mfu"), None);
         assert!(store
             .get_session(session_id)
             .expect("get session")

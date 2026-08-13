@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   createMeeting,
   deleteMeeting,
-  generateNotes,
+  generateMfu,
   getSettings,
   listMeetings,
   listTaskModels,
@@ -16,10 +16,10 @@ import {
   saveTextDialog,
   renameMeeting,
   updateSegment,
-  updateNotes,
+  updateMfu,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
-  type MeetingNotes,
+  type MeetingMfu,
   type Segment,
 } from "./ipc";
 import { SettingsScreen } from "./SettingsScreen";
@@ -48,7 +48,7 @@ import {
 // back. This union only carries what the workspace itself is showing.
 type Status = { kind: "idle" } | { kind: "error"; message: string };
 
-// How long an edited segment or notes field waits, idle, before it is
+// How long an edited segment or mfu field waits, idle, before it is
 // auto-saved to the database. There is no explicit save action or state.
 const AUTOSAVE_DEBOUNCE_MS = 500;
 
@@ -64,7 +64,7 @@ export function App() {
     boolean | null
   >(null);
   const [llmModelReady, setLlmModelReady] = useState<boolean | null>(null);
-  const [notes, setNotes] = useState<MeetingNotes | null>(null);
+  const [mfu, setMfu] = useState<MeetingMfu | null>(null);
   const [speakerLabels, setSpeakerLabels] = useState<Record<number, string>>(
     {},
   );
@@ -107,10 +107,8 @@ export function App() {
   const [transcribingProgress, setTranscribingProgress] = useState<
     number | null
   >(null);
-  const [generatingNotesId, setGeneratingNotesId] = useState<number | null>(
-    null,
-  );
-  const isGeneratingNotes = generatingNotesId !== null;
+  const [generatingMfuId, setGeneratingMfuId] = useState<number | null>(null);
+  const isGeneratingMfu = generatingMfuId !== null;
   // The meeting whose standalone "Diarize" run is in flight, or null — the
   // header action that re-runs speaker identification alone, without
   // re-transcribing (separate from diarization folded into Transcribe).
@@ -123,20 +121,20 @@ export function App() {
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
   // Pending debounced auto-save timers, keyed by segment index, and the one
-  // pending notes auto-save timer. Each timer's meeting id is captured at
+  // pending mfu auto-save timer. Each timer's meeting id is captured at
   // schedule time, so switching meetings mid-debounce still saves to the
   // meeting the edit actually belongs to.
   const segmentSaveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(
     new Map(),
   );
-  const notesSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Mirrors `notes` for the debounce timer callback below, which fires
+  const mfuSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Mirrors `mfu` for the debounce timer callback below, which fires
   // outside a React batch and must read the latest merged fields rather than
   // whatever was in scope when the timer was scheduled.
-  const notesRef = useRef<MeetingNotes | null>(null);
+  const mfuRef = useRef<MeetingMfu | null>(null);
   useEffect(() => {
-    notesRef.current = notes;
-  }, [notes]);
+    mfuRef.current = mfu;
+  }, [mfu]);
   // Mirrors `transcribingId` for the phase-change listener below, which is
   // registered once and would otherwise close over a stale id.
   const transcribingIdRef = useRef<number | null>(null);
@@ -148,14 +146,14 @@ export function App() {
   useEffect(() => {
     if (
       transcribingId === null &&
-      generatingNotesId === null &&
+      generatingMfuId === null &&
       diarizingId === null
     )
       return;
     setElapsed(0);
     const id = setInterval(() => setElapsed((e) => e + 1), 1000);
     return () => clearInterval(id);
-  }, [transcribingId, generatingNotesId, diarizingId]);
+  }, [transcribingId, generatingMfuId, diarizingId]);
 
   const refreshModelAvailability = useCallback(async () => {
     try {
@@ -216,7 +214,7 @@ export function App() {
     setSegments(meeting.segments);
     setSpeakerLabels({});
     setStatus({ kind: "idle" });
-    setNotes(meeting.notes ?? null);
+    setMfu(meeting.mfu ?? null);
   }, []);
 
   const upsertSummary = useCallback((meeting: PersistedMeeting) => {
@@ -252,7 +250,7 @@ export function App() {
             setFileName(meeting.source_name ?? null);
             setSegments(meeting.segments);
             setSpeakerLabels({});
-            setNotes(meeting.notes ?? null);
+            setMfu(meeting.mfu ?? null);
             upsertSummary(meeting);
           })
           .catch(() => {});
@@ -323,8 +321,8 @@ export function App() {
   // The single rendering both export-to-file and the header copy button use,
   // so the two can never drift apart (WP-15).
   const exportText = useMemo(
-    () => renderForExport(exportFileType, segments, notes, resolveSpeakerLabel),
-    [exportFileType, segments, notes, speakerLabels],
+    () => renderForExport(exportFileType, segments, mfu, resolveSpeakerLabel),
+    [exportFileType, segments, mfu, speakerLabels],
   );
 
   const durationLabel = useMemo(() => {
@@ -378,22 +376,22 @@ export function App() {
     }
   }
 
-  async function handleGenerateNotes() {
+  async function handleGenerateMfu() {
     if (!activeMeeting) return;
     const id = activeMeeting.id;
     try {
-      setGeneratingNotesId(id);
+      setGeneratingMfuId(id);
       setStatus({ kind: "idle" });
-      const meeting = await generateNotes(id);
+      const meeting = await generateMfu(id);
       upsertSummary(meeting);
       if (activeMeetingIdRef.current === meeting.id) {
-        setNotes(meeting.notes ?? null);
+        setMfu(meeting.mfu ?? null);
       }
     } catch (e) {
       if (activeMeetingIdRef.current === id)
         setStatus({ kind: "error", message: String(e) });
     } finally {
-      setGeneratingNotesId(null);
+      setGeneratingMfuId(null);
     }
   }
 
@@ -535,17 +533,17 @@ export function App() {
     );
   }
 
-  function editNotesField(field: keyof MeetingNotes, value: string) {
+  function editMfuField(field: keyof MeetingMfu, value: string) {
     if (field === "meeting_id") return;
-    setNotes((prev) => (prev ? { ...prev, [field]: value } : prev));
+    setMfu((prev) => (prev ? { ...prev, [field]: value } : prev));
     const meetingId = activeMeeting?.id;
     if (meetingId === undefined) return;
-    if (notesSaveTimer.current !== null) clearTimeout(notesSaveTimer.current);
-    notesSaveTimer.current = setTimeout(() => {
-      notesSaveTimer.current = null;
-      const current = notesRef.current;
+    if (mfuSaveTimer.current !== null) clearTimeout(mfuSaveTimer.current);
+    mfuSaveTimer.current = setTimeout(() => {
+      mfuSaveTimer.current = null;
+      const current = mfuRef.current;
       if (current) {
-        updateNotes({ ...current, meeting_id: meetingId }).catch((error) => {
+        updateMfu({ ...current, meeting_id: meetingId }).catch((error) => {
           setStatus({ kind: "error", message: String(error) });
         });
       }
@@ -566,11 +564,11 @@ export function App() {
   // actions that belong to whichever meeting is on screen — those use
   // `activeIsTranscribing`, so exporting an unrelated finished transcript or
   // attaching a file to an idle meeting still works while a run is going.
-  const busy = transcribingId !== null || isGeneratingNotes || isDiarizing;
+  const busy = transcribingId !== null || isGeneratingMfu || isDiarizing;
   const activeIsTranscribing =
     activeMeeting !== null && transcribingId === activeMeeting.id;
-  const activeIsGeneratingNotes =
-    activeMeeting !== null && generatingNotesId === activeMeeting.id;
+  const activeIsGeneratingMfu =
+    activeMeeting !== null && generatingMfuId === activeMeeting.id;
   const activeIsDiarizing =
     activeMeeting !== null && diarizingId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
@@ -579,7 +577,7 @@ export function App() {
   // The header describes the meeting the user is looking at, through the same
   // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
-    if (activeIsGeneratingNotes)
+    if (activeIsGeneratingMfu)
       return resolveMeetingStatus(undefined, "crafting");
     if (activeIsDiarizing) return resolveMeetingStatus(undefined, "diarizing");
     if (activeIsTranscribing)
@@ -591,7 +589,7 @@ export function App() {
     if (!activeMeeting) return null;
     return resolveMeetingStatus(activeMeeting.status);
   }, [
-    activeIsGeneratingNotes,
+    activeIsGeneratingMfu,
     activeIsDiarizing,
     activeIsTranscribing,
     transcribingPhase,
@@ -701,7 +699,7 @@ export function App() {
               disabled={
                 !activeMeeting ||
                 activeIsTranscribing ||
-                isGeneratingNotes ||
+                isGeneratingMfu ||
                 activeIsDiarizing
               }
             >
@@ -724,7 +722,7 @@ export function App() {
               disabled={
                 !activeMeeting ||
                 activeIsTranscribing ||
-                isGeneratingNotes ||
+                isGeneratingMfu ||
                 activeIsDiarizing
               }
             >
@@ -740,7 +738,7 @@ export function App() {
                 <Icon
                   name={headerStatus.icon}
                   size={14}
-                  className={`${activeIsTranscribing || activeIsGeneratingNotes || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
+                  className={`${activeIsTranscribing || activeIsGeneratingMfu || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
                 />
                 <span
                   className={`wp-status-label wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
@@ -748,7 +746,7 @@ export function App() {
                   {headerStatus.label}
                 </span>
                 {(activeIsTranscribing ||
-                  activeIsGeneratingNotes ||
+                  activeIsGeneratingMfu ||
                   activeIsDiarizing) && (
                   <span className="wp-status-timer">
                     {formatClock(elapsed)}
@@ -790,14 +788,14 @@ export function App() {
             <span className="wp-sep" />
             <ActionIcon
               icon="sparkles"
-              label="Craft notes"
+              label="Craft MFU"
               accent
-              onClick={() => void handleGenerateNotes()}
+              onClick={() => void handleGenerateMfu()}
               disabled={
                 !hasTranscript ||
                 llmModelReady !== true ||
                 activeIsTranscribing ||
-                isGeneratingNotes ||
+                isGeneratingMfu ||
                 activeIsDiarizing
               }
             />
@@ -836,7 +834,7 @@ export function App() {
               disabled={
                 !activeMeeting ||
                 activeIsTranscribing ||
-                isGeneratingNotes ||
+                isGeneratingMfu ||
                 activeIsDiarizing
               }
             />
@@ -856,7 +854,7 @@ export function App() {
             onClick={handleChooseFile}
             disabled={
               activeIsTranscribing ||
-              isGeneratingNotes ||
+              isGeneratingMfu ||
               !activeMeeting ||
               transcriptionModelReady !== true
             }
@@ -872,7 +870,7 @@ export function App() {
                 aria-label="Remove file"
                 onClick={handleRemoveFile}
                 disabled={
-                  activeIsTranscribing || isGeneratingNotes || activeIsDiarizing
+                  activeIsTranscribing || isGeneratingMfu || activeIsDiarizing
                 }
               >
                 <Icon name="x" size={12} />
@@ -882,9 +880,9 @@ export function App() {
             <span className="wp-info-muted">No file loaded</span>
           )}
           {activeMeeting?.source_missing && (
-            <span className="wp-info-warning" role="note">
+            <span className="wp-info-warning" role="status">
               Source file missing — re-transcribe disabled. The transcript and
-              notes are still readable and editable.
+              mfu are still readable and editable.
             </span>
           )}
         </div>
@@ -947,7 +945,7 @@ export function App() {
                         ? transcribingPhase
                         : diarizingId === meeting.id
                           ? "diarizing"
-                          : generatingNotesId === meeting.id
+                          : generatingMfuId === meeting.id
                             ? "crafting"
                             : "none",
                     )}
@@ -1040,7 +1038,7 @@ export function App() {
                               onRename={renameSpeaker}
                               disabled={
                                 activeIsTranscribing ||
-                                isGeneratingNotes ||
+                                isGeneratingMfu ||
                                 activeIsDiarizing
                               }
                             />
@@ -1056,7 +1054,7 @@ export function App() {
                           onChange={(e) => editSegment(i, e.target.value)}
                           disabled={
                             activeIsTranscribing ||
-                            isGeneratingNotes ||
+                            isGeneratingMfu ||
                             activeIsDiarizing
                           }
                         />
@@ -1069,8 +1067,8 @@ export function App() {
 
           {/* MFU (summary) panel */}
           <aside className="wp-mfu">
-            {notes ? (
-              <div className="wp-mfu-notes">
+            {mfu ? (
+              <div className="wp-mfu-mfu">
                 {(
                   [
                     ["summary", "Summary"],
@@ -1084,12 +1082,12 @@ export function App() {
                     <h3 className="wp-mfu-heading">{heading}</h3>
                     <textarea
                       className="wp-mfu-text wp-mfu-textarea"
-                      value={notes[field]}
+                      value={mfu[field]}
                       rows={1}
-                      onChange={(e) => editNotesField(field, e.target.value)}
+                      onChange={(e) => editMfuField(field, e.target.value)}
                       disabled={
                         activeIsTranscribing ||
-                        isGeneratingNotes ||
+                        isGeneratingMfu ||
                         activeIsDiarizing
                       }
                     />

@@ -47,29 +47,29 @@ being rewritten. No public distribution or notarization in the current horizon.
   Settings can download/delete each task's model, switch light/dark/system theme,
   and the UI is English.
 
-### M3 — Notes, full settings & polish — **Release**
+### M3 — MFU, full settings & polish — **Release**
 
-- **Goal:** Complete the app for a **public release**: structured meeting notes,
+- **Goal:** Complete the app for a **public release**: structured meeting MFU,
   the full Settings surface, a localized UI, richer themes, and in-app update.
 - **Features:**
-  [`F003_meeting-notes`](features/F003_meeting-notes/requirements.md) (structured,
-  editable, copyable notes via a local LLM) and the release scope of
+  [`F003_meeting-mfu`](features/F003_meeting-mfu/requirements.md) (structured,
+  editable, copyable MFU via a local LLM) and the release scope of
   [`F005_settings`](features/F005_settings/requirements.md): **AI models** with an
   **Active** choice among 3–4 models per task; **Appearance** with 3–4 extra
   themes (each in light and dark); **App language** adding Russian, Turkish,
   Spanish, German, French; and **Update app**.
-- **Exit criteria:** notes generate in Russian below the transcript, editable and
+- **Exit criteria:** MFU generate in Russian below the transcript, editable and
   copyable; each task can hold several models with an Active selection; extra
   themes and UI languages are selectable; the app can check for and apply updates.
 
 ## Sequencing & Dependencies
 
 - **Within M2:** build the library/meeting model first (the durable place
-  speakers and notes are stored), then layer diarization onto M1's `Segment`
+  speakers and MFU are stored), then layer diarization onto M1's `Segment`
   stream so bubbles render against persisted segments; Settings (beta) supplies
   the models those pipelines need (download/delete) and the theme/UI-language
   choices.
-- M3 reads a finalized (M2-persisted) transcript; independent of the notes model
+- M3 reads a finalized (M2-persisted) transcript; independent of the MFU model
   but reads better with the M2 speaker labels present. The release Settings scope
   builds directly on the beta Settings shell.
 - **UI language vs transcription language:** the **app UI** defaults to **English**

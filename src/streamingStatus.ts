@@ -70,7 +70,7 @@ const WIDGET_STATES = new Map<StreamingWidgetState, StreamingStatusView>([
     "crafting",
     {
       tone: "crafting",
-      label: "Crafting MFU…",
+      label: "Crafting MFU",
       icon: "refresh-cw",
       spinning: true,
       showTimer: true,

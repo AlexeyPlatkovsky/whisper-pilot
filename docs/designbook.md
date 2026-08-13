@@ -44,7 +44,10 @@ Palette (see `tokens.css` for exact values):
   so a status has exactly one colour and one label wherever it appears. Each
   status's colour is user-configurable (Settings → Appearance → Status Colors,
   WP-88): the saved color is written to a per-status `--status-color-*`
-  variable that a `.wp-status--*` class resolves ahead of the tone default.
+  variable that a `.wp-status--*` class resolves ahead of the tone default. The
+  settings list sorts labels alphabetically and fills its two columns left to
+  right; its advisory low-contrast warning uses the half-up rounded two-decimal
+  ratio and shows it against the `4.50:1` threshold.
 - rounded corners 6–16px (`--wp-radius-*`)
 - dense information layout, desktop-first, keyboard-first
 - avoid mobile spacing

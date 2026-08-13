@@ -355,7 +355,7 @@ mod tests {
             language: "en".to_string(),
             status: "transcribed".to_string(),
             segments: Vec::new(),
-            notes: None,
+            mfu: None,
             source_missing: false,
         }
     }

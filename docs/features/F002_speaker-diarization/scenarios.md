@@ -74,7 +74,7 @@ Scenario: Missing diarization models fall back to a plain transcript
   Given a meeting with a file attached
     And the sherpa-onnx diarization models are not installed
   When the user presses Transcribe and the run completes
-  Then the transcript is shown as plain segments with a note that speakers
+  Then the transcript is shown as plain segments with a detail that speakers
        are unavailable
     And the meeting is marked finished (the run did not fail)
 ```

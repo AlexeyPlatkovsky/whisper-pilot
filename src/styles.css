@@ -419,7 +419,6 @@ body {
   --status-color-ready: #5a7684;
   --status-color-transcribing: #176c8f;
   --status-color-diarizing: #176c8f;
-  --status-color-crafting-notes: #176c8f;
   --status-color-finished: #46704c;
   --status-color-error: #b82b2f;
   --status-color-no-model: #c65d2e;
@@ -446,10 +445,6 @@ body {
 }
 .wp-status--diarizing {
   --tone: var(--status-color-diarizing);
-  color: var(--tone);
-}
-.wp-status--crafting-notes {
-  --tone: var(--status-color-crafting-notes);
   color: var(--tone);
 }
 .wp-status--finished {
@@ -1098,7 +1093,7 @@ body {
   line-height: 1.5;
 }
 
-.wp-mfu-notes {
+.wp-mfu-content {
   flex: 1;
   overflow-y: auto;
   display: flex;

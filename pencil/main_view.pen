@@ -2696,7 +2696,7 @@
                           "fill": "$success"
                         },
                         "ds2R4": {
-                          "content": "Personal Notes"
+                          "content": "Personal MFU"
                         },
                         "bSjKI": {
                           "content": "Yesterday"
@@ -4080,7 +4080,7 @@
           "id": "QoZF4",
           "type": "ref",
           "ref": "gCpI1",
-          "name": "Crafting notes",
+          "name": "Crafting MFU",
           "width": 280,
           "height": 32,
           "descendants": {
@@ -4088,7 +4088,7 @@
               "stroke": "#176C8F"
             },
             "cycUZ": {
-              "content": "Crafting notes",
+              "content": "Crafting MFU",
               "fill": "#176C8F"
             }
           }
@@ -4676,11 +4676,11 @@
                                   "id": "f4eWx8",
                                   "type": "ref",
                                   "ref": "QcmBV",
-                                  "name": "Crafting notes Row",
+                                  "name": "Crafting MFU Row",
                                   "width": "fill_container",
                                   "descendants": {
                                     "MFZv4": {
-                                      "content": "Crafting notes",
+                                      "content": "Crafting MFU",
                                       "fill": "#176C8F"
                                     },
                                     "Y9hPhi": {
@@ -4866,11 +4866,11 @@
                                   "id": "D7J1LS",
                                   "type": "ref",
                                   "ref": "QcmBV",
-                                  "name": "Crafting MFU… Row",
+                                  "name": "Crafting MFU Row",
                                   "width": "fill_container",
                                   "descendants": {
                                     "MFZv4": {
-                                      "content": "Crafting MFU…",
+                                      "content": "Crafting MFU",
                                       "fill": "#176C8F"
                                     },
                                     "Y9hPhi": {

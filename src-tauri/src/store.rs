@@ -1,4 +1,4 @@
-//! Local SQLite persistence for meetings, transcript segments, and notes.
+//! Local SQLite persistence for meetings, transcript segments, and mfu.
 
 use crate::error::{AppError, Result};
 use rusqlite::{params, Connection, OptionalExtension, Row};
@@ -69,7 +69,7 @@ pub struct StoredSegment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct MeetingNotes {
+pub struct MeetingMfu {
     pub meeting_id: MeetingId,
     pub summary: String,
     pub decisions: String,
@@ -89,6 +89,7 @@ impl Store {
         connection
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
+        migrate_legacy_notes(&connection)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -228,10 +229,10 @@ impl Store {
         Ok(segments)
     }
 
-    pub fn upsert_notes(&self, notes: &MeetingNotes) -> Result<()> {
+    pub fn upsert_mfu(&self, mfu: &MeetingMfu) -> Result<()> {
         self.connection()?
             .execute(
-                "INSERT INTO notes (meeting_id, summary, decisions, action_items, open_questions, participants)
+                "INSERT INTO mfu (meeting_id, summary, decisions, action_items, open_questions, participants)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6)
                  ON CONFLICT(meeting_id) DO UPDATE SET
                     summary = excluded.summary,
@@ -240,36 +241,33 @@ impl Store {
                     open_questions = excluded.open_questions,
                     participants = excluded.participants",
                 params![
-                    notes.meeting_id,
-                    notes.summary,
-                    notes.decisions,
-                    notes.action_items,
-                    notes.open_questions,
-                    notes.participants,
+                    mfu.meeting_id,
+                    mfu.summary,
+                    mfu.decisions,
+                    mfu.action_items,
+                    mfu.open_questions,
+                    mfu.participants,
                 ],
             )
             .map_err(store_error)?;
         Ok(())
     }
 
-    pub fn get_notes(&self, meeting_id: MeetingId) -> Result<Option<MeetingNotes>> {
+    pub fn get_mfu(&self, meeting_id: MeetingId) -> Result<Option<MeetingMfu>> {
         self.connection()?
             .query_row(
                 "SELECT meeting_id, summary, decisions, action_items, open_questions, participants
-                 FROM notes WHERE meeting_id = ?1",
+                 FROM mfu WHERE meeting_id = ?1",
                 params![meeting_id],
-                notes_from_row,
+                mfu_from_row,
             )
             .optional()
             .map_err(store_error)
     }
 
-    pub fn delete_notes(&self, meeting_id: MeetingId) -> Result<()> {
+    pub fn delete_mfu(&self, meeting_id: MeetingId) -> Result<()> {
         self.connection()?
-            .execute(
-                "DELETE FROM notes WHERE meeting_id = ?1",
-                params![meeting_id],
-            )
+            .execute("DELETE FROM mfu WHERE meeting_id = ?1", params![meeting_id])
             .map_err(store_error)?;
         Ok(())
     }
@@ -279,6 +277,23 @@ impl Store {
             .lock()
             .map_err(|_| AppError::Store("database connection lock was poisoned".into()))
     }
+}
+
+/// Preserve existing pre-MFU meeting data while replacing the legacy table name.
+fn migrate_legacy_notes(connection: &Connection) -> Result<()> {
+    let has_legacy = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if has_legacy {
+        connection
+            .execute_batch("ALTER TABLE notes RENAME TO mfu;")
+            .map_err(store_error)?;
+    }
+    Ok(())
 }
 
 fn database_path(app_support_dir: &Path) -> PathBuf {
@@ -352,8 +367,8 @@ fn segment_from_row(row: &Row<'_>) -> rusqlite::Result<StoredSegment> {
     })
 }
 
-fn notes_from_row(row: &Row<'_>) -> rusqlite::Result<MeetingNotes> {
-    Ok(MeetingNotes {
+fn mfu_from_row(row: &Row<'_>) -> rusqlite::Result<MeetingMfu> {
+    Ok(MeetingMfu {
         meeting_id: row.get(0)?,
         summary: row.get(1)?,
         decisions: row.get(2)?,
@@ -385,7 +400,7 @@ CREATE TABLE IF NOT EXISTS segments (
     PRIMARY KEY (meeting_id, ordinal)
 );
 
-CREATE TABLE IF NOT EXISTS notes (
+CREATE TABLE IF NOT EXISTS mfu (
     meeting_id INTEGER PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE,
     summary TEXT NOT NULL,
     decisions TEXT NOT NULL,
@@ -422,8 +437,8 @@ mod tests {
         }
     }
 
-    fn notes(meeting_id: MeetingId) -> MeetingNotes {
-        MeetingNotes {
+    fn mfu(meeting_id: MeetingId) -> MeetingMfu {
+        MeetingMfu {
             meeting_id,
             summary: "Summary".to_string(),
             decisions: "Decision".to_string(),
@@ -468,7 +483,7 @@ mod tests {
     }
 
     #[test]
-    fn given_saved_data_when_reopened_then_meeting_segments_notes_and_newest_summary_persist() {
+    fn given_saved_data_when_reopened_then_meeting_segments_mfu_and_newest_summary_persist() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let first_id;
         let second_id;
@@ -486,7 +501,7 @@ mod tests {
             store
                 .replace_segments(second_id, &[segment(2, 1_000, 2_000), segment(1, 0, 900)])
                 .expect("replace segments");
-            store.upsert_notes(&notes(second_id)).expect("upsert notes");
+            store.upsert_mfu(&mfu(second_id)).expect("upsert mfu");
         }
 
         let reopened = Store::open(temp.path()).expect("reopen database");
@@ -509,8 +524,8 @@ mod tests {
             vec![1, 2]
         );
         assert_eq!(
-            reopened.get_notes(second_id).expect("get notes"),
-            Some(notes(second_id))
+            reopened.get_mfu(second_id).expect("get mfu"),
+            Some(mfu(second_id))
         );
     }
 
@@ -554,7 +569,7 @@ mod tests {
     }
 
     #[test]
-    fn given_meeting_with_dependents_when_deleted_then_segments_and_notes_are_cascaded() {
+    fn given_meeting_with_dependents_when_deleted_then_segments_and_mfu_are_cascaded() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = Store::open(temp.path()).expect("open database");
         let meeting_id = store
@@ -564,9 +579,7 @@ mod tests {
         store
             .replace_segments(meeting_id, &[segment(0, 0, 100)])
             .expect("replace segments");
-        store
-            .upsert_notes(&notes(meeting_id))
-            .expect("upsert notes");
+        store.upsert_mfu(&mfu(meeting_id)).expect("upsert mfu");
 
         store.delete_meeting(meeting_id).expect("delete meeting");
 
@@ -575,24 +588,22 @@ mod tests {
             .list_segments(meeting_id)
             .expect("list segments")
             .is_empty());
-        assert_eq!(store.get_notes(meeting_id).expect("get notes"), None);
+        assert_eq!(store.get_mfu(meeting_id).expect("get mfu"), None);
     }
 
     #[test]
-    fn given_saved_notes_when_deleted_then_only_the_notes_record_is_removed() {
+    fn given_saved_mfu_when_deleted_then_only_the_mfu_record_is_removed() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = Store::open(temp.path()).expect("open database");
         let meeting_id = store
-            .create_meeting(draft("Notes", 100))
+            .create_meeting(draft("MFU", 100))
             .expect("create meeting")
             .id;
-        store
-            .upsert_notes(&notes(meeting_id))
-            .expect("upsert notes");
+        store.upsert_mfu(&mfu(meeting_id)).expect("upsert mfu");
 
-        store.delete_notes(meeting_id).expect("delete notes");
+        store.delete_mfu(meeting_id).expect("delete mfu");
 
-        assert_eq!(store.get_notes(meeting_id).expect("get notes"), None);
+        assert_eq!(store.get_mfu(meeting_id).expect("get mfu"), None);
         assert!(store
             .get_meeting(meeting_id)
             .expect("get meeting")

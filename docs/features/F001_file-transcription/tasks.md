@@ -13,7 +13,7 @@ TaskPilot IDs. They document what exists, for traceability.
 | F001-T5 | Error type + actionable surfacing (`error.rs` + UI banner) | F001-R6 | — | — (as-built) |
 | F001-T6 | End-to-end pipeline test (file → segments) | F001-R2, F001-R3 | F001-T2 | — (as-built) |
 
-## Notes
+## MFU
 
 - Verified end-to-end: a 1-minute file transcribes in ~3.5 s on Metal with
   clean, timestamped output.

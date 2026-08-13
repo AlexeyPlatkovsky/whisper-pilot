@@ -1,4 +1,4 @@
-import type { MeetingNotes, Segment } from "./ipc";
+import type { MeetingMfu, Segment } from "./ipc";
 
 export type ExportFileType = "plain_text" | "markdown";
 
@@ -9,7 +9,7 @@ function formatTimestamp(ms: number): string {
   return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
-/** Today's existing rendering — transcript only, no notes, no headers. */
+/** Today's existing rendering — transcript only, no MFU, no headers. */
 export function renderPlainText(
   segments: Segment[],
   resolveSpeakerLabel: (id: number) => string,
@@ -23,7 +23,7 @@ export function renderPlainText(
     .join("\n");
 }
 
-const NOTES_SECTIONS: { heading: string; field: keyof MeetingNotes }[] = [
+const MFU_SECTIONS: { heading: string; field: keyof MeetingMfu }[] = [
   { heading: "Summary", field: "summary" },
   { heading: "Decisions", field: "decisions" },
   { heading: "Action Items", field: "action_items" },
@@ -31,11 +31,11 @@ const NOTES_SECTIONS: { heading: string; field: keyof MeetingNotes }[] = [
   { heading: "Participants", field: "participants" },
 ];
 
-/** Transcript and (when present) notes, Markdown-formatted (WP-15): headers,
+/** Transcript and (when present) MFU, Markdown-formatted (WP-15): headers,
  * bold speaker labels, and bracketed m:ss timestamps. */
 export function renderMarkdown(
   segments: Segment[],
-  notes: MeetingNotes | null,
+  mfu: MeetingMfu | null,
   resolveSpeakerLabel: (id: number) => string,
 ): string {
   const lines: string[] = ["# Transcript", ""];
@@ -48,10 +48,10 @@ export function renderMarkdown(
     );
   }
 
-  if (notes) {
-    lines.push("", "## Notes");
-    for (const { heading, field } of NOTES_SECTIONS) {
-      const value = notes[field];
+  if (mfu) {
+    lines.push("", "## MFU");
+    for (const { heading, field } of MFU_SECTIONS) {
+      const value = mfu[field];
       if (typeof value === "string" && value) {
         lines.push("", `### ${heading}`, "", value);
       }
@@ -67,11 +67,11 @@ export function renderMarkdown(
 export function renderForExport(
   fileType: ExportFileType,
   segments: Segment[],
-  notes: MeetingNotes | null,
+  mfu: MeetingMfu | null,
   resolveSpeakerLabel: (id: number) => string,
 ): string {
   return fileType === "markdown"
-    ? renderMarkdown(segments, notes, resolveSpeakerLabel)
+    ? renderMarkdown(segments, mfu, resolveSpeakerLabel)
     : renderPlainText(segments, resolveSpeakerLabel);
 }
 

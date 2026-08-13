@@ -10,18 +10,36 @@ import { Icon } from "./Icon";
 import { setSetting } from "./ipc";
 import {
   applyStatusColors,
+  contrastRatio,
   DEFAULT_STATUS_COLORS,
   isValidHexColor,
-  meetsWcagAA,
   parseStatusColors,
   serializeStatusColors,
   STATUS_COLOR_SPECS,
+  WCAG_AA_CONTRAST_RATIO,
   type StatusColorKey,
   type StatusColorMap,
 } from "./statusColors";
 
-const LEFT_COLUMN = STATUS_COLOR_SPECS.slice(0, 8);
-const RIGHT_COLUMN = STATUS_COLOR_SPECS.slice(8);
+const ALPHABETICAL_STATUS_COLOR_SPECS = [...STATUS_COLOR_SPECS].sort((a, b) =>
+  a.label.localeCompare(b.label),
+);
+
+// Assign alternating alphabetical entries to each column. In the two-column
+// layout, this fills each visual row from left to right and adapts when the
+// status catalog changes without requiring an updated split point.
+const LEFT_COLUMN = ALPHABETICAL_STATUS_COLOR_SPECS.filter(
+  (_, index) => index % 2 === 0,
+);
+const RIGHT_COLUMN = ALPHABETICAL_STATUS_COLOR_SPECS.filter(
+  (_, index) => index % 2 === 1,
+);
+
+/** The picker uses a practical two-decimal threshold: 4.495 rounds half-up to
+ * 4.50 and passes, while 4.4949 rounds to 4.49 and warns. */
+function roundContrastRatio(contrast: number): number {
+  return Math.round((contrast + Number.EPSILON) * 100) / 100;
+}
 
 /** The background the status widgets sit on, for the contrast warning.
  * Falls back to the light panel when no theme value is readable (tests). */
@@ -101,8 +119,13 @@ export function StatusColorsSection({
     return () => document.removeEventListener("keydown", onKeyDown);
   }, [openKey, confirmReset]);
 
+  const contrast = isValidHexColor(draft)
+    ? contrastRatio(draft, statusWidgetBackground())
+    : null;
+  const roundedContrast =
+    contrast === null ? null : roundContrastRatio(contrast);
   const lowContrast =
-    isValidHexColor(draft) && !meetsWcagAA(draft, statusWidgetBackground());
+    roundedContrast !== null && roundedContrast < WCAG_AA_CONTRAST_RATIO;
 
   function renderRow(spec: (typeof STATUS_COLOR_SPECS)[number]) {
     const color = colors[spec.key];
@@ -170,7 +193,9 @@ export function StatusColorsSection({
             </div>
             {lowContrast && (
               <p className="wp-status-color-warning">
-                Low contrast against the current theme background.
+                Low contrast ({roundedContrast.toFixed(2)}&lt;
+                {WCAG_AA_CONTRAST_RATIO.toFixed(2)}:1) against the current theme
+                background.
               </p>
             )}
             {draftError && <p role="alert">{draftError}</p>}

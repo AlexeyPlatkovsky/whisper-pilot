@@ -32,7 +32,7 @@ Vite serves the front end on port 1420; Tauri drives the Rust core in
 `src-tauri/frameworks/` — a staging copy of the sherpa-onnx and ONNX Runtime
 dylibs that the bundler puts into `Contents/Frameworks`. It is generated and
 gitignored; do not edit or commit it. See
-[`architecture.md`](architecture.md) §Build Notes for why it exists.
+[`architecture.md`](architecture.md) §Build MFU for why it exists.
 
 ## Scripts
 
@@ -63,7 +63,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
 ```
 
 See [`architecture.md`](architecture.md) for the full layer map, IPC contract,
-data model, and build notes.
+data model, and build MFU.
 
 ## Environment Variables
 

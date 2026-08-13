@@ -10,9 +10,9 @@ TaskPilot epic **WP-1** owns work status; each task references its `WP-<n>` ID.
 | F002-T4 | Thread speaker id through `Segment`/`TranscriptResult` and IPC | F002-R2 | F002-T3 | WP-8 |
 | F002-T5 | Per-speaker chat rendering — colored bubbles (10 shades), grouped/labelled by speaker | F002-R3 | F002-T4 | WP-9 |
 | F002-T6 | Editable, persisted speaker labels | F002-R4 | F002-T5 | WP-10 |
-| F002-T7 | Wire diarization into the Transcribe flow: run after transcription within one phase-reported run; degrade to plain segments (with note) when unavailable | F002-R6, F002-R7 | F002-T3 | WP-31 |
+| F002-T7 | Wire diarization into the Transcribe flow: run after transcription within one phase-reported run; degrade to plain segments (with detail) when unavailable | F002-R6, F002-R7 | F002-T3 | WP-31 |
 
-## Notes
+## MFU
 
 - WP-2/WP-3/WP-4 are the TaskPilot **features** grouping these tasks under epic
   WP-1 (engine / merge / UI).

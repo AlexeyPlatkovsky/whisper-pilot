@@ -8,7 +8,7 @@
 
 M1 was stateless: transcribe a file, edit, export, done — nothing persisted. For
 repeated meetings, users need to reopen, re-edit, and keep past transcriptions,
-and to attach speakers (M2) and notes (M3) durably to a meeting.
+and to attach speakers (M2) and MFU (M3) durably to a meeting.
 
 ## Decision
 
@@ -16,7 +16,7 @@ Introduce a persisted **library** of **meetings** (one meeting = one
 transcription) in a local **SQLite** database (via `rusqlite`, reusing
 VoicePilot's patterns). Meetings **reference the original source file path**
 rather than copying audio. Edits
-(transcript, speaker labels, notes) **auto-save** to the DB; export is a separate
+(transcript, speaker labels, MFU) **auto-save** to the DB; export is a separate
 explicit action. Processing remains **one file at a time**.
 
 ## Consequences
@@ -27,7 +27,7 @@ explicit action. Processing remains **one file at a time**.
   was deleted cannot be re-transcribed — a defined "source missing" state.
 - Auto-save gives a modern, no-lost-work feel and removes save-state UI; it means
   every edit writes to the DB.
-- M2 diarization and M3 notes attach their data (speaker ids, notes) to the
+- M2 diarization and M3 MFU attach their data (speaker ids, MFU) to the
   persisted meeting.
 
 ## Alternatives Considered

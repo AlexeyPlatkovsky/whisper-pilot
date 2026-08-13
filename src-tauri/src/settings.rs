@@ -48,7 +48,7 @@ pub struct Settings {
     pub active_model_llm: Option<String>,
     /// `"plain_text"` or `"markdown"` (WP-15): governs how export-to-file and
     /// the header label's clipboard copy render a meeting's transcript and
-    /// notes.
+    /// mfu.
     #[serde(default = "default_export_file_type")]
     pub export_file_type: String,
     /// WP-88: JSON object mapping each configurable status key to an opaque

@@ -49,7 +49,7 @@ pub enum AppError {
     #[error("streaming audio capture failed: {0}")]
     Capture(String),
 
-    #[error("note generation failed: {0}")]
+    #[error("MFU generation failed: {0}")]
     Llm(String),
 
     #[error("{0}")]

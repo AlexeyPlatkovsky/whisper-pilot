@@ -84,9 +84,9 @@ const ACTIVITY = new Map<MeetingActivity, MeetingStatusView>([
     "crafting",
     {
       tone: "crafting",
-      label: "Crafting notes",
+      label: "Crafting MFU",
       icon: "refresh-cw",
-      statusKey: "crafting-notes",
+      statusKey: "crafting-mfu",
     },
   ],
   [

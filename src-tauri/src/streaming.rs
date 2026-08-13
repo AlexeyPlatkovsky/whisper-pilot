@@ -27,7 +27,7 @@ pub struct StreamingWindowDto {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct StreamingNotesDto {
+pub struct StreamingMfuDto {
     pub summary: String,
     pub decisions: String,
     pub action_items: String,
@@ -43,7 +43,7 @@ pub struct StreamingSessionDto {
     pub updated_at_ms: i64,
     pub status: String,
     pub windows: Vec<StreamingWindowDto>,
-    pub notes: Option<StreamingNotesDto>,
+    pub mfu: Option<StreamingMfuDto>,
     pub prettified_text: Option<String>,
 }
 
@@ -82,7 +82,7 @@ pub fn open_streaming_session(
             outcome_ok: w.outcome_ok,
         })
         .collect();
-    let notes = store.get_notes(id)?.map(|n| StreamingNotesDto {
+    let mfu = store.get_mfu(id)?.map(|n| StreamingMfuDto {
         summary: n.summary,
         decisions: n.decisions,
         action_items: n.action_items,
@@ -97,7 +97,7 @@ pub fn open_streaming_session(
         updated_at_ms: session.updated_at_ms,
         status: session.status,
         windows,
-        notes,
+        mfu,
         prettified_text,
     })
 }
@@ -115,7 +115,7 @@ pub fn build_streaming_transcript(
         .ok_or_else(|| AppError::Store(format!("streaming session {id} was not found")))?;
     if session.status != streaming_store::status::STOPPED {
         return Err(AppError::Llm(
-            "cannot craft notes while a Streaming session is still active".into(),
+            "cannot craft mfu while a Streaming session is still active".into(),
         ));
     }
     let transcript = store
@@ -146,14 +146,15 @@ pub fn delete_streaming_session(app_support_dir: &Path, id: StreamingSessionId) 
     StreamingStore::open(app_support_dir)?.delete_session(id)
 }
 
-/// Create a new session record for a session about to start capturing.
+/// Create a new, stopped session record without beginning audio capture.
 /// Titled by creation time (matching Meeting's plain default title) — the
-/// user can rename it, same as a meeting.
+/// user can rename it, then explicitly start it when ready.
 pub fn create_streaming_session(
     app_support_dir: &Path,
     created_at_ms: i64,
 ) -> Result<StreamingSessionId> {
-    let session = StreamingStore::open(app_support_dir)?.create_session(NewStreamingSession {
+    let store = StreamingStore::open(app_support_dir)?;
+    let session = store.create_session(NewStreamingSession {
         title: "New Streaming Session".to_string(),
         created_at_ms,
     })?;
@@ -219,6 +220,7 @@ mod tests {
 
         assert_eq!(dto.id, id);
         assert_eq!(dto.title, "New Streaming Session");
+        assert_eq!(dto.status, streaming_store::status::STOPPED);
         assert!(dto.windows.is_empty());
     }
 
@@ -321,7 +323,10 @@ mod tests {
     fn resuming_an_active_session_is_rejected() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = create_streaming_session(temp.path(), 100).expect("create");
-        // Deliberately not marked stopped — session stays "active".
+        StreamingStore::open(temp.path())
+            .expect("open store")
+            .mark_active(id, 150)
+            .expect("mark active");
 
         assert!(resume_streaming_session(temp.path(), id, 200).is_err());
     }
@@ -429,10 +434,10 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
         let store = StreamingStore::open(temp.path()).expect("open store");
         let id = create_streaming_session(temp.path(), 100).expect("create");
+        store.mark_active(id, 150).expect("mark active");
         store
             .append_window(id, &ok_window(0, "hello"), 200)
             .expect("append window");
-        // Deliberately not marked stopped — session stays "active".
 
         assert!(build_streaming_transcript(temp.path(), id).is_err());
     }
@@ -470,7 +475,7 @@ mod tests {
 
         let dto = open_streaming_session(temp.path(), id).expect("open");
 
-        assert_eq!(dto.notes, None);
+        assert_eq!(dto.mfu, None);
     }
 
     #[test]
@@ -479,7 +484,7 @@ mod tests {
         let store = StreamingStore::open(temp.path()).expect("open store");
         let id = create_streaming_session(temp.path(), 100).expect("create");
         store
-            .upsert_notes(&crate::streaming_store::StreamingNotes {
+            .upsert_mfu(&crate::streaming_store::StreamingMfu {
                 session_id: id,
                 summary: "Summary.".to_string(),
                 decisions: "Decisions.".to_string(),
@@ -487,13 +492,13 @@ mod tests {
                 open_questions: "Questions.".to_string(),
                 participants: "Alex".to_string(),
             })
-            .expect("upsert notes");
+            .expect("upsert mfu");
 
         let dto = open_streaming_session(temp.path(), id).expect("open");
 
         assert_eq!(
-            dto.notes,
-            Some(StreamingNotesDto {
+            dto.mfu,
+            Some(StreamingMfuDto {
                 summary: "Summary.".to_string(),
                 decisions: "Decisions.".to_string(),
                 action_items: "Actions.".to_string(),
@@ -543,7 +548,7 @@ mod tests {
                 language: "en".to_string(),
                 outcome_ok: true,
             }],
-            notes: Some(StreamingNotesDto {
+            mfu: Some(StreamingMfuDto {
                 summary: "Summary.".to_string(),
                 decisions: "Decisions.".to_string(),
                 action_items: "Actions.".to_string(),

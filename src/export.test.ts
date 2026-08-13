@@ -5,14 +5,14 @@ import {
   renderMarkdown,
   renderPlainText,
 } from "./export";
-import type { MeetingNotes, Segment } from "./ipc";
+import type { MeetingMfu, Segment } from "./ipc";
 
 const SEGMENTS: Segment[] = [
   { start_ms: 0, end_ms: 1_000, text: "Hello" },
   { start_ms: 65_000, end_ms: 70_000, text: "there", speaker_id: 2 },
 ];
 
-const NOTES: MeetingNotes = {
+const MFU: MeetingMfu = {
   meeting_id: 1,
   summary: "Summary text",
   decisions: "",
@@ -24,7 +24,7 @@ const NOTES: MeetingNotes = {
 const label = (id: number) => `Speaker ${id + 1}`;
 
 describe("renderPlainText", () => {
-  it("preserves today's existing rendering: speaker-prefixed lines, no headers, no notes", () => {
+  it("preserves today's existing rendering: speaker-prefixed lines, no headers, no mfu", () => {
     const text = renderPlainText(SEGMENTS, label);
 
     expect(text).toBe("Hello\nSpeaker 3: there");
@@ -46,10 +46,10 @@ describe("renderMarkdown", () => {
     );
   });
 
-  it("appends only the notes sections that have content, each under its own heading", () => {
-    const text = renderMarkdown(SEGMENTS, NOTES, label);
+  it("appends only the mfu sections that have content, each under its own heading", () => {
+    const text = renderMarkdown(SEGMENTS, MFU, label);
 
-    expect(text).toContain("## Notes");
+    expect(text).toContain("## MFU");
     expect(text).toContain("### Summary\n\nSummary text");
     expect(text).toContain("### Action Items\n\nDo the thing");
     expect(text).toContain("### Participants\n\nAlice");
@@ -57,18 +57,18 @@ describe("renderMarkdown", () => {
     expect(text).not.toContain("### Open Questions");
   });
 
-  it("omits the Notes section entirely when notes is null", () => {
-    expect(renderMarkdown(SEGMENTS, null, label)).not.toContain("## Notes");
+  it("omits the MFU section entirely when mfu is null", () => {
+    expect(renderMarkdown(SEGMENTS, null, label)).not.toContain("## MFU");
   });
 });
 
 describe("renderForExport", () => {
   it("dispatches to plain text or markdown by file type", () => {
-    expect(renderForExport("plain_text", SEGMENTS, NOTES, label)).toBe(
+    expect(renderForExport("plain_text", SEGMENTS, MFU, label)).toBe(
       renderPlainText(SEGMENTS, label),
     );
-    expect(renderForExport("markdown", SEGMENTS, NOTES, label)).toBe(
-      renderMarkdown(SEGMENTS, NOTES, label),
+    expect(renderForExport("markdown", SEGMENTS, MFU, label)).toBe(
+      renderMarkdown(SEGMENTS, MFU, label),
     );
   });
 });

@@ -71,7 +71,7 @@
   --wp-speaker-7: #e34948; /* red */
   --wp-speaker-8: #0f7a86; /* teal */
   --wp-speaker-9: #8a5a2e; /* brown */
-  /* Note: the macOS window traffic lights are drawn by the OS (Overlay
+  /* The macOS window traffic lights are drawn by the OS (Overlay
      titleBarStyle), so no app tokens are needed for them. */
 
   /* --- Radii -------------------------------------------------------------- */
