@@ -1,0 +1,16 @@
+schema_version: 1
+id: WP-90
+title: Make the MFU schema migration safe to retry
+priority: high
+type: bug
+status: done
+created_at: '2026-08-26T15:10:15Z'
+updated_at: '2026-08-26T15:37:37Z'
+description: 'Repair SQLite startup migration for existing WhisperPilot databases. The Meeting store must open when a legacy notes table is present, including a partially migrated database where the current mfu table already exists. Given a database with notes only, when the app opens, then its MFU records are available through the mfu store. Given a database with both notes and mfu, when the app opens, then the app starts without a SQLite name-collision error, preserves current mfu rows, and copies each legacy-only notes row into mfu before the legacy table is removed. For a duplicate meeting_id, the current mfu record remains authoritative and is never overwritten. Apply the equivalent idempotent handling to streaming_notes and streaming_mfu. The migration must be safe to re-run and must not delete or overwrite persisted user content. Target surfaces: src-tauri/src/store.rs, src-tauri/src/streaming_store.rs, and focused Rust tests. Constraints: local SQLite only; no destructive reset, no UI or IPC changes, and no inspection or mutation of user app-support data during automated tests.'
+dod:
+- Meeting-store tests prove a legacy notes-only database migrates to mfu and its records remain readable after reopening.
+- Meeting-store tests prove a database containing both notes and mfu opens without error, retains existing mfu rows, and imports only legacy-only notes rows.
+- Streaming-store tests prove the corresponding streaming_notes and streaming_mfu migration is safe for legacy-only and already-migrated schemas.
+- Running either store migration repeatedly is idempotent and does not delete or overwrite persisted content.
+- Focused Rust tests, the complete Rust suite, and required local validation pass.
+created_by: Codex
