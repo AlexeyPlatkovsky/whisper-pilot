@@ -120,6 +120,14 @@ Single line reflecting the meeting's current state:
   other run-blocking control while Transcribe, Craft MFU, or Diarize itself
   is in flight. Mirrors Streaming's Prettify button position in its own
   transcript header.
+- At the **right end** of that same actions cluster, a labelled **MFU**
+  switch (`role="switch"`, WP-90) shows or hides the MFU section. Defaults
+  **on**; the choice persists independently per screen (Meeting, Streaming)
+  and survives restart. Unlike every other control in this cluster it is
+  **always enabled** — it never gates or is gated by Transcribe, Diarize, or
+  Craft MFU — and running **Create MFU**/**Craft** while the panel is hidden
+  reveals it automatically. Present identically on the Meeting and Streaming
+  transcript headers.
 
 ### MFU section (bottom of the right pane)
 
@@ -131,6 +139,10 @@ Single line reflecting the meeting's current state:
   **edit**, **copy**, **clear**.
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
+- **Hidden:** the header **MFU** switch (see Center — transcript, WP-90) can
+  hide this section entirely regardless of empty/populated state, freeing its
+  space for the transcript panel. Shown by default; the choice persists per
+  screen. Running **Create MFU**/**Craft** while hidden reveals the section.
 
 ### Settings (F005)
 

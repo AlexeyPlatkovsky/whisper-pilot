@@ -135,6 +135,11 @@ export interface Settings {
   /** JSON mapping of status key → opaque #RRGGBB color (WP-88); absent before
    * the setting is first saved. */
   status_colors?: string;
+  /** Whether the Meeting screen's MFU panel is shown (WP-90); absent before
+   * the setting is first saved — treat as `true` (the default). */
+  mfu_panel_meeting?: boolean;
+  /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-90). */
+  mfu_panel_streaming?: boolean;
 }
 
 export function getSettings(): Promise<Settings> {

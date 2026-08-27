@@ -264,6 +264,34 @@ body {
   color: var(--muted);
 }
 
+/* WP-90: the shared MFU-panel pill switch (28x16, 12px knob), used in both
+   the Meeting and Streaming transcript headers. */
+.wp-toggle-switch {
+  display: inline-flex;
+  align-items: center;
+  flex: 0 0 auto;
+  width: 28px;
+  height: 16px;
+  padding: 2px;
+  border: none;
+  border-radius: var(--wp-radius-sm);
+  background: var(--border);
+  cursor: pointer;
+}
+
+.wp-toggle-switch--on {
+  justify-content: flex-end;
+  background: var(--accent);
+}
+
+.wp-toggle-switch-knob {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #ffffff;
+  flex: 0 0 auto;
+}
+
 /* Left-aligned meeting title, sitting just after the 300px left group so it
    lines up with the "Transcript" label in the workspace below. */
 .wp-title-group {
@@ -850,6 +878,11 @@ body {
   height: 1px;
   background: var(--border);
   flex: 0 0 auto;
+}
+
+/* WP-90: the "MFU" text label preceding the panel toggle switch. */
+.wp-mfu-toggle-label {
+  font-weight: 600;
 }
 
 .wp-transcript-content {

@@ -5,6 +5,7 @@ import {
   deleteStreamingSession,
   generateStreamingMfu,
   generateStreamingPrettify,
+  getSettings,
   listStreamingSessions,
   onStreamingSessionEnded,
   onStreamingSources,
@@ -13,6 +14,7 @@ import {
   renameStreamingSession,
   revertStreamingPrettify,
   saveTextDialog,
+  setSetting,
   startStreamingSession,
   stopStreamingSession,
   type StreamingMfu,
@@ -23,6 +25,7 @@ import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
 import { ModeToggle } from "./ModeToggle";
+import { ToggleSwitch } from "./ToggleSwitch";
 import { formatElapsedClock } from "./format";
 import { computeWordDiff } from "./diff";
 import { groupWindowsIntoParagraphs } from "./paragraphs";
@@ -68,6 +71,11 @@ export function StreamingView({
   const [craftFailed, setCraftFailed] = useState(false);
   const [prettifyingId, setPrettifyingId] = useState<number | null>(null);
   const [prettifyFailed, setPrettifyFailed] = useState(false);
+  // WP-90: view-only visibility of the MFU (summary) panel, persisted under
+  // its own settings key independently of Meeting's. Defaults ON; a settings
+  // read/write failure keeps it ON without a blocking error (see the
+  // getSettings effect and handleToggleMfuPanel below).
+  const [mfuPanelVisible, setMfuPanelVisible] = useState(true);
   const [prettifiedText, setPrettifiedText] = useState<string | null>(null);
   const [pendingPrettify, setPendingPrettify] = useState<{
     original: string;
@@ -146,6 +154,26 @@ export function StreamingView({
   useEffect(() => {
     void refreshSessions();
   }, [refreshSessions]);
+
+  useEffect(() => {
+    getSettings()
+      .then((s) => setMfuPanelVisible(s.mfu_panel_streaming ?? true))
+      .catch(() => setMfuPanelVisible(true));
+  }, []);
+
+  // View-only: never gates Craft MFU, Prettify, Start, or Stop. Persistence
+  // is best-effort — a write failure leaves the switch exactly as the user
+  // set it, with no blocking error.
+  const handleToggleMfuPanel = useCallback((next: boolean) => {
+    setMfuPanelVisible(next);
+    void (async () => {
+      try {
+        await setSetting("mfu_panel_streaming", next ? "true" : "false");
+      } catch {
+        // Best-effort persistence: the switch already reflects `next`.
+      }
+    })();
+  }, []);
 
   useEffect(() => {
     let unlistenWindow: (() => void) | undefined;
@@ -374,6 +402,9 @@ export function StreamingView({
     // c8 ignore next -- the action is not rendered until an active session exists.
     if (activeId === null) return;
     const id = activeId;
+    // A hidden panel is auto-revealed so the generated result is never left
+    // behind it — the generation itself is unaffected either way.
+    handleToggleMfuPanel(true);
     setError(null);
     setCraftFailed(false);
     setCraftingId(id);
@@ -390,7 +421,7 @@ export function StreamingView({
     } finally {
       setCraftingId((current) => (current === id ? null : current));
     }
-  }, [activeId]);
+  }, [activeId, handleToggleMfuPanel]);
 
   const handlePrettify = useCallback(async () => {
     // c8 ignore next -- the action is not rendered until an active session exists.
@@ -750,6 +781,13 @@ export function StreamingView({
                 >
                   <Icon name="wand-sparkles" size={15} />
                 </button>
+                <span className="wp-sep" />
+                <span className="wp-mfu-toggle-label">MFU</span>
+                <ToggleSwitch
+                  checked={mfuPanelVisible}
+                  onChange={handleToggleMfuPanel}
+                  label="MFU panel"
+                />
               </div>
             </div>
             <div className="wp-separator" />
@@ -825,53 +863,58 @@ export function StreamingView({
             </div>
           </div>
 
-          {/* MFU (summary) panel */}
-          <aside className="wp-mfu">
-            {mfu ? (
-              <div className="wp-mfu-content">
-                {mfu.summary && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Summary</h3>
-                    <p className="wp-mfu-text">{mfu.summary}</p>
-                  </section>
-                )}
-                {mfu.decisions && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Decisions</h3>
-                    <p className="wp-mfu-text">{mfu.decisions}</p>
-                  </section>
-                )}
-                {mfu.action_items && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Action Items</h3>
-                    <p className="wp-mfu-text">{mfu.action_items}</p>
-                  </section>
-                )}
-                {mfu.open_questions && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Open Questions</h3>
-                    <p className="wp-mfu-text">{mfu.open_questions}</p>
-                  </section>
-                )}
-                {mfu.participants && (
-                  <section className="wp-mfu-section">
-                    <h3 className="wp-mfu-heading">Participants</h3>
-                    <p className="wp-mfu-text">{mfu.participants}</p>
-                  </section>
-                )}
-              </div>
-            ) : (
-              <div className="wp-mfu-placeholder">
-                <div className="wp-mfu-icon-frame">
-                  <Icon name="sparkles" size={32} />
+          {/* MFU (summary) panel — hidden by the header switch (WP-90); the
+              transcript panel above fills the freed width via its existing
+              flex:1 in .wp-transcript-panel. */}
+          {mfuPanelVisible && (
+            <aside className="wp-mfu">
+              {mfu ? (
+                <div className="wp-mfu-content">
+                  {mfu.summary && (
+                    <section className="wp-mfu-section">
+                      <h3 className="wp-mfu-heading">Summary</h3>
+                      <p className="wp-mfu-text">{mfu.summary}</p>
+                    </section>
+                  )}
+                  {mfu.decisions && (
+                    <section className="wp-mfu-section">
+                      <h3 className="wp-mfu-heading">Decisions</h3>
+                      <p className="wp-mfu-text">{mfu.decisions}</p>
+                    </section>
+                  )}
+                  {mfu.action_items && (
+                    <section className="wp-mfu-section">
+                      <h3 className="wp-mfu-heading">Action Items</h3>
+                      <p className="wp-mfu-text">{mfu.action_items}</p>
+                    </section>
+                  )}
+                  {mfu.open_questions && (
+                    <section className="wp-mfu-section">
+                      <h3 className="wp-mfu-heading">Open Questions</h3>
+                      <p className="wp-mfu-text">{mfu.open_questions}</p>
+                    </section>
+                  )}
+                  {mfu.participants && (
+                    <section className="wp-mfu-section">
+                      <h3 className="wp-mfu-heading">Participants</h3>
+                      <p className="wp-mfu-text">{mfu.participants}</p>
+                    </section>
+                  )}
                 </div>
-                <p className="wp-mfu-title">Run MFU Craft</p>
-                <p className="wp-mfu-subtitle">
-                  Generate summary, decisions, action items, and open questions.
-                </p>
-              </div>
-            )}
-          </aside>
+              ) : (
+                <div className="wp-mfu-placeholder">
+                  <div className="wp-mfu-icon-frame">
+                    <Icon name="sparkles" size={32} />
+                  </div>
+                  <p className="wp-mfu-title">Run MFU Craft</p>
+                  <p className="wp-mfu-subtitle">
+                    Generate summary, decisions, action items, and open
+                    questions.
+                  </p>
+                </div>
+              )}
+            </aside>
+          )}
         </section>
       </div>
 
