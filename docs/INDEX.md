@@ -47,7 +47,8 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-012 | Transcription language is always auto-detected, never chosen (supersedes ADR-007 on the language mechanism) | accepted |
 | ADR-013 | Isolate the diarization engine in a child process | accepted |
 | ADR-014 | Streaming coexists with Meeting's batch-accuracy pipeline | accepted |
-| ADR-015 | Live translation reuses the summary LLM and runs concurrently on a single-flight queue | accepted |
+| ADR-015 | Live translation reuses the summary LLM and runs concurrently on a single-flight queue | partially superseded by ADR-016 (translation-unit granularity only; engine reuse, single-flight concurrency, target languages, and the persistence-reuse concept stand) |
+| ADR-016 | Live translation moves from paragraph-unit to rolling per-window translation | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability

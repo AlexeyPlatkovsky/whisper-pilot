@@ -2,7 +2,13 @@ import type {
   MeetingMfu,
   Segment,
   StreamingTranslationTargetLanguage,
+  StreamingWindow,
 } from "./ipc";
+import {
+  paragraphTranslatedText,
+  plainTranscript,
+  type TranslationEntry,
+} from "./streamingText";
 
 export type ExportFileType = "plain_text" | "markdown";
 
@@ -101,98 +107,46 @@ export const STREAMING_TARGET_LANGUAGE_NAMES: Record<
   ru: "Русский",
 };
 
-export type StreamingTranslationStatus =
-  "pending" | "translating" | "done" | "mirrored" | "failed";
-
-/** One paragraph's Live Translation entry, structurally identical to
- * StreamingView's `TranslationEntry` (WP-93). */
-export interface StreamingTranslationEntry {
-  status: StreamingTranslationStatus;
-  sourceText: string;
-  translatedText?: string;
-}
-
-/** One paragraph as shown on the Streaming screen: `key` is its
- * `paragraph_key` (the `window_index` of the paragraph's first window),
- * `sourceText` its current on-screen original text. */
-export interface StreamingExportParagraph {
-  key: number;
-  sourceText: string;
-}
-
-/** Placeholder for a paragraph with no usable translation yet — missing,
- * still pending/translating, or one whose stored source text no longer
- * matches the paragraph's current text (stale) — used uniformly across
- * those causes so the original and translated sides always have the same
- * paragraph count (WP-94). A *mirrored* paragraph is not one of these
- * causes — see `STREAMING_TRANSLATION_FAILED_PLACEHOLDER` and
- * `renderStreamingPaired` below for why mirrored and failed are handled
- * differently. */
-export const STREAMING_TRANSLATION_PLACEHOLDER = "[Not translated]";
-
-/** Placeholder for a paragraph whose translation ran and errored. Distinct
- * wording from `STREAMING_TRANSLATION_PLACEHOLDER` because a failure needs a
- * manual retry rather than more waiting. See WP-94. */
-export const STREAMING_TRANSLATION_FAILED_PLACEHOLDER = "[Translation failed]";
+/** One paragraph as shown on the Streaming screen — its windows, in
+ * on-screen order (WP-103: translation is keyed per window, not per
+ * paragraph, so this is what `renderStreamingPaired` needs to independently
+ * derive both the paragraph's original text and its translated text). */
+export type StreamingExportParagraph = StreamingWindow[];
 
 /** Whether Copy/Export should switch into the paired original+translation
- * rendering at all — true once at least one paragraph has a translation
- * entry. False (Live Translation off, or on with nothing recorded yet)
- * means Copy/Export stay on today's single-column rendering, unchanged
- * (WP-94). */
+ * rendering at all — true once at least one window has a translation entry.
+ * False (Live Translation off, or on with nothing recorded yet) means
+ * Copy/Export stay on today's single-column rendering, unchanged (WP-94). */
 export function hasStreamingTranslations(
-  translations: Map<number, StreamingTranslationEntry>,
+  translations: Map<number, TranslationEntry>,
 ): boolean {
   return translations.size > 0;
 }
 
 /**
  * Pairs each paragraph's original text with its translation for Streaming's
- * Copy/Export (WP-94): one "Original" block followed by one target-language
- * block per paragraph, in the same order as the on-screen grid
- * (`groupWindowsIntoParagraphs` order). The rule is "export what the screen
- * shows":
- *  - `"done"` with its stored source text still matching the paragraph's
- *    current text renders the real translated text.
- *  - `"mirrored"` (with matching source text) renders the paragraph's own
- *    text — the same text the on-screen right cell shows in its muted
- *    style. This is not a failure: the paragraph's windows are already
- *    entirely in the target language, so no model call was made by design.
- *  - `"failed"` (with matching source text) renders
- *    `STREAMING_TRANSLATION_FAILED_PLACEHOLDER` — distinct wording from the
- *    not-yet-translated case, since a failed attempt already ran and needs
- *    a manual retry rather than just more waiting.
- *  - everything else — missing entry, `"pending"`, `"translating"`, or a
- *    stored source text that no longer matches the paragraph's current text
- *    (stale, regardless of status) — renders
- *    `STREAMING_TRANSLATION_PLACEHOLDER` instead of being dropped or left
- *    blank, so the two sides can never drift out of paragraph count.
+ * Copy/Export (WP-94, per-window since WP-103): one "Original" block
+ * followed by one target-language block per paragraph, in the same order as
+ * the on-screen grid (`groupWindowsIntoParagraphs` order). The rule is
+ * "export what the screen shows" — each paragraph's translated block is
+ * built by `streamingText.ts`'s `paragraphTranslatedText`, which maps every
+ * window in the paragraph through its own translation entry (real text for
+ * `done`/`mirrored`, a placeholder for missing/`pending`/`translating`/
+ * `failed`/stale) and joins them the same way the original side is joined —
+ * so a paragraph with some windows translated and others still in flight
+ * shows real text for the finished windows and a placeholder only for the
+ * unfinished tail, and the two sides can never drift out of paragraph
+ * count.
  */
 export function renderStreamingPaired(
   paragraphs: StreamingExportParagraph[],
-  translations: Map<number, StreamingTranslationEntry>,
+  translations: Map<number, TranslationEntry>,
   targetLanguage: StreamingTranslationTargetLanguage,
 ): string {
   const targetLabel = STREAMING_TARGET_LANGUAGE_NAMES[targetLanguage];
-  const blocks = paragraphs.map(({ key, sourceText }) => {
-    const entry = translations.get(key);
-    const isCurrent = entry !== undefined && entry.sourceText === sourceText;
-    let translatedText: string;
-    if (isCurrent && entry.status === "mirrored") {
-      // No model call was made for a mirrored paragraph — export the same
-      // text the muted on-screen right cell shows (its own source text).
-      translatedText = entry.translatedText ?? sourceText;
-    } else if (
-      isCurrent &&
-      entry.status === "done" &&
-      entry.translatedText !== undefined
-    ) {
-      translatedText = entry.translatedText;
-    } else if (isCurrent && entry.status === "failed") {
-      translatedText = STREAMING_TRANSLATION_FAILED_PLACEHOLDER;
-    } else {
-      translatedText = STREAMING_TRANSLATION_PLACEHOLDER;
-    }
+  const blocks = paragraphs.map((windows) => {
+    const sourceText = plainTranscript(windows);
+    const translatedText = paragraphTranslatedText(windows, translations);
     return `Original:\n${sourceText}\n\n${targetLabel}:\n${translatedText}`;
   });
   return blocks.join("\n\n");

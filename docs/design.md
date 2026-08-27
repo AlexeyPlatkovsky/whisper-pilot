@@ -137,11 +137,18 @@ Single line reflecting the meeting's current state:
   names the source side ("Original · auto-detected") and the target
   language, then one row per paragraph — left cell the original text, right
   cell its translation — each carrying its own timestamp/language tag so a
-  pair never drifts out of alignment. The right cell shows one of five
-  states: the translation, "Pending…", a spinner with "Translating…", the
-  original mirrored in a muted style (a paragraph already entirely in the
-  target language — no model call happens), or "Translation failed · Retry"
-  with a per-row retry control. Switching the toggle off restores the
+  pair never drifts out of alignment. Translation itself runs per window,
+  not per paragraph (WP-103), so the right cell is built by joining each of
+  the paragraph's windows through its own state: real translated text once a
+  window is done, the original mirrored in a muted style for a window
+  already entirely in the target language (no model call happens), a
+  "Translating…" spinner or "Pending…" for a window still in flight, or a
+  failed marker for one that errored. A paragraph whose trailing window is
+  still translating therefore shows real text for its finished windows and a
+  live indicator only on the unfinished tail, rather than the whole cell
+  staying blank until every window in it resolves. The retry control stays
+  one per row (paragraph), re-running every failed window within it rather
+  than one control per window. Switching the toggle off restores the
   single-column view unchanged. Below the app's minimum supported window
   width, the header sheds non-essential label text (the window-count meta,
   "Editable", "Live Translation") while every control stays visible and

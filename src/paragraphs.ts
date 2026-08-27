@@ -12,10 +12,11 @@ function endsSentence(text: string): boolean {
   return /[.!?]["')\]]*$/.test(text.trim());
 }
 
-/** The single definition of "what counts as closed", shared by
- * `groupWindowsIntoParagraphs` (applied to each candidate paragraph as
- * windows are appended) and `isParagraphClosed` (applied once to an
- * already-accumulated paragraph) — WP-100. */
+/** The single definition of "what counts as closed", applied by
+ * `groupWindowsIntoParagraphs` to each candidate paragraph as windows are
+ * appended — WP-100. This is a display-grouping concern only: since WP-103,
+ * Live Translation triggers per window and no longer waits on a paragraph
+ * closing (see StreamingView.tsx's reconcile effect). */
 function paragraphMeetsCloseCondition<
   W extends { text: string; outcome_ok: boolean },
 >(paragraph: W[]): boolean {
@@ -26,17 +27,6 @@ function paragraphMeetsCloseCondition<
     last !== undefined && last.outcome_ok && endsSentence(last.text);
   const tooManyWindows = paragraph.length >= MAX_WINDOWS_PER_PARAGRAPH;
   return (longEnough && atSentenceEnd) || tooManyWindows;
-}
-
-/** Whether `paragraph`, as currently accumulated, already satisfies the same
- * close condition `groupWindowsIntoParagraphs` applies per window — WP-100.
- * Lets the Streaming reconcile effect enqueue a still-trailing paragraph for
- * translation the moment it closes, instead of always waiting for a sibling
- * paragraph to start forming. */
-export function isParagraphClosed<
-  W extends { text: string; outcome_ok: boolean },
->(paragraph: W[]): boolean {
-  return paragraph.length > 0 && paragraphMeetsCloseCondition(paragraph);
 }
 
 export function groupWindowsIntoParagraphs<

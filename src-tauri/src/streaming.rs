@@ -36,16 +36,17 @@ pub struct StreamingMfuDto {
     pub participants: String,
 }
 
-/// One persisted paragraph translation (WP-93) — the read counterpart to
-/// `translate_streaming_paragraph`'s single string return, letting the
-/// frontend reuse an already-translated paragraph instead of re-running the
+/// One persisted window translation (WP-93; one row per window rather than
+/// per paragraph as of WP-103) — the read counterpart to
+/// `translate_streaming_window`'s single string return, letting the
+/// frontend reuse an already-translated window instead of re-running the
 /// model. `source_text` rides along so a caller holding the *current*
-/// paragraph text (from `src/paragraphs.ts` grouping) can detect a stale row
-/// — the paragraph's windows changed since it was translated — without this
-/// needing any paragraph concept of its own.
+/// window's text can detect a stale row — the window's text changed since
+/// it was translated (e.g. a fail-open retry) — without this needing any
+/// window-grouping concept of its own.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamingTranslationDto {
-    pub paragraph_key: i64,
+    pub window_index: i64,
     pub source_text: String,
     pub translated_text: String,
 }
@@ -258,17 +259,17 @@ pub fn ensure_translation_request_is_valid(
 /// Runs `translate` (production: `llm::translate_paragraph` bound to the
 /// resolved model path; tests: a fake, so this composition is verifiable
 /// without a real model) and persists the result — the part of
-/// `translate_streaming_paragraph` that needs the shared LLM. Injected so
+/// `translate_streaming_window` that needs the shared LLM. Injected so
 /// this can be exercised, including its "write no row on failure"
 /// guarantee, without a real model or Tauri `AppHandle`. `context` (WP-100)
-/// is the immediately preceding paragraph's own translation, passed through
+/// is the immediately preceding window(s)' own translation, passed through
 /// to `translate` unchanged as ephemeral prompt context — it is never
 /// itself persisted.
 #[allow(clippy::too_many_arguments)]
 pub fn translate_and_store(
     app_support_dir: &Path,
     session_id: StreamingSessionId,
-    paragraph_key: i64,
+    window_index: i64,
     target_language: &str,
     text: &str,
     context: Option<&str>,
@@ -280,7 +281,7 @@ pub fn translate_and_store(
     let store = StreamingStore::open(app_support_dir)?;
     store.upsert_translation(&streaming_store::StreamingTranslation {
         session_id,
-        paragraph_key,
+        window_index,
         target_language: target_language.to_string(),
         source_text: text.to_string(),
         translated_text: translated.clone(),
@@ -291,11 +292,11 @@ pub fn translate_and_store(
 }
 
 /// All persisted translations for one session and target language (WP-93) —
-/// the read counterpart to `translate_streaming_paragraph`. Replaying a
-/// whole session's paragraphs through the single-flight model on every "Live
+/// the read counterpart to `translate_streaming_window`. Replaying a whole
+/// session's windows through the single-flight model on every "Live
 /// Translation On" would be slow and wasteful for a session with translation
 /// history, so the frontend loads this first and only calls the model for
-/// paragraphs missing here or whose `source_text` no longer matches.
+/// windows missing here or whose `source_text` no longer matches.
 pub fn list_streaming_translations(
     app_support_dir: &Path,
     session_id: StreamingSessionId,
@@ -314,7 +315,7 @@ pub fn list_streaming_translations(
         .list_translations(session_id, target_language)?
         .into_iter()
         .map(|t| StreamingTranslationDto {
-            paragraph_key: t.paragraph_key,
+            window_index: t.window_index,
             source_text: t.source_text,
             translated_text: t.translated_text,
         })
@@ -690,7 +691,7 @@ mod tests {
         assert_eq!(round_tripped, original);
     }
 
-    // --- WP-92: translate_streaming_paragraph's testable core ---
+    // --- WP-92: translate_streaming_window's testable core ---
 
     #[test]
     fn ensure_translation_request_is_valid_rejects_an_unsupported_target_language() {
@@ -783,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn translate_and_store_overwrites_rather_than_duplicates_for_the_same_paragraph_key() {
+    fn translate_and_store_overwrites_rather_than_duplicates_for_the_same_window_index() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = create_streaming_session(temp.path(), 100).expect("create");
 
@@ -874,7 +875,7 @@ mod tests {
     }
 
     // --- WP-93: list_streaming_translations, the read counterpart to
-    // translate_streaming_paragraph the frontend uses to reuse already-
+    // translate_streaming_window the frontend uses to reuse already-
     // persisted translations instead of re-running the model. ---
 
     #[test]
@@ -908,7 +909,7 @@ mod tests {
         assert_eq!(
             rows,
             vec![StreamingTranslationDto {
-                paragraph_key: 0,
+                window_index: 0,
                 source_text: "Привет, мир.".to_string(),
                 translated_text: "Hello, world.".to_string(),
             }]
@@ -916,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn list_streaming_translations_orders_by_paragraph_key() {
+    fn list_streaming_translations_orders_by_window_index() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = create_streaming_session(temp.path(), 100).expect("create");
         translate_and_store(
@@ -945,7 +946,7 @@ mod tests {
         let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
 
         assert_eq!(
-            rows.iter().map(|r| r.paragraph_key).collect::<Vec<_>>(),
+            rows.iter().map(|r| r.window_index).collect::<Vec<_>>(),
             vec![0, 5]
         );
     }
@@ -1003,7 +1004,7 @@ mod tests {
     #[test]
     fn streaming_translation_dto_round_trips() {
         let original = StreamingTranslationDto {
-            paragraph_key: 3,
+            window_index: 3,
             source_text: "Исходный текст.".to_string(),
             translated_text: "Source text.".to_string(),
         };
@@ -1013,6 +1014,38 @@ mod tests {
             serde_json::from_value(json).expect("deserialize translation DTO");
 
         assert_eq!(round_tripped, original);
+    }
+
+    // --- WP-103: paragraph_key -> window_index rename, exercised end-to-end
+    // through translate_and_store and list_streaming_translations. ---
+
+    #[test]
+    fn translate_and_store_and_list_use_window_index_naming_end_to_end() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let translated = translate_and_store(
+            temp.path(),
+            id,
+            7,
+            "en",
+            "Привет, мир.",
+            None,
+            1_000,
+            |_text, _lang, _ctx| Ok("Hello, world.".to_string()),
+        )
+        .expect("translate and store window 7");
+
+        assert_eq!(translated, "Hello, world.");
+        let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
+        assert_eq!(
+            rows,
+            vec![StreamingTranslationDto {
+                window_index: 7,
+                source_text: "Привет, мир.".to_string(),
+                translated_text: "Hello, world.".to_string(),
+            }]
+        );
     }
 
     // --- WP-101: translation_enabled on the summary/session DTOs, and the

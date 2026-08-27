@@ -360,42 +360,45 @@ export function onStreamingSessionEnded(
 export type StreamingTranslationTargetLanguage = "en" | "ru";
 
 /**
- * Translates one Streaming paragraph into `targetLanguage` using the active
- * local LLM and persists the result, keyed by `(sessionId, paragraphKey,
- * targetLanguage)`. `paragraphKey` is the `window_index` of the paragraph's
- * first window. Single-flight in the core: a second concurrent call rejects
- * with a distinct, retryable error.
+ * Translates one Streaming window into `targetLanguage` using the active
+ * local LLM and persists the result, keyed by `(sessionId, windowIndex,
+ * targetLanguage)`. Single-flight in the core: a second concurrent call
+ * rejects with a distinct, retryable error. `context` (WP-100/WP-103) is the
+ * immediately preceding window(s)' own translation, if any — the caller
+ * decides how much rolling context to assemble; this command just threads
+ * it through unchanged as ephemeral prompt context.
  */
-export function translateStreamingParagraph(
+export function translateStreamingWindow(
   sessionId: number,
-  paragraphKey: number,
+  windowIndex: number,
   targetLanguage: StreamingTranslationTargetLanguage,
   text: string,
   context?: string,
 ): Promise<string> {
-  return invoke<string>("translate_streaming_paragraph", {
+  return invoke<string>("translate_streaming_window", {
     sessionId,
-    paragraphKey,
+    windowIndex,
     targetLanguage,
     text,
     context,
   });
 }
 
-/** One persisted paragraph translation, as returned by
- * `listStreamingTranslations`. `source_text` is the paragraph text the
- * translation was made from — compare it against the paragraph's *current*
- * text to detect a stale row (the paragraph's windows changed since). */
+/** One persisted window translation, as returned by
+ * `listStreamingTranslations`. `source_text` is the window's own text the
+ * translation was made from — compare it against that window's *current*
+ * text to detect a stale row (the window's text changed since, e.g. a
+ * fail-open retry). */
 export interface StreamingTranslationRow {
-  paragraph_key: number;
+  window_index: number;
   source_text: string;
   translated_text: string;
 }
 
 /**
  * All persisted translations for `sessionId` and `targetLanguage` (WP-93) —
- * the read counterpart to `translateStreamingParagraph`, letting the caller
- * reuse an already-translated paragraph instead of re-running the model.
+ * the read counterpart to `translateStreamingWindow`, letting the caller
+ * reuse an already-translated window instead of re-running the model.
  */
 export function listStreamingTranslations(
   sessionId: number,

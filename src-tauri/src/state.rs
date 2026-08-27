@@ -49,8 +49,8 @@ pub(crate) struct AppState {
     /// `docs/architecture.md`'s Streaming IPC section.
     #[cfg(target_os = "macos")]
     pub(crate) streaming_runtime: Mutex<Option<StreamingRuntime>>,
-    /// WP-92's single-flight guard for Streaming paragraph translation: at
-    /// most one `translate_streaming_paragraph` call runs its LLM inference
+    /// WP-92's single-flight guard for Streaming window translation: at
+    /// most one `translate_streaming_window` call runs its LLM inference
     /// at a time, claimed via `llm::TranslationUsageGuard`. Independent of
     /// `whisper_busy` (a different shared resource, the llama.cpp model
     /// rather than the Whisper context) so translation never blocks or is

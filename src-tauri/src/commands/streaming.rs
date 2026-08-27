@@ -52,9 +52,9 @@ pub(crate) fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result
     streaming::delete_streaming_session(&app_data_dir(&app)?, id)
 }
 
-/// All persisted paragraph translations for one session and target language
-/// (WP-93) — read counterpart to `translate_streaming_paragraph`, so the
-/// frontend can reuse an already-translated paragraph instead of re-running
+/// All persisted window translations for one session and target language
+/// (WP-93) — read counterpart to `translate_streaming_window`, so the
+/// frontend can reuse an already-translated window instead of re-running
 /// the model.
 #[tauri::command]
 pub(crate) fn list_streaming_translations(

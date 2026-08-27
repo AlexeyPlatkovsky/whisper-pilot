@@ -154,19 +154,19 @@ pub(crate) async fn revert_streaming_prettify(
     streaming::open_streaming_session(&app_support_dir, id)
 }
 
-/// Translates one Streaming paragraph into `target_language` ("en" or "ru")
+/// Translates one Streaming window into `target_language` ("en" or "ru")
 /// using the active local LLM and persists the result. Single-flight: a
 /// second concurrent translation request is rejected with a distinct,
 /// UI-retryable `AppError::TranslationBusy` rather than queuing or blocking
 /// the streaming decode loop (WP-92). `context` (WP-100) is the immediately
-/// preceding paragraph's own translation, if any — threaded through
+/// preceding window(s)' own translation, if any — threaded through
 /// unchanged to `llm::translate_paragraph` as ephemeral prompt context.
 #[tauri::command]
-pub(crate) async fn translate_streaming_paragraph(
+pub(crate) async fn translate_streaming_window(
     app: tauri::AppHandle,
     state: tauri::State<'_, crate::state::AppState>,
     session_id: streaming_store::StreamingSessionId,
-    paragraph_key: i64,
+    window_index: i64,
     target_language: String,
     text: String,
     context: Option<String>,
@@ -192,7 +192,7 @@ pub(crate) async fn translate_streaming_paragraph(
         streaming::translate_and_store(
             &app_support_dir_clone,
             session_id,
-            paragraph_key,
+            window_index,
             &target_language_clone,
             &text_clone,
             context.as_deref(),
@@ -208,7 +208,7 @@ pub(crate) async fn translate_streaming_paragraph(
 mod tests {
     use super::*;
 
-    // --- WP-92: model-resolution error path for translate_streaming_paragraph ---
+    // --- WP-92: model-resolution error path for translate_streaming_window ---
 
     #[test]
     fn resolve_llm_model_path_errors_when_no_model_is_selected() {

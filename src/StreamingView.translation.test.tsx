@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
@@ -10,10 +10,16 @@ import type {
   TaskModel,
 } from "./ipc";
 
-// WP-93: the Live Translation header control (label + switch + locked
+// WP-93/WP-103: the Live Translation header control (label + switch + locked
 // target-language select) and the two-column paired-row transcript grid,
 // mirroring the inline vi.mock idiom of StreamingView.test.tsx /
-// StreamingView.mfuToggle.test.tsx.
+// StreamingView.mfuToggle.test.tsx. WP-103 rewrote translation from one call
+// per *paragraph* to one call per *window*: nothing translates until the
+// session has at least 2 windows, windows 0 and 1 then fire back to back
+// (window 0 with no context, window 1 with window 0's translation), and
+// every window after that translates alone with a rolling up-to-2-window
+// context — all through the same single-flight queue, strictly in
+// increasing window_index order.
 
 type Handler<T> = (payload: T) => void;
 
@@ -33,7 +39,7 @@ vi.mock("./ipc", () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
-  translateStreamingParagraph: vi.fn(async () => "Translated."),
+  translateStreamingWindow: vi.fn(async () => "Translated."),
   listStreamingTranslations: vi.fn(async () => []),
   setStreamingTranslationEnabled: vi.fn(),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
@@ -76,6 +82,11 @@ const SESSION_A: StreamingSessionSummary = {
   translation_enabled: false,
 };
 
+const ACTIVE_SESSION_A: StreamingSessionSummary = {
+  ...SESSION_A,
+  status: "active",
+};
+
 function openedSession(
   overrides: Partial<StreamingSession> = {},
 ): StreamingSession {
@@ -93,10 +104,12 @@ function openedSession(
 
 /** `count` windows of monotonically increasing index, each short enough that
  * only paragraphs.ts's window-count cap (4) closes a paragraph — never the
- * length/sentence heuristic — so paragraph boundaries are deterministic
- * regardless of text content. Default language is "en" — the mirror image
- * of the "ru" target-language default, so paragraphs built with no override
- * exercise real translation instead of the same-language mirror path. */
+ * length/sentence heuristic — so paragraph boundaries (used for on-screen
+ * display grouping and the paragraph-level retry affordance) are
+ * deterministic regardless of text content. Default language is "en" — the
+ * mirror image of the "ru" target-language default, so windows built with no
+ * override exercise real translation instead of the same-language mirror
+ * path. */
 function makeWindows(
   count: number,
   opts: {
@@ -136,6 +149,25 @@ const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
+
+/** Reads a paragraph row's translated-column text by locating the row via
+ * its (untouched, plain-text) original column and reading the translated
+ * `<p className="wp-translation-text">`'s `textContent` directly. Needed
+ * instead of `screen.findByText` because that cell's content is nested
+ * inside per-window `<span>`s (WP-103) — dom-testing-library's default text
+ * matcher only reads an element's own direct text-node children, not
+ * descendant elements' text, so it would never match the wrapping `<p>`. */
+async function expectTranslatedCellText(sourceText: string, expected: string) {
+  await waitFor(() => {
+    const rows = Array.from(document.querySelectorAll(".wp-translation-row"));
+    const row = rows.find((r) =>
+      r.querySelector(".wp-translation-col")?.textContent?.includes(sourceText),
+    );
+    const cols = row?.querySelectorAll(".wp-translation-col");
+    const cell = cols?.[1]?.querySelector(".wp-translation-text");
+    expect(cell?.textContent).toBe(expected);
+  });
+}
 
 function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -185,6 +217,25 @@ function findTargetLanguageSelect() {
   return screen.getByRole("combobox", {
     name: "Live Translation target language",
   });
+}
+
+/** Starts a running session and feeds it `windows` one by one through the
+ * mocked `onStreamingWindow` handler — mirrors how live capture actually
+ * delivers windows, one at a time, unlike `openSessionWithWindows`'s
+ * already-fully-populated stopped session. */
+async function startRunningSessionWithWindows(
+  user: ReturnType<typeof userEvent.setup>,
+  windows: StreamingWindow[],
+) {
+  vi.mocked(ipc.startStreamingSession).mockResolvedValue(ACTIVE_SESSION_A);
+  render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+  await user.click(await screen.findByRole("button", { name: "Start" }));
+  await waitFor(() => expect(windowHandler).not.toBeNull());
+  const toggle = await findTranslationSwitch();
+  await user.click(toggle);
+  for (const w of windows) {
+    windowHandler!({ ...w, session_id: 1 });
+  }
 }
 
 beforeEach(() => {
@@ -284,157 +335,190 @@ describe("StreamingView — Live Translation split grid", () => {
   });
 });
 
-describe("StreamingView — Live Translation queue", () => {
-  it("backfills existing paragraphs oldest-first with at most one translate call in flight, rendering each result in its own row", async () => {
+// WP-103: translation is per-window, gated on the session having at least 2
+// windows, and always processed strictly in increasing window_index order
+// through the single-flight queue.
+describe("StreamingView — Live Translation per-window triggering (WP-103)", () => {
+  it("translates nothing at all while the session has fewer than 2 windows", async () => {
     const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    const first = deferred<string>();
-    const second = deferred<string>();
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) =>
-        paragraphKey === 0 ? first.promise : second.promise,
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    for (const w of [
-      ...PARAGRAPH_A,
-      ...PARAGRAPH_B,
-      ...makeWindows(1, { startIndex: 8 }),
-    ]) {
-      windowHandler!({ ...w, session_id: 1 });
-    }
-    await screen.findByText(new RegExp(PARAGRAPH_A[0].text));
-
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
-    );
-    // Both paragraphs are enqueued in the same reconcile pass, so A hasn't
-    // resolved yet when B is enqueued — no prior-paragraph context either
-    // call.
-    expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-      1,
-      0,
-      "ru",
-      SOURCE_A,
-      undefined,
+    await startRunningSessionWithWindows(
+      user,
+      makeWindows(1, { startIndex: 0 }),
     );
 
-    const rowA = screen
-      .getByText(SOURCE_A)
-      .closest(".wp-translation-row") as HTMLElement;
-    expect(within(rowA).getByText("Translating…")).toBeInTheDocument();
-    const rowB = screen
-      .getByText(SOURCE_B)
-      .closest(".wp-translation-row") as HTMLElement;
-    expect(within(rowB).getByText("Pending…")).toBeInTheDocument();
+    await flush();
 
-    first.resolve("Word batch A (en).");
-    expect(
-      await within(rowA).findByText("Word batch A (en)."),
-    ).toBeInTheDocument();
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(2),
-    );
-    expect(ipc.translateStreamingParagraph).toHaveBeenLastCalledWith(
-      1,
-      4,
-      "ru",
-      SOURCE_B,
-      undefined,
-    );
-
-    second.resolve("Word batch B (en).");
-    expect(
-      await within(rowB).findByText("Word batch B (en)."),
-    ).toBeInTheDocument();
-
-    // The trailing, not-yet-closed paragraph (window 8) is excluded from
-    // backfill while the session is still running.
-    expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(2);
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
   });
 
-  it("loads persisted translations first and reuses a matching one without a model call", async () => {
+  it("@WP-103-bootstrap: once the 2nd window exists, window 0 and window 1 both translate back to back — window 0 with no context, then window 1 with window 0's translation as context", async () => {
     const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([
-      { paragraph_key: 0, source_text: SOURCE_A, translated_text: "Cached A." },
-    ]);
-    const pending = deferred<string>();
-    vi.mocked(ipc.translateStreamingParagraph).mockReturnValue(pending.promise);
-    await openSessionWithWindows(user, TWO_PARAGRAPHS);
-
-    await user.click(await findTranslationSwitch());
-
-    expect(await screen.findByText("Cached A.")).toBeInTheDocument();
-    expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "ru");
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalledWith(
-      1,
-      0,
-      "ru",
-      SOURCE_A,
+    const w0 = deferred<string>();
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) =>
+        windowIndex === 0 ? w0.promise : Promise.resolve("W1 translated."),
     );
-    // Paragraph B has no persisted row, so it still gets a live call — and
-    // (WP-100) since the persisted-reused A entry is already "done" by the
-    // time B is reconciled, B's prompt gets A's translation as context.
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        4,
-        "ru",
-        SOURCE_B,
-        "Cached A.",
-      ),
+
+    await startRunningSessionWithWindows(
+      user,
+      makeWindows(2, { startIndex: 0 }),
     );
-  });
-
-  // WP-100 scenario 1 + DoD: a paragraph that closes purely on the
-  // window-count cap, with no next paragraph having started forming, must
-  // be enqueued immediately while the session is still running — not held
-  // back for a sibling paragraph to appear.
-  it("enqueues the last paragraph as soon as it closes via the window-count cap alone, with no next paragraph present", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    // Exactly MAX_WINDOWS_PER_PARAGRAPH (4) windows, none ending a sentence
-    // — only the cap closes this paragraph, and it is the only (last)
-    // paragraph in the array.
-    for (const w of PARAGRAPH_A) {
-      windowHandler!({ ...w, session_id: 1 });
-    }
 
     await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
         1,
         0,
         "ru",
-        SOURCE_A,
+        "Слово0",
         undefined,
       ),
     );
+    // Single-flight: window 1 is enqueued alongside window 0 in the same
+    // reconcile pass, but not yet dequeued/sent — only one call in flight.
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
+
+    w0.resolve("W0 translated.");
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        1,
+        "ru",
+        "Слово1",
+        "W0 translated.",
+      ),
+    );
+  });
+
+  it("@WP-103-rolling-context: a mid-session window translates using the concatenation of its 2 immediately preceding windows' translations as context", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) => Promise.resolve(`W${windowIndex} translated.`),
+    );
+
+    await startRunningSessionWithWindows(
+      user,
+      makeWindows(5, { startIndex: 0 }),
+    );
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        "Слово4",
+        "W2 translated. W3 translated.",
+      ),
+    );
+  });
+
+  it("@WP-103-failed-predecessor: a failed immediately-preceding window is skipped when assembling context, without blocking translation", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) =>
+        windowIndex === 3
+          ? Promise.reject(new Error("model unavailable"))
+          : Promise.resolve(`W${windowIndex} translated.`),
+    );
+
+    await startRunningSessionWithWindows(
+      user,
+      makeWindows(5, { startIndex: 0 }),
+    );
+
+    // Window 4's context is window 2's translation alone — window 3 failed
+    // and is skipped rather than blocking or being substituted for.
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        "Слово4",
+        "W2 translated.",
+      ),
+    );
+  });
+
+  it("@WP-103-backfill: backfills an already-fully-transcribed stopped session oldest-first, one call in flight at a time, with rolling context", async () => {
+    const user = userEvent.setup();
+    const w0 = deferred<string>();
+    const w1 = deferred<string>();
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) => {
+        if (windowIndex === 0) return w0.promise;
+        if (windowIndex === 1) return w1.promise;
+        return Promise.resolve(`W${windowIndex} translated.`);
+      },
+    );
+    await openSessionWithWindows(user, makeWindows(3, { startIndex: 0 }));
+
+    await user.click(await findTranslationSwitch());
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1),
+    );
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+      1,
+      0,
+      "ru",
+      "Слово0",
+      undefined,
+    );
+
+    w0.resolve("W0 translated.");
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(2),
+    );
+    expect(ipc.translateStreamingWindow).toHaveBeenLastCalledWith(
+      1,
+      1,
+      "ru",
+      "Слово1",
+      "W0 translated.",
+    );
+
+    w1.resolve("W1 translated.");
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(3),
+    );
+    expect(ipc.translateStreamingWindow).toHaveBeenLastCalledWith(
+      1,
+      2,
+      "ru",
+      "Слово2",
+      "W0 translated. W1 translated.",
+    );
+  });
+
+  it("loads persisted translations first and reuses one — matched by window_index and that window's own current text — without a model call, still feeding it as context to the next window", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([
+      { window_index: 0, source_text: "Слово0", translated_text: "Cached W0." },
+    ]);
+    const pending = deferred<string>();
+    vi.mocked(ipc.translateStreamingWindow).mockReturnValue(pending.promise);
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
+
+    await user.click(await findTranslationSwitch());
+
+    expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "ru");
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalledWith(
+      1,
+      0,
+      "ru",
+      "Слово0",
+      undefined,
+    );
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        1,
+        "ru",
+        "Слово1",
+        "Cached W0.",
+      ),
+    );
+    await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Translating…");
   });
 
   // state-transition: OFF -> ON -> OFF -> ON within the same session must
@@ -445,50 +529,48 @@ describe("StreamingView — Live Translation queue", () => {
   it("reuses a persisted translation on a second activation within the same session, without a stray model call", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([
-      { paragraph_key: 0, source_text: SOURCE_A, translated_text: "Cached A." },
+      { window_index: 0, source_text: "Слово0", translated_text: "Cached W0." },
+      { window_index: 1, source_text: "Слово1", translated_text: "Cached W1." },
     ]);
-    await openSessionWithWindows(user, PARAGRAPH_A);
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
     const toggle = await findTranslationSwitch();
 
     await user.click(toggle); // ON: persisted fetch resolves, reused.
-    expect(await screen.findByText("Cached A.")).toBeInTheDocument();
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+    await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Cached W1.");
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
 
     await user.click(toggle); // OFF
     expect(document.querySelector(".wp-translation-grid")).toBeNull();
 
     await user.click(toggle); // ON again, same session + target language.
 
-    // The persisted row must be reused again — no live call for it, even
-    // though the reconcile effect's own commit runs before the second
-    // fetch's promise settles.
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
-    expect(await screen.findByText("Cached A.")).toBeInTheDocument();
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+    await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Cached W1.");
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
   });
 
-  it("re-translates instead of reusing a persisted row whose stored source text no longer matches the current paragraph", async () => {
+  it("re-translates instead of reusing a persisted row whose stored source text no longer matches the window's current text", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([
       {
-        paragraph_key: 0,
+        window_index: 0,
         source_text: "stale text",
         translated_text: "Stale cached.",
       },
     ]);
-    vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
       "Fresh translation.",
     );
-    await openSessionWithWindows(user, TWO_PARAGRAPHS);
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
 
     await user.click(await findTranslationSwitch());
 
     await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
         1,
         0,
         "ru",
-        SOURCE_A,
+        "Слово0",
         undefined,
       ),
     );
@@ -496,255 +578,93 @@ describe("StreamingView — Live Translation queue", () => {
   });
 });
 
-describe("StreamingView — Live Translation same-language skip", () => {
-  it("never calls the model for a paragraph whose windows are all already the target language, and mirrors the original text", async () => {
+// WP-103: a window whose own language already matches the target is
+// mirrored individually — no model call, own text as both source and
+// "translated" text — applied per window rather than only when an entire
+// paragraph is single-language.
+describe("StreamingView — Live Translation same-language mirroring", () => {
+  it("never calls the model for a window whose language is already the target language, and mirrors its own text", async () => {
     const user = userEvent.setup();
-    const russianParagraph = makeWindows(4, {
+    const russianWindows = makeWindows(2, {
       startIndex: 0,
       language: "ru",
       prefix: "Слово",
     });
-    await openSessionWithWindows(user, russianParagraph);
+    await openSessionWithWindows(user, russianWindows);
 
     await user.click(await findTranslationSwitch());
 
-    const source = paragraphSourceText(russianParagraph);
-    const mirrored = await screen.findByText(source, {
-      selector: ".wp-translation-text--mirrored",
+    const source = paragraphSourceText(russianWindows);
+    await waitFor(() => {
+      const row = document.querySelector(".wp-translation-row");
+      const cols = row?.querySelectorAll(".wp-translation-col");
+      const translatedCell = cols?.[1]?.querySelector(".wp-translation-text");
+      expect(translatedCell?.textContent).toBe(source);
     });
-    expect(mirrored).toBeInTheDocument();
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
-  });
-});
-
-// WP-100 scenarios 2 & 3: the immediately preceding paragraph's translation
-// is threaded into the next model call as reference-only context, but only
-// when that entry is genuinely target-language text (status "done" or
-// "mirrored"). A "pending"/"translating"/"failed" previous entry, or no
-// entry at all (first paragraph), contributes no context.
-describe("StreamingView — Live Translation prior-paragraph context", () => {
-  it("passes the preceding paragraph's translation as context once it is done", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) =>
-        paragraphKey === 0
-          ? Promise.resolve("Translated A.")
-          : Promise.resolve("Translated B."),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
-    await screen.findByText("Translated A.");
-
-    // Paragraph B closes only after A is already "done".
-    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        4,
-        "ru",
-        SOURCE_B,
-        "Translated A.",
-      ),
-    );
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
   });
 
-  it("passes the preceding mirrored paragraph's own text as context", async () => {
+  // WP-103's defining improvement over the old all-or-nothing paragraph
+  // check: a paragraph mixing an already-target-language window with a
+  // window that still needs translation must render both correctly.
+  it("@WP-103-mixed-mirror: a paragraph mixing a mirrored window and a translated window renders both correctly, and only the non-mirrored window gets a model call", async () => {
     const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
-      "Translated B.",
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    const mirroredParagraph = makeWindows(4, {
+    const mirroredWindow = makeWindows(1, {
       startIndex: 0,
       language: "ru",
       prefix: "Слово",
-    });
-    for (const w of mirroredParagraph) windowHandler!({ ...w, session_id: 1 });
-    const mirroredSource = paragraphSourceText(mirroredParagraph);
-    await screen.findByText(mirroredSource, {
-      selector: ".wp-translation-text--mirrored",
-    });
-
-    // Paragraph B (English, startIndex 4 — not the target language) closes
-    // after the mirrored paragraph is already recorded.
-    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        4,
-        "ru",
-        SOURCE_B,
-        mirroredSource,
-      ),
-    );
-  });
-
-  it("passes no context while the preceding paragraph is still translating", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    const first = deferred<string>();
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) =>
-        paragraphKey === 0 ? first.promise : Promise.resolve("Translated B."),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
-    );
-
-    // Paragraph B closes while A's call is still in flight (single-flight
-    // means B is only queued, not yet sent). Flushed before A resolves so
-    // B's enqueue observes A as still "translating", not "done".
-    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
-    await flush();
-    first.resolve("Translated A.");
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        4,
-        "ru",
-        SOURCE_B,
-        undefined,
-      ),
-    );
-  });
-
-  it("passes no context when the preceding paragraph failed", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) =>
-        paragraphKey === 0
-          ? Promise.reject(new Error("model unavailable"))
-          : Promise.resolve("Translated B."),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    const toggle = await findTranslationSwitch();
-    await user.click(toggle);
-
-    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
-    await screen.findByRole("button", { name: /Translation failed.*Retry/i });
-
-    // Paragraph B closes only after A has already settled into "failed".
-    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
-
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        4,
-        "ru",
-        SOURCE_B,
-        undefined,
-      ),
-    );
-  });
-
-  it("passes no context for the first paragraph of a session", async () => {
-    const user = userEvent.setup();
-    await openSessionWithWindows(user, PARAGRAPH_A);
+    })[0];
+    const translatedWindow = makeWindows(1, {
+      startIndex: 1,
+      language: "en",
+      prefix: "Word",
+    })[0];
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue("Мир.");
+    await openSessionWithWindows(user, [mirroredWindow, translatedWindow]);
 
     await user.click(await findTranslationSwitch());
 
-    await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
-        1,
-        0,
-        "ru",
-        SOURCE_A,
-        undefined,
-      ),
+    await expectTranslatedCellText("Слово0 Word1", "Слово0 Мир.");
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+      1,
+      1,
+      "ru",
+      "Word1",
+      "Слово0",
     );
   });
 });
 
 describe("StreamingView — Live Translation failure and retry", () => {
-  it("shows a retry control on failure, continues the queue with the next paragraph, and raises no dialog or capture interruption", async () => {
+  it("shows a paragraph-level retry control on a window's failure, continues the queue with later windows, and raises no dialog or capture interruption", async () => {
     const user = userEvent.setup();
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) =>
-        paragraphKey === 0
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) =>
+        windowIndex === 0
           ? Promise.reject(new Error("model unavailable"))
-          : Promise.resolve("Word batch B (en)."),
+          : Promise.resolve(`W${windowIndex} translated.`),
     );
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-    for (const w of TWO_PARAGRAPHS) {
-      windowHandler!({ ...w, session_id: 1 });
-    }
-    // A 9th window keeps the session "running" with an open trailing
-    // paragraph, matching how a live capture actually looks mid-session.
-    windowHandler!({
-      ...makeWindows(1, { startIndex: 8 })[0],
-      session_id: 1,
-    });
-
-    await user.click(await findTranslationSwitch());
+    await startRunningSessionWithWindows(user, [
+      ...TWO_PARAGRAPHS,
+      // A 9th window keeps the session "running" with an open trailing
+      // paragraph, matching how a live capture actually looks mid-session.
+      ...makeWindows(1, { startIndex: 8 }),
+    ]);
 
     const retry = await screen.findByRole("button", {
       name: /Translation failed.*Retry/i,
     });
     expect(retry).toBeInTheDocument();
-    expect(await screen.findByText("Word batch B (en).")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        7,
+        "ru",
+        "Слово7",
+        expect.any(String),
+      ),
+    );
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     // Capture itself was never interrupted by the translation failure.
@@ -753,32 +673,50 @@ describe("StreamingView — Live Translation failure and retry", () => {
     expect(ipc.stopStreamingSession).not.toHaveBeenCalled();
   });
 
-  it("retry re-runs only the failed paragraph and leaves other rows unaffected", async () => {
+  // WP-103: retry stays a single paragraph-level affordance that re-enqueues
+  // every currently-FAILED window within that paragraph (not every window),
+  // leaving already-done/mirrored siblings untouched.
+  it("retry re-enqueues only the failed windows within that paragraph, recomputing context from current state, and leaves other windows unaffected", async () => {
     const user = userEvent.setup();
-    let attemptsForA = 0;
-    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
-      (_session, paragraphKey) => {
-        if (paragraphKey === 0) {
-          attemptsForA += 1;
-          return attemptsForA === 1
+    let attemptsForWindow0 = 0;
+    vi.mocked(ipc.translateStreamingWindow).mockImplementation(
+      (_session, windowIndex) => {
+        if (windowIndex === 0) {
+          attemptsForWindow0 += 1;
+          return attemptsForWindow0 === 1
             ? Promise.reject(new Error("model unavailable"))
-            : Promise.resolve("Recovered A (en).");
+            : Promise.resolve("Recovered W0.");
         }
-        return Promise.resolve("Word batch B (en).");
+        return Promise.resolve(`W${windowIndex} translated.`);
       },
     );
-    await openSessionWithWindows(user, TWO_PARAGRAPHS);
+    await openSessionWithWindows(user, PARAGRAPH_A);
     await user.click(await findTranslationSwitch());
     const retry = await screen.findByRole("button", {
       name: /Translation failed.*Retry/i,
     });
-    expect(await screen.findByText("Word batch B (en).")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(4),
+    );
 
     await user.click(retry);
 
-    expect(await screen.findByText("Recovered A (en).")).toBeInTheDocument();
-    expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(3);
-    expect(screen.getByText("Word batch B (en).")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(5),
+    );
+    // Retried with the paragraph's other (already-succeeded) windows as
+    // available context, not the original undefined.
+    expect(ipc.translateStreamingWindow).toHaveBeenLastCalledWith(
+      1,
+      0,
+      "ru",
+      "Слово0",
+      undefined,
+    );
+    await expectTranslatedCellText(
+      SOURCE_A,
+      "Recovered W0. W1 translated. W2 translated. W3 translated.",
+    );
   });
 });
 
@@ -863,20 +801,20 @@ describe("StreamingView — Live Translation edge cases", () => {
   it("switching off mid-queue cancels pending work and does not continue the queue once the in-flight call resolves", async () => {
     const user = userEvent.setup();
     const first = deferred<string>();
-    vi.mocked(ipc.translateStreamingParagraph).mockReturnValue(first.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockReturnValue(first.promise);
     await openSessionWithWindows(user, TWO_PARAGRAPHS);
     const toggle = await findTranslationSwitch();
 
     await user.click(toggle);
     await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1),
     );
 
     await user.click(toggle);
     first.resolve("Word batch A (en).");
     await flush();
 
-    expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1);
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
   });
 
   // state-transition: an active-session event (session-switch) while ON
@@ -896,13 +834,13 @@ describe("StreamingView — Live Translation edge cases", () => {
       }),
     );
     const first = deferred<string>();
-    vi.mocked(ipc.translateStreamingParagraph).mockReturnValue(first.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockReturnValue(first.promise);
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByText("Standup"));
     const toggle = await findTranslationSwitch();
     await user.click(toggle);
     await waitFor(() =>
-      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1),
     );
 
     await user.click(await screen.findByText("Design Review"));
@@ -911,7 +849,7 @@ describe("StreamingView — Live Translation edge cases", () => {
     expect(toggleAfterSwitch).toHaveAttribute("aria-checked", "false");
     first.resolve("Word batch A (en).");
     await flush();
-    expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1);
+    expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -928,22 +866,16 @@ describe("StreamingView — Live Translation edge cases", () => {
 describe("StreamingView — Live Translation session-lifecycle persistence (WP-101)", () => {
   it("Bug 1 repro: pressing Start/Resume on the already-open session leaves Live Translation on and keeps the in-progress translation", async () => {
     const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 1,
-      title: "Standup",
-      created_at_ms: 100,
-      updated_at_ms: 100,
-      status: "active",
-      translation_enabled: false,
-    });
-    vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
-      "Translated A.",
-    );
-    await openSessionWithWindows(user, PARAGRAPH_A);
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue(ACTIVE_SESSION_A);
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue("Translated W0.");
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
     const toggle = await findTranslationSwitch();
 
     await user.click(toggle);
-    expect(await screen.findByText("Translated A.")).toBeInTheDocument();
+    await expectTranslatedCellText(
+      "Слово0 Слово1",
+      "Translated W0. Translated W0.",
+    );
 
     const startButton = await screen.findByRole("button", {
       name: /^(start|resume)$/i,
@@ -954,9 +886,12 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     // press Start" sequence that used to force the switch back off.
     expect(ipc.startStreamingSession).toHaveBeenCalledWith(1);
     await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
-    // The queue/map was not cleared: the already-translated paragraph is
+    // The queue/map was not cleared: the already-translated windows are
     // still shown, not reset to "Pending…".
-    expect(screen.getByText("Translated A.")).toBeInTheDocument();
+    await expectTranslatedCellText(
+      "Слово0 Слово1",
+      "Translated W0. Translated W0.",
+    );
   });
 
   it("starting a brand-new session (resumeId null) still resets Live Translation to off", async () => {
@@ -1007,7 +942,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
 
   it("toggling the switch persists the new value for the open session", async () => {
     const user = userEvent.setup();
-    await openSessionWithWindows(user, PARAGRAPH_A);
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
     const toggle = await findTranslationSwitch();
 
     await user.click(toggle);
@@ -1025,7 +960,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
       new Error("disk full"),
     );
     const user = userEvent.setup();
-    await openSessionWithWindows(user, PARAGRAPH_A);
+    await openSessionWithWindows(user, makeWindows(2, { startIndex: 0 }));
     const toggle = await findTranslationSwitch();
 
     await user.click(toggle);
@@ -1086,9 +1021,9 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
 
 // WP-102: a stale `persistedReady` left over from a previously open session
 // raced the reconcile effect ahead of the reopened session's own
-// persisted-translations fetch, re-sending already-translated paragraphs.
+// persisted-translations fetch, re-sending already-translated windows.
 describe("StreamingView — Live Translation persisted-cache reload race (WP-102)", () => {
-  it("reopening a session with an already-persisted paragraph reuses it without a new model call, even after visiting another session in between", async () => {
+  it("reopening a session with an already-persisted window reuses it without a new model call, even after visiting another session in between", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
       { ...SESSION_A, translation_enabled: true },
@@ -1104,7 +1039,7 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
         ? openedSession({
             id: 1,
             title: "Standup",
-            windows: PARAGRAPH_A,
+            windows: makeWindows(2, { startIndex: 0 }),
             translation_enabled: true,
           })
         : openedSession({
@@ -1119,9 +1054,14 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
         sessionId === 1
           ? [
               {
-                paragraph_key: 0,
-                source_text: SOURCE_A,
-                translated_text: "Cached A.",
+                window_index: 0,
+                source_text: "Слово0",
+                translated_text: "Cached W0.",
+              },
+              {
+                window_index: 1,
+                source_text: "Слово1",
+                translated_text: "Cached W1.",
               },
             ]
           : [],
@@ -1129,8 +1069,8 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     await user.click(await screen.findByText("Standup"));
-    expect(await screen.findByText("Cached A.")).toBeInTheDocument();
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+    await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Cached W1.");
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
 
     await user.click(await screen.findByText("Design Review"));
     await user.click(await screen.findByText("Standup"));
@@ -1142,6 +1082,6 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
       expect(ipc.listStreamingTranslations).toHaveBeenCalledTimes(2),
     );
     await flush();
-    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
   });
 });

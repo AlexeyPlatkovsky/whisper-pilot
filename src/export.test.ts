@@ -5,17 +5,16 @@ import {
   renderMarkdown,
   renderPlainText,
 } from "./export";
-import type { MeetingMfu, Segment } from "./ipc";
-// WP-94: Streaming Copy/Export paired original+translation renderer — kept
-// as a separate import so the block above (Meeting's existing renderer) is
-// untouched.
+import type { MeetingMfu, Segment, StreamingWindow } from "./ipc";
+// WP-94/WP-103: Streaming Copy/Export paired original+translation renderer —
+// kept as a separate import so the block above (Meeting's existing renderer)
+// is untouched.
+import { hasStreamingTranslations, renderStreamingPaired } from "./export";
 import {
-  hasStreamingTranslations,
-  renderStreamingPaired,
-  STREAMING_TRANSLATION_FAILED_PLACEHOLDER,
-  STREAMING_TRANSLATION_PLACEHOLDER,
-  type StreamingTranslationEntry,
-} from "./export";
+  TRANSLATION_FAILED_PLACEHOLDER,
+  TRANSLATION_PLACEHOLDER,
+  type TranslationEntry,
+} from "./streamingText";
 
 const SEGMENTS: Segment[] = [
   { start_ms: 0, end_ms: 1_000, text: "Hello" },
@@ -90,26 +89,43 @@ describe("exportFileExtension", () => {
   });
 });
 
-// WP-94: Streaming Copy/Export paired original+translation rendering — a
-// pure renderer decoupled from StreamingView's component state so it's
+// WP-94/WP-103: Streaming Copy/Export paired original+translation rendering
+// — a pure renderer decoupled from StreamingView's component state so it's
 // unit-testable without rendering. Wiring coverage (Copy button, Export,
 // same-render-path guarantee) lives in StreamingView.pairedExport.test.tsx.
+// WP-103 moved translation from one entry per paragraph to one entry per
+// *window* — a paragraph here is just its own windows, and
+// `renderStreamingPaired` derives both the original and translated text by
+// mapping each window through its own entry.
+
+function win(
+  windowIndex: number,
+  text: string,
+  opts: { language?: string; outcomeOk?: boolean } = {},
+): StreamingWindow {
+  const { language = "en", outcomeOk = true } = opts;
+  return {
+    window_index: windowIndex,
+    start_ms: windowIndex * 1000,
+    end_ms: windowIndex * 1000 + 900,
+    text,
+    language,
+    outcome_ok: outcomeOk,
+  };
+}
 
 function entry(
-  status: StreamingTranslationEntry["status"],
+  status: TranslationEntry["status"],
   sourceText: string,
   translatedText?: string,
-): StreamingTranslationEntry {
+): TranslationEntry {
   return { status, sourceText, translatedText };
 }
 
 describe("renderStreamingPaired", () => {
   it("@WP-94-happy-paired-export: pairs each paragraph's original with its translation, in screen order, labelled by source side and target language", () => {
-    const paragraphs = [
-      { key: 0, sourceText: "Привет всем." },
-      { key: 6, sourceText: "Вторая часть." },
-    ];
-    const translations = new Map<number, StreamingTranslationEntry>([
+    const paragraphs = [[win(0, "Привет всем.")], [win(6, "Вторая часть.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("done", "Привет всем.", "Hello everyone.")],
       [6, entry("done", "Вторая часть.", "Second part.")],
     ]);
@@ -134,8 +150,8 @@ describe("renderStreamingPaired", () => {
   });
 
   it("labels the translated side with the target language's display name (Russian)", () => {
-    const paragraphs = [{ key: 0, sourceText: "Hello." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+    const paragraphs = [[win(0, "Hello.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("done", "Hello.", "Привет.")],
     ]);
 
@@ -147,10 +163,10 @@ describe("renderStreamingPaired", () => {
 
   // EP: every not-yet-translated class (never attempted, in flight, or
   // stale) collapses to the same "not translated" placeholder rather than
-  // being omitted or left blank. A *failed* attempt is deliberately excluded
+  // being omitted or left blank. A *failed* window is deliberately excluded
   // from this group — see the dedicated failed-placeholder test below — and
-  // a *mirrored* paragraph is excluded too, since it isn't a placeholder
-  // case at all — see @WP-94-mirrored.
+  // a *mirrored* window is excluded too, since it isn't a placeholder case
+  // at all — see @WP-94-mirrored.
   it.each([
     ["missing entry entirely", undefined],
     ["pending", entry("pending", "Same text.")],
@@ -158,8 +174,8 @@ describe("renderStreamingPaired", () => {
   ] as const)(
     "@WP-94-placeholder: emits the not-translated placeholder for %s",
     (_label, maybeEntry) => {
-      const paragraphs = [{ key: 0, sourceText: "Same text." }];
-      const translations = new Map<number, StreamingTranslationEntry>();
+      const paragraphs = [[win(0, "Same text.")]];
+      const translations = new Map<number, TranslationEntry>();
       if (maybeEntry) translations.set(0, maybeEntry);
 
       const text = renderStreamingPaired(paragraphs, translations, "en");
@@ -170,7 +186,7 @@ describe("renderStreamingPaired", () => {
           "Same text.",
           "",
           "English:",
-          STREAMING_TRANSLATION_PLACEHOLDER,
+          TRANSLATION_PLACEHOLDER,
         ].join("\n"),
       );
     },
@@ -182,8 +198,8 @@ describe("renderStreamingPaired", () => {
   // on its own, when in fact (per StreamingView's reconciliation) retry is
   // manual only. A distinct wording is the least-misleading choice.
   it("@WP-94-placeholder-failed: emits a distinct failed-translation placeholder, not the not-yet-translated wording", () => {
-    const paragraphs = [{ key: 0, sourceText: "Same text." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+    const paragraphs = [[win(0, "Same text.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("failed", "Same text.")],
     ]);
 
@@ -195,22 +211,20 @@ describe("renderStreamingPaired", () => {
         "Same text.",
         "",
         "English:",
-        STREAMING_TRANSLATION_FAILED_PLACEHOLDER,
+        TRANSLATION_FAILED_PLACEHOLDER,
       ].join("\n"),
     );
-    expect(STREAMING_TRANSLATION_FAILED_PLACEHOLDER).not.toBe(
-      STREAMING_TRANSLATION_PLACEHOLDER,
-    );
+    expect(TRANSLATION_FAILED_PLACEHOLDER).not.toBe(TRANSLATION_PLACEHOLDER);
   });
 
-  // A mirrored paragraph is not a failure at all: its windows are already
-  // entirely in the target language, so no model call was made by design and
-  // the on-screen right cell shows the paragraph's own text in a muted
-  // style. Copy/Export reproduce what the screen shows, so the exported
-  // right cell must carry that same text verbatim rather than a placeholder.
-  it("@WP-94-mirrored: exports a mirrored paragraph's own text verbatim — the same text the on-screen muted cell shows — not a placeholder", () => {
-    const paragraphs = [{ key: 0, sourceText: "Same text." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+  // A mirrored window is not a failure at all: its own language already
+  // matches the target, so no model call was made by design and the
+  // on-screen right cell shows the window's own text in a muted style.
+  // Copy/Export reproduce what the screen shows, so the exported right cell
+  // must carry that same text verbatim rather than a placeholder.
+  it("@WP-94-mirrored: exports a mirrored window's own text verbatim — the same text the on-screen muted cell shows — not a placeholder", () => {
+    const paragraphs = [[win(0, "Same text.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("mirrored", "Same text.", "Same text.")],
     ]);
 
@@ -221,9 +235,9 @@ describe("renderStreamingPaired", () => {
     );
   });
 
-  it("@WP-94-mirrored-fallback: falls back to the paragraph's current source text for a mirrored entry with no stored translatedText", () => {
-    const paragraphs = [{ key: 0, sourceText: "Same text." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+  it("@WP-94-mirrored-fallback: falls back to the window's current source text for a mirrored entry with no stored translatedText", () => {
+    const paragraphs = [[win(0, "Same text.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, { status: "mirrored", sourceText: "Same text." }],
     ]);
 
@@ -234,9 +248,9 @@ describe("renderStreamingPaired", () => {
     );
   });
 
-  it("@WP-94-mirrored-stale: a mirrored entry whose stored source text no longer matches the paragraph's current text falls back to the not-translated placeholder", () => {
-    const paragraphs = [{ key: 0, sourceText: "Current text." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+  it("@WP-94-mirrored-stale: a mirrored entry whose stored source text no longer matches the window's current text falls back to the not-translated placeholder", () => {
+    const paragraphs = [[win(0, "Current text.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("mirrored", "Old text.", "Old text.")],
     ]);
 
@@ -248,40 +262,88 @@ describe("renderStreamingPaired", () => {
         "Current text.",
         "",
         "English:",
-        STREAMING_TRANSLATION_PLACEHOLDER,
+        TRANSLATION_PLACEHOLDER,
       ].join("\n"),
     );
   });
 
-  it("@WP-94-stale: emits the not-translated placeholder when the stored entry's source text no longer matches the paragraph's current text", () => {
-    const paragraphs = [{ key: 0, sourceText: "Current text." }];
-    const translations = new Map<number, StreamingTranslationEntry>([
+  it("@WP-94-stale: emits the not-translated placeholder when the stored entry's source text no longer matches the window's current text", () => {
+    const paragraphs = [[win(0, "Current text.")]];
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("done", "Old text.", "Translated old text.")],
     ]);
 
     const text = renderStreamingPaired(paragraphs, translations, "en");
 
-    expect(text).toContain(STREAMING_TRANSLATION_PLACEHOLDER);
+    expect(text).toContain(TRANSLATION_PLACEHOLDER);
     expect(text).not.toContain("Translated old text.");
   });
 
   it("@WP-94-partial: leaves other paragraphs' translations intact when only one paragraph lacks a translation", () => {
     const paragraphs = [
-      { key: 0, sourceText: "First." },
-      { key: 6, sourceText: "Second." },
-      { key: 12, sourceText: "Third." },
+      [win(0, "First.")],
+      [win(6, "Second.")],
+      [win(12, "Third.")],
     ];
-    const translations = new Map<number, StreamingTranslationEntry>([
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("done", "First.", "First (en).")],
       [12, entry("done", "Third.", "Third (en).")],
-      // paragraph at key 6 has no entry at all.
+      // window 6 has no entry at all.
     ]);
 
     const text = renderStreamingPaired(paragraphs, translations, "en");
 
     expect(text).toContain("First (en).");
     expect(text).toContain("Third (en).");
-    expect(text).toContain(STREAMING_TRANSLATION_PLACEHOLDER);
+    expect(text).toContain(TRANSLATION_PLACEHOLDER);
+  });
+
+  // WP-103: the defining new behavior — a paragraph is several windows, and
+  // each contributes its own slice to the translated block. A paragraph
+  // whose earlier windows are already translated and whose trailing window
+  // is still in flight must show real text for the finished windows and a
+  // placeholder only for the unfinished tail, not a blank/all-placeholder
+  // cell.
+  it("@WP-103-mixed-paragraph: a paragraph with some windows done and others still pending shows real text for the finished windows and a placeholder for the rest", () => {
+    const paragraphs = [[win(5, "Five."), win(6, "Six."), win(7, "Seven.")]];
+    const translations = new Map<number, TranslationEntry>([
+      [5, entry("done", "Five.", "Five (en).")],
+      [6, entry("done", "Six.", "Six (en).")],
+      // window 7 has no entry yet — still in flight.
+    ]);
+
+    const text = renderStreamingPaired(paragraphs, translations, "en");
+
+    expect(text).toBe(
+      [
+        "Original:",
+        "Five. Six. Seven.",
+        "",
+        "English:",
+        `Five (en). Six (en). ${TRANSLATION_PLACEHOLDER}`,
+      ].join("\n"),
+    );
+  });
+
+  // WP-103: a paragraph mixing an already-target-language (mirrored) window
+  // with a genuinely translated one must render both correctly — not the
+  // old all-or-nothing paragraph-level mirror check.
+  it("@WP-103-mixed-mirrored: a paragraph mixing a mirrored window and a translated window renders both correctly", () => {
+    const paragraphs = [
+      [win(0, "Привет.", { language: "ru" }), win(1, "World.")],
+    ];
+    const translations = new Map<number, TranslationEntry>([
+      [0, entry("mirrored", "Привет.", "Привет.")],
+      [1, entry("done", "World.", "Мир.")],
+    ]);
+
+    const text = renderStreamingPaired(paragraphs, translations, "ru");
+
+    expect(text).toBe(
+      ["Original:", "Привет. World.", "", "Русский:", "Привет. Мир."].join(
+        "\n",
+      ),
+    );
   });
 
   // Property: paragraph-count parity — regardless of the translation-status
@@ -289,7 +351,7 @@ describe("renderStreamingPaired", () => {
   // target-language block per input paragraph, so the two sides can never
   // drift out of count.
   it("@WP-94-parity: always emits one Original block and one target-language block per paragraph, whatever the status mix", () => {
-    const statuses: (StreamingTranslationEntry["status"] | undefined)[] = [
+    const statuses: (TranslationEntry["status"] | undefined)[] = [
       "done",
       "pending",
       "translating",
@@ -297,11 +359,8 @@ describe("renderStreamingPaired", () => {
       "mirrored",
       undefined,
     ];
-    const paragraphs = statuses.map((_, i) => ({
-      key: i,
-      sourceText: `Paragraph ${i}.`,
-    }));
-    const translations = new Map<number, StreamingTranslationEntry>();
+    const paragraphs = statuses.map((_, i) => [win(i, `Paragraph ${i}.`)]);
+    const translations = new Map<number, TranslationEntry>();
     statuses.forEach((status, i) => {
       if (status) {
         translations.set(
@@ -327,8 +386,8 @@ describe("hasStreamingTranslations", () => {
     expect(hasStreamingTranslations(new Map())).toBe(false);
   });
 
-  it("is true once at least one paragraph has a translation entry", () => {
-    const translations = new Map<number, StreamingTranslationEntry>([
+  it("is true once at least one window has a translation entry", () => {
+    const translations = new Map<number, TranslationEntry>([
       [0, entry("pending", "text")],
     ]);
     expect(hasStreamingTranslations(translations)).toBe(true);

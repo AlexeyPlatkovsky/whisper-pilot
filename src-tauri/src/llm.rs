@@ -362,8 +362,9 @@ fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
     Ok(output)
 }
 
-/// Streaming paragraph translation targets (WP-92): local-only, via the
-/// active summary LLM. Source language is Streaming's own per-window
+/// Streaming window translation targets (WP-92; WP-103 moved the
+/// translation unit from a whole paragraph to a single 7s window): local-only,
+/// via the active summary LLM. Source language is Streaming's own per-window
 /// auto-detection and is never an input here.
 pub const SUPPORTED_TRANSLATION_TARGETS: [&str; 2] = ["en", "ru"];
 
@@ -410,12 +411,12 @@ fn expected_script_for_target(target_language: &str) -> Script {
     }
 }
 
-/// `prior_context`, when `Some`, is the immediately preceding paragraph's
-/// already-translated text (WP-100) — included as reference-only context
-/// ahead of the actual text to translate, with an explicit instruction (in
-/// the same language as the rest of the prompt) not to repeat or
-/// re-translate it. `None` produces byte-identical output to the pre-WP-100
-/// source-only prompt.
+/// `prior_context`, when `Some`, is the immediately preceding window's (or,
+/// pre-WP-103, paragraph's) already-translated text (WP-100) — included as
+/// reference-only context ahead of the actual text to translate, with an
+/// explicit instruction (in the same language as the rest of the prompt)
+/// not to repeat or re-translate it. `None` produces byte-identical output
+/// to the pre-WP-100 source-only prompt.
 fn build_translate_prompt(
     source_text: &str,
     target_language: &str,
@@ -468,11 +469,11 @@ RULES:\n\
 /// the system/user scaffolding `build_translate_prompt` adds.
 const TRANSLATE_PROMPT_OVERHEAD_TOKENS: usize = 200;
 
-/// Chars-per-token used only to reject a paragraph that would clearly
-/// overflow `CTX_SIZE` before spending an inference call on it — the real
-/// tokenizer, loaded lazily inside `run_inference`, is what actually enforces
-/// the hard limit. Script-dependent: Cyrillic tokenizes denser than Latin
-/// under Qwen/ChatML-style tokenizers.
+/// Chars-per-token used only to reject a window (or, pre-WP-103, paragraph)
+/// that would clearly overflow `CTX_SIZE` before spending an inference call
+/// on it — the real tokenizer, loaded lazily inside `run_inference`, is what
+/// actually enforces the hard limit. Script-dependent: Cyrillic tokenizes
+/// denser than Latin under Qwen/ChatML-style tokenizers.
 const LATIN_CHARS_PER_TOKEN: usize = 4;
 const CYRILLIC_CHARS_PER_TOKEN: usize = 2;
 
@@ -545,15 +546,19 @@ fn validate_translation_candidate(
     Ok(candidate.to_string())
 }
 
-/// Translates one Streaming paragraph into `target_language` ("en" or "ru")
-/// using the active local LLM — the same llama.cpp completion path
+/// Translates one Streaming translation unit — a single window as of
+/// WP-103, previously a whole paragraph — into `target_language` ("en" or
+/// "ru") using the active local LLM — the same llama.cpp completion path
 /// `prettify_transcript` uses, with its own prompt and candidate validation.
 /// Callers are responsible for validating `target_language` is supported and
 /// `source_text` is non-empty before calling; this still guards the model's
-/// own context budget and never silently truncates a paragraph that doesn't
-/// fit. `prior_context` (WP-100), when `Some`, is the immediately preceding
-/// paragraph's own translation, threaded into the prompt as reference-only
-/// context to improve continuity without being itself re-translated.
+/// own context budget and never silently truncates text that doesn't fit.
+/// `prior_context` (WP-100), when `Some`, is the immediately preceding
+/// window's (or, pre-WP-103, paragraph's) own translation, threaded into the
+/// prompt as reference-only context to improve continuity without being
+/// itself re-translated. Signature and name (`translate_paragraph`)
+/// unchanged by WP-103 — only what a caller assembles as `source_text` and
+/// `prior_context` changed, not this function.
 pub fn translate_paragraph(
     model_path: &Path,
     source_text: &str,
@@ -580,7 +585,7 @@ pub struct TranslationUsageGuard<'a> {
 
 impl<'a> TranslationUsageGuard<'a> {
     /// Contention returns `Err(())`, which the caller
-    /// (`translate_streaming_paragraph`) maps to `AppError::TranslationBusy`.
+    /// (`translate_streaming_window`) maps to `AppError::TranslationBusy`.
     #[allow(clippy::result_unit_err)]
     pub fn acquire(busy: &'a AtomicBool) -> std::result::Result<Self, ()> {
         match busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire) {

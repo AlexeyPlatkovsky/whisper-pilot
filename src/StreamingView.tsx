@@ -20,7 +20,7 @@ import {
   setStreamingTranslationEnabled,
   startStreamingSession,
   stopStreamingSession,
-  translateStreamingParagraph,
+  translateStreamingWindow,
   type StreamingMfu,
   type StreamingSessionSummary,
   type StreamingTranslationTargetLanguage,
@@ -38,7 +38,7 @@ import { ModeToggle } from "./ModeToggle";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { formatElapsedClock } from "./format";
 import { computeWordDiff } from "./diff";
-import { groupWindowsIntoParagraphs, isParagraphClosed } from "./paragraphs";
+import { groupWindowsIntoParagraphs } from "./paragraphs";
 import { StreamingSessionRow } from "./StreamingSessionRow";
 import {
   fileNameFor,
@@ -46,8 +46,10 @@ import {
   plainTranscript,
   sourcesLabel,
   toMarkdown,
+  type TranslationEntry,
   upsertWindow,
   windowText,
+  windowTranslationDisplay,
 } from "./streamingText";
 import {
   resolveStreamingRowStatus,
@@ -59,18 +61,26 @@ import {
 // the paired export renderer so the two cannot drift.
 const TARGET_LANGUAGE_NAMES = STREAMING_TARGET_LANGUAGE_NAMES;
 
-type TranslationStatus =
-  "pending" | "translating" | "done" | "mirrored" | "failed";
-
-/** One paragraph's Live Translation state, keyed by `paragraph_key` (the
- * `window_index` of the paragraph's first window). `sourceText` is the
- * paragraph text this entry was produced from — comparing it against the
- * paragraph's *current* text is how a stale entry (the paragraph's windows
- * changed since) is detected and replaced. */
-interface TranslationEntry {
-  status: TranslationStatus;
-  sourceText: string;
-  translatedText?: string;
+// WP-103: rolling context — the up-to-2 immediately preceding windows'
+// available translations, joined in order (skips a failed/unavailable one
+// rather than blocking). `index` is a position in `windows`, not a
+// `window_index` value.
+function precedingWindowsContext(
+  windows: StreamingWindow[],
+  index: number,
+  entries: Map<number, TranslationEntry>,
+): string | undefined {
+  const parts: string[] = [];
+  for (let i = Math.max(0, index - 2); i < index; i++) {
+    const w = windows[i];
+    if (!w) continue;
+    const entry = entries.get(w.window_index);
+    if (!entry) continue;
+    if (entry.status !== "done" && entry.status !== "mirrored") continue;
+    if (entry.translatedText === undefined) continue;
+    parts.push(entry.translatedText);
+  }
+  return parts.length > 0 ? parts.join(" ") : undefined;
 }
 
 export function StreamingView({
@@ -124,24 +134,39 @@ export function StreamingView({
     id: number;
     title: string;
   } | null>(null);
-  // WP-93: Live Translation — switch state, locked-while-on target language
-  // (default Russian — English -> Russian is the primary use case, never
-  // persisted), and per-paragraph translation status keyed by paragraph_key.
-  // The queue itself lives in refs (not state) since it's an implementation
-  // detail that never renders directly.
+  // WP-93/WP-103: Live Translation — switch state, locked-while-on target
+  // language (default Russian — English -> Russian is the primary use case,
+  // never persisted), and per-*window* translation status keyed by
+  // window_index (WP-103 moved this off paragraph_key). The queue itself
+  // lives in refs (not state) since it's an implementation detail that never
+  // renders directly.
   const [translationEnabled, setTranslationEnabled] = useState(false);
   const [targetLanguage, setTargetLanguage] =
     useState<StreamingTranslationTargetLanguage>("ru");
   const [translations, setTranslations] = useState<
     Map<number, TranslationEntry>
   >(new Map());
+  // Mirrors `translations` synchronously (unlike React state, which only
+  // commits on a later render) so code that runs across an async boundary —
+  // the translate queue's dequeue-time context lookup, its .then/.catch
+  // result handlers — always reads the freshest map instead of racing a
+  // pending re-render. `commitTranslations` is the only way either is
+  // written, so they can never drift apart.
+  const translationsRef = useRef<Map<number, TranslationEntry>>(new Map());
+  function commitTranslations(next: Map<number, TranslationEntry>) {
+    translationsRef.current = next;
+    setTranslations(next);
+  }
+  // Mirrors `windows` for the same reason — the queue's dequeue-time context
+  // lookup needs each window's position among its neighbors, read fresh at
+  // that moment rather than from whatever render defined the closure.
+  const windowsRef = useRef<StreamingWindow[]>([]);
+  useEffect(() => {
+    windowsRef.current = windows;
+  }, [windows]);
   const [llmModelReady, setLlmModelReady] = useState(false);
-  // `context` (WP-100) is the immediately preceding paragraph's translated
-  // text at the moment this paragraph was enqueued — a snapshot, not a live
-  // reference, so a later status change on the previous paragraph can't
-  // retroactively alter a call already queued.
   const translationQueueRef = useRef<
-    { key: number; sourceText: string; context?: string }[]
+    { windowIndex: number; sourceText: string }[]
   >([]);
   const translationBusyRef = useRef(false);
   // Bumped whenever translation is toggled (either direction) so an
@@ -154,7 +179,7 @@ export function StreamingView({
   // False while a fresh (session, targetLanguage) persisted-translations
   // fetch is outstanding — gates the reconcile effect below so it never
   // enqueues a live model call before finding out whether a persisted
-  // result already covers a paragraph.
+  // result already covers a window.
   const [persistedReady, setPersistedReady] = useState(false);
   // Read after an await to avoid acting on a stale closure once the user has
   // switched sessions — plain state would still hold the id captured when
@@ -338,7 +363,7 @@ export function StreamingView({
         setPendingPrettify(null);
         if (!isSameSessionResume) {
           setTranslationEnabled(false);
-          setTranslations(new Map());
+          commitTranslations(new Map());
           translationQueueRef.current = [];
           translationTokenRef.current += 1;
           persistedTranslationsRef.current = new Map();
@@ -380,7 +405,7 @@ export function StreamingView({
       setPrettifyFailed(false);
       setPendingPrettify(null);
       setTranslationEnabled(false);
-      setTranslations(new Map());
+      commitTranslations(new Map());
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
       persistedTranslationsRef.current = new Map();
@@ -427,7 +452,7 @@ export function StreamingView({
       // survives reopening it (and an app restart), matching WP-96's
       // MFU-panel persistence. Absent (pre-WP-101 data) reads as off.
       setTranslationEnabled(session.translation_enabled ?? false);
-      setTranslations(new Map());
+      commitTranslations(new Map());
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
       persistedTranslationsRef.current = new Map();
@@ -496,7 +521,7 @@ export function StreamingView({
         setPrettifyFailed(false);
         setPendingPrettify(null);
         setTranslationEnabled(false);
-        setTranslations(new Map());
+        commitTranslations(new Map());
         translationQueueRef.current = [];
         translationTokenRef.current += 1;
         persistedTranslationsRef.current = new Map();
@@ -523,10 +548,7 @@ export function StreamingView({
     prettifiedText ??
     (translationEnabled && hasStreamingTranslations(translations)
       ? renderStreamingPaired(
-          groupWindowsIntoParagraphs(windows).map((paragraph) => ({
-            key: paragraph[0].window_index,
-            sourceText: plainTranscript(paragraph),
-          })),
+          groupWindowsIntoParagraphs(windows),
           translations,
           targetLanguage,
         )
@@ -630,14 +652,13 @@ export function StreamingView({
     }
   }, [activeId, prettifiedText]);
 
-  // --- WP-93: Live Translation --------------------------------------------
+  // --- WP-93/WP-103: Live Translation --------------------------------------
 
   // Runs the queue's next item, if any, honoring the single-flight
-  // constraint (`translationBusyRef`). Reads `targetLanguage`/`translations`
-  // from this render's closure — safe because the target language is locked
-  // (the select is disabled) for the whole time a run can be in flight, and
-  // every state write below re-derives from the freshest `prev` via the
-  // functional setState form.
+  // constraint (`translationBusyRef`). Context (WP-103) is read fresh here
+  // at dequeue time from `windowsRef`/`translationsRef`, not snapshotted at
+  // enqueue time — required for the 2-window bootstrap pair, where window 1
+  // is enqueued before window 0 has actually translated.
   function runTranslationQueue() {
     if (translationBusyRef.current) return;
     const item = translationQueueRef.current.shift();
@@ -647,44 +668,54 @@ export function StreamingView({
     const lang = targetLanguage;
     const token = translationTokenRef.current;
     translationBusyRef.current = true;
-    setTranslations((prev) => {
-      const next = new Map(prev);
-      next.set(item.key, {
+    const position = windowsRef.current.findIndex(
+      (w) => w.window_index === item.windowIndex,
+    );
+    const context =
+      position >= 0
+        ? precedingWindowsContext(
+            windowsRef.current,
+            position,
+            translationsRef.current,
+          )
+        : undefined;
+    {
+      const next = new Map(translationsRef.current);
+      next.set(item.windowIndex, {
         status: "translating",
         sourceText: item.sourceText,
       });
-      return next;
-    });
-    void translateStreamingParagraph(
+      commitTranslations(next);
+    }
+    void translateStreamingWindow(
       sessionId,
-      item.key,
+      item.windowIndex,
       lang,
       item.sourceText,
-      item.context,
+      context,
     )
       .then((text) => {
         if (translationTokenRef.current !== token) return;
-        setTranslations((prev) => {
-          const current = prev.get(item.key);
-          if (!current || current.sourceText !== item.sourceText) return prev;
-          const next = new Map(prev);
-          next.set(item.key, {
-            status: "done",
-            sourceText: item.sourceText,
-            translatedText: text,
-          });
-          return next;
+        const current = translationsRef.current.get(item.windowIndex);
+        if (!current || current.sourceText !== item.sourceText) return;
+        const next = new Map(translationsRef.current);
+        next.set(item.windowIndex, {
+          status: "done",
+          sourceText: item.sourceText,
+          translatedText: text,
         });
+        commitTranslations(next);
       })
       .catch(() => {
         if (translationTokenRef.current !== token) return;
-        setTranslations((prev) => {
-          const current = prev.get(item.key);
-          if (!current || current.sourceText !== item.sourceText) return prev;
-          const next = new Map(prev);
-          next.set(item.key, { status: "failed", sourceText: item.sourceText });
-          return next;
+        const current = translationsRef.current.get(item.windowIndex);
+        if (!current || current.sourceText !== item.sourceText) return;
+        const next = new Map(translationsRef.current);
+        next.set(item.windowIndex, {
+          status: "failed",
+          sourceText: item.sourceText,
         });
+        commitTranslations(next);
       })
       .finally(() => {
         translationBusyRef.current = false;
@@ -692,44 +723,20 @@ export function StreamingView({
       });
   }
 
-  // Upserts by key so a paragraph whose text changed again before its
+  // Upserts by window_index so a window whose text changed again before its
   // earlier queued attempt started replaces the stale payload rather than
-  // running twice.
-  function enqueueTranslation(
-    key: number,
-    sourceText: string,
-    context?: string,
-  ) {
+  // running twice. Windows are always enqueued in increasing window_index
+  // order by the reconcile effect and retry below, so the queue — and thus
+  // every translate call — processes strictly in that order.
+  function enqueueTranslation(windowIndex: number, sourceText: string) {
     const queue = translationQueueRef.current;
-    const index = queue.findIndex((entry) => entry.key === key);
+    const index = queue.findIndex((entry) => entry.windowIndex === windowIndex);
     if (index >= 0) {
-      queue[index] = { key, sourceText, context };
+      queue[index] = { windowIndex, sourceText };
     } else {
-      queue.push({ key, sourceText, context });
+      queue.push({ windowIndex, sourceText });
     }
     runTranslationQueue();
-  }
-
-  // WP-100: the immediately preceding paragraph's already-translated text,
-  // passed as ephemeral prompt context — never stored, only used to shape
-  // the next model call. Only a genuinely target-language entry ("done" or
-  // "mirrored") counts as usable context; no entry (first paragraph, or the
-  // previous one hasn't closed yet) and a "pending"/"translating"/"failed"
-  // entry all contribute nothing.
-  function priorParagraphContext(
-    paragraphs: { window_index: number }[][],
-    index: number,
-    entries: Map<number, TranslationEntry>,
-  ): string | undefined {
-    if (index <= 0) return undefined;
-    const previousParagraph = paragraphs[index - 1];
-    if (!previousParagraph || previousParagraph.length === 0) return undefined;
-    const previousKey = previousParagraph[0].window_index;
-    const entry = entries.get(previousKey);
-    if (!entry) return undefined;
-    if (entry.status !== "done" && entry.status !== "mirrored")
-      return undefined;
-    return entry.translatedText;
   }
 
   // View-only; gates nothing else. Clearing translations/queue on both
@@ -744,11 +751,11 @@ export function StreamingView({
   // commit as this toggle, observing the previous activation's leftover
   // `persistedReady === true` (that effect only flips it back to false
   // asynchronously, one render later) while `persistedTranslationsRef` has
-  // already been cleared above — so every closed paragraph would look
-  // "not yet persisted" and get queued for a live call it doesn't need.
+  // already been cleared above — so every window would look "not yet
+  // persisted" and get queued for a live call it doesn't need.
   const handleToggleTranslation = useCallback((next: boolean) => {
     setTranslationEnabled(next);
-    setTranslations(new Map());
+    commitTranslations(new Map());
     translationQueueRef.current = [];
     translationTokenRef.current += 1;
     persistedTranslationsRef.current = new Map();
@@ -768,20 +775,39 @@ export function StreamingView({
     }
   }, []);
 
+  // WP-103: the retry affordance stays at the paragraph level (one button,
+  // not one per window) — re-enqueues every currently-FAILED window within
+  // that paragraph, leaving its done/mirrored/pending/translating siblings
+  // untouched. Context for each retried window is recomputed at retry time
+  // (like any other enqueue) by `runTranslationQueue`'s dequeue-time lookup,
+  // from the windows' current state — not from whatever it was originally.
   const handleRetryTranslation = useCallback(
-    (key: number) => {
+    (paragraphKey: number) => {
       const paragraphs = groupWindowsIntoParagraphs(windows);
-      const index = paragraphs.findIndex((p) => p[0].window_index === key);
-      if (index === -1) return;
-      const paragraph = paragraphs[index];
-      const sourceText = plainTranscript(paragraph);
-      const context = priorParagraphContext(paragraphs, index, translations);
-      setTranslations((prev) => {
-        const next = new Map(prev);
-        next.set(key, { status: "pending", sourceText });
-        return next;
+      const paragraph = paragraphs.find(
+        (p) => p[0].window_index === paragraphKey,
+      );
+      if (!paragraph) return;
+      const failedWindows = paragraph.filter((w) => {
+        const entry = translations.get(w.window_index);
+        return (
+          entry !== undefined &&
+          entry.sourceText === windowText(w) &&
+          entry.status === "failed"
+        );
       });
-      enqueueTranslation(key, sourceText, context);
+      if (failedWindows.length === 0) return;
+      const next = new Map(translationsRef.current);
+      for (const w of failedWindows) {
+        next.set(w.window_index, {
+          status: "pending",
+          sourceText: windowText(w),
+        });
+      }
+      commitTranslations(next);
+      for (const w of failedWindows) {
+        enqueueTranslation(w.window_index, windowText(w));
+      }
     },
     [windows, translations],
   );
@@ -789,7 +815,7 @@ export function StreamingView({
   // Loads this session+target-language's persisted translations once per
   // "Live Translation On" so the reconcile effect below can reuse them
   // instead of re-running the model (WP-92's single-flight command makes
-  // replaying a whole session's paragraphs on every toggle expensive).
+  // replaying a whole session's windows on every toggle expensive).
   useEffect(() => {
     if (!translationEnabled || activeId === null) return;
     let cancelled = false;
@@ -801,13 +827,13 @@ export function StreamingView({
       try {
         const rows = await listStreamingTranslations(sessionId, lang);
         for (const row of rows) {
-          map.set(row.paragraph_key, {
+          map.set(row.window_index, {
             text: row.translated_text,
             sourceText: row.source_text,
           });
         }
       } catch {
-        // Best-effort: proceed with nothing persisted — paragraphs are
+        // Best-effort: proceed with nothing persisted — windows are
         // translated live instead.
       }
       if (cancelled) return;
@@ -819,44 +845,28 @@ export function StreamingView({
     };
   }, [translationEnabled, activeId, targetLanguage]);
 
-  // Reconciles every *closed* paragraph — a later paragraph exists, capture
-  // has stopped, or (WP-100) the still-open trailing paragraph itself
-  // already satisfies isParagraphClosed on its own text — against its
-  // translation entry: same-language paragraphs are mirrored, a matching
-  // persisted row is reused, and anything else missing or stale (source
-  // text changed) is (re-)enqueued, with the immediately preceding
-  // paragraph's translation threaded in as context when that entry is
-  // "done" or "mirrored". A failed entry whose source text still matches is
-  // left alone — retry is manual only.
+  // WP-103: reconciles every window directly against its own translation
+  // entry (paragraph grouping stays display-only — see
+  // groupWindowsIntoParagraphs' on-screen use below). Nothing is enqueued
+  // until the session has 2+ windows; a failed entry whose source text still
+  // matches is left alone — retry is manual only.
   useEffect(() => {
     if (!translationEnabled || activeId === null || !persistedReady) return;
-    const paragraphs = groupWindowsIntoParagraphs(windows);
-    const next = new Map(translations);
+    if (windows.length < 2) return;
+    const next = new Map(translationsRef.current);
     let changed = false;
-    // Collected instead of enqueued inline: enqueueTranslation kicks the
-    // queue synchronously, which would apply its "translating" write before
-    // the batched `next` map below (still holding "pending" for that key)
-    // gets applied — clobbering it back to "pending". Enqueuing only after
-    // `next` is committed keeps the two writes in the right order.
-    const toEnqueue: { key: number; sourceText: string; context?: string }[] =
-      [];
-    for (let index = 0; index < paragraphs.length; index++) {
-      const paragraph = paragraphs[index];
-      const isLastWhileRunning = isRunning && index === paragraphs.length - 1;
-      if (isLastWhileRunning && !isParagraphClosed(paragraph)) continue;
-      const key = paragraph[0].window_index;
-      const sourceText = plainTranscript(paragraph);
-      const existing = next.get(key);
-      const isTargetAlready = paragraph.every(
-        (w) => w.language.toLowerCase() === targetLanguage,
-      );
+    const toEnqueue: { windowIndex: number; sourceText: string }[] = [];
+    for (const w of windows) {
+      const sourceText = windowText(w);
+      const existing = next.get(w.window_index);
+      const isTargetAlready = w.language.toLowerCase() === targetLanguage;
       if (isTargetAlready) {
         if (
           !existing ||
           existing.sourceText !== sourceText ||
           existing.status !== "mirrored"
         ) {
-          next.set(key, {
+          next.set(w.window_index, {
             status: "mirrored",
             sourceText,
             translatedText: sourceText,
@@ -865,7 +875,7 @@ export function StreamingView({
         }
         continue;
       }
-      const persisted = persistedTranslationsRef.current.get(key);
+      const persisted = persistedTranslationsRef.current.get(w.window_index);
       if (persisted && persisted.sourceText === sourceText) {
         if (
           !existing ||
@@ -873,7 +883,7 @@ export function StreamingView({
           existing.status !== "done" ||
           existing.translatedText !== persisted.text
         ) {
-          next.set(key, {
+          next.set(w.window_index, {
             status: "done",
             sourceText,
             translatedText: persisted.text,
@@ -883,28 +893,20 @@ export function StreamingView({
         continue;
       }
       if (!existing || existing.sourceText !== sourceText) {
-        next.set(key, { status: "pending", sourceText });
+        next.set(w.window_index, { status: "pending", sourceText });
         changed = true;
-        const context = priorParagraphContext(paragraphs, index, next);
-        toEnqueue.push({ key, sourceText, context });
+        toEnqueue.push({ windowIndex: w.window_index, sourceText });
       }
     }
-    if (changed) setTranslations(next);
+    if (changed) commitTranslations(next);
     for (const item of toEnqueue) {
-      enqueueTranslation(item.key, item.sourceText, item.context);
+      enqueueTranslation(item.windowIndex, item.sourceText);
     }
-    // `translations` intentionally omitted: read directly from this
-    // render's closure to decide reuse without re-running this effect on
+    // `translations` intentionally omitted: read directly from
+    // `translationsRef` to decide reuse without re-running this effect on
     // every status transition the queue itself writes (translating/done/
-    // failed) — those don't change which paragraphs are closed or stale.
-  }, [
-    windows,
-    translationEnabled,
-    activeId,
-    targetLanguage,
-    isRunning,
-    persistedReady,
-  ]);
+    // failed) — those don't change which windows are stale.
+  }, [windows, translationEnabled, activeId, targetLanguage, persistedReady]);
 
   const translationDisabledReason = !llmModelReady
     ? "Live Translation needs a downloaded language model."
@@ -1323,10 +1325,20 @@ export function StreamingView({
                   </div>
                   {groupWindowsIntoParagraphs(windows).map((paragraph) => {
                     const key = paragraph[0].window_index;
-                    const entry = translations.get(key);
-                    const status = entry?.status ?? "pending";
                     const sourceText = plainTranscript(paragraph);
                     const lastWindow = paragraph[paragraph.length - 1];
+                    // WP-103: retry stays a single paragraph-level affordance
+                    // — shown whenever at least one of this paragraph's
+                    // windows is currently failed (with its stored source
+                    // text still matching, i.e. not stale).
+                    const hasFailedWindow = paragraph.some((w) => {
+                      const entry = translations.get(w.window_index);
+                      return (
+                        entry !== undefined &&
+                        entry.sourceText === windowText(w) &&
+                        entry.status === "failed"
+                      );
+                    });
                     return (
                       <div
                         key={key}
@@ -1351,24 +1363,53 @@ export function StreamingView({
                               {targetLanguage.toUpperCase()}
                             </span>
                           </div>
-                          {status === "translating" ? (
-                            <span className="wp-translation-translating">
-                              <Icon
-                                name="loader"
-                                size={13}
-                                className="wp-spin"
-                              />
-                              <span>Translating…</span>
-                            </span>
-                          ) : status === "mirrored" ? (
-                            <p className="wp-translation-text wp-translation-text--mirrored">
-                              {entry?.translatedText ?? sourceText}
-                            </p>
-                          ) : status === "done" ? (
-                            <p className="wp-translation-text">
-                              {entry?.translatedText ?? ""}
-                            </p>
-                          ) : status === "failed" ? (
+                          {/* WP-103: each window renders its own slice —
+                              real text once done/mirrored, an inline
+                              placeholder otherwise — so a paragraph with a
+                              still-in-flight trailing window shows real text
+                              for its finished windows and a placeholder only
+                              for that tail, not a blank/all-placeholder
+                              cell. */}
+                          <p className="wp-translation-text">
+                            {paragraph.map((w, i) => {
+                              const display = windowTranslationDisplay(
+                                w,
+                                translations.get(w.window_index),
+                              );
+                              return (
+                                <span key={w.window_index}>
+                                  {display.kind === "text" ? (
+                                    <span
+                                      className={
+                                        display.mirrored
+                                          ? "wp-translation-text--mirrored"
+                                          : undefined
+                                      }
+                                    >
+                                      {display.text}
+                                    </span>
+                                  ) : display.kind === "translating" ? (
+                                    <span className="wp-translation-translating">
+                                      <Icon
+                                        name="loader"
+                                        size={13}
+                                        className="wp-spin"
+                                      />
+                                      <span>Translating…</span>
+                                    </span>
+                                  ) : display.kind === "failed" ? (
+                                    <span>Translation failed</span>
+                                  ) : (
+                                    <span className="wp-translation-pending">
+                                      Pending…
+                                    </span>
+                                  )}
+                                  {i < paragraph.length - 1 ? " " : ""}
+                                </span>
+                              );
+                            })}
+                          </p>
+                          {hasFailedWindow && (
                             <button
                               type="button"
                               className="wp-translation-retry"
@@ -1377,10 +1418,6 @@ export function StreamingView({
                               <Icon name="rotate-ccw" size={13} />
                               Translation failed · Retry
                             </button>
-                          ) : (
-                            <span className="wp-translation-pending">
-                              Pending…
-                            </span>
                           )}
                         </div>
                       </div>

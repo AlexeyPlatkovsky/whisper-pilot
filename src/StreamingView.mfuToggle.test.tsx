@@ -24,7 +24,7 @@ vi.mock("./ipc", () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
-  translateStreamingParagraph: vi.fn(),
+  translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),

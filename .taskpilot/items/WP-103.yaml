@@ -1,0 +1,75 @@
+schema_version: 1
+id: WP-103
+title: Rolling per-window Live Translation with 14s context, replacing paragraph-batch translation
+priority: normal
+type: task
+status: done
+created_at: '2026-08-27T18:42:36Z'
+updated_at: '2026-08-27T22:25:49Z'
+parent_id: WP-91
+description: 'Replace paragraph-batch Live Translation (translate a whole closed paragraph, up to 28s of audio) with a continuous rolling per-window scheme so translated text appears roughly 7-14s behind speech instead of up to 28s+ behind. Confirmed design (user-approved):
+
+
+  Translation unit is a single window (7s, WINDOW_SECONDS) instead of a paragraph. Nothing is translated until at least 2 windows exist in the session (a session-wide count, independent of paragraph/sentence boundaries - groupWindowsIntoParagraphs keeps grouping windows for on-screen display only, never for translation triggering). Once 2 windows exist: window 0 translates first with no context, then window 1 translates immediately after with context = window 0''s translation - both fire back to back, so the user perceives "the first 14s translated at once." From window 2 onward, each new window translates alone as soon as it arrives, with context = the concatenation, in order, of the up-to-2 immediately preceding windows'' available (done or mirrored) translations - skip any preceding window that failed or has no translation yet rather than blocking (translation always proceeds; a missing/failed neighbor just means less context, never a wait). Windows are always translated in strictly increasing window_index order through the existing single-flight queue, so by the time window N is translated its immediate predecessor(s) are always already resolved (done/mirrored/failed), never still pending.
+
+
+  A window whose own language already matches the target is mirrored exactly as today (no model call, its own text used verbatim as both source and "translated" text, and still usable as context for its successor) - this now applies per window instead of only when an entire paragraph is single-language, so a paragraph mixing already-translated and needs-translation windows renders correctly instead of the old all-or-nothing paragraph check.
+
+
+  Turning translation on for an already-fully-transcribed stopped session still backfills, oldest-first, through the same mechanism - just walking windows in order instead of paragraphs.
+
+
+  Persistence: streaming_translations moves from one row per paragraph (keyed by paragraph_key = the paragraph''s first window''s window_index) to one row per window (keyed by window_index, that window''s own index). Rename the paragraph_key column to window_index via a checked ALTER TABLE ... RENAME COLUMN migration (rusqlite/bundled SQLite supports RENAME COLUMN; follow the existing checked-before-ALTER idiom used for translation_enabled). Rename paragraph_key to window_index throughout the Rust layer (StreamingTranslation struct/params, StreamingTranslationRow DTO) and src/ipc.ts. Rename the translate_streaming_paragraph Tauri command and its src/ipc.ts wrapper to translate_streaming_window (param renamed source_text/context stay, paragraph_key param becomes window_index) - this command already only ever translates one thing at a time, which is now literally true instead of "one paragraph''s worth of text." llm.rs''s translate_paragraph/build_translate_prompt keep their existing signature (text: &str, target_language: &str, prior_context: Option<&str>) unchanged - only what the frontend assembles as prior_context changes (rolling window text instead of one prior paragraph''s text), so no backend prompt-building change is needed beyond updating stale "paragraph" wording in comments/docs to "window".
+
+
+  Frontend rewrite (src/StreamingView.tsx): the translations Map moves from paragraph-key-scoped whole-paragraph entries to window-index-scoped single-window entries (each window has its own pending/translating/done/mirrored/failed status). The reconcile effect drops the isParagraphClosed-gated "wait for the trailing paragraph to close" logic entirely (isParagraphClosed becomes dead code - delete it and its test coverage, since its only caller is being removed) and instead walks the windows array directly: once windows.length >= 2, enqueue any window from index 0 onward whose entry is missing, stale (source text changed), mirrored-eligibility changed, or (for index >= 1) whose two-window bootstrap partner isn''t yet queued. runTranslationQueue/enqueueTranslation keep their existing single-flight-queue shape, just keyed by window_index. handleRetryTranslation targets a window_index. The persisted-translations load effect matches by window_index instead of paragraph_key, comparing each window''s own current text (windowText(w), not a joined multi-window string) against the persisted source_text.
+
+
+  Rendering: the paired-row grid keeps grouping original text into paragraphs via groupWindowsIntoParagraphs (unchanged - this is a display grouping only now). For the translated cell, add a shared helper (used by both the renderer and export.ts''s renderStreamingPaired) that builds a paragraph''s translated text by mapping each of its windows through its own entry: real translated text if done/mirrored, or a placeholder if missing/pending/translating/failed - joined the same way plainTranscript joins original text - rather than computing one aggregate status per paragraph. This means a paragraph can render with real text for its earlier windows and a "translating..."/failed placeholder only for its still-in-flight or failed trailing window(s), instead of blanking the whole cell. Keep the retry affordance at the paragraph level for now (one retry per paragraph, re-enqueuing every failed window within it) rather than a separate button per window, to avoid a cluttered multi-affordance row - this is an explicit scope decision, not an oversight.
+
+
+  Known, accepted consequence: any session with translations persisted under the old paragraph_key scheme will have every paragraph look "never translated" the first time it''s reopened after this ships (the rename changes what the key means, so old keys don''t match new per-window lookups) and will retranslate once, harmlessly. This is expected, one-time, and distinct from the WP-102 race bug - do not treat it as a WP-102 regression.
+
+
+  Known, accepted quality tradeoff: translating single 7s windows means a window will often end mid-sentence; the model receives rolling context to help it continue naturally, but individual window translations may read as sentence fragments in isolation. This is the deliberate latency/coherence tradeoff the user asked for.
+
+
+  Happy path: user turns Live Translation on early in a session. The first translated text appears roughly 14s after speech starts, and every ~7s thereafter a further 7s of translated text appears, keeping pace with live transcription instead of lagging up to 28s+ behind.
+
+
+  Failure/edge cases: a window''s translation fails - only that window''s slice shows the failed placeholder inline; its paragraph''s other windows and later windows are unaffected, and later windows still get context from whichever of their two preceding windows succeeded. A stale window (its text changed after being translated, e.g. a fail-open retry) is retranslated in place like today, using current context. Deleting/switching sessions cancels pending work exactly as today (per-window instead of per-paragraph).
+
+
+  Target surfaces: src-tauri/src/streaming_store.rs, src-tauri/src/streaming.rs, src-tauri/src/commands/mfu.rs, src-tauri/src/commands/streaming.rs (if it references list_streaming_translations'' field), src-tauri/src/lib.rs, src-tauri/src/llm.rs (comment wording only), src/ipc.ts, src/StreamingView.tsx, src/paragraphs.ts (delete isParagraphClosed), src/export.ts, src/streamingText.ts (shared per-window display-text helper), plus every existing test file covering the renamed/restructured surfaces (src/StreamingView.translation.test.tsx, src/StreamingView.pairedExport.test.tsx, src-tauri streaming_store.rs/streaming.rs test modules).
+
+
+  Constraints: single-flight translation concurrency guard (AppState::translation_busy) and its independence from whisper_busy are unchanged. No change to the Live Translation on/off persistence (WP-101) or target-language non-persistence (WP-99). No change to Prettify mutual exclusion or the LLM-readiness disabled-reason behavior.
+
+
+  Scenarios:
+
+  Given a running session with Live Translation on, When the 2nd window (14s) arrives, Then windows 0 and 1 are both translated (window 0 with no context, window 1 with window 0''s translation as context) without waiting for a paragraph to close.
+
+  Given windows 0-3 already translated, When window 4 arrives, Then it is translated using the concatenation of windows 2 and 3''s translations as context.
+
+  Given window 3''s translation failed and window 2''s succeeded, When window 4 is translated, Then its context is window 2''s translation alone (the failed window 3 is skipped, translation still proceeds without blocking).
+
+  Given a paragraph made of windows 5-7 where windows 5-6 are done and window 7 is still translating, When the transcript renders, Then the paragraph''s translated cell shows windows 5-6''s real text followed by a translating indicator for window 7''s slice, not a blank or fully-placeholder cell.
+
+  Given a stopped session with translations persisted under the pre-WP-103 paragraph_key scheme, When it is reopened, Then its windows retranslate once under the new per-window keying without error (accepted one-time consequence, not a bug).'
+dod:
+- Translation triggers per-window once windows.length >= 2 (session-wide, independent of paragraph boundaries); windows 0 and 1 both translate as soon as the 2-window threshold is met (window 0 with no context, window 1 with window 0's translation as context); every later window translates alone using the concatenation of its up-to-2 immediately preceding available (done/mirrored) translations as context, skipping any failed or unavailable predecessor rather than blocking. Covered by React/vitest tests for the bootstrap pair, a mid-session window, and a failed-predecessor context fallback.
+- isParagraphClosed and its only call site are deleted (dead code once translation no longer gates on paragraph closure); groupWindowsIntoParagraphs is unchanged and still used for display grouping. Covered by paragraphs.ts's existing test suite passing with the dead export removed.
+- streaming_translations' paragraph_key column is renamed to window_index via a checked ALTER TABLE ... RENAME COLUMN migration, safe to run on every store open (idempotent); the Rust struct/DTO field and src/ipc.ts's StreamingTranslationRow field are renamed to match. Covered by a migration test opening a pre-rename database and a reopening-an-already-migrated-database idempotency test.
+- The translate_streaming_paragraph Tauri command and its src/ipc.ts wrapper are renamed to translate_streaming_window with a window_index param (replacing paragraph_key); llm.rs's translate_paragraph/build_translate_prompt signatures are unchanged. Covered by Rust command/facade tests and a TS type-check pass.
+- The persisted-translations load effect matches a persisted row to a window by window_index and that window's own current text (windowText, not a joined multi-window string). Covered by a React/vitest test reusing a persisted single-window translation without a new model call.
+- A paragraph's translated cell (on-screen and in Copy/Export) is built by mapping each of its windows through its own entry - real text for done/mirrored, an inline placeholder for missing/pending/translating/failed - via one shared helper used by both the renderer and export.ts's renderStreamingPaired, so a partially-translated paragraph shows real text for its finished windows and a placeholder only for its unfinished tail. Covered by a React/vitest rendering test and an export.ts unit test for a mixed-status paragraph.
+- handleRetryTranslation re-enqueues every failed window within a paragraph when its (single, paragraph-level) retry affordance is used, with context recomputed at retry time from the windows' current state. Covered by a React/vitest test.
+- A window whose own language already matches the target is mirrored individually (no model call, own text as both source and translated text, usable as context for its successor) - a paragraph mixing mirrored and translated windows renders both correctly instead of the old all-or-nothing paragraph-level mirror check. Covered by a React/vitest test.
+- Backfilling an already-transcribed stopped session (translation turned on after the fact) still translates every window oldest-first through the same single-flight queue. Covered by a React/vitest test.
+- WP-101's translation-enabled persistence and WP-99's target-language non-persistence are unchanged; no test for either regresses.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  relates_to:
+  - WP-100
+  - WP-102

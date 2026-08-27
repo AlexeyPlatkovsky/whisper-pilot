@@ -1,6 +1,10 @@
 # ADR-015: Live translation reuses the summary LLM and runs concurrently on a single-flight queue
 
-- **Status:** accepted
+- **Status:** partially superseded by [ADR-016](ADR-016-rolling-per-window-live-translation.md)
+  (translation-unit granularity only — the "Unit" decision below and its
+  "Translate at window granularity" rejected alternative; engine reuse,
+  single-flight concurrency, target languages, and the persistence-reuse
+  concept below all stand)
 - **Date:** 2026-08-27
 - **Deciders:** Alexey Platkovsky
 - **Relates to:** [ADR-014](ADR-014-streaming-mode-coexists-with-batch-meeting.md)
@@ -66,7 +70,10 @@ safe:
   translation does not retroactively guard Craft or Prettify, and
   `translation_busy` does not cover them either.
 
-**Unit: the paragraph is the translation and alignment unit.** A paragraph
+**Unit: the paragraph is the translation and alignment unit.** *(Superseded
+by [ADR-016](ADR-016-rolling-per-window-live-translation.md): the translation
+unit is now a single window, decoupled from paragraph grouping; the
+paired-row *display* still aligns on the paragraph, unchanged.)* A paragraph
 (as grouped by the front end's `groupWindowsIntoParagraphs`) is translated and
 persisted as one piece — not a window, not a sentence — because it is the
 unit the split paired-row view aligns original and translated text on: one
@@ -84,6 +91,8 @@ case.
 
 **Persistence: reuse translations instead of re-running the model.**
 Translations persist keyed by `(session_id, paragraph_key, target_language)`
+*(renamed `window_index` by ADR-016, one row per window instead of per
+paragraph — the reuse-instead-of-re-running principle itself is unchanged)*
 in the new `streaming_translations` table, alongside the source text they
 were produced from. Turning Live Translation on backfills a session from
 stored rows first; a row is only re-translated when its stored source text no
@@ -141,7 +150,9 @@ has changed, not on every read.
 - **Translate at window granularity instead of paragraph granularity** —
   rejected: a window is a decode-cadence artifact (~5-10s), not a stable
   linguistic unit; the paragraph is what the split view aligns rows on and
-  what a reader perceives as one translatable thought.
+  what a reader perceives as one translatable thought. *(Reversed by
+  [ADR-016](ADR-016-rolling-per-window-live-translation.md) once real-world
+  latency made this trade-off the wrong one — see that ADR's Context.)*
 - **Support more target languages than English and Russian** — deferred, not
   rejected outright: the two languages match the app's current primary
   audiences (ADR-007's Russian-first stance, English added later); widening
