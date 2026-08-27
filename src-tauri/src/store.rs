@@ -303,7 +303,8 @@ fn migrate_legacy_notes(connection: &Connection) -> Result<()> {
                      SELECT notes.meeting_id, notes.summary, notes.decisions, notes.action_items,
                             notes.open_questions, notes.participants
                      FROM notes
-                     WHERE NOT EXISTS (SELECT 1 FROM mfu WHERE mfu.meeting_id = notes.meeting_id);
+                     WHERE EXISTS (SELECT 1 FROM meetings WHERE meetings.id = notes.meeting_id)
+                       AND NOT EXISTS (SELECT 1 FROM mfu WHERE mfu.meeting_id = notes.meeting_id);
                      DROP TABLE notes;",
                 )
                 .map_err(store_error)?;
@@ -550,8 +551,8 @@ mod tests {
     }
 
     #[test]
-    fn wp90_migrates_legacy_notes_and_recovers_a_mixed_mfu_schema() {
-        // Decision table: notes-only migrates; notes plus mfu preserves mfu and imports legacy-only rows.
+    fn recovers_mixed_mfu_schema_with_orphaned_legacy_rows() {
+        // Decision table: notes-only migrates; mixed schemas preserve current rows, import valid legacy rows, and discard orphans.
         let legacy_only = tempfile::tempdir().expect("legacy-only app support");
         let connection =
             Connection::open(database_path(legacy_only.path())).expect("open legacy db");
@@ -609,10 +610,10 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT NOT NULL, source_path TEXT, source_name TEXT, created_at_ms INTEGER NOT NULL, duration_ms INTEGER, language TEXT NOT NULL, status TEXT NOT NULL);
                  CREATE TABLE notes (meeting_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
-                 CREATE TABLE mfu (meeting_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 CREATE TABLE mfu (meeting_id INTEGER PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
                  INSERT INTO meetings VALUES (1, 'Current', NULL, NULL, 1, NULL, 'en', 'finished'), (2, 'Legacy', NULL, NULL, 2, NULL, 'en', 'finished');
                  INSERT INTO mfu VALUES (1, 'Current summary', 'Current decisions', 'Current actions', 'Current questions', 'Current participants');
-                 INSERT INTO notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants');",
+                 INSERT INTO notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants'), (3, 'Orphaned summary', 'Orphaned decisions', 'Orphaned actions', 'Orphaned questions', 'Orphaned participants');",
             )
             .expect("seed mixed db");
         drop(connection);
@@ -640,6 +641,7 @@ mod tests {
                 participants: "Imported participants".to_string(),
             })
         );
+        assert_eq!(mixed_store.get_mfu(3).expect("read orphaned mfu"), None);
         drop(mixed_store);
         let reopened_mixed = Store::open(mixed.path()).expect("repeat mixed migration");
         assert_eq!(
@@ -654,6 +656,12 @@ mod tests {
                 open_questions: "Current questions".to_string(),
                 participants: "Current participants".to_string(),
             })
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(3)
+                .expect("read reopened orphaned mfu"),
+            None
         );
         assert_eq!(
             reopened_mixed

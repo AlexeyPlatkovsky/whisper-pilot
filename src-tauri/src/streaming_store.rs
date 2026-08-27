@@ -385,7 +385,11 @@ fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
                             streaming_notes.action_items, streaming_notes.open_questions,
                             streaming_notes.participants
                      FROM streaming_notes
-                     WHERE NOT EXISTS (
+                     WHERE EXISTS (
+                         SELECT 1 FROM streaming_sessions
+                         WHERE streaming_sessions.id = streaming_notes.session_id
+                     )
+                       AND NOT EXISTS (
                          SELECT 1 FROM streaming_mfu
                          WHERE streaming_mfu.session_id = streaming_notes.session_id
                      );
@@ -583,8 +587,8 @@ mod tests {
     }
 
     #[test]
-    fn wp90_migrates_legacy_streaming_notes_and_recovers_a_mixed_mfu_schema() {
-        // Decision table: streaming_notes-only migrates; a mixed schema preserves current rows.
+    fn recovers_mixed_streaming_mfu_schema_with_orphaned_legacy_rows() {
+        // Decision table: streaming_notes-only migrates; mixed schemas preserve current rows, import valid legacy rows, and discard orphans.
         let legacy_only = tempfile::tempdir().expect("legacy-only app support");
         let connection = Connection::open(crate::store::shared_database_path(legacy_only.path()))
             .expect("open legacy db");
@@ -644,10 +648,10 @@ mod tests {
             .execute_batch(
                 "CREATE TABLE streaming_sessions (id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, status TEXT NOT NULL);
                  CREATE TABLE streaming_notes (session_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
-                 CREATE TABLE streaming_mfu (session_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 CREATE TABLE streaming_mfu (session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
                  INSERT INTO streaming_sessions VALUES (1, 'Current', 1, 1, 'stopped'), (2, 'Legacy', 2, 2, 'stopped');
                  INSERT INTO streaming_mfu VALUES (1, 'Current summary', 'Current decisions', 'Current actions', 'Current questions', 'Current participants');
-                 INSERT INTO streaming_notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants');",
+                 INSERT INTO streaming_notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants'), (3, 'Orphaned summary', 'Orphaned decisions', 'Orphaned actions', 'Orphaned questions', 'Orphaned participants');",
             )
             .expect("seed mixed db");
         drop(connection);
@@ -675,6 +679,7 @@ mod tests {
                 participants: "Imported participants".to_string(),
             })
         );
+        assert_eq!(mixed_store.get_mfu(3).expect("read orphaned mfu"), None);
         drop(mixed_store);
         let reopened_mixed = StreamingStore::open(mixed.path()).expect("repeat mixed migration");
         assert_eq!(
@@ -689,6 +694,12 @@ mod tests {
                 open_questions: "Current questions".to_string(),
                 participants: "Current participants".to_string(),
             })
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(3)
+                .expect("read reopened orphaned mfu"),
+            None
         );
         assert_eq!(
             reopened_mixed
