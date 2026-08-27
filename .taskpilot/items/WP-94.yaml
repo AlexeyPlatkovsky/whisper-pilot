@@ -1,0 +1,45 @@
+schema_version: 1
+id: WP-94
+title: Streaming copy and export with paired original + translation output
+priority: normal
+type: task
+status: done
+created_at: '2026-08-26T16:32:41Z'
+updated_at: '2026-08-27T11:30:25Z'
+parent_id: WP-91
+description: 'Extend Streaming copy-to-clipboard and export-to-Markdown so a session with Live Translation on carries both columns.
+
+
+  When translations exist for the session and the currently selected target language, the rendered output emits one block per paragraph: the original paragraph followed by its translation, labelled with the source side and the target language, in the same order as on screen. When Live Translation is off, or no translation exists, output is byte-identical to today''s.
+
+
+  Happy path: with translation on and complete, Copy places the paired text on the clipboard and Export writes a Markdown file whose paragraphs alternate original and translation.
+
+  Failure behavior: a paragraph with no translation, a failed translation, or a mirrored same-language paragraph is emitted with an explicit placeholder line rather than silently omitted or left blank, so paragraph counts always match between the two sides.
+
+  Edge cases: a session whose stored translations are stale relative to current paragraph text exports the original with the not-translated placeholder; a session translated earlier into a different target language than the one currently selected exports only for the selected language.
+
+
+  Scope boundary: rendering of copy and export output only. No change to how translations are produced, queued or stored, and no change to Meeting export.
+
+
+  Scenarios:
+
+  Given a Streaming session with translations for every paragraph, When the user exports to Markdown, Then the file contains each original paragraph followed by its labelled translation in screen order.
+
+  Given a session with Live Translation off, When the user copies or exports, Then the output is identical to the current implementation.
+
+  Given a session where one paragraph has no translation, When the user exports, Then that paragraph is emitted with a not-translated placeholder and the remaining paragraphs are unaffected.
+
+
+  Target surfaces: src/export.ts, src/StreamingView.tsx (export and CopyButton wiring), src/export.test.ts, src-tauri export command only if the file-writing path needs the extra content shape.
+
+
+  Constraints: no network calls; existing single-language export output and its tests must remain unchanged when translation is absent.'
+dod:
+- Copy and export emit one labelled original + translation block per paragraph, in screen order, when translations exist for the selected target language; covered by unit tests in src/export.test.ts.
+- Output is unchanged from the current implementation when Live Translation is off or no translation exists; covered by the existing export tests remaining green without modification.
+- Untranslated, failed, and same-language mirrored paragraphs emit an explicit placeholder so the two sides always have matching paragraph counts; covered by unit tests.
+- The Streaming Copy button and Export action both use the paired renderer; covered by React/vitest tests.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+created_by: Aleksei_Platkovskii

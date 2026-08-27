@@ -25,6 +25,11 @@ import {
   type StreamingTranslationTargetLanguage,
   type StreamingWindow,
 } from "./ipc";
+import {
+  hasStreamingTranslations,
+  renderStreamingPaired,
+  STREAMING_TARGET_LANGUAGE_NAMES,
+} from "./export";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
@@ -49,14 +54,9 @@ import {
 } from "./streamingStatus";
 
 // WP-93: Live Translation's target-language options — the select's display
-// names and the split grid's target-column header (uppercased).
-const TARGET_LANGUAGE_NAMES: Record<
-  StreamingTranslationTargetLanguage,
-  string
-> = {
-  en: "English",
-  ru: "Русский",
-};
+// names and the split grid's target-column header (uppercased). Shared with
+// the paired export renderer so the two cannot drift.
+const TARGET_LANGUAGE_NAMES = STREAMING_TARGET_LANGUAGE_NAMES;
 
 type TranslationStatus =
   "pending" | "translating" | "done" | "mirrored" | "failed";
@@ -481,8 +481,26 @@ export function StreamingView({
   }, [deleteTarget, refreshSessions]);
 
   // Once accepted, the cleaned text is what gets copied/exported — that's
-  // the point of prettifying.
-  const exportText = prettifiedText ?? plainTranscript(windows);
+  // the point of prettifying. Otherwise, when Live Translation is on and at
+  // least one paragraph has a translation entry, Copy/Export switch to the
+  // paired original+translation rendering (WP-94); an empty translations
+  // map (off, or on with nothing recorded yet) falls through to today's
+  // plain transcript unchanged, so that output stays byte-identical.
+  // Mutual exclusion between Prettify and Live Translation (see
+  // `prettifyDisabledByTranslation` below) means `prettifiedText` and
+  // `translationEnabled` are never both truthy at once.
+  const exportText =
+    prettifiedText ??
+    (translationEnabled && hasStreamingTranslations(translations)
+      ? renderStreamingPaired(
+          groupWindowsIntoParagraphs(windows).map((paragraph) => ({
+            key: paragraph[0].window_index,
+            sourceText: plainTranscript(paragraph),
+          })),
+          translations,
+          targetLanguage,
+        )
+      : plainTranscript(windows));
 
   const handleExport = useCallback(async () => {
     setError(null);
