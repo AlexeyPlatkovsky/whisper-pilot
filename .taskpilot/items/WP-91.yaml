@@ -3,9 +3,9 @@ id: WP-91
 title: Streaming Live Translation (EN/RU) with split original/translated transcript
 priority: normal
 type: feature
-status: in_progress
+status: done
 created_at: '2026-08-26T16:31:13Z'
-updated_at: '2026-08-27T02:29:49Z'
+updated_at: '2026-08-27T11:40:16Z'
 description: 'Give the Streaming screen a Live Translation control in the middle of its transcript panel header — the label "Live Translation", a switch, and a target-language dropdown offering English and Русский. While the switch is ON the transcript area splits vertically into two columns inside one scroll container: the original transcript on the left, its translation into the selected target language on the right, rendered as paired rows so a paragraph and its translation always sit at the same vertical position. Translation runs locally through the existing llama.cpp path with the active summary LLM model; no new model and no new catalog entry (see ADR-014 for Streaming''s offline scope).
 
 
