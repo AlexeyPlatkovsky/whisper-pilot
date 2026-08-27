@@ -349,3 +349,27 @@ export function onStreamingSessionEnded(
     handler(event.payload),
   );
 }
+
+/** Target languages Streaming paragraph translation supports (WP-92). */
+export type StreamingTranslationTargetLanguage = "en" | "ru";
+
+/**
+ * Translates one Streaming paragraph into `targetLanguage` using the active
+ * local LLM and persists the result, keyed by `(sessionId, paragraphKey,
+ * targetLanguage)`. `paragraphKey` is the `window_index` of the paragraph's
+ * first window. Single-flight in the core: a second concurrent call rejects
+ * with a distinct, retryable error.
+ */
+export function translateStreamingParagraph(
+  sessionId: number,
+  paragraphKey: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+  text: string,
+): Promise<string> {
+  return invoke<string>("translate_streaming_paragraph", {
+    sessionId,
+    paragraphKey,
+    targetLanguage,
+    text,
+  });
+}

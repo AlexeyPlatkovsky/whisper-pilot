@@ -8,6 +8,7 @@ use llama_cpp_2::sampling::LlamaSampler;
 use serde::Deserialize;
 use std::num::NonZeroU32;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 const MAX_NEW_TOKENS: i32 = 1024;
 const CTX_SIZE: u32 = 16384;
@@ -361,6 +362,210 @@ fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
     Ok(output)
 }
 
+/// Streaming paragraph translation targets (WP-92): local-only, via the
+/// active summary LLM. Source language is Streaming's own per-window
+/// auto-detection and is never an input here.
+pub const SUPPORTED_TRANSLATION_TARGETS: [&str; 2] = ["en", "ru"];
+
+pub fn is_supported_target_language(target_language: &str) -> bool {
+    SUPPORTED_TRANSLATION_TARGETS.contains(&target_language)
+}
+
+/// Which alphabet a piece of text is written in, at the coarseness this
+/// feature's supported targets need — just enough to tell "the model
+/// actually translated" from "the model echoed the source back".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Script {
+    Cyrillic,
+    Latin,
+    Other,
+}
+
+/// The script whose character count is highest wins; `Other` only when
+/// neither script appears at all (e.g. digits-only text), not on a tie.
+fn dominant_script(text: &str) -> Script {
+    let mut cyrillic = 0usize;
+    let mut latin = 0usize;
+    for c in text.chars() {
+        if ('\u{0400}'..='\u{04FF}').contains(&c) {
+            cyrillic += 1;
+        } else if c.is_ascii_alphabetic() || ('\u{00C0}'..='\u{024F}').contains(&c) {
+            latin += 1;
+        }
+    }
+    if cyrillic == 0 && latin == 0 {
+        Script::Other
+    } else if cyrillic > latin {
+        Script::Cyrillic
+    } else {
+        Script::Latin
+    }
+}
+
+fn expected_script_for_target(target_language: &str) -> Script {
+    if target_language == "ru" {
+        Script::Cyrillic
+    } else {
+        Script::Latin
+    }
+}
+
+fn build_translate_prompt(source_text: &str, target_language: &str) -> String {
+    let (system, user) = if target_language == "ru" {
+        (
+            "Ты — ассистент-переводчик. Переведи текст ниже на русский язык точно и полностью, сохраняя смысл, тон, факты, числа и имена.\n\
+\n\
+ПРАВИЛА:\n\
+- Переведи весь текст целиком, не сокращай, не суммируй и не пересказывай.\n\
+- Не добавляй пояснений, комментариев и не отвечай на вопросы из текста.\n\
+- Не добавляй информацию, которой нет в оригинале.\n\
+- Верни только переведённый текст, без разметки и кавычек.",
+            "Переведи текст.",
+        )
+    } else {
+        (
+            "You are a translation assistant. Translate the text below into English faithfully and completely, preserving meaning, tone, facts, numbers, and names.\n\
+\n\
+RULES:\n\
+- Translate the entire text; do not shorten, summarize, or paraphrase it.\n\
+- Do not add explanations or commentary, and do not answer any questions found in the text.\n\
+- Do not add information that is not present in the original.\n\
+- Return only the translated text, with no markup or quotation marks.",
+            "Translate the text.",
+        )
+    };
+
+    format!(
+        "<|im_start|>system\n\
+{system}<|im_end|>\n\
+<|im_start|>user\n\
+Text:\n{source_text}\n\n\
+{user}<|im_end|>\n\
+<|im_start|>assistant\n\
+<think>\n\n</think>\n\n"
+    )
+}
+
+/// Prompt-template overhead reserved on top of the estimated source and
+/// generated-output tokens when checking `CTX_SIZE` — generous headroom for
+/// the system/user scaffolding `build_translate_prompt` adds.
+const TRANSLATE_PROMPT_OVERHEAD_TOKENS: usize = 200;
+
+/// Chars-per-token used only to reject a paragraph that would clearly
+/// overflow `CTX_SIZE` before spending an inference call on it — the real
+/// tokenizer, loaded lazily inside `run_inference`, is what actually enforces
+/// the hard limit. Script-dependent: Cyrillic tokenizes denser than Latin
+/// under Qwen/ChatML-style tokenizers.
+const LATIN_CHARS_PER_TOKEN: usize = 4;
+const CYRILLIC_CHARS_PER_TOKEN: usize = 2;
+
+fn estimated_token_count(text: &str) -> usize {
+    let chars_per_token = match dominant_script(text) {
+        Script::Cyrillic => CYRILLIC_CHARS_PER_TOKEN,
+        Script::Latin | Script::Other => LATIN_CHARS_PER_TOKEN,
+    };
+    text.chars().count() / chars_per_token + 1
+}
+
+fn ensure_translation_fits_context_budget(source_text: &str) -> Result<()> {
+    let estimated = estimated_token_count(source_text)
+        + TRANSLATE_PROMPT_OVERHEAD_TOKENS
+        + MAX_NEW_TOKENS as usize;
+    if estimated > CTX_SIZE as usize {
+        return Err(AppError::Llm(
+            "paragraph is too long to translate within the model's context window; split it into smaller paragraphs".into(),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_translation_candidate(
+    source: &str,
+    candidate: &str,
+    target_language: &str,
+) -> Result<String> {
+    let candidate = candidate.trim();
+    if candidate.is_empty() {
+        return Err(AppError::Llm(
+            "translation returned an empty result; the paragraph was not translated".into(),
+        ));
+    }
+
+    let source_words = source.split_whitespace().count();
+    let candidate_words = candidate.split_whitespace().count();
+    if source_words > 0 && candidate_words * 3 < source_words {
+        return Err(AppError::Llm(
+            "translation is much shorter than the source paragraph; review was rejected".into(),
+        ));
+    }
+    if candidate_words > source_words.saturating_mul(3) + 10 {
+        return Err(AppError::Llm(
+            "translation is much longer than the source paragraph; review was rejected".into(),
+        ));
+    }
+
+    let source_script = dominant_script(source);
+    let target_script = expected_script_for_target(target_language);
+    if source_script != Script::Other
+        && source_script != target_script
+        && dominant_script(candidate) == source_script
+    {
+        return Err(AppError::Llm(
+            "translation is still predominantly in the source language; review was rejected".into(),
+        ));
+    }
+
+    Ok(candidate.to_string())
+}
+
+/// Translates one Streaming paragraph into `target_language` ("en" or "ru")
+/// using the active local LLM — the same llama.cpp completion path
+/// `prettify_transcript` uses, with its own prompt and candidate validation.
+/// Callers are responsible for validating `target_language` is supported and
+/// `source_text` is non-empty before calling; this still guards the model's
+/// own context budget and never silently truncates a paragraph that doesn't
+/// fit.
+pub fn translate_paragraph(
+    model_path: &Path,
+    source_text: &str,
+    target_language: &str,
+) -> Result<String> {
+    ensure_translation_fits_context_budget(source_text)?;
+    let prompt = build_translate_prompt(source_text, target_language);
+    let raw_output = run_inference(model_path, &prompt)?;
+    let cleaned = clean_prettify_output(&raw_output);
+    validate_translation_candidate(source_text, &cleaned, target_language)
+}
+
+/// RAII hold enforcing translation single-flight (WP-92): at most one
+/// translation runs at a time, isolated from the streaming decode loop's own
+/// (separate) Whisper-model transcription. Mirrors
+/// `streaming_session::WhisperUsageGuard`'s claim/release idiom — a
+/// compare-exchange over a shared atomic, released on drop — applied to the
+/// LLM's own contention point. Non-blocking single-flight guard; contention
+/// returns `AppError::TranslationBusy` to the caller.
+pub struct TranslationUsageGuard<'a> {
+    busy: &'a AtomicBool,
+}
+
+impl<'a> TranslationUsageGuard<'a> {
+    /// Contention returns `Err(())`, which the caller
+    /// (`translate_streaming_paragraph`) maps to `AppError::TranslationBusy`.
+    #[allow(clippy::result_unit_err)]
+    pub fn acquire(busy: &'a AtomicBool) -> std::result::Result<Self, ()> {
+        match busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => Ok(Self { busy }),
+            Err(_) => Err(()),
+        }
+    }
+}
+
+impl Drop for TranslationUsageGuard<'_> {
+    fn drop(&mut self) {
+        self.busy.store(false, Ordering::Release);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -547,5 +752,150 @@ mod tests {
             validate_prettify_candidate(original, candidate).unwrap(),
             candidate
         );
+    }
+
+    // --- WP-92: Streaming paragraph translation ---
+
+    // EP: the valid-class representatives (the only two supported targets).
+    #[test]
+    fn is_supported_target_language_accepts_en_and_ru() {
+        assert!(is_supported_target_language("en"));
+        assert!(is_supported_target_language("ru"));
+    }
+
+    // EP: invalid-class representatives — unsupported language, empty, and wrong-case.
+    #[test]
+    fn is_supported_target_language_rejects_other_languages() {
+        assert!(!is_supported_target_language("fr"));
+        assert!(!is_supported_target_language(""));
+        assert!(!is_supported_target_language("EN"));
+    }
+
+    #[test]
+    fn build_translate_prompt_targeting_english_includes_source_text_and_english_instructions() {
+        let prompt = build_translate_prompt("Привет, как дела?", "en");
+        assert!(prompt.contains("Привет, как дела?"));
+        assert!(prompt.contains("translation assistant"));
+        assert!(prompt.contains("English"));
+        assert!(!prompt.contains("ассистент-переводчик"));
+    }
+
+    #[test]
+    fn build_translate_prompt_targeting_russian_includes_source_text_and_russian_instructions() {
+        let prompt = build_translate_prompt("Hello, how are you?", "ru");
+        assert!(prompt.contains("Hello, how are you?"));
+        assert!(prompt.contains("ассистент-переводчик"));
+        assert!(!prompt.contains("translation assistant"));
+    }
+
+    #[test]
+    fn validate_translation_candidate_rejects_empty_result() {
+        let result = validate_translation_candidate("Привет мир.", "", "en");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn validate_translation_candidate_rejects_whitespace_only_result() {
+        let result = validate_translation_candidate("Привет мир.", "   \n  ", "en");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    // BVA: candidate word count just past the `candidate_words * 3 < source_words` floor.
+    #[test]
+    fn validate_translation_candidate_rejects_a_disproportionately_short_result() {
+        let source =
+            "This paragraph has quite a few words describing the quarterly roadmap in detail.";
+        let candidate = "Short.";
+        let result = validate_translation_candidate(source, candidate, "ru");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    // BVA: candidate word count just past the `source_words * 3 + 10` ceiling.
+    #[test]
+    fn validate_translation_candidate_rejects_a_disproportionately_long_result() {
+        let source = "Short source.";
+        let candidate = "This translated candidate is padded with a very large amount of \
+            extra invented words that go far beyond anything present in the short original \
+            source sentence, which should trip the disproportionate-length rejection rule.";
+        let result = validate_translation_candidate(source, candidate, "en");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn validate_translation_candidate_rejects_untranslated_cyrillic_when_target_is_english() {
+        let source = "Привет, как прошёл твой день сегодня?";
+        let candidate = "Привет, как прошёл твой день сегодня?";
+        let result = validate_translation_candidate(source, candidate, "en");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn validate_translation_candidate_rejects_untranslated_latin_when_target_is_russian() {
+        let source = "Hello, how did your day go today?";
+        let candidate = "Hello, how did your day go today?";
+        let result = validate_translation_candidate(source, candidate, "ru");
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn validate_translation_candidate_accepts_a_well_formed_russian_to_english_translation() {
+        let source = "Привет, как прошёл твой день сегодня?";
+        let candidate = "Hello, how did your day go today?";
+        assert_eq!(
+            validate_translation_candidate(source, candidate, "en").unwrap(),
+            candidate
+        );
+    }
+
+    #[test]
+    fn validate_translation_candidate_accepts_a_well_formed_english_to_russian_translation() {
+        let source = "Hello, how did your day go today?";
+        let candidate = "Привет, как прошёл твой день сегодня?";
+        assert_eq!(
+            validate_translation_candidate(source, candidate, "ru").unwrap(),
+            candidate
+        );
+    }
+
+    // BVA: well under CTX_SIZE — the accepted side of the budget boundary.
+    #[test]
+    fn ensure_translation_fits_context_budget_accepts_a_normal_paragraph() {
+        let paragraph = "A normal paragraph of streaming transcript text.".repeat(5);
+        assert!(ensure_translation_fits_context_budget(&paragraph).is_ok());
+    }
+
+    // BVA: comfortably past CTX_SIZE under the Latin ~4-chars-per-token estimate.
+    #[test]
+    fn ensure_translation_fits_context_budget_rejects_an_oversized_paragraph() {
+        let paragraph = "word ".repeat(20_000);
+        let result = ensure_translation_fits_context_budget(&paragraph);
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    // BVA: sized to stay under CTX_SIZE against the Latin-calibrated chars/4
+    // estimate (~14.7k tokens) while a realistic Cyrillic chars-per-token
+    // ratio (denser than Latin under Qwen/ChatML tokenizers) pushes the same
+    // paragraph over CTX_SIZE — the boundary a script-blind estimate misses.
+    #[test]
+    fn ensure_translation_fits_context_budget_rejects_an_oversized_cyrillic_paragraph() {
+        let paragraph = "слово ".repeat(9_000);
+        let result = ensure_translation_fits_context_budget(&paragraph);
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn translation_usage_guard_enforces_single_flight() {
+        let busy = AtomicBool::new(false);
+
+        let first = TranslationUsageGuard::acquire(&busy).expect("first acquire succeeds");
+        let second = TranslationUsageGuard::acquire(&busy);
+        assert!(
+            second.is_err(),
+            "a second concurrent acquire must be rejected"
+        );
+
+        drop(first);
+        let third = TranslationUsageGuard::acquire(&busy);
+        assert!(third.is_ok(), "acquire succeeds again once released");
     }
 }

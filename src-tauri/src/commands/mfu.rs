@@ -153,3 +153,65 @@ pub(crate) async fn revert_streaming_prettify(
     store.delete_prettified(id)?;
     streaming::open_streaming_session(&app_support_dir, id)
 }
+
+/// Translates one Streaming paragraph into `target_language` ("en" or "ru")
+/// using the active local LLM and persists the result. Single-flight: a
+/// second concurrent translation request is rejected with a distinct,
+/// UI-retryable `AppError::TranslationBusy` rather than queuing or blocking
+/// the streaming decode loop (WP-92).
+#[tauri::command]
+pub(crate) async fn translate_streaming_paragraph(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    session_id: streaming_store::StreamingSessionId,
+    paragraph_key: i64,
+    target_language: String,
+    text: String,
+) -> Result<String> {
+    let app_support_dir = app_data_dir(&app)?;
+    streaming::ensure_translation_request_is_valid(
+        &app_support_dir,
+        session_id,
+        &target_language,
+        &text,
+    )?;
+    let model_path = resolve_llm_model_path(&app_support_dir)?;
+
+    let _guard = llm::TranslationUsageGuard::acquire(&state.translation_busy)
+        .map_err(|()| AppError::TranslationBusy)?;
+
+    let now = crate::state::now_ms()?;
+    let app_support_dir_clone = app_support_dir.clone();
+    let target_language_clone = target_language.clone();
+    let text_clone = text.clone();
+    let model_path_clone = model_path.clone();
+    tokio::task::spawn_blocking(move || {
+        streaming::translate_and_store(
+            &app_support_dir_clone,
+            session_id,
+            paragraph_key,
+            &target_language_clone,
+            &text_clone,
+            now,
+            |source, lang| llm::translate_paragraph(&model_path_clone, source, lang),
+        )
+    })
+    .await
+    .map_err(|e| AppError::Llm(e.to_string()))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- WP-92: model-resolution error path for translate_streaming_paragraph ---
+
+    #[test]
+    fn resolve_llm_model_path_errors_when_no_model_is_selected() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let result = resolve_llm_model_path(temp.path());
+
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+}

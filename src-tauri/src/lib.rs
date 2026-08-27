@@ -65,7 +65,8 @@ pub fn run() {
             commands::mfu::generate_streaming_mfu,
             commands::mfu::generate_streaming_prettify,
             commands::mfu::accept_streaming_prettify,
-            commands::mfu::revert_streaming_prettify
+            commands::mfu::revert_streaming_prettify,
+            commands::mfu::translate_streaming_paragraph
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

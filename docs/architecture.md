@@ -459,6 +459,23 @@ streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
 (`StreamingSessionDto`, `StreamingWindowDto`) are the JSON shape the
 Streaming tab consumes.
 
+`streaming_translations` (WP-92) is the newest table in this store, keyed by
+`(session_id, paragraph_key, target_language)` with `ON DELETE CASCADE` on
+`session_id`, created in the same `CREATE TABLE IF NOT EXISTS` schema batch as
+`streaming_prettified`. `paragraph_key` is the `window_index` of a paragraph's
+first window — the front-end paragraph grouping's only stable anchor this
+store can key on, since it has no paragraph concept of its own.
+`StreamingStore::upsert_translation` follows `append_window`'s
+`ON CONFLICT … DO UPDATE` idiom, so a repeated translate for the same key
+overwrites in place rather than duplicating; `list_translations` reads back
+every stored translation for one session and target language. Each row also
+stores the source paragraph text it was translated from, so
+`StreamingTranslation::is_stale(current_source_text)` can tell a caller when a
+later window extended the paragraph and the stored translation no longer
+matches — re-translation, not display, is then the caller's job. See
+Paragraph Translation below for the local-LLM call and command that populate
+this table.
+
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
 
 `stop_streaming_session` in `commands/streaming.rs`, `src/StreamingView.tsx`)
@@ -596,8 +613,52 @@ control calls `revert_streaming_prettify` to delete that row and restore the
 raw per-window transcript for display/copy/export. The two LLM-generation
 commands reuse `streaming::build_streaming_transcript`'s guards (session
 exists, stopped, non-empty transcript); Accept and Revert operate on an
-existing session row. Craft and Prettify are mutually exclusive in flight
-(both are LLM calls against the same shared model).
+existing session row. Craft and Prettify are kept from overlapping only by
+the front end disabling their buttons while either is in flight — there is
+no backend guard between those two commands, so nothing in the core itself
+would stop two concurrent requests from both reaching the shared model. (See
+Paragraph Translation below for the first real backend guard against this
+class of contention, though it currently covers only translation.)
+
+## Paragraph Translation (WP-92, `llm.rs`) — core and persistence only, no UI yet
+
+A third local-LLM use of the same shared model, alongside Craft MFU and
+Prettify: `llm::translate_paragraph` translates one Streaming paragraph into
+a target language (`"en"` or `"ru"`) via the same llama.cpp completion path,
+using its own prompt (`build_translate_prompt`, branching on the target
+language) and its own candidate validation
+(`validate_translation_candidate`) — rejecting an empty or whitespace-only
+result, a result disproportionately shorter or longer than the source, and a
+result still predominantly in the source script when the target script
+differs. `ensure_translation_fits_context_budget` rejects (rather than
+truncates) a paragraph whose estimated token count would overflow `CTX_SIZE`,
+using a script-aware chars-per-token estimate — Cyrillic tokenizes denser
+than Latin under Qwen/ChatML-style tokenizers, so the same character count
+budgets fewer tokens for Cyrillic text.
+
+Unlike Craft and Prettify (previous section), translation has its own real
+backend concurrency guard: `AppState::translation_busy` (an `AtomicBool`,
+deliberately independent of `whisper_busy` so translation never blocks or is
+blocked by the streaming decode loop) and `llm::TranslationUsageGuard`, a
+non-blocking single-flight RAII guard mirroring `streaming_session::
+WhisperUsageGuard`'s claim/release idiom. Contention returns
+`AppError::TranslationBusy`, a distinct, UI-retryable error, rather than
+queuing or blocking. This guard only single-flights translation against
+itself — it does not also cover Craft or Prettify.
+
+The `translate_streaming_paragraph(session_id, paragraph_key, target_language,
+text)` command (`commands/mfu.rs`) validates the request cheaply first
+(`streaming::ensure_translation_request_is_valid`: supported target language,
+session exists, non-empty source text) before resolving the active LLM model
+path or acquiring the single-flight guard, then runs `streaming::
+translate_and_store` — which calls the model and upserts the result into
+`streaming_translations` (see Streaming Persistence above) — on a
+`spawn_blocking` task, and returns the translated text. `src/ipc.ts` exposes
+this as a typed `translateStreamingParagraph` wrapper with a
+`StreamingTranslationTargetLanguage` type. Scope boundary: this ships the
+Rust core, persistence, and IPC surface only — no header toggle, no
+target-language picker, and no split original/translated transcript view.
+That UI is WP-93.
 
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
@@ -690,6 +751,11 @@ span.
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
 | `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
+| `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |
+| `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
+| `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |
+| `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
+| `translate_streaming_paragraph(session_id, paragraph_key, target_language, text)` | Translate one Streaming paragraph into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, paragraph_key, target_language)`; no UI wiring yet (WP-93) | WP-92     |
 
 Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
 between the Meeting run's two passes; completion and errors return through the

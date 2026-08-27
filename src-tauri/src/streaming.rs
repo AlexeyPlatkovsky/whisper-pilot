@@ -198,6 +198,63 @@ pub fn resume_streaming_session(
     ))
 }
 
+/// Validates a translation request's cheap, model-independent prerequisites
+/// — target language supported, session exists, source text non-empty — so
+/// a doomed request never reaches the LLM. Run before resolving the model
+/// path or acquiring the translation single-flight guard.
+pub fn ensure_translation_request_is_valid(
+    app_support_dir: &Path,
+    session_id: StreamingSessionId,
+    target_language: &str,
+    text: &str,
+) -> Result<()> {
+    if !crate::llm::is_supported_target_language(target_language) {
+        return Err(AppError::Llm(format!(
+            "unsupported translation target language: {target_language}"
+        )));
+    }
+    let store = StreamingStore::open(app_support_dir)?;
+    store
+        .get_session(session_id)?
+        .ok_or_else(|| AppError::Store(format!("streaming session {session_id} was not found")))?;
+    if text.trim().is_empty() {
+        return Err(AppError::Llm(
+            "cannot translate an empty or whitespace-only paragraph".into(),
+        ));
+    }
+    Ok(())
+}
+
+/// Runs `translate` (production: `llm::translate_paragraph` bound to the
+/// resolved model path; tests: a fake, so this composition is verifiable
+/// without a real model) and persists the result — the part of
+/// `translate_streaming_paragraph` that needs the shared LLM. Injected so
+/// this can be exercised, including its "write no row on failure"
+/// guarantee, without a real model or Tauri `AppHandle`.
+pub fn translate_and_store(
+    app_support_dir: &Path,
+    session_id: StreamingSessionId,
+    paragraph_key: i64,
+    target_language: &str,
+    text: &str,
+    now_ms: i64,
+    translate: impl FnOnce(&str, &str) -> Result<String>,
+) -> Result<String> {
+    let translated = translate(text, target_language)?;
+
+    let store = StreamingStore::open(app_support_dir)?;
+    store.upsert_translation(&streaming_store::StreamingTranslation {
+        session_id,
+        paragraph_key,
+        target_language: target_language.to_string(),
+        source_text: text.to_string(),
+        translated_text: translated.clone(),
+        updated_at_ms: now_ms,
+    })?;
+
+    Ok(translated)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -563,5 +620,129 @@ mod tests {
             serde_json::from_value(json).expect("deserialize streaming session DTO");
 
         assert_eq!(round_tripped, original);
+    }
+
+    // --- WP-92: translate_streaming_paragraph's testable core ---
+
+    #[test]
+    fn ensure_translation_request_is_valid_rejects_an_unsupported_target_language() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let result = ensure_translation_request_is_valid(temp.path(), id, "fr", "Bonjour");
+
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn ensure_translation_request_is_valid_rejects_an_unknown_session() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let result = ensure_translation_request_is_valid(temp.path(), 999_999, "en", "Привет");
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn ensure_translation_request_is_valid_rejects_empty_source_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let result = ensure_translation_request_is_valid(temp.path(), id, "en", "   \n  ");
+
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn ensure_translation_request_is_valid_accepts_a_well_formed_request() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let result = ensure_translation_request_is_valid(temp.path(), id, "en", "Привет, мир.");
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn translate_and_store_persists_on_success_and_returns_translated_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let translated = translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            1_000,
+            |_text, _lang| Ok("Hello, world.".to_string()),
+        )
+        .expect("translate and store");
+
+        assert_eq!(translated, "Hello, world.");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let rows = store
+            .list_translations(id, "en")
+            .expect("list translations");
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].source_text, "Привет, мир.");
+        assert_eq!(rows[0].translated_text, "Hello, world.");
+    }
+
+    #[test]
+    fn translate_and_store_writes_no_row_when_translation_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let result = translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            1_000,
+            |_text, _lang| Err(AppError::Llm("candidate rejected".into())),
+        );
+
+        assert!(result.is_err());
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        assert!(store
+            .list_translations(id, "en")
+            .expect("list translations")
+            .is_empty());
+    }
+
+    #[test]
+    fn translate_and_store_overwrites_rather_than_duplicates_for_the_same_paragraph_key() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            1_000,
+            |_, _| Ok("Hello, world.".to_string()),
+        )
+        .expect("first translate");
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            2_000,
+            |_, _| Ok("Hi, world.".to_string()),
+        )
+        .expect("retranslate");
+
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let rows = store
+            .list_translations(id, "en")
+            .expect("list translations");
+        assert_eq!(rows.len(), 1, "retranslation must overwrite, not duplicate");
+        assert_eq!(rows[0].translated_text, "Hi, world.");
     }
 }

@@ -52,6 +52,9 @@ pub enum AppError {
     #[error("MFU generation failed: {0}")]
     Llm(String),
 
+    #[error("a translation is already in progress; retry shortly")]
+    TranslationBusy,
+
     #[error("{0}")]
     Io(String),
 }

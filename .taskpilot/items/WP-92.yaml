@@ -1,0 +1,56 @@
+schema_version: 1
+id: WP-92
+title: Paragraph translation via the summary LLM + streaming_translations store
+priority: normal
+type: task
+status: done
+created_at: '2026-08-26T16:31:48Z'
+updated_at: '2026-08-27T03:12:32Z'
+parent_id: WP-91
+description: 'Add local paragraph translation to the Rust core and persist its results.
+
+
+  Translation entry point in src-tauri/src/llm.rs alongside prettify_transcript: takes the active LLM model path, one paragraph of source text, and a target language of "en" or "ru", and returns the translated text. Prompting follows the existing build_prettify_prompt pattern (system + user + assistant prefill, MAX_NEW_TOKENS bounded) and instructs the model to translate faithfully without summarizing, commenting, or answering the content. Output goes through a validation step in the spirit of validate_prettify_candidate: reject an empty result, a result that is disproportionately longer or shorter than the source, and a result that is still predominantly in the source script when the target script differs. A rejected or failed translation returns an error for that paragraph only.
+
+
+  Tauri command translate_streaming_paragraph(session_id, paragraph_key, target_language, text) validates the target language, errors when no LLM model is active or downloaded, runs the translation, persists it, and returns it. Concurrency is single-flight in the core: a second in-flight request for the same session either queues or is rejected with a distinct error the UI can retry, and translation never holds a lock the streaming decode loop needs.
+
+
+  New streaming_translations table in src-tauri/src/streaming_store.rs following the streaming_prettified precedent: primary key (session_id, paragraph_key, target_language), storing source text, translated text, and a timestamp, with upsert-on-conflict semantics, cascade delete with its session, and a read that returns all rows for one session and target language. paragraph_key is the window_index of the paragraph''s first window. A stored row whose source text no longer matches the current paragraph text is stale and must be re-translated rather than shown.
+
+
+  Happy path: the command receives a Russian paragraph with target "en", the LLM returns English text, the row is upserted, and the translation is returned.
+
+  Failure behavior: no active LLM model, an unknown session, an unsupported target language, or a rejected candidate each return a typed error without writing a row and without affecting the session''s segments.
+
+  Edge cases: repeated calls for the same paragraph_key overwrite rather than duplicate; a session deleted mid-translation must not leave orphan rows; empty or whitespace-only source text is rejected before the model runs.
+
+
+  Scope boundary: core and persistence only. No UI, no queue orchestration in the front end, no export changes, and no decision about when the command is called.
+
+
+  Scenarios:
+
+  Given an active LLM model and a Russian paragraph, When translate_streaming_paragraph is called with target "en", Then it returns English text and a streaming_translations row exists for that session, paragraph_key and target language.
+
+  Given no active LLM model, When translate_streaming_paragraph is called, Then it returns an error and writes no row.
+
+  Given a stored translation for a paragraph_key, When the same paragraph_key is translated again, Then the existing row is updated in place and no duplicate row is created.
+
+
+  Target surfaces: src-tauri/src/llm.rs, src-tauri/src/streaming_store.rs (schema plus migration), src-tauri/src/streaming_session.rs, src-tauri/src/lib.rs (command registration), src/ipc.ts (typed wrapper and types).
+
+
+  Constraints: offline only, no network calls; the translation call must not block or starve the streaming decode loop; existing streaming tables and their data must survive the migration; prompts stay inside the current CTX_SIZE budget, so an oversized paragraph is split or rejected rather than silently truncated.'
+dod:
+- The llm.rs translation function builds a target-language prompt and rejects an empty, disproportionate, or untranslated candidate; covered by Rust unit tests for prompt construction and for each rejection rule.
+- 'translate_streaming_paragraph returns a typed error, and writes no row, for: no active LLM model, unknown session, unsupported target language, empty source text, and a rejected candidate. Covered by Rust tests.'
+- The streaming_translations table is created with primary key (session_id, paragraph_key, target_language), upserts on conflict, and cascades on session delete; covered by Rust store tests including a repeated-write test proving no duplicate rows.
+- The migration preserves existing streaming_sessions, streaming_segments, streaming_mfu and streaming_prettified data; covered by a store test opening a pre-migration database.
+- A read returns all stored translations for one session and target language, and a row whose stored source text differs from the current paragraph text is reported as stale.
+- src/ipc.ts exposes a typed wrapper and types for the command.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  blocks:
+  - WP-93
+created_by: Aleksei_Platkovskii
