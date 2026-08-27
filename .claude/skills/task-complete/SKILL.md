@@ -26,6 +26,11 @@ For an untracked user-authored worktree review, require the manager-declared
 objective DoD and frozen-boundary record; TaskPilot lifecycle verification is
 not applicable. Require successful local-commit evidence only when the
 manager-declared route includes a user-authorized commit step.
+For post-review remediation, require the manager-declared objective DoD,
+R1 assessment, and every applicable direct-route artifact. An `accepted` R1
+requires the applicable R2–R8 artifacts; an `invalid` R1 requires explicit
+R2–R8 skips. TaskPilot lifecycle verification is not applicable, and require
+local-commit evidence only when the user authorized a commit.
 
 ## Rules
 
@@ -99,6 +104,13 @@ validation and code-review artifacts. When the manager-declared route includes
 a user-authorized commit step, also require successful `Local commit evidence -
 output below` with staged paths limited to the frozen boundary and direct
 remediation within it; otherwise require its explicit skip condition.
+For post-review remediation, require stable manager-declared objective DoD,
+the `R1` finding assessment, and the route's documentation decision. For an
+accepted finding, require accepted validation and code-review artifacts. For an
+invalid finding, require explicit R2–R8 skips. When the manager-declared route
+includes a user-authorized commit, also require successful `Local commit
+evidence - output below` with staged paths limited to the accepted finding and
+the original task ID; otherwise require its explicit skip condition.
 
 Any unplanned state-changing handoff blocks closure until the manager explicitly
 re-routes it.
