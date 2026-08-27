@@ -78,7 +78,7 @@ function openedSession(
 }
 
 /** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (6) closes a paragraph, so paragraph
+ * only paragraphs.ts's window-count cap (4) closes a paragraph, so paragraph
  * boundaries are deterministic regardless of text content — mirrors
  * StreamingView.translation.test.tsx's helper. Default language is "en" —
  * the mirror image of the "ru" target-language default, so paragraphs built
@@ -106,8 +106,8 @@ function paragraphSourceText(windows: StreamingWindow[]): string {
   return windows.map((w) => w.text).join(" ");
 }
 
-const PARAGRAPH_A = makeWindows(6, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(6, { startIndex: 6 });
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -379,7 +379,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
   // reproduce what the screen shows, so that text must survive verbatim.
   it("@WP-94-mirrored: a same-language mirrored paragraph is exported with its own text verbatim, matching the on-screen muted cell", async () => {
     const user = setupUser();
-    const russianParagraph = makeWindows(6, {
+    const russianParagraph = makeWindows(4, {
       startIndex: 0,
       language: "ru",
       prefix: "Слово",
@@ -420,6 +420,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         0,
         "ru",
         SOURCE_A,
+        undefined,
       ),
     );
 
@@ -463,6 +464,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         0,
         "ru",
         SOURCE_A,
+        undefined,
       ),
     );
 

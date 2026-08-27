@@ -244,17 +244,22 @@ pub fn ensure_translation_request_is_valid(
 /// without a real model) and persists the result — the part of
 /// `translate_streaming_paragraph` that needs the shared LLM. Injected so
 /// this can be exercised, including its "write no row on failure"
-/// guarantee, without a real model or Tauri `AppHandle`.
+/// guarantee, without a real model or Tauri `AppHandle`. `context` (WP-100)
+/// is the immediately preceding paragraph's own translation, passed through
+/// to `translate` unchanged as ephemeral prompt context — it is never
+/// itself persisted.
+#[allow(clippy::too_many_arguments)]
 pub fn translate_and_store(
     app_support_dir: &Path,
     session_id: StreamingSessionId,
     paragraph_key: i64,
     target_language: &str,
     text: &str,
+    context: Option<&str>,
     now_ms: i64,
-    translate: impl FnOnce(&str, &str) -> Result<String>,
+    translate: impl FnOnce(&str, &str, Option<&str>) -> Result<String>,
 ) -> Result<String> {
-    let translated = translate(text, target_language)?;
+    let translated = translate(text, target_language, context)?;
 
     let store = StreamingStore::open(app_support_dir)?;
     store.upsert_translation(&streaming_store::StreamingTranslation {
@@ -720,8 +725,9 @@ mod tests {
             0,
             "en",
             "Привет, мир.",
+            None,
             1_000,
-            |_text, _lang| Ok("Hello, world.".to_string()),
+            |_text, _lang, _ctx| Ok("Hello, world.".to_string()),
         )
         .expect("translate and store");
 
@@ -746,8 +752,9 @@ mod tests {
             0,
             "en",
             "Привет, мир.",
+            None,
             1_000,
-            |_text, _lang| Err(AppError::Llm("candidate rejected".into())),
+            |_text, _lang, _ctx| Err(AppError::Llm("candidate rejected".into())),
         );
 
         assert!(result.is_err());
@@ -769,8 +776,9 @@ mod tests {
             0,
             "en",
             "Привет, мир.",
+            None,
             1_000,
-            |_, _| Ok("Hello, world.".to_string()),
+            |_, _, _| Ok("Hello, world.".to_string()),
         )
         .expect("first translate");
         translate_and_store(
@@ -779,8 +787,9 @@ mod tests {
             0,
             "en",
             "Привет, мир.",
+            None,
             2_000,
-            |_, _| Ok("Hi, world.".to_string()),
+            |_, _, _| Ok("Hi, world.".to_string()),
         )
         .expect("retranslate");
 
@@ -790,6 +799,61 @@ mod tests {
             .expect("list translations");
         assert_eq!(rows.len(), 1, "retranslation must overwrite, not duplicate");
         assert_eq!(rows[0].translated_text, "Hi, world.");
+    }
+
+    // WP-100: translate_and_store threads its `context` parameter straight
+    // through to the injected `translate` closure, unchanged.
+    #[test]
+    fn translate_and_store_passes_context_through_to_translate() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        let mut received_context: Option<String> = None;
+
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            Some("Previous paragraph translation."),
+            1_000,
+            |_text, _lang, ctx| {
+                received_context = ctx.map(|c| c.to_string());
+                Ok("Hello, world.".to_string())
+            },
+        )
+        .expect("translate and store");
+
+        assert_eq!(
+            received_context.as_deref(),
+            Some("Previous paragraph translation.")
+        );
+    }
+
+    // WP-100: absent context (None) must reach the translate closure as
+    // None too, unchanged from the pre-WP-100 behavior.
+    #[test]
+    fn translate_and_store_passes_no_context_when_absent() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        let mut received_context: Option<String> = Some("sentinel".to_string());
+
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            None,
+            1_000,
+            |_text, _lang, ctx| {
+                received_context = ctx.map(|c| c.to_string());
+                Ok("Hello, world.".to_string())
+            },
+        )
+        .expect("translate and store");
+
+        assert!(received_context.is_none());
     }
 
     // --- WP-93: list_streaming_translations, the read counterpart to
@@ -816,8 +880,9 @@ mod tests {
             0,
             "en",
             "Привет, мир.",
+            None,
             1_000,
-            |_, _| Ok("Hello, world.".to_string()),
+            |_, _, _| Ok("Hello, world.".to_string()),
         )
         .expect("translate and store");
 
@@ -837,13 +902,27 @@ mod tests {
     fn list_streaming_translations_orders_by_paragraph_key() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = create_streaming_session(temp.path(), 100).expect("create");
-        translate_and_store(temp.path(), id, 5, "en", "Second.", 1_000, |_, _| {
-            Ok("Second (en).".to_string())
-        })
+        translate_and_store(
+            temp.path(),
+            id,
+            5,
+            "en",
+            "Second.",
+            None,
+            1_000,
+            |_, _, _| Ok("Second (en).".to_string()),
+        )
         .expect("translate and store paragraph 5");
-        translate_and_store(temp.path(), id, 0, "en", "First.", 1_000, |_, _| {
-            Ok("First (en).".to_string())
-        })
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "First.",
+            None,
+            1_000,
+            |_, _, _| Ok("First (en).".to_string()),
+        )
         .expect("translate and store paragraph 0");
 
         let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
@@ -858,11 +937,18 @@ mod tests {
     fn list_streaming_translations_scopes_by_target_language() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = create_streaming_session(temp.path(), 100).expect("create");
-        translate_and_store(temp.path(), id, 0, "en", "Привет.", 1_000, |_, _| {
-            Ok("Hi.".to_string())
-        })
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет.",
+            None,
+            1_000,
+            |_, _, _| Ok("Hi.".to_string()),
+        )
         .expect("translate en");
-        translate_and_store(temp.path(), id, 0, "ru", "Hi.", 1_000, |_, _| {
+        translate_and_store(temp.path(), id, 0, "ru", "Hi.", None, 1_000, |_, _, _| {
             Ok("Привет.".to_string())
         })
         .expect("translate ru");

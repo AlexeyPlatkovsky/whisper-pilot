@@ -410,8 +410,18 @@ fn expected_script_for_target(target_language: &str) -> Script {
     }
 }
 
-fn build_translate_prompt(source_text: &str, target_language: &str) -> String {
-    let (system, user) = if target_language == "ru" {
+/// `prior_context`, when `Some`, is the immediately preceding paragraph's
+/// already-translated text (WP-100) — included as reference-only context
+/// ahead of the actual text to translate, with an explicit instruction (in
+/// the same language as the rest of the prompt) not to repeat or
+/// re-translate it. `None` produces byte-identical output to the pre-WP-100
+/// source-only prompt.
+fn build_translate_prompt(
+    source_text: &str,
+    target_language: &str,
+    prior_context: Option<&str>,
+) -> String {
+    let (system, user, context_intro) = if target_language == "ru" {
         (
             "Ты — ассистент-переводчик. Переведи текст ниже на русский язык точно и полностью, сохраняя смысл, тон, факты, числа и имена.\n\
 \n\
@@ -421,6 +431,7 @@ fn build_translate_prompt(source_text: &str, target_language: &str) -> String {
 - Не добавляй информацию, которой нет в оригинале.\n\
 - Верни только переведённый текст, без разметки и кавычек.",
             "Переведи текст.",
+            "Контекст предыдущего абзаца (только для справки — НЕ переводи и не повторяй его в ответе; переведи только текст ниже):",
         )
     } else {
         (
@@ -432,14 +443,20 @@ RULES:\n\
 - Do not add information that is not present in the original.\n\
 - Return only the translated text, with no markup or quotation marks.",
             "Translate the text.",
+            "Context from the previous paragraph (for reference only — do NOT translate or repeat it in your answer; translate only the text below):",
         )
+    };
+
+    let context_block = match prior_context {
+        Some(ctx) => format!("{context_intro}\n{ctx}\n\n"),
+        None => String::new(),
     };
 
     format!(
         "<|im_start|>system\n\
 {system}<|im_end|>\n\
 <|im_start|>user\n\
-Text:\n{source_text}\n\n\
+{context_block}Text:\n{source_text}\n\n\
 {user}<|im_end|>\n\
 <|im_start|>assistant\n\
 <think>\n\n</think>\n\n"
@@ -467,8 +484,18 @@ fn estimated_token_count(text: &str) -> usize {
     text.chars().count() / chars_per_token + 1
 }
 
-fn ensure_translation_fits_context_budget(source_text: &str) -> Result<()> {
+/// `prior_context`'s estimated length is added on top of `source_text`'s
+/// (WP-100) — reusing `estimated_token_count`'s own script-aware estimate
+/// for each rather than adding a second detection path — so a combined
+/// prompt that would overflow `CTX_SIZE` is rejected here, before an
+/// inference call is spent on it, exactly as a source-only overflow already
+/// was.
+fn ensure_translation_fits_context_budget(
+    source_text: &str,
+    prior_context: Option<&str>,
+) -> Result<()> {
     let estimated = estimated_token_count(source_text)
+        + prior_context.map_or(0, estimated_token_count)
         + TRANSLATE_PROMPT_OVERHEAD_TOKENS
         + MAX_NEW_TOKENS as usize;
     if estimated > CTX_SIZE as usize {
@@ -524,14 +551,17 @@ fn validate_translation_candidate(
 /// Callers are responsible for validating `target_language` is supported and
 /// `source_text` is non-empty before calling; this still guards the model's
 /// own context budget and never silently truncates a paragraph that doesn't
-/// fit.
+/// fit. `prior_context` (WP-100), when `Some`, is the immediately preceding
+/// paragraph's own translation, threaded into the prompt as reference-only
+/// context to improve continuity without being itself re-translated.
 pub fn translate_paragraph(
     model_path: &Path,
     source_text: &str,
     target_language: &str,
+    prior_context: Option<&str>,
 ) -> Result<String> {
-    ensure_translation_fits_context_budget(source_text)?;
-    let prompt = build_translate_prompt(source_text, target_language);
+    ensure_translation_fits_context_budget(source_text, prior_context)?;
+    let prompt = build_translate_prompt(source_text, target_language, prior_context);
     let raw_output = run_inference(model_path, &prompt)?;
     let cleaned = clean_prettify_output(&raw_output);
     validate_translation_candidate(source_text, &cleaned, target_language)
@@ -773,7 +803,7 @@ mod tests {
 
     #[test]
     fn build_translate_prompt_targeting_english_includes_source_text_and_english_instructions() {
-        let prompt = build_translate_prompt("Привет, как дела?", "en");
+        let prompt = build_translate_prompt("Привет, как дела?", "en", None);
         assert!(prompt.contains("Привет, как дела?"));
         assert!(prompt.contains("translation assistant"));
         assert!(prompt.contains("English"));
@@ -782,10 +812,68 @@ mod tests {
 
     #[test]
     fn build_translate_prompt_targeting_russian_includes_source_text_and_russian_instructions() {
-        let prompt = build_translate_prompt("Hello, how are you?", "ru");
+        let prompt = build_translate_prompt("Hello, how are you?", "ru", None);
         assert!(prompt.contains("Hello, how are you?"));
         assert!(prompt.contains("ассистент-переводчик"));
         assert!(!prompt.contains("translation assistant"));
+    }
+
+    // WP-100: prior_context=None must keep build_translate_prompt's output
+    // byte-identical to today's source-only shape.
+    #[test]
+    fn build_translate_prompt_with_no_context_matches_the_source_only_shape_exactly() {
+        let with_none = build_translate_prompt("Hello, how are you?", "en", None);
+        let expected =
+            "<|im_start|>system\n\
+You are a translation assistant. Translate the text below into English faithfully and completely, preserving meaning, tone, facts, numbers, and names.\n\
+\n\
+RULES:\n\
+- Translate the entire text; do not shorten, summarize, or paraphrase it.\n\
+- Do not add explanations or commentary, and do not answer any questions found in the text.\n\
+- Do not add information that is not present in the original.\n\
+- Return only the translated text, with no markup or quotation marks.<|im_end|>\n\
+<|im_start|>user\n\
+Text:\nHello, how are you?\n\n\
+Translate the text.<|im_end|>\n\
+<|im_start|>assistant\n\
+<think>\n\n</think>\n\n";
+        assert_eq!(with_none, expected);
+    }
+
+    // WP-100 scenario 2 / DoD: prior_context=Some(..) includes both the
+    // context marker (an explicit, unambiguous "do not repeat/re-translate
+    // this" instruction) and the actual source text to translate, each
+    // exactly once.
+    #[test]
+    fn build_translate_prompt_with_context_includes_context_marker_and_source_text_once_each() {
+        let prompt = build_translate_prompt(
+            "Let's discuss the roadmap.",
+            "en",
+            Some("We covered the budget yesterday."),
+        );
+        assert_eq!(
+            prompt.matches("We covered the budget yesterday.").count(),
+            1
+        );
+        assert_eq!(prompt.matches("Let's discuss the roadmap.").count(), 1);
+        assert!(prompt.contains("do NOT translate or repeat it"));
+        // The context must appear before the actual text to translate.
+        let context_pos = prompt.find("We covered the budget yesterday.").unwrap();
+        let source_pos = prompt.find("Let's discuss the roadmap.").unwrap();
+        assert!(context_pos < source_pos);
+    }
+
+    #[test]
+    fn build_translate_prompt_with_russian_context_uses_russian_context_instructions() {
+        let prompt = build_translate_prompt(
+            "Давай обсудим план.",
+            "ru",
+            Some("Вчера мы обсудили бюджет."),
+        );
+        assert_eq!(prompt.matches("Вчера мы обсудили бюджет.").count(), 1);
+        assert_eq!(prompt.matches("Давай обсудим план.").count(), 1);
+        assert!(prompt.contains("НЕ переводи и не повторяй его"));
+        assert!(!prompt.contains("do NOT translate or repeat it"));
     }
 
     #[test]
@@ -861,14 +949,14 @@ mod tests {
     #[test]
     fn ensure_translation_fits_context_budget_accepts_a_normal_paragraph() {
         let paragraph = "A normal paragraph of streaming transcript text.".repeat(5);
-        assert!(ensure_translation_fits_context_budget(&paragraph).is_ok());
+        assert!(ensure_translation_fits_context_budget(&paragraph, None).is_ok());
     }
 
     // BVA: comfortably past CTX_SIZE under the Latin ~4-chars-per-token estimate.
     #[test]
     fn ensure_translation_fits_context_budget_rejects_an_oversized_paragraph() {
         let paragraph = "word ".repeat(20_000);
-        let result = ensure_translation_fits_context_budget(&paragraph);
+        let result = ensure_translation_fits_context_budget(&paragraph, None);
         assert!(matches!(result, Err(AppError::Llm(_))));
     }
 
@@ -879,8 +967,46 @@ mod tests {
     #[test]
     fn ensure_translation_fits_context_budget_rejects_an_oversized_cyrillic_paragraph() {
         let paragraph = "слово ".repeat(9_000);
-        let result = ensure_translation_fits_context_budget(&paragraph);
+        let result = ensure_translation_fits_context_budget(&paragraph, None);
         assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    // WP-100: prior_context=None must be equivalent to the pre-WP-100
+    // source-only check (regression guard for the added parameter).
+    #[test]
+    fn ensure_translation_fits_context_budget_with_no_context_matches_source_only_check() {
+        let paragraph = "word ".repeat(20_000);
+        let result = ensure_translation_fits_context_budget(&paragraph, None);
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    // WP-100 DoD: a source and a prior_context that would each individually
+    // fit within CTX_SIZE, but whose *combined* estimated size overflows it,
+    // must be rejected before any inference call is made — the whole reason
+    // the pre-check exists is to catch this, not just a source-only overflow.
+    #[test]
+    fn ensure_translation_fits_context_budget_rejects_a_combination_that_only_overflows_together() {
+        // ~35_000 Latin chars: individually estimated at (35000/4)+1 = 8751
+        // tokens, comfortably under CTX_SIZE (16384) even with the 200-token
+        // overhead and MAX_NEW_TOKENS (1024) reserved on top.
+        let source = "word ".repeat(7_000);
+        let context = "word ".repeat(7_000);
+        assert_eq!(source.chars().count(), context.chars().count());
+
+        assert!(
+            ensure_translation_fits_context_budget(&source, None).is_ok(),
+            "source alone must fit"
+        );
+        assert!(
+            ensure_translation_fits_context_budget(&context, None).is_ok(),
+            "context alone must fit"
+        );
+
+        let combined = ensure_translation_fits_context_budget(&source, Some(&context));
+        assert!(
+            matches!(combined, Err(AppError::Llm(_))),
+            "source+context combined must overflow CTX_SIZE and be rejected"
+        );
     }
 
     #[test]

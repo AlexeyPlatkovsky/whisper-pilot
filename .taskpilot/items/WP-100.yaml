@@ -1,0 +1,61 @@
+schema_version: 1
+id: WP-100
+title: 'Reduce Live Translation latency: shorter paragraphs + prior-paragraph context'
+priority: normal
+type: task
+status: done
+created_at: '2026-08-27T17:21:38Z'
+updated_at: '2026-08-27T17:52:37Z'
+parent_id: WP-91
+description: 'Two changes to cut translation latency, requested after a live run measured a 42s wait before the first translation appeared. Root cause: streaming windows are WINDOW_SECONDS=7.0 (src-tauri/src/streaming_session.rs) and MAX_WINDOWS_PER_PARAGRAPH=6 (src/paragraphs.ts), so an unbroken stretch of speech with no early sentence-ending punctuation takes 6*7=42s to close a paragraph at all, and the queue additionally waits for the *next* paragraph to start forming before translating the current one, adding roughly one more window.
+
+
+  Change 1 - lower the window cap. MAX_WINDOWS_PER_PARAGRAPH: 6 -> 4 in src/paragraphs.ts. MIN_PARAGRAPH_CHARS (240) and the sentence-end heuristic are unchanged, so a paragraph still closes earlier than the cap whenever punctuation appears; the cap only bounds the worst case for unbroken speech, now 4*7=28s instead of 42s.
+
+
+  Change 2 - stop waiting for the next paragraph. Today src/StreamingView.tsx''s reconcile effect treats the *last* element of groupWindowsIntoParagraphs(windows) as always still-open while running (`closed = isRunning ? paragraphs.slice(0, -1) : paragraphs`), regardless of whether that last paragraph already satisfied its own close condition. Export a small predicate from src/paragraphs.ts, e.g. isParagraphClosed(paragraph: W[]): boolean, that reapplies the same close condition (long-enough + sentence-end, or window-count cap) to one paragraph. In the reconcile effect, include the last paragraph in `closed` when isParagraphClosed says it''s done, not only when a newer paragraph has started. This removes an extra ~7s of latency per paragraph for free: a paragraph that later turns out to still be growing (a boundary shift) is already handled by the existing staleness/re-enqueue mechanism (WP-93), so translating it the moment it closes cannot produce a wrong final result, only a possible extra re-translation in the rare boundary-shift case.
+
+
+  Change 3 - prior-paragraph translation as context. build_translate_prompt and translate_paragraph (src-tauri/src/llm.rs) gain an optional prior_context: Option<&str> parameter. When present, the prompt includes it as reference-only context the model must not repeat or re-translate, ahead of the actual text to translate - exact wording is the implementer''s call, but the instruction must be unambiguous that only the new text gets translated. ensure_translation_fits_context_budget''s estimate must account for the added context length, not just source_text, so the pre-check budget reflects the real prompt size - do not let a combined prompt slip past the check that a source-only prompt would have caught. translate_streaming_paragraph (src-tauri/src/commands/mfu.rs) gains a matching optional context parameter, threaded through to translate_and_store (src-tauri/src/streaming.rs) and into llm::translate_paragraph. src/ipc.ts''s translateStreamingParagraph wrapper gains the optional parameter to match.
+
+
+  Frontend wiring: when the translation queue in src/StreamingView.tsx enqueues a paragraph, look up the immediately preceding paragraph''s own entry in the translations state. Pass its translated text as context only when that entry''s status is "done" or "mirrored" (both are genuinely target-language text); pass no context when the previous paragraph has no entry, or is "pending", "translating", or "failed". This is the first paragraph in the session, or the immediately-preceding one only - never a longer lookback.
+
+
+  Scope boundary: this changes latency and consistency of translation only. No change to the split-view UI, the row states, retry behavior, copy/export, or the persisted-translation table''s shape (context is not itself stored, only used as an ephemeral prompt input).
+
+
+  Happy path: with translation on, a paragraph closes and is enqueued as soon as its own text satisfies the paragraph-closing heuristic (no longer waiting for a sibling paragraph to start); its prompt includes the previous paragraph''s translation as reference context when one exists.
+
+  Failure behavior: unchanged from WP-92/93 - a rejected or failed translation still shows the existing retry state; adding context must not change any existing rejection rule''s behavior on a source-only prompt (verify old tests without context still pass unmodified where they assert no-context behavior).
+
+  Edge cases: the very first paragraph of a session has no prior context (translate exactly as today); a previous paragraph that is itself still "pending"/"translating"/"failed" contributes no context; a paragraph whose boundary later shifts (WP-93''s staleness path) recomputes fresh, including recomputing which paragraph is now "previous" for context purposes.
+
+
+  Scenarios:
+
+  Given a session with unbroken speech and no early sentence break, When four windows accumulate, Then the paragraph closes and is enqueued without waiting for a fifth window or for a new paragraph to start forming.
+
+  Given a paragraph is enqueued whose immediately preceding paragraph has a "done" translation, When the translate call is made, Then the prompt includes that prior translation as reference-only context and the model is instructed not to repeat it.
+
+  Given the first paragraph of a session, When it is translated, Then no context is included and the prompt matches today''s source-only shape exactly.
+
+
+  Target surfaces: src/paragraphs.ts, src/paragraphs.test.ts, src/StreamingView.tsx, src/StreamingView.translation.test.tsx, src-tauri/src/llm.rs, src-tauri/src/streaming.rs, src-tauri/src/commands/mfu.rs, src/ipc.ts.
+
+
+  Constraints: offline only, no new model; single-flight and staleness behavior from WP-92/93 unchanged; adding context must not push a previously-accepted paragraph over ensure_translation_fits_context_budget''s limit without that being a deliberate, tested consequence of the larger prompt, not an unaccounted-for one.'
+dod:
+- MAX_WINDOWS_PER_PARAGRAPH is 4 in src/paragraphs.ts; existing paragraph-grouping tests updated only where they assert the old cap value, all other grouping behavior (MIN_PARAGRAPH_CHARS, sentence-end detection) unchanged and covered by existing tests.
+- A new isParagraphClosed predicate is exported from src/paragraphs.ts and covered by unit tests for both closing conditions (length+sentence-end, window-count cap) and the not-yet-closed case.
+- The reconcile effect in src/StreamingView.tsx enqueues the last paragraph in the array as soon as isParagraphClosed is true for it, without requiring a newer paragraph to exist; covered by a React/vitest test that closes a paragraph via the window-count cap alone (no next paragraph present) and asserts it is enqueued.
+- llm::translate_paragraph accepts an optional prior_context parameter; when present, build_translate_prompt includes it as reference-only context with an explicit instruction not to repeat or re-translate it, and the resulting prompt is asserted in a Rust unit test to contain both the context marker and the actual source text once each.
+- ensure_translation_fits_context_budget's estimate accounts for prior_context's length in addition to source_text when context is present; covered by a Rust test proving a combined source+context input that would fit alone but overflow together is correctly rejected.
+- translate_streaming_paragraph and translate_and_store accept and thread an optional context parameter through to llm::translate_paragraph without altering behavior when it is None; src/ipc.ts's translateStreamingParagraph wrapper exposes the matching optional parameter.
+- The Streaming queue passes the immediately preceding paragraph's translation as context only when that paragraph's status is done or mirrored, and passes no context otherwise (no entry, pending, translating, or failed); covered by React/vitest tests for each status.
+- Every existing WP-92/93/94 test that asserts a source-only, no-context prompt or call shape still passes unmodified.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  relates_to:
+  - WP-101
+created_by: Aleksei_Platkovskii

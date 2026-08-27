@@ -37,7 +37,7 @@ import { ModeToggle } from "./ModeToggle";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { formatElapsedClock } from "./format";
 import { computeWordDiff } from "./diff";
-import { groupWindowsIntoParagraphs } from "./paragraphs";
+import { groupWindowsIntoParagraphs, isParagraphClosed } from "./paragraphs";
 import { StreamingSessionRow } from "./StreamingSessionRow";
 import {
   fileNameFor,
@@ -135,7 +135,13 @@ export function StreamingView({
     Map<number, TranslationEntry>
   >(new Map());
   const [llmModelReady, setLlmModelReady] = useState(false);
-  const translationQueueRef = useRef<{ key: number; sourceText: string }[]>([]);
+  // `context` (WP-100) is the immediately preceding paragraph's translated
+  // text at the moment this paragraph was enqueued — a snapshot, not a live
+  // reference, so a later status change on the previous paragraph can't
+  // retroactively alter a call already queued.
+  const translationQueueRef = useRef<
+    { key: number; sourceText: string; context?: string }[]
+  >([]);
   const translationBusyRef = useRef(false);
   // Bumped whenever translation is toggled (either direction) so an
   // in-flight promise from a superseded run discards its result instead of
@@ -626,7 +632,13 @@ export function StreamingView({
       });
       return next;
     });
-    void translateStreamingParagraph(sessionId, item.key, lang, item.sourceText)
+    void translateStreamingParagraph(
+      sessionId,
+      item.key,
+      lang,
+      item.sourceText,
+      item.context,
+    )
       .then((text) => {
         if (translationTokenRef.current !== token) return;
         setTranslations((prev) => {
@@ -660,15 +672,41 @@ export function StreamingView({
   // Upserts by key so a paragraph whose text changed again before its
   // earlier queued attempt started replaces the stale payload rather than
   // running twice.
-  function enqueueTranslation(key: number, sourceText: string) {
+  function enqueueTranslation(
+    key: number,
+    sourceText: string,
+    context?: string,
+  ) {
     const queue = translationQueueRef.current;
     const index = queue.findIndex((entry) => entry.key === key);
     if (index >= 0) {
-      queue[index] = { key, sourceText };
+      queue[index] = { key, sourceText, context };
     } else {
-      queue.push({ key, sourceText });
+      queue.push({ key, sourceText, context });
     }
     runTranslationQueue();
+  }
+
+  // WP-100: the immediately preceding paragraph's already-translated text,
+  // passed as ephemeral prompt context — never stored, only used to shape
+  // the next model call. Only a genuinely target-language entry ("done" or
+  // "mirrored") counts as usable context; no entry (first paragraph, or the
+  // previous one hasn't closed yet) and a "pending"/"translating"/"failed"
+  // entry all contribute nothing.
+  function priorParagraphContext(
+    paragraphs: { window_index: number }[][],
+    index: number,
+    entries: Map<number, TranslationEntry>,
+  ): string | undefined {
+    if (index <= 0) return undefined;
+    const previousParagraph = paragraphs[index - 1];
+    if (!previousParagraph || previousParagraph.length === 0) return undefined;
+    const previousKey = previousParagraph[0].window_index;
+    const entry = entries.get(previousKey);
+    if (!entry) return undefined;
+    if (entry.status !== "done" && entry.status !== "mirrored")
+      return undefined;
+    return entry.translatedText;
   }
 
   // View-only; gates nothing else. Clearing translations/queue on both
@@ -696,19 +734,20 @@ export function StreamingView({
 
   const handleRetryTranslation = useCallback(
     (key: number) => {
-      const paragraph = groupWindowsIntoParagraphs(windows).find(
-        (p) => p[0].window_index === key,
-      );
-      if (!paragraph) return;
+      const paragraphs = groupWindowsIntoParagraphs(windows);
+      const index = paragraphs.findIndex((p) => p[0].window_index === key);
+      if (index === -1) return;
+      const paragraph = paragraphs[index];
       const sourceText = plainTranscript(paragraph);
+      const context = priorParagraphContext(paragraphs, index, translations);
       setTranslations((prev) => {
         const next = new Map(prev);
         next.set(key, { status: "pending", sourceText });
         return next;
       });
-      enqueueTranslation(key, sourceText);
+      enqueueTranslation(key, sourceText, context);
     },
-    [windows],
+    [windows, translations],
   );
 
   // Loads this session+target-language's persisted translations once per
@@ -744,16 +783,18 @@ export function StreamingView({
     };
   }, [translationEnabled, activeId, targetLanguage]);
 
-  // Reconciles every *closed* paragraph (a later paragraph exists, or
-  // capture has stopped — the still-open trailing paragraph while running
-  // is left alone) against its translation entry: same-language paragraphs
-  // are mirrored, a matching persisted row is reused, and anything else
-  // missing or stale (source text changed) is (re-)enqueued. A failed entry
-  // whose source text still matches is left alone — retry is manual only.
+  // Reconciles every *closed* paragraph — a later paragraph exists, capture
+  // has stopped, or (WP-100) the still-open trailing paragraph itself
+  // already satisfies isParagraphClosed on its own text — against its
+  // translation entry: same-language paragraphs are mirrored, a matching
+  // persisted row is reused, and anything else missing or stale (source
+  // text changed) is (re-)enqueued, with the immediately preceding
+  // paragraph's translation threaded in as context when that entry is
+  // "done" or "mirrored". A failed entry whose source text still matches is
+  // left alone — retry is manual only.
   useEffect(() => {
     if (!translationEnabled || activeId === null || !persistedReady) return;
     const paragraphs = groupWindowsIntoParagraphs(windows);
-    const closed = isRunning ? paragraphs.slice(0, -1) : paragraphs;
     const next = new Map(translations);
     let changed = false;
     // Collected instead of enqueued inline: enqueueTranslation kicks the
@@ -761,8 +802,12 @@ export function StreamingView({
     // the batched `next` map below (still holding "pending" for that key)
     // gets applied — clobbering it back to "pending". Enqueuing only after
     // `next` is committed keeps the two writes in the right order.
-    const toEnqueue: { key: number; sourceText: string }[] = [];
-    for (const paragraph of closed) {
+    const toEnqueue: { key: number; sourceText: string; context?: string }[] =
+      [];
+    for (let index = 0; index < paragraphs.length; index++) {
+      const paragraph = paragraphs[index];
+      const isLastWhileRunning = isRunning && index === paragraphs.length - 1;
+      if (isLastWhileRunning && !isParagraphClosed(paragraph)) continue;
       const key = paragraph[0].window_index;
       const sourceText = plainTranscript(paragraph);
       const existing = next.get(key);
@@ -804,11 +849,14 @@ export function StreamingView({
       if (!existing || existing.sourceText !== sourceText) {
         next.set(key, { status: "pending", sourceText });
         changed = true;
-        toEnqueue.push({ key, sourceText });
+        const context = priorParagraphContext(paragraphs, index, next);
+        toEnqueue.push({ key, sourceText, context });
       }
     }
     if (changed) setTranslations(next);
-    for (const item of toEnqueue) enqueueTranslation(item.key, item.sourceText);
+    for (const item of toEnqueue) {
+      enqueueTranslation(item.key, item.sourceText, item.context);
+    }
     // `translations` intentionally omitted: read directly from this
     // render's closure to decide reuse without re-running this effect on
     // every status transition the queue itself writes (translating/done/

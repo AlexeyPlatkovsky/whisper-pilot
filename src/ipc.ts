@@ -365,12 +365,14 @@ export function translateStreamingParagraph(
   paragraphKey: number,
   targetLanguage: StreamingTranslationTargetLanguage,
   text: string,
+  context?: string,
 ): Promise<string> {
   return invoke<string>("translate_streaming_paragraph", {
     sessionId,
     paragraphKey,
     targetLanguage,
     text,
+    context,
   });
 }
 

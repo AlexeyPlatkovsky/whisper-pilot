@@ -647,15 +647,20 @@ queuing or blocking. This guard only single-flights translation against
 itself — it does not also cover Craft or Prettify.
 
 The `translate_streaming_paragraph(session_id, paragraph_key, target_language,
-text)` command (`commands/mfu.rs`) validates the request cheaply first
-(`streaming::ensure_translation_request_is_valid`: supported target language,
-session exists, non-empty source text) before resolving the active LLM model
-path or acquiring the single-flight guard, then runs `streaming::
+text, context)` command (`commands/mfu.rs`) validates the request cheaply
+first (`streaming::ensure_translation_request_is_valid`: supported target
+language, session exists, non-empty source text) before resolving the active
+LLM model path or acquiring the single-flight guard, then runs `streaming::
 translate_and_store` — which calls the model and upserts the result into
 `streaming_translations` (see Streaming Persistence above) — on a
-`spawn_blocking` task, and returns the translated text. `src/ipc.ts` exposes
-this as a typed `translateStreamingParagraph` wrapper with a
-`StreamingTranslationTargetLanguage` type.
+`spawn_blocking` task, and returns the translated text. The optional `context`
+(WP-100) is the immediately preceding paragraph's own translation, threaded
+unchanged through `translate_and_store` into `llm::translate_paragraph`'s
+`prior_context` parameter; omitted or `None`, the call and its resulting
+prompt are byte-identical to before WP-100. `src/ipc.ts` exposes this as a
+typed `translateStreamingParagraph` wrapper with a
+`StreamingTranslationTargetLanguage` type and the matching optional `context`
+parameter.
 
 Its read counterpart, `list_streaming_translations(session_id,
 target_language)` (`commands/streaming.rs` → `streaming::
@@ -673,8 +678,19 @@ switch + target-language select (English/Русский) — and, while it is on
 the transcript content renders as a two-column paired-row grid instead of
 `groupWindowsIntoParagraphs`'s usual single-column flow. See `docs/design.md`
 ("Center — transcript") for the full layout, row states, and header-control
-rules. Behaviorally: a paragraph is enqueued for translation when it closes
-(a later paragraph exists, or capture stopped); turning the switch on
+rules. Behaviorally (WP-100): while capture is running, a paragraph is
+enqueued for translation as soon as `paragraphs.ts`'s `isParagraphClosed`
+says it has closed by its own heuristic (long-enough text ending a sentence,
+or the `MAX_WINDOWS_PER_PARAGRAPH` cap) — it no longer waits for a later
+sibling paragraph to start forming; once capture has stopped, every paragraph
+is closed by definition. Enqueuing also looks up the immediately preceding
+paragraph's entry in the translations state and, only when that entry's
+status is `"done"` or `"mirrored"` (both hold genuinely target-language
+text), passes its translated text as `context` to `translateStreamingParagraph`
+so the model sees the prior paragraph as reference-only context without
+re-translating it; a `"pending"`/`"translating"`/`"failed"` previous entry, no
+previous entry at all, or the first paragraph of the session all enqueue with
+no context, exactly as translation worked before WP-100. Turning the switch on
 backfills the whole session oldest-first; exactly one
 `translateStreamingParagraph` call is in flight at a time, and the queue
 never delays rendering of incoming windows. Before queuing anything, an
@@ -782,7 +798,7 @@ span.
 | `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
 | `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |
 | `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
-| `translate_streaming_paragraph(session_id, paragraph_key, target_language, text)` | Translate one Streaming paragraph into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, paragraph_key, target_language)`; called by the Live Translation queue (WP-93) | WP-92     |
+| `translate_streaming_paragraph(session_id, paragraph_key, target_language, text, context?)` | Translate one Streaming paragraph into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, paragraph_key, target_language)`; called by the Live Translation queue (WP-93). Optional `context` (WP-100) is the immediately preceding paragraph's own translation, passed as reference-only prompt context | WP-92, WP-100 |
 | `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
 
 Events: `transcription_phase { id, phase: "diarizing" }` marks the transition

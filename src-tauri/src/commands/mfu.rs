@@ -158,7 +158,9 @@ pub(crate) async fn revert_streaming_prettify(
 /// using the active local LLM and persists the result. Single-flight: a
 /// second concurrent translation request is rejected with a distinct,
 /// UI-retryable `AppError::TranslationBusy` rather than queuing or blocking
-/// the streaming decode loop (WP-92).
+/// the streaming decode loop (WP-92). `context` (WP-100) is the immediately
+/// preceding paragraph's own translation, if any — threaded through
+/// unchanged to `llm::translate_paragraph` as ephemeral prompt context.
 #[tauri::command]
 pub(crate) async fn translate_streaming_paragraph(
     app: tauri::AppHandle,
@@ -167,6 +169,7 @@ pub(crate) async fn translate_streaming_paragraph(
     paragraph_key: i64,
     target_language: String,
     text: String,
+    context: Option<String>,
 ) -> Result<String> {
     let app_support_dir = app_data_dir(&app)?;
     streaming::ensure_translation_request_is_valid(
@@ -192,8 +195,9 @@ pub(crate) async fn translate_streaming_paragraph(
             paragraph_key,
             &target_language_clone,
             &text_clone,
+            context.as_deref(),
             now,
-            |source, lang| llm::translate_paragraph(&model_path_clone, source, lang),
+            |source, lang, ctx| llm::translate_paragraph(&model_path_clone, source, lang, ctx),
         )
     })
     .await

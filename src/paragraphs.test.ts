@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { groupWindowsIntoParagraphs } from "./paragraphs";
+import { groupWindowsIntoParagraphs, isParagraphClosed } from "./paragraphs";
 
 function ok(text: string) {
   return { text, outcome_ok: true };
@@ -48,14 +48,14 @@ describe("groupWindowsIntoParagraphs", () => {
     expect(paragraphs).toEqual([windows]);
   });
 
-  // BVA: the window-count boundary forces a break even without punctuation,
-  // so a long run-on span can't grow forever
+  // BVA: the window-count boundary (WP-100: lowered from 6 to 4) forces a
+  // break even without punctuation, so a long run-on span can't grow forever
   it("forces a break after the max window count even mid-sentence", () => {
-    const windows = Array.from({ length: 7 }, (_, i) => ok(`word${i}`));
+    const windows = Array.from({ length: 5 }, (_, i) => ok(`word${i}`));
 
     const paragraphs = groupWindowsIntoParagraphs(windows);
 
-    expect(paragraphs).toEqual([windows.slice(0, 6), windows.slice(6)]);
+    expect(paragraphs).toEqual([windows.slice(0, 4), windows.slice(4)]);
   });
 
   // EP: a fail-open window's empty text can't itself end a sentence
@@ -77,5 +77,40 @@ describe("groupWindowsIntoParagraphs", () => {
     const paragraphs = groupWindowsIntoParagraphs(windows);
 
     expect(paragraphs).toEqual([[windows[0]], [windows[1]]]);
+  });
+});
+
+// WP-100: isParagraphClosed reapplies groupWindowsIntoParagraphs's own
+// per-window close condition to a single already-accumulated paragraph, so
+// the Streaming reconcile effect can enqueue a still-trailing paragraph the
+// moment it closes instead of waiting for a sibling paragraph to start.
+describe("isParagraphClosed", () => {
+  // S-1: happy path — long enough and ends a sentence.
+  it("is closed once the paragraph is long enough and ends a sentence", () => {
+    const long = "x".repeat(240) + ".";
+    expect(isParagraphClosed([ok(long)])).toBe(true);
+  });
+
+  // BVA: the window-count cap alone closes a paragraph, even short and
+  // mid-sentence.
+  it("is closed once the window-count cap is reached, even mid-sentence", () => {
+    const windows = Array.from({ length: 4 }, (_, i) => ok(`word${i}`));
+    expect(isParagraphClosed(windows)).toBe(true);
+  });
+
+  // EP: neither condition met — short, no sentence end, under the cap.
+  it("is not closed while short, mid-sentence, and under the window cap", () => {
+    expect(isParagraphClosed([ok("still going")])).toBe(false);
+  });
+
+  // EP: long enough but no sentence end — length alone never closes it.
+  it("is not closed on length alone without a sentence boundary", () => {
+    const noPunctuation = "x".repeat(400);
+    expect(isParagraphClosed([ok(noPunctuation)])).toBe(false);
+  });
+
+  // BVA: the empty-paragraph lower boundary.
+  it("is not closed for an empty paragraph", () => {
+    expect(isParagraphClosed([])).toBe(false);
   });
 });

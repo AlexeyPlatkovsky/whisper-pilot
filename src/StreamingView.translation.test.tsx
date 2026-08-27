@@ -89,7 +89,7 @@ function openedSession(
 }
 
 /** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (6) closes a paragraph — never the
+ * only paragraphs.ts's window-count cap (4) closes a paragraph — never the
  * length/sentence heuristic — so paragraph boundaries are deterministic
  * regardless of text content. Default language is "en" — the mirror image
  * of the "ru" target-language default, so paragraphs built with no override
@@ -126,9 +126,10 @@ function paragraphSourceText(windows: StreamingWindow[]): string {
   return windows.map((w) => w.text).join(" ");
 }
 
-// Two full (6-window) English paragraphs, closed regardless of running state.
-const PARAGRAPH_A = makeWindows(6, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(6, { startIndex: 6 });
+// Two full (4-window, WP-100's lowered cap) English paragraphs, closed
+// regardless of running state.
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -301,7 +302,7 @@ describe("StreamingView — Live Translation queue", () => {
     for (const w of [
       ...PARAGRAPH_A,
       ...PARAGRAPH_B,
-      ...makeWindows(1, { startIndex: 12 }),
+      ...makeWindows(1, { startIndex: 8 }),
     ]) {
       windowHandler!({ ...w, session_id: 1 });
     }
@@ -313,11 +314,15 @@ describe("StreamingView — Live Translation queue", () => {
     await waitFor(() =>
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
     );
+    // Both paragraphs are enqueued in the same reconcile pass, so A hasn't
+    // resolved yet when B is enqueued — no prior-paragraph context either
+    // call.
     expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
       1,
       0,
       "ru",
       SOURCE_A,
+      undefined,
     );
 
     const rowA = screen
@@ -339,9 +344,10 @@ describe("StreamingView — Live Translation queue", () => {
     );
     expect(ipc.translateStreamingParagraph).toHaveBeenLastCalledWith(
       1,
-      6,
+      4,
       "ru",
       SOURCE_B,
+      undefined,
     );
 
     second.resolve("Word batch B (en).");
@@ -349,7 +355,7 @@ describe("StreamingView — Live Translation queue", () => {
       await within(rowB).findByText("Word batch B (en)."),
     ).toBeInTheDocument();
 
-    // The trailing, not-yet-closed paragraph (window 12) is excluded from
+    // The trailing, not-yet-closed paragraph (window 8) is excluded from
     // backfill while the session is still running.
     expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(2);
   });
@@ -373,13 +379,54 @@ describe("StreamingView — Live Translation queue", () => {
       "ru",
       SOURCE_A,
     );
-    // Paragraph B has no persisted row, so it still gets a live call.
+    // Paragraph B has no persisted row, so it still gets a live call — and
+    // (WP-100) since the persisted-reused A entry is already "done" by the
+    // time B is reconciled, B's prompt gets A's translation as context.
     await waitFor(() =>
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
         1,
-        6,
+        4,
         "ru",
         SOURCE_B,
+        "Cached A.",
+      ),
+    );
+  });
+
+  // WP-100 scenario 1 + DoD: a paragraph that closes purely on the
+  // window-count cap, with no next paragraph having started forming, must
+  // be enqueued immediately while the session is still running — not held
+  // back for a sibling paragraph to appear.
+  it("enqueues the last paragraph as soon as it closes via the window-count cap alone, with no next paragraph present", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
+
+    // Exactly MAX_WINDOWS_PER_PARAGRAPH (4) windows, none ending a sentence
+    // — only the cap closes this paragraph, and it is the only (last)
+    // paragraph in the array.
+    for (const w of PARAGRAPH_A) {
+      windowHandler!({ ...w, session_id: 1 });
+    }
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        0,
+        "ru",
+        SOURCE_A,
+        undefined,
       ),
     );
   });
@@ -436,6 +483,7 @@ describe("StreamingView — Live Translation queue", () => {
         0,
         "ru",
         SOURCE_A,
+        undefined,
       ),
     );
     expect(screen.queryByText("Stale cached.")).not.toBeInTheDocument();
@@ -445,7 +493,7 @@ describe("StreamingView — Live Translation queue", () => {
 describe("StreamingView — Live Translation same-language skip", () => {
   it("never calls the model for a paragraph whose windows are all already the target language, and mirrors the original text", async () => {
     const user = userEvent.setup();
-    const russianParagraph = makeWindows(6, {
+    const russianParagraph = makeWindows(4, {
       startIndex: 0,
       language: "ru",
       prefix: "Слово",
@@ -460,6 +508,193 @@ describe("StreamingView — Live Translation same-language skip", () => {
     });
     expect(mirrored).toBeInTheDocument();
     expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+  });
+});
+
+// WP-100 scenarios 2 & 3: the immediately preceding paragraph's translation
+// is threaded into the next model call as reference-only context, but only
+// when that entry is genuinely target-language text (status "done" or
+// "mirrored"). A "pending"/"translating"/"failed" previous entry, or no
+// entry at all (first paragraph), contributes no context.
+describe("StreamingView — Live Translation prior-paragraph context", () => {
+  it("passes the preceding paragraph's translation as context once it is done", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+    });
+    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
+      (_session, paragraphKey) =>
+        paragraphKey === 0
+          ? Promise.resolve("Translated A.")
+          : Promise.resolve("Translated B."),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
+
+    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
+    await screen.findByText("Translated A.");
+
+    // Paragraph B closes only after A is already "done".
+    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        SOURCE_B,
+        "Translated A.",
+      ),
+    );
+  });
+
+  it("passes the preceding mirrored paragraph's own text as context", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+    });
+    vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
+      "Translated B.",
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
+
+    const mirroredParagraph = makeWindows(4, {
+      startIndex: 0,
+      language: "ru",
+      prefix: "Слово",
+    });
+    for (const w of mirroredParagraph) windowHandler!({ ...w, session_id: 1 });
+    const mirroredSource = paragraphSourceText(mirroredParagraph);
+    await screen.findByText(mirroredSource, {
+      selector: ".wp-translation-text--mirrored",
+    });
+
+    // Paragraph B (English, startIndex 4 — not the target language) closes
+    // after the mirrored paragraph is already recorded.
+    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        SOURCE_B,
+        mirroredSource,
+      ),
+    );
+  });
+
+  it("passes no context while the preceding paragraph is still translating", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+    });
+    const first = deferred<string>();
+    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
+      (_session, paragraphKey) =>
+        paragraphKey === 0 ? first.promise : Promise.resolve("Translated B."),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
+
+    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1),
+    );
+
+    // Paragraph B closes while A's call is still in flight (single-flight
+    // means B is only queued, not yet sent). Flushed before A resolves so
+    // B's enqueue observes A as still "translating", not "done".
+    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
+    await flush();
+    first.resolve("Translated A.");
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        SOURCE_B,
+        undefined,
+      ),
+    );
+  });
+
+  it("passes no context when the preceding paragraph failed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+    });
+    vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
+      (_session, paragraphKey) =>
+        paragraphKey === 0
+          ? Promise.reject(new Error("model unavailable"))
+          : Promise.resolve("Translated B."),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
+
+    for (const w of PARAGRAPH_A) windowHandler!({ ...w, session_id: 1 });
+    await screen.findByRole("button", { name: /Translation failed.*Retry/i });
+
+    // Paragraph B closes only after A has already settled into "failed".
+    for (const w of PARAGRAPH_B) windowHandler!({ ...w, session_id: 1 });
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        4,
+        "ru",
+        SOURCE_B,
+        undefined,
+      ),
+    );
+  });
+
+  it("passes no context for the first paragraph of a session", async () => {
+    const user = userEvent.setup();
+    await openSessionWithWindows(user, PARAGRAPH_A);
+
+    await user.click(await findTranslationSwitch());
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
+        1,
+        0,
+        "ru",
+        SOURCE_A,
+        undefined,
+      ),
+    );
   });
 });
 
@@ -485,10 +720,10 @@ describe("StreamingView — Live Translation failure and retry", () => {
     for (const w of TWO_PARAGRAPHS) {
       windowHandler!({ ...w, session_id: 1 });
     }
-    // A 13th window keeps the session "running" with an open trailing
+    // A 9th window keeps the session "running" with an open trailing
     // paragraph, matching how a live capture actually looks mid-session.
     windowHandler!({
-      ...makeWindows(1, { startIndex: 12 })[0],
+      ...makeWindows(1, { startIndex: 8 })[0],
       session_id: 1,
     });
 
