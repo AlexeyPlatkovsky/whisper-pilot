@@ -1,7 +1,7 @@
 # Testing
 
-Owns the test strategy and how feature scenarios are executed. Per-feature
-scenario content lives in `features/F<NNN>/scenarios.md`. Project-wide quality
+Owns the test strategy and how feature scenarios are executed. Feature-level
+scenarios live in TaskPilot (project key WP). Project-wide quality
 gates are in `AGENTS.md`.
 
 ## Strategy
@@ -30,13 +30,18 @@ The front-end suite grows as the UI does; M1 keeps logic thin and Rust-side.
 
 ## Running Feature Scenarios
 
-Each `features/F<NNN>/scenarios.md` scenario maps to either:
+Each TaskPilot scenario maps to either:
 
 - an **automated** test at one of the levels above (preferred for pure logic and
   the pipeline), or
 - a **manual checklist** item run against the built app (for UX states and
   model-quality judgments that cannot be asserted deterministically — e.g.
   "Russian transcript reads accurately").
+
+Two file-handling checks recur across attach/save flows and belong on that
+manual checklist wherever such a flow is touched: the file picker filters to
+audio/video files and cancelling it is a no-op; a saved file reopens with the
+edited transcript text intact.
 
 The manual checklist is run before a TaskPilot item closes, per
 `.claude/skills/task-quality/SKILL.md`.

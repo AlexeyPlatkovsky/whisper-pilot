@@ -1,15 +1,13 @@
 # Documentation Index
 
-Live map of the docs tree, feature registry, and decision log. Lookup aid only —
-no routing, gates, or behavioral rules. Rebuilt by `sdd-index-sync` after any
-doc/feature change.
+Live map of the docs tree and decision log. Lookup aid only — no routing,
+gates, or behavioral rules. Rebuilt by `sdd-index-sync` after any doc change.
 
-The three tables below sit inside generated `begin`/`end` marker comments. The
-sync owns which rows exist — keyed by filename, feature ID, and ADR ID — and
-re-derives the key cell plus the feature ID-range cells. Every other cell is
-hand-written and carried across a rebuild byte-identically, and text outside the
-markers is never touched. Full contract:
-`.claude/skills/sdd-index-sync/SKILL.md`.
+The two tables below sit inside generated `begin`/`end` marker comments. The
+sync owns which rows exist — keyed by filename and ADR ID — and re-derives the
+key cell. Every other cell is hand-written and carried across a rebuild
+byte-identically, and text outside the markers is never touched. Full
+contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 
 **Tier:** Standard
 **Docs root:** `docs/`
@@ -29,22 +27,6 @@ markers is never touched. Full contract:
 | `designbook.md` | UI design contract: design tokens (source of truth `src/tokens.css`), themes, component patterns | You do UI work and need tokens or patterns |
 | `decisions/` | One ADR per significant decision (rationale) | You need why a choice was made |
 <!-- sdd-index-sync:end documents -->
-
-## Feature Registry
-
-Listed in milestone order (feature IDs are stable, not sequential with
-milestones).
-
-<!-- sdd-index-sync:begin features -->
-| ID | Feature | Milestone | Requirements | Tasks | Scenarios | TaskPilot |
-| --- | --- | --- | --- | --- | --- | --- |
-| F001 | Transcription core | M1 (done) | R1–R6 | T1–T6 | S1–S5 | — (as-built) |
-| F004 | Library & workspace | M2 (next) | R1–R14 | T1–T15 | S1–S14 | epic WP-11 (WP-16…WP-30, WP-32) |
-| F002 | Speaker diarization | M2 (next) | R1–R7 | T1–T7 | S1–S6 | epic WP-1 (WP-5…WP-10, WP-31) |
-| F005 | Settings | M2 beta / M3 release | R1–R11 | T1–T11 | S1–S11 | epic WP-33 (WP-34…WP-42); release unscheduled |
-| F003 | Structured meeting MFU | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
-| F006 | Streaming live translation & MFU toggle | unscheduled (Streaming's own milestone placement not yet decided, see `roadmap.md`) | R1–R6 | T1–T7 | S1–S14 | feature WP-91 (WP-92…WP-94, done); WP-96 related (done) |
-<!-- sdd-index-sync:end features -->
 
 ## Decision Log
 
@@ -68,19 +50,9 @@ milestones).
 | ADR-015 | Live translation reuses the summary LLM and runs concurrently on a single-flight queue | accepted |
 <!-- sdd-index-sync:end decisions -->
 
-## Traceability MFU
+## Traceability
 
-- Every F-requirement traces up to an `idea.md` scope item and a `roadmap.md`
-  milestone, and down to at least one task and one scenario (see each feature
-  folder).
-- Work status lives in TaskPilot (`WP-<n>`). Active backlog: **M2 (Beta)** =
-  **F004 Library & workspace** (epic WP-11, features WP-12…WP-15 + WP-25, tasks
-  WP-16…WP-30 + WP-32), **F002 Speaker diarization** (epic WP-1, features
-  WP-2…WP-4, tasks WP-5…WP-10 + WP-31), and **F005 Settings — beta** (epic WP-33,
-  features WP-34…WP-36, tasks WP-37…WP-42). F001 is as-built (pre-tracking);
-  **M3 (Release)** = **F003 MFU** and the **F005 release scope**, both
-  unscheduled in TaskPilot until M3 is picked up. **F006 Streaming live
-  translation & MFU toggle** is shipped (feature WP-91 and its children
-  WP-92…WP-94, plus WP-96, all done) but — like the rest of Streaming — has
-  no assigned roadmap milestone; see `docs/features/F006_streaming-live-translation/requirements.md`
-  §Serves for the flagged `idea.md`/`roadmap.md` traceability gap.
+Feature-level tracking — requirements, tasks, scenarios, and their status —
+lives in TaskPilot (project key **WP**), not in `docs/`. This index maps
+documents and decisions only; it does not attempt feature-to-milestone
+traceability.

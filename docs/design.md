@@ -68,7 +68,8 @@ controls (close / minimize / zoom):
 
 - **Panel toggle** — hide/show the left pane. Sits directly after the traffic
   lights; its position is fixed and it reflects toggled/untoggled state. The
-  collapsed/expanded choice **persists** across restarts.
+  pane **defaults open on every launch**; the collapsed/expanded choice does
+  not persist across restarts.
 - **App logo** — directly after the toggle (VoicePilot logo for now). Fixed
   position; purely decorative.
 - **Settings gear** — a fixed control at the **far right** of row 1; opens the
@@ -80,8 +81,8 @@ Row 2 — the active meeting's header:
   modal), **copy** (copies the full transcript to the clipboard and confirms
   with a brief checked button state and "Copied!" toast), **delete**
   (with confirmation — same as the list action).
-- **Model switcher** — dropdown of available Whisper models; default **large**.
-  If **no model is available**, the switcher shows nothing and the status bar
+- There is no in-header model switcher; model selection lives in
+  Settings → AI models only. If **no model is available**, the status bar
   shows a warning.
 - **Transcribe** — icon button with hover text. **Disabled** when no file is
   attached. Meeting transcription runs to completion; safe cancellation is
@@ -233,8 +234,8 @@ Whisper model; diarization degrades without its models).
    - If diarization is unavailable, the transcript still appears as plain segments
      with a detail; the run does not fail.
    - Pressing **Transcribe** again on a meeting that already has a transcript
-     **warns** it will replace the transcript and any MFU, and proceeds only on
-     confirmation.
+     replaces the transcript and any MFU immediately, with no confirmation
+     guard.
 
 ### Reopen / manage a meeting (M2)
 
@@ -282,8 +283,8 @@ Whisper model; diarization degrades without its models).
 - **MFU populated** — MFU section at 30% with edit/copy/clear.
 - **Source file missing** — meeting opens; Transcribe disabled with an
   explanatory detail; transcript/MFU remain editable.
-- **No model available** — model switcher hidden; status-bar warning; the
-  Settings → AI models section flags the missing model with a Download action.
+- **No model available** — status-bar warning; the Settings → AI models
+  section flags the missing model with a Download action.
 - **Settings open** — the Settings screen (models / appearance / app language);
   changes apply immediately and persist.
 - **Model downloading** — a model shows download progress; on SHA-verified

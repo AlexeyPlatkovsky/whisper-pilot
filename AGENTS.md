@@ -187,7 +187,6 @@ structure, identifiers, and traceability.
 | `docs/testing.md` | Test strategy and quality gates. |
 | `docs/roadmap.md` | Milestones and sequencing. |
 | `docs/decisions/` | Architecture decision records. |
-| `docs/features/F*/` | Feature requirements, tasks, and scenarios. |
 | `README.md` | User-facing overview and setup. |
 | `docs/development.md` | Developer setup and commands. |
 | `src-tauri/src/lib.rs`, `src-tauri/src/main.rs`, `src/App.tsx` | Application entry points. |
