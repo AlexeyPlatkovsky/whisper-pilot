@@ -342,6 +342,7 @@ export function StreamingView({
           translationQueueRef.current = [];
           translationTokenRef.current += 1;
           persistedTranslationsRef.current = new Map();
+          setPersistedReady(false); // WP-102: see handleOpen.
         }
         setIsRunning(true);
         await refreshSessions();
@@ -383,6 +384,7 @@ export function StreamingView({
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
       persistedTranslationsRef.current = new Map();
+      setPersistedReady(false); // WP-102: see handleOpen.
       await refreshSessions();
     } catch (e) {
       setError(String(e));
@@ -429,6 +431,10 @@ export function StreamingView({
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
       persistedTranslationsRef.current = new Map();
+      // WP-102: pairs with the ref clear above so a `persistedReady` left
+      // over `true` from a prior session can't race the reconcile effect
+      // ahead of this session's own persisted-fetch effect.
+      setPersistedReady(false);
     } catch (e) {
       setError(String(e));
     }
@@ -494,6 +500,7 @@ export function StreamingView({
         translationQueueRef.current = [];
         translationTokenRef.current += 1;
         persistedTranslationsRef.current = new Map();
+        setPersistedReady(false); // WP-102: see handleOpen.
         return null;
       });
       await refreshSessions();

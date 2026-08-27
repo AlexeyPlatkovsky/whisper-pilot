@@ -1083,3 +1083,65 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 });
+
+// WP-102: a stale `persistedReady` left over from a previously open session
+// raced the reconcile effect ahead of the reopened session's own
+// persisted-translations fetch, re-sending already-translated paragraphs.
+describe("StreamingView — Live Translation persisted-cache reload race (WP-102)", () => {
+  it("reopening a session with an already-persisted paragraph reuses it without a new model call, even after visiting another session in between", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      { ...SESSION_A, translation_enabled: true },
+      {
+        ...SESSION_A,
+        id: 2,
+        title: "Design Review",
+        translation_enabled: false,
+      },
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      id === 1
+        ? openedSession({
+            id: 1,
+            title: "Standup",
+            windows: PARAGRAPH_A,
+            translation_enabled: true,
+          })
+        : openedSession({
+            id: 2,
+            title: "Design Review",
+            windows: [],
+            translation_enabled: false,
+          }),
+    );
+    vi.mocked(ipc.listStreamingTranslations).mockImplementation(
+      async (sessionId) =>
+        sessionId === 1
+          ? [
+              {
+                paragraph_key: 0,
+                source_text: SOURCE_A,
+                translated_text: "Cached A.",
+              },
+            ]
+          : [],
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+    expect(await screen.findByText("Cached A.")).toBeInTheDocument();
+    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+
+    await user.click(await screen.findByText("Design Review"));
+    await user.click(await screen.findByText("Standup"));
+
+    // Session A's persisted-translations fetch runs once per open (not on
+    // the Design Review visit, since its own translation is off); wait for
+    // the reopen's fetch to resolve before asserting nothing was enqueued.
+    await waitFor(() =>
+      expect(ipc.listStreamingTranslations).toHaveBeenCalledTimes(2),
+    );
+    await flush();
+    expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
+  });
+});
