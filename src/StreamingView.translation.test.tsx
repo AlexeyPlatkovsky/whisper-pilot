@@ -91,7 +91,9 @@ function openedSession(
 /** `count` windows of monotonically increasing index, each short enough that
  * only paragraphs.ts's window-count cap (6) closes a paragraph — never the
  * length/sentence heuristic — so paragraph boundaries are deterministic
- * regardless of text content. */
+ * regardless of text content. Default language is "en" — the mirror image
+ * of the "ru" target-language default, so paragraphs built with no override
+ * exercise real translation instead of the same-language mirror path. */
 function makeWindows(
   count: number,
   opts: {
@@ -103,7 +105,7 @@ function makeWindows(
 ): StreamingWindow[] {
   const {
     startIndex = 0,
-    language = "ru",
+    language = "en",
     prefix = "Слово",
     outcomeOk = true,
   } = opts;
@@ -124,7 +126,7 @@ function paragraphSourceText(windows: StreamingWindow[]): string {
   return windows.map((w) => w.text).join(" ");
 }
 
-// Two full (6-window) Russian paragraphs, closed regardless of running state.
+// Two full (6-window) English paragraphs, closed regardless of running state.
 const PARAGRAPH_A = makeWindows(6, { startIndex: 0 });
 const PARAGRAPH_B = makeWindows(6, { startIndex: 6 });
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
@@ -220,7 +222,7 @@ describe("StreamingView — Live Translation header control", () => {
     const toggle = await findTranslationSwitch();
     expect(toggle).toHaveAttribute("aria-checked", "false");
     const select = findTargetLanguageSelect();
-    expect(select).toHaveValue("en");
+    expect(select).toHaveValue("ru");
     expect(select).not.toBeDisabled();
   });
 
@@ -249,7 +251,7 @@ describe("StreamingView — Live Translation split grid", () => {
     expect(await screen.findByText(SOURCE_A)).toBeInTheDocument();
     expect(screen.getByText(SOURCE_B)).toBeInTheDocument();
     expect(screen.getByText("ORIGINAL · AUTO-DETECTED")).toBeInTheDocument();
-    expect(screen.getByText("ENGLISH")).toBeInTheDocument();
+    expect(screen.getByText("РУССКИЙ")).toBeInTheDocument();
 
     const scrollContainers = document.querySelectorAll(
       ".wp-transcript-content",
@@ -314,7 +316,7 @@ describe("StreamingView — Live Translation queue", () => {
     expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
       1,
       0,
-      "en",
+      "ru",
       SOURCE_A,
     );
 
@@ -338,7 +340,7 @@ describe("StreamingView — Live Translation queue", () => {
     expect(ipc.translateStreamingParagraph).toHaveBeenLastCalledWith(
       1,
       6,
-      "en",
+      "ru",
       SOURCE_B,
     );
 
@@ -364,11 +366,11 @@ describe("StreamingView — Live Translation queue", () => {
     await user.click(await findTranslationSwitch());
 
     expect(await screen.findByText("Cached A.")).toBeInTheDocument();
-    expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "en");
+    expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "ru");
     expect(ipc.translateStreamingParagraph).not.toHaveBeenCalledWith(
       1,
       0,
-      "en",
+      "ru",
       SOURCE_A,
     );
     // Paragraph B has no persisted row, so it still gets a live call.
@@ -376,7 +378,7 @@ describe("StreamingView — Live Translation queue", () => {
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
         1,
         6,
-        "en",
+        "ru",
         SOURCE_B,
       ),
     );
@@ -432,7 +434,7 @@ describe("StreamingView — Live Translation queue", () => {
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
         1,
         0,
-        "en",
+        "ru",
         SOURCE_A,
       ),
     );
@@ -443,16 +445,16 @@ describe("StreamingView — Live Translation queue", () => {
 describe("StreamingView — Live Translation same-language skip", () => {
   it("never calls the model for a paragraph whose windows are all already the target language, and mirrors the original text", async () => {
     const user = userEvent.setup();
-    const englishParagraph = makeWindows(6, {
+    const russianParagraph = makeWindows(6, {
       startIndex: 0,
-      language: "en",
-      prefix: "Word",
+      language: "ru",
+      prefix: "Слово",
     });
-    await openSessionWithWindows(user, englishParagraph);
+    await openSessionWithWindows(user, russianParagraph);
 
     await user.click(await findTranslationSwitch());
 
-    const source = paragraphSourceText(englishParagraph);
+    const source = paragraphSourceText(russianParagraph);
     const mirrored = await screen.findByText(source, {
       selector: ".wp-translation-text--mirrored",
     });

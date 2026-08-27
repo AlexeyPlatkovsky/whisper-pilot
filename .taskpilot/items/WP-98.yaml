@@ -1,0 +1,51 @@
+schema_version: 1
+id: WP-98
+title: MFU regenerate confirmation guard and Clear action
+priority: normal
+type: task
+status: backlog
+created_at: '2026-08-27T12:51:57Z'
+updated_at: '2026-08-27T12:51:57Z'
+parent_id: WP-97
+description: 'Migrated from the retired docs/features/F003_meeting-mfu specification, where it was the one requirement never implemented. Verified still missing in production at migration time: handleGenerateMfu in src/App.tsx calls generateMfu directly with no confirmation step, and the MFU panel renders only the five editable fields plus Copy — there is no clear control anywhere in it.
+
+
+  Two related behaviours on the Meeting MFU panel:
+
+
+  Regenerate with a confirmation guard. Crafting an MFU for a meeting that already has one silently replaces it today, including any manual edits the user made to the generated text. The user must be asked to confirm before generated content that has been edited is replaced, so a re-run cannot destroy edits without warning. Regenerating an MFU the user has not edited need not be guarded.
+
+
+  Clear. The user can empty the MFU section, returning it to its empty state with the Craft MFU placeholder, and the cleared state persists like any other MFU edit.
+
+
+  Happy path: a user who has hand-corrected an action item runs Craft MFU again, is warned that their edited MFU will be replaced, confirms, and gets fresh generated content.
+
+  Failure behavior: declining the confirmation leaves the existing MFU exactly as it was and starts no generation run.
+
+  Edge cases: a meeting with no MFU yet regenerates without a prompt; clearing an MFU that is mid-generation is not offered; clearing is undoable only by regenerating.
+
+
+  Scope boundary: the Meeting MFU panel only. Streaming''s MFU is not in scope, and MFU generation itself is unchanged.
+
+
+  Scenarios:
+
+  Given a meeting whose MFU the user has edited, When the user triggers Craft MFU again, Then a confirmation is shown before the edited content is replaced.
+
+  Given that confirmation, When the user declines, Then the existing MFU is unchanged and no generation runs.
+
+  Given a meeting with a populated MFU, When the user clears it, Then the MFU section returns to its empty state and stays empty after reopening the meeting.
+
+
+  Target surfaces: src/App.tsx (handleGenerateMfu, the wp-mfu panel), src-tauri/src/commands/mfu.rs and src-tauri/src/store.rs if clearing needs its own command rather than an empty update_mfu, src/ipc.ts.
+
+
+  Constraints: the confirmation must follow the existing modal pattern used by the delete and rename dialogs (role, focus handling, Escape to dismiss); clearing must not delete the meeting''s transcript or segments. No network or model impact.'
+created_by: Aleksei_Platkovskii
+dod:
+- Re-running Craft MFU on a meeting whose MFU has been manually edited shows a confirmation before any generated content is replaced, and declining leaves the stored MFU byte-identical and starts no generation run; covered by React/vitest tests.
+- Re-running Craft MFU on a meeting with no MFU, or with an unedited generated MFU, proceeds without a confirmation prompt.
+- A Clear action empties the MFU section back to its placeholder state, persists that empty state across reopening the meeting, and leaves the transcript and segments untouched; covered by tests at the layer that owns the write.
+- The confirmation dialog follows the existing modal pattern (role, autofocus, Escape to dismiss) used by the rename and delete dialogs.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'

@@ -1,0 +1,31 @@
+schema_version: 1
+id: WP-99
+title: Default the Live Translation target language to Russian
+priority: normal
+type: task
+status: done
+created_at: '2026-08-27T13:01:33Z'
+updated_at: '2026-08-27T13:04:20Z'
+description: 'English to Russian is the primary direction for Streaming Live Translation, so the target-language control must open on Русский rather than English. This reverses one detail of the confirmed live-translation decision record; every other part of it stands — the target language is still not persisted and still resets to the default on each launch, the supported pair is still English and Russian only, and the dropdown still locks while the switch is on.
+
+
+  Happy path: a user capturing English audio switches Live Translation on and gets Russian without touching the dropdown.
+
+  Failure behavior: none — this changes an initial value only, with no new failure mode.
+
+  Edge case: a paragraph already entirely in Russian is now the one that takes the same-language mirror path by default, where previously that was English.
+
+
+  Scope boundary: the initial value of the target-language control. No change to persistence, the supported language set, the locking rule, the queue, or the translation backend.
+
+
+  Scenario:
+
+  Given a Streaming session and a ready LLM model, When the user switches Live Translation on without touching the dropdown, Then the target language is Russian and the split view''s target column is headed Русский.
+
+
+  Target surfaces: src/StreamingView.tsx (targetLanguage initial state), src/StreamingView.translation.test.tsx, src/StreamingView.pairedExport.test.tsx, docs/design.md, docs/decisions/ADR-015-live-translation-shared-llm-concurrent-single-flight.md.
+
+
+  Constraints: test fixtures whose language previously differed from the English default must be re-pointed so they still exercise real translation rather than silently falling into the same-language mirror path; tests that explicitly select a language must remain unchanged.'
+created_by: Aleksei_Platkovskii

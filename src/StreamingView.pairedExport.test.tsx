@@ -80,12 +80,15 @@ function openedSession(
 /** `count` windows of monotonically increasing index, each short enough that
  * only paragraphs.ts's window-count cap (6) closes a paragraph, so paragraph
  * boundaries are deterministic regardless of text content — mirrors
- * StreamingView.translation.test.tsx's helper. */
+ * StreamingView.translation.test.tsx's helper. Default language is "en" —
+ * the mirror image of the "ru" target-language default, so paragraphs built
+ * with no override exercise real translation instead of the same-language
+ * mirror path. */
 function makeWindows(
   count: number,
   opts: { startIndex?: number; language?: string; prefix?: string } = {},
 ): StreamingWindow[] {
-  const { startIndex = 0, language = "ru", prefix = "Слово" } = opts;
+  const { startIndex = 0, language = "en", prefix = "Слово" } = opts;
   return Array.from({ length: count }, (_, i) => {
     const index = startIndex + i;
     return {
@@ -249,13 +252,13 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         "Original:",
         SOURCE_A,
         "",
-        "English:",
+        "Русский:",
         "English batch A.",
         "",
         "Original:",
         SOURCE_B,
         "",
-        "English:",
+        "Русский:",
         "English batch B.",
       ].join("\n"),
     );
@@ -274,7 +277,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
     await clickExport(user);
 
     expect(ipc.saveTextDialog).toHaveBeenCalledWith(
-      `# Standup\n\nOriginal:\n${SOURCE_A}\n\nEnglish:\nEnglish batch A.\n`,
+      `# Standup\n\nOriginal:\n${SOURCE_A}\n\nРусский:\nEnglish batch A.\n`,
       "Standup.md",
     );
   });
@@ -323,13 +326,13 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         "Original:",
         SOURCE_A,
         "",
-        "English:",
+        "Русский:",
         "English batch A.",
         "",
         "Original:",
         SOURCE_B,
         "",
-        "English:",
+        "Русский:",
         PLACEHOLDER,
       ].join("\n"),
     );
@@ -358,13 +361,13 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         "Original:",
         SOURCE_A,
         "",
-        "English:",
+        "Русский:",
         FAILED_PLACEHOLDER,
         "",
         "Original:",
         SOURCE_B,
         "",
-        "English:",
+        "Русский:",
         "English batch B.",
       ].join("\n"),
     );
@@ -376,13 +379,13 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
   // reproduce what the screen shows, so that text must survive verbatim.
   it("@WP-94-mirrored: a same-language mirrored paragraph is exported with its own text verbatim, matching the on-screen muted cell", async () => {
     const user = setupUser();
-    const englishParagraph = makeWindows(6, {
+    const russianParagraph = makeWindows(6, {
       startIndex: 0,
-      language: "en",
-      prefix: "Word",
+      language: "ru",
+      prefix: "Слово",
     });
-    const source = paragraphSourceText(englishParagraph);
-    await openSessionWithWindows(user, englishParagraph);
+    const source = paragraphSourceText(russianParagraph);
+    await openSessionWithWindows(user, russianParagraph);
     const toggle = await findTranslationSwitch();
     await user.click(toggle);
     await screen.findByText(source, {
@@ -392,7 +395,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
     await clickCopy(user);
 
     expect(writeTextMock).toHaveBeenCalledWith(
-      ["Original:", source, "", "English:", source].join("\n"),
+      ["Original:", source, "", "Русский:", source].join("\n"),
     );
     expect(ipc.translateStreamingParagraph).not.toHaveBeenCalled();
   });
@@ -415,7 +418,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
         1,
         0,
-        "en",
+        "ru",
         SOURCE_A,
       ),
     );
@@ -423,7 +426,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
     await clickCopy(user);
 
     expect(writeTextMock).toHaveBeenCalledWith(
-      ["Original:", SOURCE_A, "", "English:", PLACEHOLDER].join("\n"),
+      ["Original:", SOURCE_A, "", "Русский:", PLACEHOLDER].join("\n"),
     );
     expect(writeTextMock.mock.calls[0][0]).not.toContain(
       "Stale cached translation.",
@@ -433,15 +436,15 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
   it("@WP-94-language-scope: exports only for the currently selected target language, ignoring rows stored under a different one", async () => {
     const user = setupUser();
     // The backend only ever returns rows for the language it's asked about;
-    // simulate a session with a persisted "ru" translation but no "en" one.
+    // simulate a session with a persisted "en" translation but no "ru" one.
     vi.mocked(ipc.listStreamingTranslations).mockImplementation(
       async (_sessionId, lang) =>
-        lang === "ru"
+        lang === "en"
           ? [
               {
                 paragraph_key: 0,
                 source_text: SOURCE_A,
-                translated_text: "Cached RU translation.",
+                translated_text: "Cached EN translation.",
               },
             ]
           : [],
@@ -449,16 +452,16 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
     const pending = deferred<string>();
     vi.mocked(ipc.translateStreamingParagraph).mockReturnValue(pending.promise);
     await openSessionWithWindows(user, PARAGRAPH_A);
-    const toggle = await findTranslationSwitch(); // target language defaults to "en"
+    const toggle = await findTranslationSwitch(); // target language defaults to "ru"
     await user.click(toggle);
     await waitFor(() =>
-      expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "en"),
+      expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "ru"),
     );
     await waitFor(() =>
       expect(ipc.translateStreamingParagraph).toHaveBeenCalledWith(
         1,
         0,
-        "en",
+        "ru",
         SOURCE_A,
       ),
     );
@@ -466,10 +469,10 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
     await clickCopy(user);
 
     expect(writeTextMock).toHaveBeenCalledWith(
-      ["Original:", SOURCE_A, "", "English:", PLACEHOLDER].join("\n"),
+      ["Original:", SOURCE_A, "", "Русский:", PLACEHOLDER].join("\n"),
     );
     expect(writeTextMock.mock.calls[0][0]).not.toContain(
-      "Cached RU translation.",
+      "Cached EN translation.",
     );
   });
 });

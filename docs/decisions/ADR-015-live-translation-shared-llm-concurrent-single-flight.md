@@ -78,7 +78,9 @@ per-window auto-detection (ADR-014) — translation adds a target, it does not
 change how the source is detected. A paragraph whose text is already
 entirely in the target language is never sent to the model; its row mirrors
 the original text instead, saving a model call for the common case of an
-already-matching-language paragraph.
+already-matching-language paragraph. The target-language control defaults to
+`ru` on every launch (not persisted) — English → Russian is the primary use
+case.
 
 **Persistence: reuse translations instead of re-running the model.**
 Translations persist keyed by `(session_id, paragraph_key, target_language)`

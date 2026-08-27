@@ -1,0 +1,32 @@
+schema_version: 1
+id: WP-97
+title: Meeting Structured MFU (Craft MFU) — retroactive as-built record
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-27T12:51:37Z'
+updated_at: '2026-08-27T12:51:37Z'
+description: 'Retroactive record of a capability that shipped before it was ever tracked. Created when docs/features/ was retired in favour of tracking features only in TaskPilot; without it, this shipped behaviour would have had no record anywhere except architecture.md''s prose.
+
+
+  Meeting generates a structured MFU from a finished transcript, locally, with no network access: summary, key decisions, action items, open questions and participants (ADR-009). Generation runs on llama.cpp with a quantized Qwen2.5-Instruct model (ADR-006) and is prompted in Russian or English depending on the transcript''s own script.
+
+
+  Trigger and gating: generation is manual, via the Craft MFU action in the Meeting header, enabled only once transcription has finished and an LLM model is active and downloaded. The run is UI-blocking, with a spinner and elapsed timer in the header status widget, and it is disabled together with the other run-blocking controls while any transcription, diarization or MFU run is in flight.
+
+
+  Output handling: each of the five sections renders in the MFU panel as an editable field; edits auto-save to the meeting through update_mfu with the same debounce the transcript editor uses. The whole MFU is copyable to the clipboard and is included in export.
+
+
+  Scope boundary of this record: it documents behaviour already in production as of this record''s creation. It carries no new work. The one behaviour the retired feature doc specified but that was never built — regenerate with a confirmation guard, and a Clear action — is tracked separately as its own item, not here.
+
+
+  Implementation surfaces: src-tauri/src/llm.rs (generate_mfu, build_prompt), src-tauri/src/commands/mfu.rs, src-tauri/src/store.rs (the mfu table), src/App.tsx (handleGenerateMfu, editMfuField, the wp-mfu panel), src/ipc.ts.
+
+
+  Authoritative description of the design lives in docs/architecture.md (Structured MFU) and docs/design.md (MFU section); ADR-009 and ADR-006 own the decisions.'
+created_by: Aleksei_Platkovskii
+dod:
+- 'Record only: this item carries no deliverable work. It documents behaviour that shipped before tracking existed, so its completion criterion is that the description accurately matches the code in production at the time of writing.'
+- The description names the five MFU sections, the local llama.cpp/Qwen engine, the manual gated trigger, the auto-saving editable output, and the copy/export path, each verifiable against the named implementation surfaces.
+- Behaviour specified but never built (regenerate confirmation guard, Clear action) is excluded from this record and tracked as its own item.

@@ -123,7 +123,7 @@ Single line reflecting the meeting's current state:
 - **Streaming only:** the transcript header carries a third, middle slot
   between the title group and the actions cluster — a **Live Translation**
   control: a label, a switch (`role="switch"`, WP-93), and a target-language
-  dropdown (English / Русский, defaulting to English on every launch — the
+  dropdown (English / Русский, defaulting to Russian on every launch — the
   choice is not persisted). The dropdown locks while the switch is on; to
   change the target, switch off, pick, then switch back on. The switch is
   disabled with a stated reason when no LLM model is ready, when a

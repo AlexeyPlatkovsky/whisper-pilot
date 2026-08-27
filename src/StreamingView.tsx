@@ -124,12 +124,13 @@ export function StreamingView({
     title: string;
   } | null>(null);
   // WP-93: Live Translation — switch state, locked-while-on target language
-  // (default English, never persisted), and per-paragraph translation
-  // status keyed by paragraph_key. The queue itself lives in refs (not
-  // state) since it's an implementation detail that never renders directly.
+  // (default Russian — English -> Russian is the primary use case, never
+  // persisted), and per-paragraph translation status keyed by paragraph_key.
+  // The queue itself lives in refs (not state) since it's an implementation
+  // detail that never renders directly.
   const [translationEnabled, setTranslationEnabled] = useState(false);
   const [targetLanguage, setTargetLanguage] =
-    useState<StreamingTranslationTargetLanguage>("en");
+    useState<StreamingTranslationTargetLanguage>("ru");
   const [translations, setTranslations] = useState<
     Map<number, TranslationEntry>
   >(new Map());
