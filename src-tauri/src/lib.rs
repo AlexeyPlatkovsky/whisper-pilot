@@ -56,6 +56,7 @@ pub fn run() {
             commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,
+            commands::streaming::set_streaming_translation_enabled,
             commands::dialogs::save_text_dialog,
             commands::settings::get_settings,
             commands::settings::set_setting,

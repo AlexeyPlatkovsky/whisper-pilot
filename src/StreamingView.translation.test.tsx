@@ -35,6 +35,7 @@ vi.mock("./ipc", () => ({
   revertStreamingPrettify: vi.fn(),
   translateStreamingParagraph: vi.fn(async () => "Translated."),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -72,6 +73,7 @@ const SESSION_A: StreamingSessionSummary = {
   created_at_ms: 100,
   updated_at_ms: 100,
   status: "stopped",
+  translation_enabled: false,
 };
 
 function openedSession(
@@ -83,6 +85,7 @@ function openedSession(
     created_at_ms: 100,
     updated_at_ms: 100,
     status: "stopped",
+    translation_enabled: false,
     windows: [],
     ...overrides,
   };
@@ -197,6 +200,7 @@ beforeEach(() => {
     active_model_llm: "llm-mini",
   });
   vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([]);
+  vi.mocked(ipc.setStreamingTranslationEnabled).mockResolvedValue(undefined);
 });
 
 describe("StreamingView — Live Translation header control", () => {
@@ -289,6 +293,7 @@ describe("StreamingView — Live Translation queue", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     const first = deferred<string>();
     const second = deferred<string>();
@@ -405,6 +410,7 @@ describe("StreamingView — Live Translation queue", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -525,6 +531,7 @@ describe("StreamingView — Live Translation prior-paragraph context", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
       (_session, paragraphKey) =>
@@ -563,6 +570,7 @@ describe("StreamingView — Live Translation prior-paragraph context", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
       "Translated B.",
@@ -607,6 +615,7 @@ describe("StreamingView — Live Translation prior-paragraph context", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     const first = deferred<string>();
     vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
@@ -650,6 +659,7 @@ describe("StreamingView — Live Translation prior-paragraph context", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     vi.mocked(ipc.translateStreamingParagraph).mockImplementation(
       (_session, paragraphKey) =>
@@ -713,6 +723,7 @@ describe("StreamingView — Live Translation failure and retry", () => {
       created_at_ms: 100,
       updated_at_ms: 100,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -901,5 +912,174 @@ describe("StreamingView — Live Translation edge cases", () => {
     first.resolve("Word batch A (en).");
     await flush();
     expect(ipc.translateStreamingParagraph).toHaveBeenCalledTimes(1);
+  });
+});
+
+// WP-101: two related bugs from a live run — (1) pressing Start to resume
+// the session that is already open turned Live Translation back off and
+// cleared the in-progress queue, since startSession() unconditionally reset
+// translation state; (2) the enabled/disabled choice never survived
+// reopening a session or an app restart, since translationEnabled was plain
+// React state with no backing column. Fixed by only resetting translation
+// state when the session identity actually changes (resumeId is null or
+// differs from activeId), and by persisting the toggle per session
+// (mirroring WP-96's MFU-panel settings-write pattern: best-effort, a
+// failure never blocks or reverts the switch).
+describe("StreamingView — Live Translation session-lifecycle persistence (WP-101)", () => {
+  it("Bug 1 repro: pressing Start/Resume on the already-open session leaves Live Translation on and keeps the in-progress translation", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 1,
+      title: "Standup",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+      translation_enabled: false,
+    });
+    vi.mocked(ipc.translateStreamingParagraph).mockResolvedValue(
+      "Translated A.",
+    );
+    await openSessionWithWindows(user, PARAGRAPH_A);
+    const toggle = await findTranslationSwitch();
+
+    await user.click(toggle);
+    expect(await screen.findByText("Translated A.")).toBeInTheDocument();
+
+    const startButton = await screen.findByRole("button", {
+      name: /^(start|resume)$/i,
+    });
+    await user.click(startButton);
+
+    // resumeId === activeId (both 1) — the exact "flip the switch on, then
+    // press Start" sequence that used to force the switch back off.
+    expect(ipc.startStreamingSession).toHaveBeenCalledWith(1);
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    // The queue/map was not cleared: the already-translated paragraph is
+    // still shown, not reset to "Pending…".
+    expect(screen.getByText("Translated A.")).toBeInTheDocument();
+  });
+
+  it("starting a brand-new session (resumeId null) still resets Live Translation to off", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 9,
+      title: "New Streaming Session",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+
+    const toggle = await findTranslationSwitch();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("opening a session whose Live Translation was left on restores the switch to on, with no user action", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ translation_enabled: true }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+
+    const toggle = await findTranslationSwitch();
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("opening a session whose Live Translation was left off restores the switch to off", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ translation_enabled: false }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+
+    const toggle = await findTranslationSwitch();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+  });
+
+  it("toggling the switch persists the new value for the open session", async () => {
+    const user = userEvent.setup();
+    await openSessionWithWindows(user, PARAGRAPH_A);
+    const toggle = await findTranslationSwitch();
+
+    await user.click(toggle);
+    expect(ipc.setStreamingTranslationEnabled).toHaveBeenCalledWith(1, true);
+
+    await user.click(toggle);
+    expect(ipc.setStreamingTranslationEnabled).toHaveBeenLastCalledWith(
+      1,
+      false,
+    );
+  });
+
+  it("keeps the switch showing the user's chosen state, with no blocking error, when persisting the toggle fails", async () => {
+    vi.mocked(ipc.setStreamingTranslationEnabled).mockRejectedValue(
+      new Error("disk full"),
+    );
+    const user = userEvent.setup();
+    await openSessionWithWindows(user, PARAGRAPH_A);
+    const toggle = await findTranslationSwitch();
+
+    await user.click(toggle);
+
+    await waitFor(() => expect(toggle).toHaveAttribute("aria-checked", "true"));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("opening a different session reflects that session's own persisted value, not the previously open session's", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      { ...SESSION_A, id: 2, title: "Design Review" },
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      openedSession({
+        id,
+        title: id === 1 ? "Standup" : "Design Review",
+        translation_enabled: id === 2,
+      }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+    expect(await findTranslationSwitch()).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+
+    await user.click(await screen.findByText("Design Review"));
+    expect(await findTranslationSwitch()).toHaveAttribute(
+      "aria-checked",
+      "true",
+    );
+  });
+
+  it("creating a brand-new session still starts with Live Translation off (nothing persisted yet)", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.createStreamingSession).mockResolvedValue({
+      id: 3,
+      title: "New Streaming Session",
+      created_at_ms: 100,
+      updated_at_ms: 100,
+      status: "stopped",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "New streaming session" }),
+    );
+
+    const toggle = await findTranslationSwitch();
+    expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 });

@@ -26,6 +26,12 @@ pub struct StreamingSessionRecord {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
+    /// WP-101: whether Live Translation was left on for this session — unlike
+    /// the target language (WP-99, never persisted), this survives reopening
+    /// the session and an app restart. Defaults to `false` for both a
+    /// brand-new session and one that predates this column (see the
+    /// `translation_enabled` migration below).
+    pub translation_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +41,7 @@ pub struct StreamingSessionSummary {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
+    pub translation_enabled: bool,
 }
 
 /// One decoded window's text, ready to append. `outcome_ok` distinguishes a
@@ -125,6 +132,7 @@ impl StreamingStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
         migrate_legacy_streaming_notes(&connection)?;
+        migrate_translation_enabled_column(&connection)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -161,6 +169,20 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
+    /// Persists the Live Translation on/off choice for one session (WP-101),
+    /// mirroring `rename_session`'s single-field-update shape and error
+    /// handling for an unknown session id.
+    pub fn set_translation_enabled(&self, id: StreamingSessionId, enabled: bool) -> Result<()> {
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE streaming_sessions SET translation_enabled = ?1 WHERE id = ?2",
+                params![enabled, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "streaming session", id)
+    }
+
     pub fn delete_session(&self, id: StreamingSessionId) -> Result<()> {
         let changed = self
             .connection()?
@@ -173,7 +195,7 @@ impl StreamingStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, title, created_at_ms, updated_at_ms, status
+                "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
                  FROM streaming_sessions ORDER BY updated_at_ms DESC, id DESC",
             )
             .map_err(store_error)?;
@@ -457,13 +479,55 @@ fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Adds `translation_enabled` to a `streaming_sessions` table that predates
+/// the column (WP-101), defaulting every existing row to off (`false`).
+/// SQLite's `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` clause, so —
+/// unlike the other tables here, which fold new tables into the idempotent
+/// `CREATE TABLE IF NOT EXISTS` schema batch — this checks the column's
+/// presence via `PRAGMA table_info` first, the same check-then-alter shape
+/// `migrate_legacy_streaming_notes` uses. A no-op on a brand-new database
+/// (no `streaming_sessions` table yet: `CREATE TABLE IF NOT EXISTS` below
+/// already creates it with the column) and on a database that already has
+/// the column (this feature's own migration, run on a prior launch).
+fn migrate_translation_enabled_column(connection: &Connection) -> Result<()> {
+    let has_table = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_sessions')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if !has_table {
+        return Ok(());
+    }
+    let has_column = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(streaming_sessions)")
+            .map_err(store_error)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(store_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(store_error)?;
+        columns.iter().any(|name| name == "translation_enabled")
+    };
+    if !has_column {
+        connection
+            .execute_batch(
+                "ALTER TABLE streaming_sessions ADD COLUMN translation_enabled INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
 fn session_by_id(
     connection: &Connection,
     id: StreamingSessionId,
 ) -> Result<Option<StreamingSessionRecord>> {
     connection
         .query_row(
-            "SELECT id, title, created_at_ms, updated_at_ms, status
+            "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
              FROM streaming_sessions WHERE id = ?1",
             params![id],
             session_from_row,
@@ -479,6 +543,7 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionRecord> {
         created_at_ms: row.get(2)?,
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
+        translation_enabled: row.get(5)?,
     })
 }
 
@@ -489,6 +554,7 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
         created_at_ms: row.get(2)?,
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
+        translation_enabled: row.get(5)?,
     })
 }
 
@@ -532,7 +598,8 @@ CREATE TABLE IF NOT EXISTS streaming_sessions (
     title TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    translation_enabled INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS streaming_segments (
@@ -604,6 +671,9 @@ mod tests {
             .expect("create session");
 
         assert_eq!(created.status, status::STOPPED);
+        // WP-101: a newly created session defaults translation_enabled to
+        // false — nothing has been persisted for it yet.
+        assert!(!created.translation_enabled);
         assert_eq!(
             store.get_session(created.id).expect("get session"),
             Some(created.clone())
@@ -616,6 +686,7 @@ mod tests {
                 created_at_ms: 100,
                 updated_at_ms: 100,
                 status: status::STOPPED.to_string(),
+                translation_enabled: false,
             }]
         );
     }
@@ -1223,5 +1294,156 @@ mod tests {
             .upsert_translation(&translation(1, 0, "en"))
             .expect("upsert into migrated table");
         assert_eq!(store.list_translations(1, "en").expect("list").len(), 1);
+    }
+
+    // --- WP-101: translation_enabled column, migration, and persistence ---
+
+    /// Opening a database whose `streaming_sessions` table predates the
+    /// `translation_enabled` column must both preserve the existing session
+    /// row and add the column, defaulted to false (off) — the same
+    /// check-then-`ALTER TABLE` shape as `migrate_legacy_streaming_notes`,
+    /// since SQLite's `ADD COLUMN` has no `IF NOT EXISTS` clause to fold into
+    /// the idempotent `CREATE TABLE IF NOT EXISTS` schema batch.
+    #[test]
+    fn opening_a_pre_migration_database_adds_translation_enabled_defaulted_to_false() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let db_path = crate::store::shared_database_path(temp.path());
+        std::fs::create_dir_all(temp.path()).expect("create app-support dir");
+
+        {
+            // A pre-WP-101 streaming_sessions table: every column this
+            // feature's migration must leave intact, deliberately excluding
+            // translation_enabled.
+            let connection = Connection::open(&db_path).expect("open raw pre-migration database");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE streaming_sessions (
+                        id INTEGER PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL
+                    );
+                    INSERT INTO streaming_sessions (id, title, created_at_ms, updated_at_ms, status)
+                        VALUES (1, 'Pre-migration session', 100, 200, 'stopped');
+                    "#,
+                )
+                .expect("seed pre-migration schema and data");
+        }
+
+        let store = StreamingStore::open(temp.path()).expect("open (and migrate) database");
+
+        let session = store
+            .get_session(1)
+            .expect("get session")
+            .expect("session survives migration");
+        assert_eq!(session.title, "Pre-migration session");
+        assert_eq!(session.status, status::STOPPED);
+        assert!(
+            !session.translation_enabled,
+            "a pre-existing session must default to translation_enabled = false"
+        );
+
+        // The column is now writable, not just readable with a default.
+        store
+            .set_translation_enabled(1, true)
+            .expect("set translation_enabled on the migrated column");
+        assert!(
+            store
+                .get_session(1)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    /// Reopening the (already-migrated) database a second time must not
+    /// error on a duplicate `ALTER TABLE ADD COLUMN` — the column-presence
+    /// check must make the migration a no-op once the column exists.
+    #[test]
+    fn reopening_an_already_migrated_database_does_not_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        {
+            let store = StreamingStore::open(temp.path()).expect("first open");
+            store.create_session(draft("Standup", 100)).unwrap();
+        }
+
+        StreamingStore::open(temp.path()).expect("reopening an already-migrated database");
+    }
+
+    #[test]
+    fn set_translation_enabled_persists_and_is_readable_after_reopen() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let session_id;
+        {
+            let store = StreamingStore::open(temp.path()).expect("open database");
+            session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+            assert!(
+                !store
+                    .get_session(session_id)
+                    .unwrap()
+                    .unwrap()
+                    .translation_enabled
+            );
+
+            store
+                .set_translation_enabled(session_id, true)
+                .expect("set translation_enabled");
+        }
+
+        let reopened = StreamingStore::open(temp.path()).expect("reopen database");
+        assert!(
+            reopened
+                .get_session(session_id)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    #[test]
+    fn set_translation_enabled_back_to_false_overwrites_the_prior_value() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .set_translation_enabled(session_id, true)
+            .expect("enable");
+
+        store
+            .set_translation_enabled(session_id, false)
+            .expect("disable");
+
+        assert!(
+            !store
+                .get_session(session_id)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    #[test]
+    fn setting_translation_enabled_for_an_unknown_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        let result = store.set_translation_enabled(999_999, true);
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn two_sessions_have_independent_translation_enabled_values() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let a = store.create_session(draft("A", 100)).unwrap().id;
+        let b = store.create_session(draft("B", 200)).unwrap().id;
+
+        store.set_translation_enabled(a, true).expect("enable a");
+
+        assert!(store.get_session(a).unwrap().unwrap().translation_enabled);
+        assert!(!store.get_session(b).unwrap().unwrap().translation_enabled);
     }
 }

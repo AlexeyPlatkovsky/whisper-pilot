@@ -80,7 +80,22 @@ pub(crate) fn create_streaming_session(
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
         status: session.status,
+        translation_enabled: session.translation_enabled,
     })
+}
+
+/// Persists the Live Translation on/off choice for one session (WP-101) —
+/// best-effort from the front-end's perspective (`src/ipc.ts`'s
+/// `setStreamingTranslationEnabled`): a write failure here surfaces as a
+/// rejected promise the caller swallows, matching WP-96's MFU-panel toggle
+/// pattern rather than blocking or reverting the switch.
+#[tauri::command]
+pub(crate) fn set_streaming_translation_enabled(
+    app: tauri::AppHandle,
+    session_id: streaming_store::StreamingSessionId,
+    enabled: bool,
+) -> Result<()> {
+    streaming::set_streaming_translation_enabled(&app_data_dir(&app)?, session_id, enabled)
 }
 
 /// Runs on its own blocking thread for a session's whole lifetime: persists

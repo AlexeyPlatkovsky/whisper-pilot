@@ -703,6 +703,19 @@ original text in a muted style. Switching the toggle off mid-queue, or
 switching or deleting the session, cancels pending work and discards any
 in-flight result a subsequent change has superseded.
 
+The switch's own on/off state is persisted (WP-101): `streaming_sessions`
+gains a `translation_enabled` column, written best-effort via
+`set_streaming_translation_enabled` on every toggle (mirroring WP-96's
+MFU-panel-toggle pattern — the switch keeps showing what the user chose even
+if the write fails, with no retry), and read back into both
+`StreamingSessionSummaryDto` and `StreamingSessionDto`. Opening a session
+restores its persisted value, so the state survives closing and reopening a
+session and an app restart. Pressing Start/Resume on the session that is
+*already* open is not a session-identity change, so it leaves the switch,
+its translations, and its in-flight queue untouched — only starting a
+genuinely different session (a brand-new one, or resuming a different past
+session) resets them.
+
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
@@ -792,6 +805,7 @@ span.
 | `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
+| `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
 | `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 | `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |

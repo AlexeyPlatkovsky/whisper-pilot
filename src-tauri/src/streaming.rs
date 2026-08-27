@@ -14,6 +14,7 @@ pub struct StreamingSessionSummaryDto {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
+    pub translation_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -59,6 +60,7 @@ pub struct StreamingSessionDto {
     pub windows: Vec<StreamingWindowDto>,
     pub mfu: Option<StreamingMfuDto>,
     pub prettified_text: Option<String>,
+    pub translation_enabled: bool,
 }
 
 pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSessionSummaryDto>> {
@@ -71,6 +73,7 @@ pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSe
             created_at_ms: s.created_at_ms,
             updated_at_ms: s.updated_at_ms,
             status: s.status,
+            translation_enabled: s.translation_enabled,
         })
         .collect();
     Ok(summaries)
@@ -113,6 +116,7 @@ pub fn open_streaming_session(
         windows,
         mfu,
         prettified_text,
+        translation_enabled: session.translation_enabled,
     })
 }
 
@@ -207,9 +211,21 @@ pub fn resume_streaming_session(
             created_at_ms: session.created_at_ms,
             updated_at_ms: now_ms,
             status: streaming_store::status::ACTIVE.to_string(),
+            translation_enabled: session.translation_enabled,
         },
         next_window_index,
     ))
+}
+
+/// Persists the Live Translation on/off choice for one session (WP-101) —
+/// the facade counterpart to `rename_streaming_session`, delegating straight
+/// to the store's single-field update.
+pub fn set_streaming_translation_enabled(
+    app_support_dir: &Path,
+    id: StreamingSessionId,
+    enabled: bool,
+) -> Result<()> {
+    StreamingStore::open(app_support_dir)?.set_translation_enabled(id, enabled)
 }
 
 /// Validates a translation request's cheap, model-independent prerequisites
@@ -664,6 +680,7 @@ mod tests {
                 participants: "Alex".to_string(),
             }),
             prettified_text: Some("Cleaned transcript.".to_string()),
+            translation_enabled: false,
         };
 
         let json = serde_json::to_value(&original).expect("serialize streaming session DTO");
@@ -994,6 +1011,93 @@ mod tests {
         let json = serde_json::to_value(&original).expect("serialize translation DTO");
         let round_tripped: StreamingTranslationDto =
             serde_json::from_value(json).expect("deserialize translation DTO");
+
+        assert_eq!(round_tripped, original);
+    }
+
+    // --- WP-101: translation_enabled on the summary/session DTOs, and the
+    // set_streaming_translation_enabled facade function. ---
+
+    #[test]
+    fn new_session_summary_and_dto_report_translation_enabled_false() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let summaries = list_streaming_sessions(temp.path()).expect("list");
+        assert_eq!(summaries.len(), 1);
+        assert!(!summaries[0].translation_enabled);
+
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+        assert!(!dto.translation_enabled);
+    }
+
+    #[test]
+    fn set_streaming_translation_enabled_is_reflected_by_list_and_open() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        set_streaming_translation_enabled(temp.path(), id, true).expect("set translation enabled");
+
+        let summaries = list_streaming_sessions(temp.path()).expect("list");
+        assert!(summaries[0].translation_enabled);
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+        assert!(dto.translation_enabled);
+    }
+
+    #[test]
+    fn set_streaming_translation_enabled_can_be_turned_back_off() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        set_streaming_translation_enabled(temp.path(), id, true).expect("enable");
+
+        set_streaming_translation_enabled(temp.path(), id, false).expect("disable");
+
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+        assert!(!dto.translation_enabled);
+    }
+
+    #[test]
+    fn set_streaming_translation_enabled_rejects_an_unknown_session() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let result = set_streaming_translation_enabled(temp.path(), 999_999, true);
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn resume_streaming_session_summary_reflects_persisted_translation_enabled() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        set_streaming_translation_enabled(temp.path(), id, true).expect("enable");
+        StreamingStore::open(temp.path())
+            .expect("open store")
+            .mark_stopped(id, 500)
+            .expect("mark stopped");
+
+        let (summary, _next_index) =
+            resume_streaming_session(temp.path(), id, 600).expect("resume");
+
+        assert!(summary.translation_enabled);
+    }
+
+    #[test]
+    fn streaming_session_dto_round_trips_with_translation_enabled() {
+        let original = StreamingSessionDto {
+            id: 7,
+            title: "Contract session".to_string(),
+            created_at_ms: 42,
+            updated_at_ms: 100,
+            status: "stopped".to_string(),
+            windows: vec![],
+            mfu: None,
+            prettified_text: None,
+            translation_enabled: true,
+        };
+
+        let json = serde_json::to_value(&original).expect("serialize streaming session DTO");
+        let round_tripped: StreamingSessionDto =
+            serde_json::from_value(json).expect("deserialize streaming session DTO");
 
         assert_eq!(round_tripped, original);
     }

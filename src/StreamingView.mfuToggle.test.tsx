@@ -46,6 +46,7 @@ const SESSION_A: StreamingSessionSummary = {
   created_at_ms: 100,
   updated_at_ms: 100,
   status: "stopped",
+  translation_enabled: false,
 };
 
 function openedSession(
@@ -57,6 +58,7 @@ function openedSession(
     created_at_ms: 100,
     updated_at_ms: 100,
     status: "stopped",
+    translation_enabled: false,
     windows: [],
     ...overrides,
   };

@@ -226,6 +226,10 @@ export interface StreamingSessionSummary {
   created_at_ms: number;
   updated_at_ms: number;
   status: string;
+  /** Whether Live Translation was left on for this session (WP-101).
+   * Unlike the target language (WP-99), this survives reopening the session
+   * and an app restart. */
+  translation_enabled: boolean;
 }
 
 export interface StreamingWindow {
@@ -254,6 +258,8 @@ export interface StreamingSession {
   windows: StreamingWindow[];
   mfu?: StreamingMfu;
   prettified_text?: string;
+  /** See `StreamingSessionSummary.translation_enabled` (WP-101). */
+  translation_enabled: boolean;
 }
 
 export function generateStreamingMfu(id: number): Promise<StreamingSession> {
@@ -398,5 +404,21 @@ export function listStreamingTranslations(
   return invoke<StreamingTranslationRow[]>("list_streaming_translations", {
     sessionId,
     targetLanguage,
+  });
+}
+
+/**
+ * Persists the Live Translation on/off choice for one session (WP-101).
+ * Best-effort from the caller's perspective — matching WP-96's MFU-panel
+ * toggle pattern, a rejected promise here should be swallowed rather than
+ * surfaced as a blocking error or used to revert the switch.
+ */
+export function setStreamingTranslationEnabled(
+  sessionId: number,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("set_streaming_translation_enabled", {
+    sessionId,
+    enabled,
   });
 }

@@ -17,6 +17,7 @@ import {
   revertStreamingPrettify,
   saveTextDialog,
   setSetting,
+  setStreamingTranslationEnabled,
   startStreamingSession,
   stopStreamingSession,
   translateStreamingParagraph,
@@ -311,11 +312,20 @@ export function StreamingView({
   // flags) is stale the moment new audio starts arriving, so it's cleared in
   // both cases — only `windows` survives a resume, since preserving the
   // session's transcript-so-far is the whole point of resuming into it.
+  //
+  // WP-101: Live Translation state (the switch, its map, and the queue/
+  // token/persisted refs) is the one exception — it's reset only when the
+  // session identity is actually changing (a brand-new session, or resuming
+  // a *different* past session), not when resuming the session that's
+  // already open. `activeIdRef` is always current across renders, unlike the
+  // `activeId` state this callback would otherwise close over.
   const startSession = useCallback(
     async (resumeId: number | null) => {
       setError(null);
       setBusy(true);
       try {
+        const isSameSessionResume =
+          resumeId !== null && resumeId === activeIdRef.current;
         const summary = await startStreamingSession(resumeId ?? undefined);
         setActiveId(summary.id);
         setActiveTitle(summary.title);
@@ -326,11 +336,13 @@ export function StreamingView({
         setPrettifiedText(null);
         setPrettifyFailed(false);
         setPendingPrettify(null);
-        setTranslationEnabled(false);
-        setTranslations(new Map());
-        translationQueueRef.current = [];
-        translationTokenRef.current += 1;
-        persistedTranslationsRef.current = new Map();
+        if (!isSameSessionResume) {
+          setTranslationEnabled(false);
+          setTranslations(new Map());
+          translationQueueRef.current = [];
+          translationTokenRef.current += 1;
+          persistedTranslationsRef.current = new Map();
+        }
         setIsRunning(true);
         await refreshSessions();
       } catch (e) {
@@ -408,7 +420,11 @@ export function StreamingView({
       setPrettifiedText(session.prettified_text ?? null);
       setPrettifyFailed(false);
       setPendingPrettify(null);
-      setTranslationEnabled(false);
+      // WP-101: restore this session's own persisted choice instead of
+      // always forcing it off — a session's Live Translation state now
+      // survives reopening it (and an app restart), matching WP-96's
+      // MFU-panel persistence. Absent (pre-WP-101 data) reads as off.
+      setTranslationEnabled(session.translation_enabled ?? false);
       setTranslations(new Map());
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
@@ -730,6 +746,19 @@ export function StreamingView({
     translationTokenRef.current += 1;
     persistedTranslationsRef.current = new Map();
     if (next) setPersistedReady(false);
+    // WP-101: best-effort persistence, mirroring handleToggleMfuPanel — the
+    // switch already reflects `next`; a write failure is swallowed rather
+    // than surfaced as a blocking error or used to revert the switch.
+    const sessionId = activeIdRef.current;
+    if (sessionId !== null) {
+      void (async () => {
+        try {
+          await setStreamingTranslationEnabled(sessionId, next);
+        } catch {
+          // Best-effort persistence: the switch already reflects `next`.
+        }
+      })();
+    }
   }, []);
 
   const handleRetryTranslation = useCallback(
