@@ -96,7 +96,7 @@ export function App() {
   );
   const [exportFileType, setExportFileType] =
     useState<ExportFileType>("plain_text");
-  // WP-90: view-only visibility of the MFU (summary) panel, persisted under
+  // WP-96: view-only visibility of the MFU (summary) panel, persisted under
   // its own settings key so it survives a restart independently of
   // Streaming's. Defaults ON; a settings read/write failure keeps it ON
   // without surfacing a blocking error (see the getSettings effect below and
@@ -1098,7 +1098,7 @@ export function App() {
             </div>
           </div>
 
-          {/* MFU (summary) panel — hidden by the header switch (WP-90); the
+          {/* MFU (summary) panel — hidden by the header switch (WP-96); the
               transcript panel above fills the freed width via its existing
               flex:1 in .wp-transcript-panel. */}
           {mfuPanelVisible && (

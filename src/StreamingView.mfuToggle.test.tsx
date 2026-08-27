@@ -9,7 +9,7 @@ import type {
   StreamingSessionSummary,
 } from "./ipc";
 
-// WP-90: the view-only MFU switch in the Streaming transcript header, mirroring
+// WP-96: the view-only MFU switch in the Streaming transcript header, mirroring
 // App.mfuToggle.test.tsx for the Meeting screen. Default ON; persists under
 // the `mfu_panel_streaming` key; never gates Craft MFU/Prettify/Start/Stop.
 vi.mock("./ipc", () => ({

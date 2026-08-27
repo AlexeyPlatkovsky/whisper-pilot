@@ -54,7 +54,7 @@ vi.mock("./ipc", () => ({
     };
   }),
   saveTextDialog: vi.fn(async () => null),
-  // WP-90: the MFU panel toggle reads/writes these; default ON with no
+  // WP-96: the MFU panel toggle reads/writes these; default ON with no
   // fields set, matching the shipped Settings default.
   getSettings: vi.fn(async () => ({
     theme: "system",

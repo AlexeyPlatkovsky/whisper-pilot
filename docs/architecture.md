@@ -692,7 +692,7 @@ in-flight result a subsequent change has superseded.
 Settings live in a small **key–value store** in the app support directory
 (theme, `ui_language`, each task's active model, export file type, the
 WP-88 `status_colors` JSON mapping of each configurable status to an opaque
-`#RRGGBB` color, and the WP-90 `mfu_panel_meeting`/`mfu_panel_streaming`
+`#RRGGBB` color, and the WP-96 `mfu_panel_meeting`/`mfu_panel_streaming`
 booleans — one independent key per screen, each defaulting to `true`, gating
 only that screen's MFU panel visibility, never Craft MFU itself), applied
 immediately and across restarts. The React layer owns **theming** (light /

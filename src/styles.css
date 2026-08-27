@@ -264,7 +264,7 @@ body {
   color: var(--muted);
 }
 
-/* WP-90: the shared MFU-panel pill switch (28x16, 12px knob), used in both
+/* WP-96: the shared MFU-panel pill switch (28x16, 12px knob), used in both
    the Meeting and Streaming transcript headers. */
 .wp-toggle-switch {
   display: inline-flex;
@@ -898,7 +898,7 @@ body {
   flex: 0 0 auto;
 }
 
-/* WP-90: the "MFU" text label preceding the panel toggle switch. */
+/* WP-96: the "MFU" text label preceding the panel toggle switch. */
 .wp-mfu-toggle-label {
   font-weight: 600;
 }

@@ -15,7 +15,7 @@ vi.mock("./ipc", () => mockCreateIpc());
 
 beforeEach(resetAppMocks);
 
-// WP-90: the view-only MFU switch in the Meeting transcript header. Default
+// WP-96: the view-only MFU switch in the Meeting transcript header. Default
 // ON; persists per screen under the `mfu_panel_meeting` setting key; never
 // gates Craft MFU/Diarize/Transcribe.
 describe("App — MFU panel toggle", () => {

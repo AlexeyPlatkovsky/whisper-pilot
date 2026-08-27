@@ -3,7 +3,7 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { ToggleSwitch } from "./ToggleSwitch";
 
-// Shared pill switch (WP-90) used by both the Meeting and Streaming
+// Shared pill switch (WP-96) used by both the Meeting and Streaming
 // transcript headers to show/hide the MFU panel. Tested in isolation here;
 // App.mfuToggle.test.tsx and StreamingView.mfuToggle.test.tsx cover its
 // wiring into each screen.

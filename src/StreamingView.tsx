@@ -99,7 +99,7 @@ export function StreamingView({
   const [craftFailed, setCraftFailed] = useState(false);
   const [prettifyingId, setPrettifyingId] = useState<number | null>(null);
   const [prettifyFailed, setPrettifyFailed] = useState(false);
-  // WP-90: view-only visibility of the MFU (summary) panel, persisted under
+  // WP-96: view-only visibility of the MFU (summary) panel, persisted under
   // its own settings key independently of Meeting's. Defaults ON; a settings
   // read/write failure keeps it ON without a blocking error (see the
   // getSettings effect and handleToggleMfuPanel below).
@@ -1329,7 +1329,7 @@ export function StreamingView({
             </div>
           </div>
 
-          {/* MFU (summary) panel — hidden by the header switch (WP-90); the
+          {/* MFU (summary) panel — hidden by the header switch (WP-96); the
               transcript panel above fills the freed width via its existing
               flex:1 in .wp-transcript-panel. */}
           {mfuPanelVisible && (

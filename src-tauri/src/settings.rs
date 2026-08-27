@@ -1,6 +1,6 @@
 //! Local key-value settings store: theme, ui_language, the active
 //! transcription model, export file type, the configurable status colors
-//! (WP-88), and per-screen MFU panel visibility (WP-90), persisted as JSON in
+//! (WP-88), and per-screen MFU panel visibility (WP-96), persisted as JSON in
 //! the app support directory and applied immediately and across restarts
 //! (F005-R2, F005-T1).
 
@@ -25,7 +25,7 @@ const KEY_EXPORT_FILE_TYPE: &str = "export_file_type";
 // object string (`{"ready":"#112233",…}`) so the front-end-owned status key
 // set can grow without a settings-store schema change.
 const KEY_STATUS_COLORS: &str = "status_colors";
-// WP-90: view-only visibility of each screen's MFU (summary) panel, one
+// WP-96: view-only visibility of each screen's MFU (summary) panel, one
 // independent boolean key per screen so restoring one on launch never
 // disturbs the other.
 const KEY_MFU_PANEL_MEETING: &str = "mfu_panel_meeting";
@@ -45,7 +45,7 @@ fn default_true() -> bool {
     true
 }
 
-/// Strict "true"/"false" only (WP-90 non-goal: no other truthy/falsy spelling).
+/// Strict "true"/"false" only (WP-96 non-goal: no other truthy/falsy spelling).
 fn parse_bool_setting(key: &str, value: &str) -> Result<bool> {
     match value {
         "true" => Ok(true),
@@ -77,11 +77,11 @@ pub struct Settings {
     /// then uses the built-in mapping).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_colors: Option<String>,
-    /// WP-90: whether the Meeting screen's MFU panel is shown. View-only —
+    /// WP-96: whether the Meeting screen's MFU panel is shown. View-only —
     /// never gates Craft MFU or any other action. Defaults ON.
     #[serde(default = "default_true")]
     pub mfu_panel_meeting: bool,
-    /// WP-90: same as `mfu_panel_meeting`, for the Streaming screen. Kept
+    /// WP-96: same as `mfu_panel_meeting`, for the Streaming screen. Kept
     /// independent so restoring one on launch never disturbs the other.
     #[serde(default = "default_true")]
     pub mfu_panel_streaming: bool,
@@ -496,7 +496,7 @@ mod tests {
         );
     }
 
-    // WP-90: MFU panel visibility, one independent boolean key per screen.
+    // WP-96: MFU panel visibility, one independent boolean key per screen.
 
     #[test]
     fn get_settings_defaults_mfu_panel_meeting_to_true() {

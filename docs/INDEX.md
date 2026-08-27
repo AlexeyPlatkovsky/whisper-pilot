@@ -43,7 +43,7 @@ milestones).
 | F002 | Speaker diarization | M2 (next) | R1–R7 | T1–T7 | S1–S6 | epic WP-1 (WP-5…WP-10, WP-31) |
 | F005 | Settings | M2 beta / M3 release | R1–R11 | T1–T11 | S1–S11 | epic WP-33 (WP-34…WP-42); release unscheduled |
 | F003 | Structured meeting MFU | M3 | R1–R6 | T1–T4 | S1–S4 | — (unscheduled) |
-| F006 | Streaming live translation & MFU toggle | unscheduled (Streaming's own milestone placement not yet decided, see `roadmap.md`) | R1–R6 | T1–T7 | S1–S14 | feature WP-91 (WP-92…WP-94, done); WP-90 related (done) |
+| F006 | Streaming live translation & MFU toggle | unscheduled (Streaming's own milestone placement not yet decided, see `roadmap.md`) | R1–R6 | T1–T7 | S1–S14 | feature WP-91 (WP-92…WP-94, done); WP-96 related (done) |
 <!-- sdd-index-sync:end features -->
 
 ## Decision Log
@@ -81,6 +81,6 @@ milestones).
   **M3 (Release)** = **F003 MFU** and the **F005 release scope**, both
   unscheduled in TaskPilot until M3 is picked up. **F006 Streaming live
   translation & MFU toggle** is shipped (feature WP-91 and its children
-  WP-92…WP-94, plus WP-90, all done) but — like the rest of Streaming — has
+  WP-92…WP-94, plus WP-96, all done) but — like the rest of Streaming — has
   no assigned roadmap milestone; see `docs/features/F006_streaming-live-translation/requirements.md`
   §Serves for the flagged `idea.md`/`roadmap.md` traceability gap.

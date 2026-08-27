@@ -147,7 +147,7 @@ Single line reflecting the meeting's current state:
   focusable, so the header never overflows with the MFU panel open at that
   width.
 - At the **right end** of that same actions cluster, a labelled **MFU**
-  switch (`role="switch"`, WP-90) shows or hides the MFU section. Defaults
+  switch (`role="switch"`, WP-96) shows or hides the MFU section. Defaults
   **on**; the choice persists independently per screen (Meeting, Streaming)
   and survives restart. Unlike every other control in this cluster it is
   **always enabled** — it never gates or is gated by Transcribe, Diarize, or
@@ -165,7 +165,7 @@ Single line reflecting the meeting's current state:
   **edit**, **copy**, **clear**.
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
-- **Hidden:** the header **MFU** switch (see Center — transcript, WP-90) can
+- **Hidden:** the header **MFU** switch (see Center — transcript, WP-96) can
   hide this section entirely regardless of empty/populated state, freeing its
   space for the transcript panel. Shown by default; the choice persists per
   screen. Running **Create MFU**/**Craft** while hidden reveals the section.

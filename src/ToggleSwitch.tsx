@@ -1,5 +1,5 @@
 /** A view-only pill switch, shared by the Meeting and Streaming transcript
- * headers (WP-90) so their MFU-panel toggle can't drift in markup, styling,
+ * headers (WP-96) so their MFU-panel toggle can't drift in markup, styling,
  * or accessibility behavior. A native `<button>` with `role="switch"` keeps
  * native keyboard activation (Space/Enter) for free — see
  * `.claude/conventions/react-tauri/accessibility.md`.
