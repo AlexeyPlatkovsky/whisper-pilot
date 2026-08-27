@@ -1,9 +1,9 @@
 # Documentation Index
 
-<!-- Live map of the authoritative docs tree and feature registry. This is a
+<!-- Live map of the authoritative docs tree and decision log. This is a
      lookup aid only: no routing, gates, or behavioral rules. Keep it in sync
-     after every docs or feature change with the sdd-index-sync skill. Include
-     only documents and features that actually exist. -->
+     after every docs or ADR change with the sdd-index-sync skill. Include
+     only documents and decisions that actually exist. -->
 
 <!-- TEMPLATE GUIDANCE — delete every comment block opening with this token as
      the final step of creating the index. Keep the opening description above,
@@ -12,12 +12,12 @@
      the sync cannot run in update mode without them, even around a table that
      has no data rows yet.
 
-     The three tables below sit inside those markers. The sync owns which rows
-     exist (keys: filename, feature ID, ADR ID) and re-derives the key cell plus
-     the feature ID-range cells; every other cell is curated and is carried
-     across a rebuild byte-identically. Anything outside the markers is never
-     touched. Full contract: .claude/skills/sdd-index-sync/SKILL.md
-     §Generated Markers And The Key-Preserving Row Merge.
+     The two tables below sit inside those markers. The sync owns which rows
+     exist (keys: filename, ADR ID) and re-derives the key cell; every other
+     cell is curated and is carried across a rebuild byte-identically.
+     Anything outside the markers is never touched. Full contract:
+     .claude/skills/sdd-index-sync/SKILL.md §Generated Markers And The
+     Key-Preserving Row Merge.
 
      Do not rename, duplicate, nest, or quote a marker literal anywhere else in
      this file. -->
@@ -45,16 +45,6 @@
 | `decisions/` | Architectural decisions | You need the rationale behind a choice |
 <!-- sdd-index-sync:end documents -->
 
-## Feature Registry
-
-<!-- sdd-index-sync:begin features -->
-| ID | Feature | Requirements | Tasks | Scenarios | Serves |
-| --- | --- | --- | --- | --- | --- |
-<!-- sdd-index-sync:end features -->
-
-<!-- TEMPLATE GUIDANCE — The sync adds one row per present feature, keyed by feature ID. TaskPilot
-     owns work status; do not add a status column here. -->
-
 ## Decision Log
 
 <!-- sdd-index-sync:begin decisions -->
@@ -63,3 +53,14 @@
 <!-- sdd-index-sync:end decisions -->
 
 <!-- TEMPLATE GUIDANCE — The sync adds one row per present ADR, keyed by ADR ID. -->
+
+## Traceability
+
+<!-- TEMPLATE GUIDANCE — Feature-level tracking lives in TaskPilot, not docs/.
+     Keep this note so the index doesn't attempt feature-to-milestone
+     traceability of its own. -->
+
+Feature-level tracking — requirements, tasks, scenarios, and their status —
+lives in TaskPilot (project key **WP**), not in `docs/`. This index maps
+documents and decisions only; it does not attempt feature-to-milestone
+traceability.

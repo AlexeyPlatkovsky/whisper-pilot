@@ -9,8 +9,8 @@ description: Authors or updates a single main or extension document in a docs/ S
   `design`, `testing`, `roadmap`), one ADR under `decisions/`, or one extension doc.
 - Keep the document within the concern it owns per the doc-set convention; link to other
   docs instead of duplicating their content.
-- Do not create or edit feature folders, rebuild `INDEX.md`, or invent facts — those are
-  separate concerns handled outside this skill.
+- Do not rebuild `INDEX.md` or invent facts — those are separate concerns handled
+  outside this skill.
 
 ## Required Environment
 

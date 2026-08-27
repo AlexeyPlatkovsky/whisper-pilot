@@ -71,9 +71,9 @@ review, and commit requirements. Scope expansion or new behavior returns to
 normal tracked work.
 
 AI-governance maintenance of `AGENTS.md` or `.claude/` is TaskPilot-exempt
-when it governs AI execution only; it never exempts `docs/`, feature
-specifications, or product/runtime artifacts. Exempt non-trivial work remains
-Full tier and uses its routed quality, Git, and closure gates.
+when it governs AI execution only; it never exempts `docs/` or
+product/runtime artifacts. Exempt non-trivial work remains Full tier and uses
+its routed quality, Git, and closure gates.
 
 ### Git Operation Authority
 
@@ -139,7 +139,6 @@ Unless an entry states otherwise, a skill resolves to
 | `react-tauri-expert` | Give read-only React/TypeScript/Tauri advice. |
 | `record-discovered-spec` | Persist an approved discovery specification to TaskPilot. |
 | `sdd-doc-author` | Create or update one SDD document. |
-| `sdd-feature-author` | Scaffold or update one SDD feature folder. |
 | `sdd-index-sync` | Rebuild `docs/INDEX.md` after an SDD change. |
 | `sync-pen-code` | Synchronize `pencil/*.pen` and UI code outside implementation. |
 | `task-complete` | Close non-trivial routed work. |
@@ -173,14 +172,16 @@ commit; the script updates both Tauri version files.
 
 ## Spec-Driven Development
 
-`.claude/conventions/sdd-doc-set.md` owns the Standard SDD document set,
-structure, identifiers, and traceability.
+`.claude/conventions/sdd-doc-set.md` owns the Standard SDD document set, its
+structure, and ADR identifiers. Feature, task, and scenario identifiers and
+their traceability belong to TaskPilot (see §Task Identity And Tracking);
+`docs/` neither assigns nor mirrors them.
 
 ## Authoritative Sources
 
 | Source | Purpose |
 |---|---|
-| `docs/INDEX.md` | Documentation and feature registry map. |
+| `docs/INDEX.md` | Documentation and decision-log map. |
 | `docs/idea.md` | Product scope and principles. |
 | `docs/architecture.md` | Technical architecture. |
 | `docs/design.md` | UX flows, screens, and states. |

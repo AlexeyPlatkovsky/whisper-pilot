@@ -52,16 +52,15 @@ status `skipped`, with artifact label, attempt, and digest `N/A`.
 | 0. Activate TaskPilot item | verified `ready → in_progress` or approved `blocked → in_progress` | operation-specific `taskpilot-work` artifact |
 | 1. Intake | confirm repo root, complete source inventory, Standard tier, scope | `SDD adoption intake record` |
 | 2. Gap analysis | `sdd-gap-analyzer` | `Pass` or `Needs user decision` |
-| 3. Confirm plan | resolve decision rows and version the plan | `Confirmed adoption plan` with plan version and stable row IDs, target, mode, source, dependencies |
+| 3. Confirm plan | resolve decision rows, confirm every row's target is a Standard-tier or recognized-extension document name from `sdd-doc-set.md`, and version the plan | `Confirmed adoption plan` with plan version and stable row IDs, target, mode, source, dependencies |
 | 4. Reconcile docs | one `sdd-doc-author` invocation per confirmed `create new` or `migrate content` doc row; retain `reuse as-is` and optional `not needed` rows as no-action evidence | one matching `Status: completed` artifact per authoring row plus the reviewed no-action rows |
-| 5. Features | one `sdd-feature-author` invocation per confirmed feature row | one matching `Status: completed` artifact per row |
-| 6. Index | `sdd-index-sync`; pass mode, Route run, and attempt `1` initially, then prior artifact plus incremented attempt after rework | artifact with matching mode and `Status: completed` |
-| 7. Review | `sdd-spec-reviewer` | `Pass` or dispositioned `Pass with minor findings` |
-| 8. Definition of Done | prepare evidence, then `task-quality` | `Quality gate: pass` |
-| 9. TaskPilot completion and local commit | `taskpilot-work`, then `work-with-git` | separate reloaded-`done` artifact and `Local commit evidence - output below` |
-| 10. Task Complete | `task-complete` | `Skill: task-complete - output below` |
+| 5. Index | `sdd-index-sync`; pass mode, Route run, and attempt `1` initially, then prior artifact plus incremented attempt after rework | artifact with matching mode and `Status: completed` |
+| 6. Review | `sdd-spec-reviewer` | `Pass` or dispositioned `Pass with minor findings` |
+| 7. Definition of Done | prepare evidence, then `task-quality` | `Quality gate: pass` |
+| 8. TaskPilot completion and local commit | `taskpilot-work`, then `work-with-git` | separate reloaded-`done` artifact and `Local commit evidence - output below` |
+| 9. Task Complete | `task-complete` | `Skill: task-complete - output below` |
 
-At stage 8, pass the manager objective DoD, reloaded `in_progress` item, Route
+At stage 7, pass the manager objective DoD, reloaded `in_progress` item, Route
 execution record, prepared criterion mapping, and latest accepted authoring,
 index, review, and validation artifacts to `task-quality`.
 
@@ -71,7 +70,7 @@ whose expected artifact and accepted status are missing. Stop when the
 gap-analysis verdict is `Blocked` or the Definition-of-Done
 gate is not `pass`.
 Pass the confirmed plan version, matching stable row ID, manager Route run, and
-author-attempt number to every doc-author and feature-author invocation.
+author-attempt number to every doc-author invocation.
 
 ## Authority Sources
 
@@ -82,16 +81,12 @@ author-attempt number to every doc-author and feature-author invocation.
 ## Stop Conditions
 
 - `Needs user decision` advances only to stage 3; `Blocked` stops.
-- A doc-authoring or feature step blocks — resolve before advancing.
-- A feature-author result is `recovery required` — stop all downstream stages,
-  preserve the reported tree, perform only its exact recovery action, increment
-  the author attempt with the prior artifact, and re-run stage 5 before index
-  sync.
+- A doc-authoring step blocks — resolve before advancing.
 - An index-sync result is `recovery required` — stop downstream stages,
   preserve the reported tree, perform only its exact recovery action, increment
-  the sync attempt with the prior artifact, and re-run stage 6.
+  the sync attempt with the prior artifact, and re-run stage 5.
 - `sdd-spec-reviewer` verdict is `Needs revision` — fix the cited findings, re-run the
-  affected stage and stage 6, then re-run stage 7.
+  affected stage and stage 5, then re-run stage 6.
 - Any other `Blocked`, `skipped`, malformed, or unrecognized outcome stops.
   After activation, persist the blocker and exact unblocking action through
   `taskpilot-work`.

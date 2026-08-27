@@ -1,7 +1,7 @@
 # Testing
 
-<!-- Owns: test strategy and how feature scenarios/checklists are executed. Per-feature
-     scenario content lives in features/F<NNN>/scenarios.md. Use only commands and
+<!-- Owns: test strategy and how feature scenarios/checklists are executed. Feature-level
+     scenario content lives in TaskPilot (project key WP). Use only commands and
      tooling verified in the repository; label planned levels as planned. Omit this file
      entirely on the Lean tier. -->
 
@@ -12,8 +12,10 @@
 
 ## Test Levels
 
-<!-- WhisperPilot's current test pyramid. Adjust the rows to match the current suite;
-     do not list scripts, CI jobs, or tools that the repository does not provide. -->
+<!-- Replace every row below with this project's actual test pyramid. Adjust the
+     rows to match the current suite; do not list scripts, CI jobs, or tools that
+     the repository does not provide. The rows shown are WhisperPilot's current
+     ones, kept here only as a worked example. -->
 
 | Level | Scope | Tooling |
 | --- | --- | --- |
@@ -25,9 +27,9 @@
 
 ## Running Feature Scenarios
 
-<!-- How the Given/When/Then scenarios in features/F<NNN>/scenarios.md are executed:
-     automated (which runner/level above) and/or manual (who runs the checklist and when,
-     e.g. as part of the smoke checklist in task-quality before an item closes). -->
+<!-- How each TaskPilot scenario is executed: automated (which runner/level above)
+     and/or manual (who runs the checklist and when, e.g. as part of the smoke
+     checklist in task-quality before an item closes). -->
 
 ## Coverage Expectations
 

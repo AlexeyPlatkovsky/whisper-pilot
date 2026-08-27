@@ -22,8 +22,14 @@ pipeline return to `.claude/skills/task-routing/SKILL.md`.
 Before asking any questions, require the manager artifact's exact Route run,
 the routed TaskPilot item type (`epic`/`feature`/`task`), and:
 
-1. Read the relevant feature requirements, scenarios, and task records under
-   `docs/features/`, when they exist.
+1. Read the existing description, scenarios, and DoD of this item and of its
+   parent in TaskPilot (project key **WP**) with `taskpilot item show <ID>`
+   (`.claude/skills/taskpilot-work/SKILL.md` owns the command reference).
+   When the parent has other children, list them and read the description and
+   scenarios of any whose title or stated surfaces touch the same screen,
+   command, table, or module as the routed item — a sibling's requirements are
+   the most likely source of an overlap or a contradiction, and no later gate
+   reads them for you. State which siblings were read, or "No sibling items."
 2. If the requested work touches or depends on existing UI, IPC, Rust core, or database behavior, read the relevant sections of `docs/architecture.md`.
 3. State which architecture docs were checked, or "Architecture docs skipped: <reason>."
 
