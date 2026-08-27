@@ -24,6 +24,8 @@ vi.mock("./ipc", () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
+  translateStreamingParagraph: vi.fn(),
+  listStreamingTranslations: vi.fn(async () => []),
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
@@ -35,6 +37,7 @@ vi.mock("./ipc", () => ({
     export_file_type: "plain_text",
   })),
   setSetting: vi.fn(),
+  listTaskModels: vi.fn(async () => []),
 }));
 
 const SESSION_A: StreamingSessionSummary = {

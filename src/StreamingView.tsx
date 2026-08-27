@@ -7,6 +7,8 @@ import {
   generateStreamingPrettify,
   getSettings,
   listStreamingSessions,
+  listStreamingTranslations,
+  listTaskModels,
   onStreamingSessionEnded,
   onStreamingSources,
   onStreamingWindow,
@@ -17,8 +19,10 @@ import {
   setSetting,
   startStreamingSession,
   stopStreamingSession,
+  translateStreamingParagraph,
   type StreamingMfu,
   type StreamingSessionSummary,
+  type StreamingTranslationTargetLanguage,
   type StreamingWindow,
 } from "./ipc";
 import { AppLogo, Icon } from "./Icon";
@@ -43,6 +47,30 @@ import {
   resolveStreamingRowStatus,
   resolveStreamingWidgetStatus,
 } from "./streamingStatus";
+
+// WP-93: Live Translation's target-language options — the select's display
+// names and the split grid's target-column header (uppercased).
+const TARGET_LANGUAGE_NAMES: Record<
+  StreamingTranslationTargetLanguage,
+  string
+> = {
+  en: "English",
+  ru: "Русский",
+};
+
+type TranslationStatus =
+  "pending" | "translating" | "done" | "mirrored" | "failed";
+
+/** One paragraph's Live Translation state, keyed by `paragraph_key` (the
+ * `window_index` of the paragraph's first window). `sourceText` is the
+ * paragraph text this entry was produced from — comparing it against the
+ * paragraph's *current* text is how a stale entry (the paragraph's windows
+ * changed since) is detected and replaced. */
+interface TranslationEntry {
+  status: TranslationStatus;
+  sourceText: string;
+  translatedText?: string;
+}
 
 export function StreamingView({
   onClose,
@@ -95,6 +123,31 @@ export function StreamingView({
     id: number;
     title: string;
   } | null>(null);
+  // WP-93: Live Translation — switch state, locked-while-on target language
+  // (default English, never persisted), and per-paragraph translation
+  // status keyed by paragraph_key. The queue itself lives in refs (not
+  // state) since it's an implementation detail that never renders directly.
+  const [translationEnabled, setTranslationEnabled] = useState(false);
+  const [targetLanguage, setTargetLanguage] =
+    useState<StreamingTranslationTargetLanguage>("en");
+  const [translations, setTranslations] = useState<
+    Map<number, TranslationEntry>
+  >(new Map());
+  const [llmModelReady, setLlmModelReady] = useState(false);
+  const translationQueueRef = useRef<{ key: number; sourceText: string }[]>([]);
+  const translationBusyRef = useRef(false);
+  // Bumped whenever translation is toggled (either direction) so an
+  // in-flight promise from a superseded run discards its result instead of
+  // writing into a queue/map that's since been cleared.
+  const translationTokenRef = useRef(0);
+  const persistedTranslationsRef = useRef<
+    Map<number, { text: string; sourceText: string }>
+  >(new Map());
+  // False while a fresh (session, targetLanguage) persisted-translations
+  // fetch is outstanding — gates the reconcile effect below so it never
+  // enqueues a live model call before finding out whether a persisted
+  // result already covers a paragraph.
+  const [persistedReady, setPersistedReady] = useState(false);
   // Read after an await to avoid acting on a stale closure once the user has
   // switched sessions — plain state would still hold the id captured when
   // the async handler started.
@@ -159,6 +212,31 @@ export function StreamingView({
     getSettings()
       .then((s) => setMfuPanelVisible(s.mfu_panel_streaming ?? true))
       .catch(() => setMfuPanelVisible(true));
+  }, []);
+
+  // WP-93: Live Translation's model-readiness gate, mirroring how App.tsx's
+  // Meeting screen resolves `llmModelReady` for Craft MFU (listTaskModels +
+  // getSettings().active_model_llm) — a failure of either call leaves the
+  // switch disabled rather than surfacing a blocking error.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const [models, settings] = await Promise.all([
+          listTaskModels(),
+          getSettings(),
+        ]);
+        if (cancelled) return;
+        const llmId = settings.active_model_llm;
+        const model = llmId ? models.find((m) => m.id === llmId) : undefined;
+        setLlmModelReady(model?.downloaded ?? false);
+      } catch {
+        if (!cancelled) setLlmModelReady(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   // View-only: never gates Craft MFU, Prettify, Start, or Stop. Persistence
@@ -241,6 +319,11 @@ export function StreamingView({
         setPrettifiedText(null);
         setPrettifyFailed(false);
         setPendingPrettify(null);
+        setTranslationEnabled(false);
+        setTranslations(new Map());
+        translationQueueRef.current = [];
+        translationTokenRef.current += 1;
+        persistedTranslationsRef.current = new Map();
         setIsRunning(true);
         await refreshSessions();
       } catch (e) {
@@ -276,6 +359,11 @@ export function StreamingView({
       setPrettifiedText(null);
       setPrettifyFailed(false);
       setPendingPrettify(null);
+      setTranslationEnabled(false);
+      setTranslations(new Map());
+      translationQueueRef.current = [];
+      translationTokenRef.current += 1;
+      persistedTranslationsRef.current = new Map();
       await refreshSessions();
     } catch (e) {
       setError(String(e));
@@ -313,6 +401,11 @@ export function StreamingView({
       setPrettifiedText(session.prettified_text ?? null);
       setPrettifyFailed(false);
       setPendingPrettify(null);
+      setTranslationEnabled(false);
+      setTranslations(new Map());
+      translationQueueRef.current = [];
+      translationTokenRef.current += 1;
+      persistedTranslationsRef.current = new Map();
     } catch (e) {
       setError(String(e));
     }
@@ -373,6 +466,11 @@ export function StreamingView({
         setPrettifiedText(null);
         setPrettifyFailed(false);
         setPendingPrettify(null);
+        setTranslationEnabled(false);
+        setTranslations(new Map());
+        translationQueueRef.current = [];
+        translationTokenRef.current += 1;
+        persistedTranslationsRef.current = new Map();
         return null;
       });
       await refreshSessions();
@@ -483,6 +581,238 @@ export function StreamingView({
       if (activeIdRef.current === id) setError(String(e));
     }
   }, [activeId, prettifiedText]);
+
+  // --- WP-93: Live Translation --------------------------------------------
+
+  // Runs the queue's next item, if any, honoring the single-flight
+  // constraint (`translationBusyRef`). Reads `targetLanguage`/`translations`
+  // from this render's closure — safe because the target language is locked
+  // (the select is disabled) for the whole time a run can be in flight, and
+  // every state write below re-derives from the freshest `prev` via the
+  // functional setState form.
+  function runTranslationQueue() {
+    if (translationBusyRef.current) return;
+    const item = translationQueueRef.current.shift();
+    if (!item) return;
+    const sessionId = activeIdRef.current;
+    if (sessionId === null) return;
+    const lang = targetLanguage;
+    const token = translationTokenRef.current;
+    translationBusyRef.current = true;
+    setTranslations((prev) => {
+      const next = new Map(prev);
+      next.set(item.key, {
+        status: "translating",
+        sourceText: item.sourceText,
+      });
+      return next;
+    });
+    void translateStreamingParagraph(sessionId, item.key, lang, item.sourceText)
+      .then((text) => {
+        if (translationTokenRef.current !== token) return;
+        setTranslations((prev) => {
+          const current = prev.get(item.key);
+          if (!current || current.sourceText !== item.sourceText) return prev;
+          const next = new Map(prev);
+          next.set(item.key, {
+            status: "done",
+            sourceText: item.sourceText,
+            translatedText: text,
+          });
+          return next;
+        });
+      })
+      .catch(() => {
+        if (translationTokenRef.current !== token) return;
+        setTranslations((prev) => {
+          const current = prev.get(item.key);
+          if (!current || current.sourceText !== item.sourceText) return prev;
+          const next = new Map(prev);
+          next.set(item.key, { status: "failed", sourceText: item.sourceText });
+          return next;
+        });
+      })
+      .finally(() => {
+        translationBusyRef.current = false;
+        runTranslationQueue();
+      });
+  }
+
+  // Upserts by key so a paragraph whose text changed again before its
+  // earlier queued attempt started replaces the stale payload rather than
+  // running twice.
+  function enqueueTranslation(key: number, sourceText: string) {
+    const queue = translationQueueRef.current;
+    const index = queue.findIndex((entry) => entry.key === key);
+    if (index >= 0) {
+      queue[index] = { key, sourceText };
+    } else {
+      queue.push({ key, sourceText });
+    }
+    runTranslationQueue();
+  }
+
+  // View-only; gates nothing else. Clearing translations/queue on both
+  // directions (not just OFF) means turning back ON always re-derives fresh
+  // from the current windows + a fresh persisted-translations fetch, so a
+  // translation from a previous target-language run can never be reused
+  // under a new target language.
+  //
+  // Turning ON also resets `persistedReady` synchronously here, mirroring
+  // the persisted-fetch effect below. Without this, a second activation in
+  // the same session would have the reconcile effect run in the *same*
+  // commit as this toggle, observing the previous activation's leftover
+  // `persistedReady === true` (that effect only flips it back to false
+  // asynchronously, one render later) while `persistedTranslationsRef` has
+  // already been cleared above — so every closed paragraph would look
+  // "not yet persisted" and get queued for a live call it doesn't need.
+  const handleToggleTranslation = useCallback((next: boolean) => {
+    setTranslationEnabled(next);
+    setTranslations(new Map());
+    translationQueueRef.current = [];
+    translationTokenRef.current += 1;
+    persistedTranslationsRef.current = new Map();
+    if (next) setPersistedReady(false);
+  }, []);
+
+  const handleRetryTranslation = useCallback(
+    (key: number) => {
+      const paragraph = groupWindowsIntoParagraphs(windows).find(
+        (p) => p[0].window_index === key,
+      );
+      if (!paragraph) return;
+      const sourceText = plainTranscript(paragraph);
+      setTranslations((prev) => {
+        const next = new Map(prev);
+        next.set(key, { status: "pending", sourceText });
+        return next;
+      });
+      enqueueTranslation(key, sourceText);
+    },
+    [windows],
+  );
+
+  // Loads this session+target-language's persisted translations once per
+  // "Live Translation On" so the reconcile effect below can reuse them
+  // instead of re-running the model (WP-92's single-flight command makes
+  // replaying a whole session's paragraphs on every toggle expensive).
+  useEffect(() => {
+    if (!translationEnabled || activeId === null) return;
+    let cancelled = false;
+    setPersistedReady(false);
+    const sessionId = activeId;
+    const lang = targetLanguage;
+    void (async () => {
+      const map = new Map<number, { text: string; sourceText: string }>();
+      try {
+        const rows = await listStreamingTranslations(sessionId, lang);
+        for (const row of rows) {
+          map.set(row.paragraph_key, {
+            text: row.translated_text,
+            sourceText: row.source_text,
+          });
+        }
+      } catch {
+        // Best-effort: proceed with nothing persisted — paragraphs are
+        // translated live instead.
+      }
+      if (cancelled) return;
+      persistedTranslationsRef.current = map;
+      setPersistedReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [translationEnabled, activeId, targetLanguage]);
+
+  // Reconciles every *closed* paragraph (a later paragraph exists, or
+  // capture has stopped — the still-open trailing paragraph while running
+  // is left alone) against its translation entry: same-language paragraphs
+  // are mirrored, a matching persisted row is reused, and anything else
+  // missing or stale (source text changed) is (re-)enqueued. A failed entry
+  // whose source text still matches is left alone — retry is manual only.
+  useEffect(() => {
+    if (!translationEnabled || activeId === null || !persistedReady) return;
+    const paragraphs = groupWindowsIntoParagraphs(windows);
+    const closed = isRunning ? paragraphs.slice(0, -1) : paragraphs;
+    const next = new Map(translations);
+    let changed = false;
+    // Collected instead of enqueued inline: enqueueTranslation kicks the
+    // queue synchronously, which would apply its "translating" write before
+    // the batched `next` map below (still holding "pending" for that key)
+    // gets applied — clobbering it back to "pending". Enqueuing only after
+    // `next` is committed keeps the two writes in the right order.
+    const toEnqueue: { key: number; sourceText: string }[] = [];
+    for (const paragraph of closed) {
+      const key = paragraph[0].window_index;
+      const sourceText = plainTranscript(paragraph);
+      const existing = next.get(key);
+      const isTargetAlready = paragraph.every(
+        (w) => w.language.toLowerCase() === targetLanguage,
+      );
+      if (isTargetAlready) {
+        if (
+          !existing ||
+          existing.sourceText !== sourceText ||
+          existing.status !== "mirrored"
+        ) {
+          next.set(key, {
+            status: "mirrored",
+            sourceText,
+            translatedText: sourceText,
+          });
+          changed = true;
+        }
+        continue;
+      }
+      const persisted = persistedTranslationsRef.current.get(key);
+      if (persisted && persisted.sourceText === sourceText) {
+        if (
+          !existing ||
+          existing.sourceText !== sourceText ||
+          existing.status !== "done" ||
+          existing.translatedText !== persisted.text
+        ) {
+          next.set(key, {
+            status: "done",
+            sourceText,
+            translatedText: persisted.text,
+          });
+          changed = true;
+        }
+        continue;
+      }
+      if (!existing || existing.sourceText !== sourceText) {
+        next.set(key, { status: "pending", sourceText });
+        changed = true;
+        toEnqueue.push({ key, sourceText });
+      }
+    }
+    if (changed) setTranslations(next);
+    for (const item of toEnqueue) enqueueTranslation(item.key, item.sourceText);
+    // `translations` intentionally omitted: read directly from this
+    // render's closure to decide reuse without re-running this effect on
+    // every status transition the queue itself writes (translating/done/
+    // failed) — those don't change which paragraphs are closed or stale.
+  }, [
+    windows,
+    translationEnabled,
+    activeId,
+    targetLanguage,
+    isRunning,
+    persistedReady,
+  ]);
+
+  const translationDisabledReason = !llmModelReady
+    ? "Live Translation needs a downloaded language model."
+    : prettifiedText !== null
+      ? "Turn off Prettify to use Live Translation."
+      : pendingPrettify !== null
+        ? "Finish or cancel the Prettify review to use Live Translation."
+        : null;
+  const prettifyDisabledByTranslation = translationEnabled;
+
+  // --- end WP-93 -----------------------------------------------------------
 
   const hasText = windows.some((w) => windowText(w).length > 0);
   // Craft/Prettify need real decoded content, unlike Copy/Export's hasText —
@@ -724,15 +1054,44 @@ export function StreamingView({
         )}
 
         <section className="wp-workspace">
-          <div className="wp-transcript-panel">
+          <div className="wp-transcript-panel wp-transcript-panel--streaming">
             <div className="wp-transcript-header">
               <div className="wp-transcript-title-group">
                 <h2 className="wp-transcript-title">Live Transcript</h2>
                 <span className="wp-transcript-meta">{windowCountLabel}</span>
               </div>
+              <div className="wp-translation-control">
+                <span className="wp-translation-label">Live Translation</span>
+                <ToggleSwitch
+                  checked={translationEnabled}
+                  onChange={handleToggleTranslation}
+                  label="Live Translation"
+                  disabled={translationDisabledReason !== null}
+                  disabledReason={translationDisabledReason ?? undefined}
+                />
+                <select
+                  className="wp-translation-lang-select"
+                  aria-label="Live Translation target language"
+                  value={targetLanguage}
+                  disabled={translationEnabled}
+                  title={
+                    translationEnabled
+                      ? "Turn off Live Translation to change the target language."
+                      : "Target language"
+                  }
+                  onChange={(event) =>
+                    setTargetLanguage(
+                      event.target.value as StreamingTranslationTargetLanguage,
+                    )
+                  }
+                >
+                  <option value="en">English</option>
+                  <option value="ru">Русский</option>
+                </select>
+              </div>
               <div className="wp-transcript-actions">
                 <Icon name="pencil" size={14} />
-                <span>Editable</span>
+                <span className="wp-transcript-editable-label">Editable</span>
                 <span className="wp-sep" />
                 {pendingPrettify && (
                   <>
@@ -775,9 +1134,17 @@ export function StreamingView({
                   type="button"
                   className="wp-icon-btn wp-icon-btn--accent"
                   aria-label="Prettify transcript"
-                  title="Prettify transcript"
+                  title={
+                    prettifyDisabledByTranslation
+                      ? "Turn off Live Translation to use Prettify."
+                      : "Prettify transcript"
+                  }
                   onClick={() => void handlePrettify()}
-                  disabled={canPrettify || pendingPrettify !== null}
+                  disabled={
+                    canPrettify ||
+                    pendingPrettify !== null ||
+                    prettifyDisabledByTranslation
+                  }
                 >
                   <Icon name="wand-sparkles" size={15} />
                 </button>
@@ -835,6 +1202,87 @@ export function StreamingView({
               ) : prettifiedText !== null ? (
                 <div className="streaming-transcript-text">
                   {prettifiedText}
+                </div>
+              ) : translationEnabled ? (
+                <div className="wp-translation-grid">
+                  <div className="wp-translation-columns wp-translation-columns--header">
+                    <div className="wp-translation-col">
+                      <span className="wp-translation-col-label">
+                        ORIGINAL · AUTO-DETECTED
+                      </span>
+                    </div>
+                    <div className="wp-translation-col-divider" />
+                    <div className="wp-translation-col">
+                      <span className="wp-translation-col-label">
+                        {TARGET_LANGUAGE_NAMES[targetLanguage].toUpperCase()}
+                      </span>
+                    </div>
+                  </div>
+                  {groupWindowsIntoParagraphs(windows).map((paragraph) => {
+                    const key = paragraph[0].window_index;
+                    const entry = translations.get(key);
+                    const status = entry?.status ?? "pending";
+                    const sourceText = plainTranscript(paragraph);
+                    const lastWindow = paragraph[paragraph.length - 1];
+                    return (
+                      <div
+                        key={key}
+                        className="wp-translation-columns wp-translation-row"
+                      >
+                        <div className="wp-translation-col">
+                          <div className="wp-translation-meta">
+                            <span className="wp-translation-timestamp">
+                              {formatClockTime(paragraph[0].start_ms)}–
+                              {formatClockTime(lastWindow.end_ms)}
+                            </span>
+                            <span className="wp-translation-lang-tag">
+                              {paragraph[0].language.toUpperCase()}
+                            </span>
+                          </div>
+                          <p className="wp-translation-text">{sourceText}</p>
+                        </div>
+                        <div className="wp-translation-col-divider" />
+                        <div className="wp-translation-col">
+                          <div className="wp-translation-meta">
+                            <span className="wp-translation-lang-tag">
+                              {targetLanguage.toUpperCase()}
+                            </span>
+                          </div>
+                          {status === "translating" ? (
+                            <span className="wp-translation-translating">
+                              <Icon
+                                name="loader"
+                                size={13}
+                                className="wp-spin"
+                              />
+                              <span>Translating…</span>
+                            </span>
+                          ) : status === "mirrored" ? (
+                            <p className="wp-translation-text wp-translation-text--mirrored">
+                              {entry?.translatedText ?? sourceText}
+                            </p>
+                          ) : status === "done" ? (
+                            <p className="wp-translation-text">
+                              {entry?.translatedText ?? ""}
+                            </p>
+                          ) : status === "failed" ? (
+                            <button
+                              type="button"
+                              className="wp-translation-retry"
+                              onClick={() => handleRetryTranslation(key)}
+                            >
+                              <Icon name="rotate-ccw" size={13} />
+                              Translation failed · Retry
+                            </button>
+                          ) : (
+                            <span className="wp-translation-pending">
+                              Pending…
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <div className="streaming-transcript-text">

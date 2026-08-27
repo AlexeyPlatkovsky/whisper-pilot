@@ -373,3 +373,28 @@ export function translateStreamingParagraph(
     text,
   });
 }
+
+/** One persisted paragraph translation, as returned by
+ * `listStreamingTranslations`. `source_text` is the paragraph text the
+ * translation was made from — compare it against the paragraph's *current*
+ * text to detect a stale row (the paragraph's windows changed since). */
+export interface StreamingTranslationRow {
+  paragraph_key: number;
+  source_text: string;
+  translated_text: string;
+}
+
+/**
+ * All persisted translations for `sessionId` and `targetLanguage` (WP-93) —
+ * the read counterpart to `translateStreamingParagraph`, letting the caller
+ * reuse an already-translated paragraph instead of re-running the model.
+ */
+export function listStreamingTranslations(
+  sessionId: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+): Promise<StreamingTranslationRow[]> {
+  return invoke<StreamingTranslationRow[]>("list_streaming_translations", {
+    sessionId,
+    targetLanguage,
+  });
+}

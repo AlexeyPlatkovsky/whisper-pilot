@@ -839,6 +839,17 @@ body {
   background: var(--panel);
 }
 
+/* WP-93: Streaming-only — the header's three groups (title, Live
+   Translation control, actions) need to shed non-essential text once the
+   *panel* (not the viewport) gets narrow, so a container query (not a
+   viewport media query) targets it. Scoped to this modifier rather than
+   the shared .wp-transcript-panel so Meeting's transcript panel is
+   unaffected — container-type also establishes a containing block for
+   absolutely/fixed-positioned descendants. See WP-93. */
+.wp-transcript-panel--streaming {
+  container-type: inline-size;
+}
+
 .wp-transcript-header {
   display: flex;
   align-items: center;
@@ -852,6 +863,9 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* Lets the group yield space (and ellipsize its title) instead of
+     forcing the header to overflow when the panel is narrow. */
+  min-width: 0;
 }
 
 .wp-transcript-title {
@@ -859,6 +873,10 @@ body {
   font-size: var(--wp-font-size-md);
   font-weight: 600;
   color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
 }
 
 .wp-transcript-meta {
@@ -893,6 +911,178 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+
+/* WP-93: Live Translation's header middle slot — title group stays left,
+   this sits centered between it and the action cluster, action cluster
+   stays right (all three as siblings of .wp-transcript-header). */
+.wp-translation-control {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  flex: 0 0 auto;
+}
+
+.wp-translation-label {
+  font-size: var(--wp-font-size-sm);
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.wp-translation-lang-select {
+  font-family: inherit;
+  font-size: var(--wp-font-size-sm);
+  color: var(--text);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  padding: 3px 6px;
+}
+
+.wp-translation-lang-select:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* WP-93: Streaming-only progressive disclosure, keyed off the panel's own
+   width via the container query on .wp-transcript-panel--streaming above.
+   Below the threshold there isn't room for every text label alongside
+   every control, so this drops only non-essential *text*: the transcript
+   meta count, the "Editable" text (its pencil icon stays), and the
+   visible "Live Translation" text (the switch keeps its own accessible
+   name via ToggleSwitch's aria-label, so hiding the sibling text does not
+   change what a screen reader announces). Every control itself (switch,
+   select, Prettify button, MFU switch) stays visible and focusable at
+   every width; only these three text nodes are hidden. See WP-93. */
+@container (max-width: 520px) {
+  .wp-transcript-panel--streaming .wp-transcript-meta,
+  .wp-transcript-panel--streaming .wp-transcript-editable-label,
+  .wp-transcript-panel--streaming .wp-translation-label {
+    display: none;
+  }
+}
+
+/* The split paired-row grid — renders inside the same
+   .wp-transcript-content scroll container as the single-column view it
+   replaces, never a nested scroller of its own. */
+.wp-translation-grid {
+  display: flex;
+  flex-direction: column;
+}
+
+.wp-translation-columns {
+  display: flex;
+  align-items: stretch;
+}
+
+.wp-translation-columns--header {
+  flex: 0 0 auto;
+  background: var(--bg);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: var(--wp-space-xs);
+}
+
+.wp-translation-row {
+  border-bottom: 1px solid var(--border);
+}
+
+.wp-translation-row:last-child {
+  border-bottom: none;
+}
+
+/* The floor is set by the narrowest layout the app allows: the app's
+   minimum window width minus the sidebar and MFU aside, so two columns
+   plus the 1px divider must still fit. A larger minimum clips the
+   translated column instead of shrinking it. See WP-93. */
+.wp-translation-col {
+  flex: 1 1 0;
+  min-width: 180px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: var(--wp-space-sm) var(--wp-space-md);
+}
+
+.wp-translation-columns--header .wp-translation-col {
+  padding: 8px var(--wp-space-md);
+  gap: 0;
+}
+
+.wp-translation-col-divider {
+  flex: 0 0 auto;
+  width: 1px;
+  background: var(--border);
+}
+
+.wp-translation-col-label {
+  font-size: var(--wp-font-size-xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.wp-translation-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  font-size: var(--wp-font-size-xs);
+  color: var(--muted);
+}
+
+.wp-translation-lang-tag {
+  font-weight: 600;
+}
+
+.wp-translation-text {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-md);
+  line-height: 1.6;
+}
+
+/* Same-language mirror (WP-93): the original text echoed back, in the
+   muted tone rather than the normal reading tone, so it reads as "already
+   in the target language" without relying on color alone (the meta row
+   above still carries the RU/EN language tags as text). */
+.wp-translation-text--mirrored {
+  color: var(--muted);
+}
+
+.wp-translation-pending {
+  color: var(--muted);
+  font-size: var(--wp-font-size-body);
+}
+
+.wp-translation-translating {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: var(--wp-font-size-body);
+  font-style: italic;
+}
+
+.wp-translation-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--error);
+  font-family: inherit;
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wp-translation-retry:hover {
+  text-decoration: underline;
+}
+
+.wp-translation-retry:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .wp-notice {

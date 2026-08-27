@@ -120,6 +120,32 @@ Single line reflecting the meeting's current state:
   other run-blocking control while Transcribe, Craft MFU, or Diarize itself
   is in flight. Mirrors Streaming's Prettify button position in its own
   transcript header.
+- **Streaming only:** the transcript header carries a third, middle slot
+  between the title group and the actions cluster — a **Live Translation**
+  control: a label, a switch (`role="switch"`, WP-93), and a target-language
+  dropdown (English / Русский, defaulting to English on every launch — the
+  choice is not persisted). The dropdown locks while the switch is on; to
+  change the target, switch off, pick, then switch back on. The switch is
+  disabled with a stated reason when no LLM model is ready, when a
+  prettified transcript is showing, or while a Prettify review is pending —
+  and the reverse also holds: **Prettify** is disabled with a stated reason
+  while Live Translation is on, so the two are mutually exclusive either
+  direction. Meeting's header has no translation control.
+- **Live Translation on** replaces Streaming's transcript flow with a
+  two-column paired-row view inside the same scroll region: a header row
+  names the source side ("Original · auto-detected") and the target
+  language, then one row per paragraph — left cell the original text, right
+  cell its translation — each carrying its own timestamp/language tag so a
+  pair never drifts out of alignment. The right cell shows one of five
+  states: the translation, "Pending…", a spinner with "Translating…", the
+  original mirrored in a muted style (a paragraph already entirely in the
+  target language — no model call happens), or "Translation failed · Retry"
+  with a per-row retry control. Switching the toggle off restores the
+  single-column view unchanged. Below the app's minimum supported window
+  width, the header sheds non-essential label text (the window-count meta,
+  "Editable", "Live Translation") while every control stays visible and
+  focusable, so the header never overflows with the MFU panel open at that
+  width.
 - At the **right end** of that same actions cluster, a labelled **MFU**
   switch (`role="switch"`, WP-90) shows or hides the MFU section. Defaults
   **on**; the choice persists independently per screen (Meeting, Streaming)

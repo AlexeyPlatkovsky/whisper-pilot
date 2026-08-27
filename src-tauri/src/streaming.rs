@@ -35,6 +35,20 @@ pub struct StreamingMfuDto {
     pub participants: String,
 }
 
+/// One persisted paragraph translation (WP-93) — the read counterpart to
+/// `translate_streaming_paragraph`'s single string return, letting the
+/// frontend reuse an already-translated paragraph instead of re-running the
+/// model. `source_text` rides along so a caller holding the *current*
+/// paragraph text (from `src/paragraphs.ts` grouping) can detect a stale row
+/// — the paragraph's windows changed since it was translated — without this
+/// needing any paragraph concept of its own.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StreamingTranslationDto {
+    pub paragraph_key: i64,
+    pub source_text: String,
+    pub translated_text: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct StreamingSessionDto {
     pub id: StreamingSessionId,
@@ -253,6 +267,38 @@ pub fn translate_and_store(
     })?;
 
     Ok(translated)
+}
+
+/// All persisted translations for one session and target language (WP-93) —
+/// the read counterpart to `translate_streaming_paragraph`. Replaying a
+/// whole session's paragraphs through the single-flight model on every "Live
+/// Translation On" would be slow and wasteful for a session with translation
+/// history, so the frontend loads this first and only calls the model for
+/// paragraphs missing here or whose `source_text` no longer matches.
+pub fn list_streaming_translations(
+    app_support_dir: &Path,
+    session_id: StreamingSessionId,
+    target_language: &str,
+) -> Result<Vec<StreamingTranslationDto>> {
+    if !crate::llm::is_supported_target_language(target_language) {
+        return Err(AppError::Llm(format!(
+            "unsupported translation target language: {target_language}"
+        )));
+    }
+    let store = StreamingStore::open(app_support_dir)?;
+    store
+        .get_session(session_id)?
+        .ok_or_else(|| AppError::Store(format!("streaming session {session_id} was not found")))?;
+    let translations = store
+        .list_translations(session_id, target_language)?
+        .into_iter()
+        .map(|t| StreamingTranslationDto {
+            paragraph_key: t.paragraph_key,
+            source_text: t.source_text,
+            translated_text: t.translated_text,
+        })
+        .collect();
+    Ok(translations)
 }
 
 #[cfg(test)]
@@ -744,5 +790,125 @@ mod tests {
             .expect("list translations");
         assert_eq!(rows.len(), 1, "retranslation must overwrite, not duplicate");
         assert_eq!(rows[0].translated_text, "Hi, world.");
+    }
+
+    // --- WP-93: list_streaming_translations, the read counterpart to
+    // translate_streaming_paragraph the frontend uses to reuse already-
+    // persisted translations instead of re-running the model. ---
+
+    #[test]
+    fn list_streaming_translations_returns_empty_when_none_are_stored() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
+
+        assert!(rows.is_empty());
+    }
+
+    #[test]
+    fn list_streaming_translations_returns_persisted_rows_with_source_text() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        translate_and_store(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            1_000,
+            |_, _| Ok("Hello, world.".to_string()),
+        )
+        .expect("translate and store");
+
+        let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
+
+        assert_eq!(
+            rows,
+            vec![StreamingTranslationDto {
+                paragraph_key: 0,
+                source_text: "Привет, мир.".to_string(),
+                translated_text: "Hello, world.".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn list_streaming_translations_orders_by_paragraph_key() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        translate_and_store(temp.path(), id, 5, "en", "Second.", 1_000, |_, _| {
+            Ok("Second (en).".to_string())
+        })
+        .expect("translate and store paragraph 5");
+        translate_and_store(temp.path(), id, 0, "en", "First.", 1_000, |_, _| {
+            Ok("First (en).".to_string())
+        })
+        .expect("translate and store paragraph 0");
+
+        let rows = list_streaming_translations(temp.path(), id, "en").expect("list translations");
+
+        assert_eq!(
+            rows.iter().map(|r| r.paragraph_key).collect::<Vec<_>>(),
+            vec![0, 5]
+        );
+    }
+
+    #[test]
+    fn list_streaming_translations_scopes_by_target_language() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        translate_and_store(temp.path(), id, 0, "en", "Привет.", 1_000, |_, _| {
+            Ok("Hi.".to_string())
+        })
+        .expect("translate en");
+        translate_and_store(temp.path(), id, 0, "ru", "Hi.", 1_000, |_, _| {
+            Ok("Привет.".to_string())
+        })
+        .expect("translate ru");
+
+        let en_rows =
+            list_streaming_translations(temp.path(), id, "en").expect("list en translations");
+        let ru_rows =
+            list_streaming_translations(temp.path(), id, "ru").expect("list ru translations");
+
+        assert_eq!(en_rows.len(), 1);
+        assert_eq!(en_rows[0].translated_text, "Hi.");
+        assert_eq!(ru_rows.len(), 1);
+        assert_eq!(ru_rows[0].translated_text, "Привет.");
+    }
+
+    #[test]
+    fn list_streaming_translations_rejects_an_unsupported_target_language() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+
+        let result = list_streaming_translations(temp.path(), id, "fr");
+
+        assert!(matches!(result, Err(AppError::Llm(_))));
+    }
+
+    #[test]
+    fn list_streaming_translations_rejects_an_unknown_session() {
+        let temp = tempfile::tempdir().expect("temp dir");
+
+        let result = list_streaming_translations(temp.path(), 999_999, "en");
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn streaming_translation_dto_round_trips() {
+        let original = StreamingTranslationDto {
+            paragraph_key: 3,
+            source_text: "Исходный текст.".to_string(),
+            translated_text: "Source text.".to_string(),
+        };
+
+        let json = serde_json::to_value(&original).expect("serialize translation DTO");
+        let round_tripped: StreamingTranslationDto =
+            serde_json::from_value(json).expect("deserialize translation DTO");
+
+        assert_eq!(round_tripped, original);
     }
 }

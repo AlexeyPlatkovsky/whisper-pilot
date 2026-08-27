@@ -52,6 +52,7 @@ pub fn run() {
             commands::streaming::open_streaming_session,
             commands::streaming::rename_streaming_session,
             commands::streaming::delete_streaming_session,
+            commands::streaming::list_streaming_translations,
             commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,

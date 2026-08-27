@@ -68,7 +68,7 @@ describe("ToggleSwitch", () => {
     expect(onChange).toHaveBeenCalledWith(true);
   });
 
-  it("is never disabled — the switch is always operable regardless of caller state", () => {
+  it("is enabled by default when no disabled prop is passed", () => {
     render(
       <ToggleSwitch checked={true} onChange={vi.fn()} label="MFU panel" />,
     );
@@ -76,5 +76,53 @@ describe("ToggleSwitch", () => {
     expect(
       screen.getByRole("switch", { name: "MFU panel" }),
     ).not.toBeDisabled();
+  });
+
+  // WP-93: opt-in disabled state (used by Live Translation, gated on model
+  // readiness/Prettify state) — omitting the prop preserves the MFU
+  // toggle's always-enabled behavior above.
+  it("is disabled and exposes the reason as its title when disabled with a reason", () => {
+    render(
+      <ToggleSwitch
+        checked={false}
+        onChange={vi.fn()}
+        label="Live Translation"
+        disabled
+        disabledReason="No language model is ready."
+      />,
+    );
+
+    const el = screen.getByRole("switch", { name: "Live Translation" });
+    expect(el).toBeDisabled();
+    expect(el).toHaveAttribute("title", "No language model is ready.");
+  });
+
+  it("does not call onChange when clicked while disabled", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(
+      <ToggleSwitch
+        checked={false}
+        onChange={onChange}
+        label="Live Translation"
+        disabled
+        disabledReason="No language model is ready."
+      />,
+    );
+
+    await user.click(screen.getByRole("switch", { name: "Live Translation" }));
+
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("uses the label as the title when enabled", () => {
+    render(
+      <ToggleSwitch checked={false} onChange={vi.fn()} label="MFU panel" />,
+    );
+
+    expect(screen.getByRole("switch", { name: "MFU panel" })).toHaveAttribute(
+      "title",
+      "MFU panel",
+    );
   });
 });

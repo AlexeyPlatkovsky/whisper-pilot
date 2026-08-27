@@ -52,6 +52,19 @@ pub(crate) fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result
     streaming::delete_streaming_session(&app_data_dir(&app)?, id)
 }
 
+/// All persisted paragraph translations for one session and target language
+/// (WP-93) — read counterpart to `translate_streaming_paragraph`, so the
+/// frontend can reuse an already-translated paragraph instead of re-running
+/// the model.
+#[tauri::command]
+pub(crate) fn list_streaming_translations(
+    app: tauri::AppHandle,
+    session_id: streaming_store::StreamingSessionId,
+    target_language: String,
+) -> Result<Vec<streaming::StreamingTranslationDto>> {
+    streaming::list_streaming_translations(&app_data_dir(&app)?, session_id, &target_language)
+}
+
 /// Create a stopped Streaming session record. Capture begins only when the
 /// user subsequently invokes `start_streaming_session` for this session.
 #[tauri::command]

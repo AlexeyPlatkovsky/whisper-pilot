@@ -31,6 +31,8 @@ vi.mock("./ipc", () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: revertPrettifyMock,
+  translateStreamingParagraph: vi.fn(),
+  listStreamingTranslations: vi.fn(async () => []),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -61,6 +63,10 @@ vi.mock("./ipc", () => ({
     export_file_type: "plain_text",
   })),
   setSetting: vi.fn(),
+  // WP-93: Live Translation's model-readiness check; no model configured by
+  // default so most existing tests exercise the switch's disabled state
+  // unless a test explicitly opts in.
+  listTaskModels: vi.fn(async () => []),
 }));
 
 const SESSION_A: StreamingSessionSummary = {

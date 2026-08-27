@@ -620,7 +620,7 @@ would stop two concurrent requests from both reaching the shared model. (See
 Paragraph Translation below for the first real backend guard against this
 class of contention, though it currently covers only translation.)
 
-## Paragraph Translation (WP-92, `llm.rs`) — core and persistence only, no UI yet
+## Paragraph Translation (WP-92 core/persistence, WP-93 UI; `llm.rs`, `src/StreamingView.tsx`)
 
 A third local-LLM use of the same shared model, alongside Craft MFU and
 Prettify: `llm::translate_paragraph` translates one Streaming paragraph into
@@ -655,10 +655,37 @@ translate_and_store` — which calls the model and upserts the result into
 `streaming_translations` (see Streaming Persistence above) — on a
 `spawn_blocking` task, and returns the translated text. `src/ipc.ts` exposes
 this as a typed `translateStreamingParagraph` wrapper with a
-`StreamingTranslationTargetLanguage` type. Scope boundary: this ships the
-Rust core, persistence, and IPC surface only — no header toggle, no
-target-language picker, and no split original/translated transcript view.
-That UI is WP-93.
+`StreamingTranslationTargetLanguage` type.
+
+Its read counterpart, `list_streaming_translations(session_id,
+target_language)` (`commands/streaming.rs` → `streaming::
+list_streaming_translations`), validates the target language and that the
+session exists, then returns every persisted `{paragraph_key, source_text,
+translated_text}` row for that session and target language via
+`StreamingStore::list_translations`. `src/ipc.ts` exposes it as
+`listStreamingTranslations`, typed `StreamingTranslationRow[]`. This closed
+the gap the previous revision of this section left open: WP-92 persisted
+translations but shipped no way to read them back.
+
+**WP-93 (front-end, `src/StreamingView.tsx`):** the transcript header gains
+a Live Translation control between the title group and the action cluster —
+switch + target-language select (English/Русский) — and, while it is on,
+the transcript content renders as a two-column paired-row grid instead of
+`groupWindowsIntoParagraphs`'s usual single-column flow. See `docs/design.md`
+("Center — transcript") for the full layout, row states, and header-control
+rules. Behaviorally: a paragraph is enqueued for translation when it closes
+(a later paragraph exists, or capture stopped); turning the switch on
+backfills the whole session oldest-first; exactly one
+`translateStreamingParagraph` call is in flight at a time, and the queue
+never delays rendering of incoming windows. Before queuing anything, an
+effect calls `listStreamingTranslations` so a row already persisted for this
+session and target language is reused without a model call; a persisted row
+whose `source_text` no longer matches the paragraph's current text is stale
+and gets re-queued instead. A paragraph whose windows are all already in the
+target language is never sent to the model — its right cell mirrors the
+original text in a muted style. Switching the toggle off mid-queue, or
+switching or deleting the session, cancels pending work and discards any
+in-flight result a subsequent change has superseded.
 
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
@@ -755,7 +782,8 @@ span.
 | `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
 | `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |
 | `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
-| `translate_streaming_paragraph(session_id, paragraph_key, target_language, text)` | Translate one Streaming paragraph into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, paragraph_key, target_language)`; no UI wiring yet (WP-93) | WP-92     |
+| `translate_streaming_paragraph(session_id, paragraph_key, target_language, text)` | Translate one Streaming paragraph into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, paragraph_key, target_language)`; called by the Live Translation queue (WP-93) | WP-92     |
+| `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
 
 Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
 between the Meeting run's two passes; completion and errors return through the
