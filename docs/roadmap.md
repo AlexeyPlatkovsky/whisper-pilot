@@ -1,8 +1,7 @@
 # Roadmap
 
 Owns phases, milestones, sequencing, and non-goals over time. Per-feature task
-breakdown lives in `features/F<NNN>/tasks.md`; work-item status lives in
-TaskPilot (`WP-<n>`).
+breakdown and work-item status both live in TaskPilot (`WP-<n>`).
 
 ## Release Stance
 
@@ -16,7 +15,7 @@ being rewritten. No public distribution or notarization in the current horizon.
 
 - **Goal:** Add an audio/video file and get an accurate, editable, timestamped
   Russian transcript that can be exported. Stateless (no library yet).
-- **Feature:** [`F001_file-transcription`](features/F001_file-transcription/requirements.md)
+- **Feature:** file transcription core.
 - **Exit criteria:** file → ffmpeg → Whisper (Metal, full-file, Russian) →
   editable segments → save, verified end-to-end on a real file. *(As shipped in
   M1; the forced Russian decode was superseded by ADR-012 — the language is now
@@ -34,12 +33,8 @@ being rewritten. No public distribution or notarization in the current horizon.
   **Settings** screen (beta scope): **AI models** download/delete (one model per
   task), **Appearance** (light / dark / system themes), and **App language**
   (English UI).
-- **Features:**
-  [`F004_library-workspace`](features/F004_library-workspace/requirements.md)
-  (TaskPilot epic `WP-11`),
-  [`F002_speaker-diarization`](features/F002_speaker-diarization/requirements.md)
-  (TaskPilot epic `WP-1`), and the beta scope of
-  [`F005_settings`](features/F005_settings/requirements.md)
+- **Features:** library & workspace (TaskPilot epic `WP-11`), speaker
+  diarization (TaskPilot epic `WP-1`), and the beta scope of Settings
   (TaskPilot epic `WP-33`).
 - **Exit criteria:** transcriptions persist as meetings; edits auto-save;
   meetings reopen (with a source-missing state); export produces `.md`/`.txt`;
@@ -51,10 +46,8 @@ being rewritten. No public distribution or notarization in the current horizon.
 
 - **Goal:** Complete the app for a **public release**: structured meeting MFU,
   the full Settings surface, a localized UI, richer themes, and in-app update.
-- **Features:**
-  [`F003_meeting-mfu`](features/F003_meeting-mfu/requirements.md) (structured,
-  editable, copyable MFU via a local LLM) and the release scope of
-  [`F005_settings`](features/F005_settings/requirements.md): **AI models** with an
+- **Features:** structured meeting MFU (structured, editable, copyable MFU
+  via a local LLM) and the release scope of Settings: **AI models** with an
   **Active** choice among 3–4 models per task; **Appearance** with 3–4 extra
   themes (each in light and dark); **App language** adding Russian, Turkish,
   Spanish, German, French; and **Update app**.

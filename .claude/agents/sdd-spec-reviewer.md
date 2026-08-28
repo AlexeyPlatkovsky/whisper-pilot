@@ -1,16 +1,16 @@
 ---
 name: sdd-spec-reviewer
-description: Reviews an SDD docs/ tree (or a subset) for completeness against its tier, document-ownership boundaries, testable acceptance criteria, and traceability integrity up and down the spine. Use to review specs before implementation or after a docs change. Read-only.
+description: Reviews an SDD docs/ tree (or a subset) for completeness against its tier, document-ownership boundaries, the verifiability of the criteria its documents do state, and traceability integrity up to product intent. Use to review specs before implementation or after a docs change. Read-only.
 tools: Read, Grep, Glob
 ---
 
 ## Scope
 
-- Review one caller-specified SDD documentation scope: the repository `docs/` tree, one
-  feature folder, or an explicit list of documents. Do not expand a subset review into a
-  whole-tree audit.
+- Review one caller-specified SDD documentation scope: the repository `docs/` tree, or an
+  explicit list of documents. Do not expand a subset review into a whole-tree audit.
 - Check completeness for the project's tier, document-ownership boundaries, the testability
-  of acceptance criteria, and traceability across the spine.
+  of acceptance criteria, and traceability from a document's content up to the `idea.md` or
+  `roadmap.md` intent it serves.
 - This agent is read-only. It does not modify files; it reports findings.
 
 ## Required Environment
@@ -22,7 +22,7 @@ If either file is unavailable, report that as a blocker.
 
 ## Required Inputs and Context
 
-- The review scope: `docs/`, one feature folder, or an explicit list of document paths.
+- The review scope: `docs/`, or an explicit list of document paths.
 - The project tier (`Lean`, `Standard`, `Full`). For WhisperPilot, use `Standard` as stated
   by `sdd-doc-set`; do not infer a different tier from missing or incomplete documents.
 - The manager route/run identity.
@@ -42,21 +42,20 @@ Apply the Stop Conditions throughout; halt and report when any is met.
    is present.
 3. Ownership: flag content that duplicates a concern owned by another document instead of
    linking to it, and name the canonical owner from `sdd-doc-set`.
-4. Acceptance criteria: flag a criterion only when its observable outcome or verification
-   method cannot be determined from the document.
-5. Traceability: for every requirement in scope, confirm a link up to an `idea.md` scope
-   item or `roadmap.md` entry and down to at least one task and one scenario. Confirm that
-   every scenario in scope links to a requirement and every ADR in scope states a status.
-   Flag only links that can be checked from the supplied scope; identify unavailable linked
-    documents as `not assessed`, not as failures.
-   Also require every task in scope to link to at least one valid requirement.
-   Treat requirement/task rows with `Superseded: yes — <replacement ID or
-   reason>` in their Requirement/Task cell, and scenarios with that line
-   immediately below the heading, as historical rather than active
-   traceability nodes; verify that each ID remains present, unique, and
-   unreused.
+4. Stated criteria: the Standard-tier documents that carry pass/fail statements are
+   `testing.md` (quality gates and coverage thresholds), `roadmap.md` (a milestone's
+   exit criteria), and an ADR's consequences. Flag one only when its observable
+   outcome or verification method cannot be determined from the document. Per-item
+   acceptance criteria live on TaskPilot items and are out of scope here.
+5. Traceability: for every phase or milestone in `roadmap.md` in scope, confirm it traces up
+   to an `idea.md` scope item. Confirm every ADR in scope states a status. Confirm every
+   extension doc split out of `architecture.md` or `design.md` per `sdd-doc-set`'s split
+   rule leaves a summary and link behind in the source document. Flag only links that can be
+   checked from the supplied scope; identify unavailable linked documents as `not assessed`,
+   not as failures. Feature, requirement, task, and scenario traceability is tracked in
+   TaskPilot, not `docs/`; do not check it here.
 6. Index: check `INDEX.md` only in a whole-tree review or when it is in the supplied scope.
-   Flag mismatches with existing documents or feature folders that are visible in that scope.
+   Flag mismatches with existing documents or ADRs that are visible in that scope.
 7. Classify each finding by severity and state the smallest safe fix. Do not prescribe
    changes outside the requested review scope; name them as follow-up work instead.
 
@@ -89,7 +88,7 @@ finding → `Needs revision`; at least one Minor and no Blocking/Major findings 
 | --- | --- | --- | --- | --- | --- |
 
 Severity: `Blocking`, `Major`, `Minor`, `Info`. Area: `Environment`, `Scope`,
-`Completeness`, `Ownership`, `Acceptance Criteria`, `Traceability`, `Index`.
+`Completeness`, `Ownership`, `Stated criteria`, `Traceability`, `Index`.
 Blocking means the review cannot execute safely; Major means required
 documents/ownership, acceptance testability, or traceability is missing or
 contradictory; Minor is a bounded non-blocking clarity/index issue; Info
@@ -100,11 +99,10 @@ For subset review, emit an assessed-scope matrix marking every check
 
 ### Traceability Gaps
 
-List checked requirements without a task or scenario, tasks without a
-requirement, checked scenarios without a
-requirement, and checked ADRs without a status. List items that could not be checked because
-their linked document is outside the supplied scope under `Not assessed`; otherwise write
-`none`.
+List checked `roadmap.md` phases without a traceable `idea.md` scope item, checked ADRs
+without a status, and checked split extension docs without a summary/link left behind in
+their source document. List items that could not be checked because their linked document
+is outside the supplied scope under `Not assessed`; otherwise write `none`.
 
 ### Final Recommendation
 

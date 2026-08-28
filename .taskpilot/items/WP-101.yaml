@@ -1,0 +1,58 @@
+schema_version: 1
+id: WP-101
+title: Fix Live Translation session-lifecycle reset; persist enabled state in the DB
+priority: normal
+type: task
+status: done
+created_at: '2026-08-27T17:22:10Z'
+updated_at: '2026-08-27T18:19:58Z'
+parent_id: WP-91
+description: 'Two related bugs reported from a live run.
+
+
+  Bug 1 - starting the currently-open session turns translation back off. src/StreamingView.tsx''s startSession(resumeId) unconditionally calls setTranslationEnabled(false) (and clears the translation queue/map) every time it runs, including when handleStart resumes the session that is already open and already has translation on (resumeId === activeId, the common "flip the switch on, then press Start" path). It should only reset translation state when the session identity is actually changing - a brand-new session (resumeId === null) or resuming a different session than the one currently loaded - not when resuming the same one.
+
+
+  Bug 2 - the enabled/disabled state does not survive reopening a session or an app restart. translationEnabled is plain React state with no backing column; handleOpen always sets it to false regardless of what the user last chose for that session. The user wants it treated like MFU panel visibility (WP-96): persisted, and restored automatically.
+
+
+  Fix: add a translation_enabled column to the streaming_sessions table (src-tauri/src/streaming_store.rs), NOT NULL DEFAULT 0 via the existing ALTER-TABLE-in-the-schema-batch idiom (see streaming_translations'' own migration for the pattern), so every pre-existing session defaults to off. Add a store method to update it (mirror rename_session''s shape) and include it on StreamingSessionRecord/StreamingSessionSummary and their DTOs so open_streaming_session and list_streaming_sessions both return the current value. Add a Tauri command (src-tauri/src/commands/streaming.rs, registered in lib.rs) to persist a toggle, and an src/ipc.ts wrapper.
+
+
+  Wire the frontend: handleOpen restores translationEnabled from the opened session''s persisted value instead of forcing false. The toggle handler persists the new value via the new command whenever the user flips the switch (best-effort, matching WP-96''s MFU-toggle pattern: the switch reflects the user''s choice immediately, a persistence failure does not block or revert it). startSession only resets translation state (and the queue/map) when resumeId is null or differs from the currently loaded activeId; when it equals activeId, translationEnabled, translations, and the queue are left exactly as they are.
+
+
+  This is a deliberate, explicit reversal of one detail from WP-93/ADR-015: the enabled/disabled state (not the target language, which stays session-local and defaults to Russian per WP-99) now persists per session and survives an app restart. Target language selection is unchanged - still not persisted, still resets to the default each time translation is turned on.
+
+
+  Happy path: user opens a session, turns Live Translation on, presses Start on that same session - translation stays on and capture begins normally. They stop, close the app, reopen it, open the same session - the switch reads on, matching how they left it.
+
+  Failure behavior: a persistence write failure on toggling leaves the switch showing the user''s chosen state, matching WP-96''s settings-write fallback; it does not surface a blocking error.
+
+  Edge cases: opening a genuinely different session still resets translation state to that session''s own persisted value, not the previously-open session''s; creating a brand-new session always starts with translation off (nothing persisted yet); deleting a session removes its row via the existing cascade, no orphaned setting.
+
+
+  Scenarios:
+
+  Given a session with Live Translation on, When the user presses Start to resume that same session, Then Live Translation remains on and the queue is not cleared.
+
+  Given a session where Live Translation was on when last closed, When the user reopens that session (including after an app restart), Then the switch reads on without the user re-enabling it.
+
+  Given a session where Live Translation was off, When the user opens a different session that has it on, Then the switch reflects the newly opened session''s own state, not the previous session''s.
+
+
+  Target surfaces: src-tauri/src/streaming_store.rs, src-tauri/src/streaming.rs, src-tauri/src/commands/streaming.rs, src-tauri/src/lib.rs, src/ipc.ts, src/StreamingView.tsx, src/StreamingView.translation.test.tsx.
+
+
+  Constraints: migration must preserve existing streaming_sessions rows and default them to translation_enabled=false; no change to target-language persistence (still not persisted, per WP-99); no change to MFU-toggle behavior (WP-96) beyond following its established pattern.'
+dod:
+- startSession(resumeId) resets translationEnabled and clears the translation queue/map only when resumeId is null or differs from the currently loaded activeId; resuming the same session leaves them untouched. Covered by a React/vitest test reproducing the exact reported sequence (open session, turn translation on, press Start) asserting the switch stays on.
+- A new translation_enabled column exists on streaming_sessions, defaults existing rows to false, and is exposed on the session record/summary and their DTOs; covered by a Rust migration test opening a pre-migration database and asserting the default.
+- A store method updates translation_enabled for one session id, following rename_session's shape; covered by a Rust test for persistence and for a nonexistent-session error.
+- A Tauri command persists the toggle and is registered in lib.rs; src/ipc.ts exposes a typed wrapper.
+- handleOpen sets translationEnabled from the opened session's persisted value instead of unconditionally false; covered by a React/vitest test opening a session with the value stored true and asserting the switch renders on with no user action.
+- Toggling the switch persists the new value via the command; a persistence failure leaves the switch showing the user's chosen state without a blocking error, covered by a React/vitest test mocking a rejected persistence call.
+- Opening a different session (not the currently loaded one) still resets to that session's own persisted value; creating a brand-new session still starts with translation off; deleting a session's row is covered by the existing cascade with no orphaned setting. Each covered by a test.
+- Target-language persistence and the WP-96 MFU-toggle pattern are unchanged; no test for either regresses.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+created_by: Aleksei_Platkovskii

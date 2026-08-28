@@ -68,7 +68,8 @@ controls (close / minimize / zoom):
 
 - **Panel toggle** — hide/show the left pane. Sits directly after the traffic
   lights; its position is fixed and it reflects toggled/untoggled state. The
-  collapsed/expanded choice **persists** across restarts.
+  pane **defaults open on every launch**; the collapsed/expanded choice does
+  not persist across restarts.
 - **App logo** — directly after the toggle (VoicePilot logo for now). Fixed
   position; purely decorative.
 - **Settings gear** — a fixed control at the **far right** of row 1; opens the
@@ -80,8 +81,8 @@ Row 2 — the active meeting's header:
   modal), **copy** (copies the full transcript to the clipboard and confirms
   with a brief checked button state and "Copied!" toast), **delete**
   (with confirmation — same as the list action).
-- **Model switcher** — dropdown of available Whisper models; default **large**.
-  If **no model is available**, the switcher shows nothing and the status bar
+- There is no in-header model switcher; model selection lives in
+  Settings → AI models only. If **no model is available**, the status bar
   shows a warning.
 - **Transcribe** — icon button with hover text. **Disabled** when no file is
   attached. Meeting transcription runs to completion; safe cancellation is
@@ -120,6 +121,47 @@ Single line reflecting the meeting's current state:
   other run-blocking control while Transcribe, Craft MFU, or Diarize itself
   is in flight. Mirrors Streaming's Prettify button position in its own
   transcript header.
+- **Streaming only:** the transcript header carries a third, middle slot
+  between the title group and the actions cluster — a **Live Translation**
+  control: a label, a switch (`role="switch"`, WP-93), and a target-language
+  dropdown (English / Русский, defaulting to Russian on every launch — the
+  choice is not persisted). The dropdown locks while the switch is on; to
+  change the target, switch off, pick, then switch back on. The switch is
+  disabled with a stated reason when no LLM model is ready, when a
+  prettified transcript is showing, or while a Prettify review is pending —
+  and the reverse also holds: **Prettify** is disabled with a stated reason
+  while Live Translation is on, so the two are mutually exclusive either
+  direction. Meeting's header has no translation control.
+- **Live Translation on** replaces Streaming's transcript flow with a
+  two-column paired-row view inside the same scroll region: a header row
+  names the source side ("Original · auto-detected") and the target
+  language, then one row per paragraph — left cell the original text, right
+  cell its translation — each carrying its own timestamp/language tag so a
+  pair never drifts out of alignment. Translation itself runs per window,
+  not per paragraph (WP-103), so the right cell is built by joining each of
+  the paragraph's windows through its own state: real translated text once a
+  window is done, the original mirrored in a muted style for a window
+  already entirely in the target language (no model call happens), a
+  "Translating…" spinner or "Pending…" for a window still in flight, or a
+  failed marker for one that errored. A paragraph whose trailing window is
+  still translating therefore shows real text for its finished windows and a
+  live indicator only on the unfinished tail, rather than the whole cell
+  staying blank until every window in it resolves. The retry control stays
+  one per row (paragraph), re-running every failed window within it rather
+  than one control per window. Switching the toggle off restores the
+  single-column view unchanged. Below the app's minimum supported window
+  width, the header sheds non-essential label text (the window-count meta,
+  "Editable", "Live Translation") while every control stays visible and
+  focusable, so the header never overflows with the MFU panel open at that
+  width.
+- At the **right end** of that same actions cluster, a labelled **MFU**
+  switch (`role="switch"`, WP-96) shows or hides the MFU section. Defaults
+  **on**; the choice persists independently per screen (Meeting, Streaming)
+  and survives restart. Unlike every other control in this cluster it is
+  **always enabled** — it never gates or is gated by Transcribe, Diarize, or
+  Craft MFU — and running **Create MFU**/**Craft** while the panel is hidden
+  reveals it automatically. Present identically on the Meeting and Streaming
+  transcript headers.
 
 ### MFU section (bottom of the right pane)
 
@@ -131,6 +173,10 @@ Single line reflecting the meeting's current state:
   **edit**, **copy**, **clear**.
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
+- **Hidden:** the header **MFU** switch (see Center — transcript, WP-96) can
+  hide this section entirely regardless of empty/populated state, freeing its
+  space for the transcript panel. Shown by default; the choice persists per
+  screen. Running **Create MFU**/**Craft** while hidden reveals the section.
 
 ### Settings (F005)
 
@@ -195,8 +241,8 @@ Whisper model; diarization degrades without its models).
    - If diarization is unavailable, the transcript still appears as plain segments
      with a detail; the run does not fail.
    - Pressing **Transcribe** again on a meeting that already has a transcript
-     **warns** it will replace the transcript and any MFU, and proceeds only on
-     confirmation.
+     replaces the transcript and any MFU immediately, with no confirmation
+     guard.
 
 ### Reopen / manage a meeting (M2)
 
@@ -244,8 +290,8 @@ Whisper model; diarization degrades without its models).
 - **MFU populated** — MFU section at 30% with edit/copy/clear.
 - **Source file missing** — meeting opens; Transcribe disabled with an
   explanatory detail; transcript/MFU remain editable.
-- **No model available** — model switcher hidden; status-bar warning; the
-  Settings → AI models section flags the missing model with a Download action.
+- **No model available** — status-bar warning; the Settings → AI models
+  section flags the missing model with a Download action.
 - **Settings open** — the Settings screen (models / appearance / app language);
   changes apply immediately and persist.
 - **Model downloading** — a model shows download progress; on SHA-verified

@@ -63,11 +63,17 @@ Meeting's batch-accuracy pipeline, which is unchanged.
   additive capability from Meeting; it does not use or affect Meeting's
   batch pipeline. No raw audio is retained for a Streaming session, so it
   cannot later be re-transcribed with a different model.
+- **Streaming live translation** (ADR-015): a Streaming session's transcript
+  can be translated into English or Russian as it is captured, shown beside
+  the original, using the same local summarization model — no new model and
+  no cloud service. Streaming only; Meeting transcripts are not translated.
 
 ### Out of scope
 
 - Cloud transcription, summarization, or storage.
-- Translation between languages.
+- Translation between languages, other than Streaming live translation
+  into English or Russian (ADR-015). Meeting transcripts are not
+  translated, and no other language pair is offered.
 - Real-name speaker identification (voice enrollment); speakers are generic
   labels the user renames. Reassigning or merging speakers is deferred, so a
   misattributed segment cannot yet be corrected.

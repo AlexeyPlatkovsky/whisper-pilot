@@ -48,14 +48,14 @@ describe("groupWindowsIntoParagraphs", () => {
     expect(paragraphs).toEqual([windows]);
   });
 
-  // BVA: the window-count boundary forces a break even without punctuation,
-  // so a long run-on span can't grow forever
+  // BVA: the window-count boundary (WP-100: lowered from 6 to 4) forces a
+  // break even without punctuation, so a long run-on span can't grow forever
   it("forces a break after the max window count even mid-sentence", () => {
-    const windows = Array.from({ length: 7 }, (_, i) => ok(`word${i}`));
+    const windows = Array.from({ length: 5 }, (_, i) => ok(`word${i}`));
 
     const paragraphs = groupWindowsIntoParagraphs(windows);
 
-    expect(paragraphs).toEqual([windows.slice(0, 6), windows.slice(6)]);
+    expect(paragraphs).toEqual([windows.slice(0, 4), windows.slice(4)]);
   });
 
   // EP: a fail-open window's empty text can't itself end a sentence

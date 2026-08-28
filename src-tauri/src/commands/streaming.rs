@@ -52,6 +52,19 @@ pub(crate) fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result
     streaming::delete_streaming_session(&app_data_dir(&app)?, id)
 }
 
+/// All persisted window translations for one session and target language
+/// (WP-93) — read counterpart to `translate_streaming_window`, so the
+/// frontend can reuse an already-translated window instead of re-running
+/// the model.
+#[tauri::command]
+pub(crate) fn list_streaming_translations(
+    app: tauri::AppHandle,
+    session_id: streaming_store::StreamingSessionId,
+    target_language: String,
+) -> Result<Vec<streaming::StreamingTranslationDto>> {
+    streaming::list_streaming_translations(&app_data_dir(&app)?, session_id, &target_language)
+}
+
 /// Create a stopped Streaming session record. Capture begins only when the
 /// user subsequently invokes `start_streaming_session` for this session.
 #[tauri::command]
@@ -67,7 +80,22 @@ pub(crate) fn create_streaming_session(
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
         status: session.status,
+        translation_enabled: session.translation_enabled,
     })
+}
+
+/// Persists the Live Translation on/off choice for one session (WP-101) —
+/// best-effort from the front-end's perspective (`src/ipc.ts`'s
+/// `setStreamingTranslationEnabled`): a write failure here surfaces as a
+/// rejected promise the caller swallows, matching WP-96's MFU-panel toggle
+/// pattern rather than blocking or reverting the switch.
+#[tauri::command]
+pub(crate) fn set_streaming_translation_enabled(
+    app: tauri::AppHandle,
+    session_id: streaming_store::StreamingSessionId,
+    enabled: bool,
+) -> Result<()> {
+    streaming::set_streaming_translation_enabled(&app_data_dir(&app)?, session_id, enabled)
 }
 
 /// Runs on its own blocking thread for a session's whole lifetime: persists

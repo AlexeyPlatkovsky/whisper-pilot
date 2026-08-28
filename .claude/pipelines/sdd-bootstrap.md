@@ -29,7 +29,8 @@ implement step logic and does not emit its own output artifact.
   status (or an explicitly approved resumed `blocked` item).
 - `Skill: work-with-git - output below` reporting the completed branch decision.
 
-If either artifact is absent, report `Blocked` and stop before Stage 1.
+If either artifact is absent, report `Blocked` and stop before Stage 0; perform
+no TaskPilot or file mutation.
 
 ## Inputs
 
@@ -50,20 +51,19 @@ status `skipped`, with artifact label, attempt, and digest `N/A`.
 | Stage | Capability | Required Visible Artifact |
 | --- | --- | --- |
 | 0. Activate TaskPilot item | verified `ready → in_progress` or approved `blocked → in_progress` | operation-specific `taskpilot-work` artifact |
-| 1. Intake | validate empty docs root, Standard tier, and versioned source/feature inventory | `SDD bootstrap intake record` with plan version and stable row IDs |
+| 1. Intake | validate empty docs root, Standard tier, and versioned source inventory | `SDD bootstrap intake record` with plan version and stable row IDs |
 | 2. Idea | `sdd-doc-author`, `idea.md`, mode `new` | matching completed artifact |
 | 3. Architecture | one invocation per convention-required document | one matching completed artifact per target |
 | 4. Design | `sdd-doc-author`, `design.md`, mode `new` | matching completed artifact |
 | 5. Testing | `sdd-doc-author`, `testing.md`, mode `new` | matching completed artifact |
 | 6. Roadmap | `sdd-doc-author`, `roadmap.md`, mode `new` | matching completed artifact |
-| 7. Features | one invocation per intake feature row | one completed artifact per row, or explicit zero-feature decision |
-| 8. Index | `sdd-index-sync`: `create` only while INDEX is absent; `update` on every post-creation rerun; pass Route run and attempt `1`, then prior artifact plus incremented attempt after rework | matching mode and `Status: completed` |
-| 9. Review | `sdd-spec-reviewer` | `Pass` or dispositioned `Pass with minor findings` |
-| 10. Definition of Done | prepare evidence, then `task-quality` | `Quality gate: pass` |
-| 11. TaskPilot completion and local commit | `taskpilot-work`, then `work-with-git` | separate reloaded-`done` artifact and `Local commit evidence - output below` |
-| 12. Task Complete | `task-complete` | `Skill: task-complete - output below` |
+| 7. Index | `sdd-index-sync`: `create` only while INDEX is absent; `update` on every post-creation rerun; pass Route run and attempt `1`, then prior artifact plus incremented attempt after rework | matching mode and `Status: completed` |
+| 8. Review | `sdd-spec-reviewer` | `Pass` or dispositioned `Pass with minor findings` |
+| 9. Definition of Done | prepare evidence, then `task-quality` | `Quality gate: pass` |
+| 10. TaskPilot completion and local commit | `taskpilot-work`, then `work-with-git` | separate reloaded-`done` artifact and `Local commit evidence - output below` |
+| 11. Task Complete | `task-complete` | `Skill: task-complete - output below` |
 
-At stage 10, pass the manager objective DoD, reloaded `in_progress` item, Route
+At stage 9, pass the manager objective DoD, reloaded `in_progress` item, Route
 execution record, prepared criterion mapping, and latest accepted authoring,
 index, review, and validation artifacts to `task-quality`.
 
@@ -71,14 +71,10 @@ Do not advance past a stage whose expected visible artifact and accepted status
 is missing or whose
 Definition-of-Done gate is not `pass`.
 Pass the intake plan version, matching stable row ID, manager Route run, and
-author-attempt number to every doc-author and feature-author invocation.
-If a feature-author result is `recovery required`, stop downstream stages,
-preserve the reported tree, perform only its exact recovery action, increment
-the author attempt with the prior artifact, and re-run stage 7 before index
-sync.
+author-attempt number to every doc-author invocation.
 If index sync reports `recovery required`, stop downstream stages, preserve the
 reported tree, perform only its exact recovery action, increment the sync
-attempt with the prior artifact, and re-run stage 8.
+attempt with the prior artifact, and re-run stage 7.
 
 ## Authority Sources
 
@@ -87,11 +83,11 @@ attempt with the prior artifact, and re-run stage 8.
 
 ## Stop Conditions
 
-- Docs root or source/feature inventory is ambiguous — return to stage 1.
+- Docs root or source inventory is ambiguous — return to stage 1.
 - A doc-authoring step blocks (ownership conflict, unverifiable facts) — resolve before
   advancing.
 - `sdd-spec-reviewer` verdict is `Needs revision` — fix the cited findings, re-run the
-  affected authoring stage and stage 8, then re-run stage 9.
+  affected authoring stage and stage 7, then re-run stage 8.
 - `Blocked`, `skipped`, malformed, or unrecognized outcomes stop. After
   activation, persist the blocker and exact unblocking action through
   `taskpilot-work`.

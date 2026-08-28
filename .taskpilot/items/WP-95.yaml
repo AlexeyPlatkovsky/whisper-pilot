@@ -1,0 +1,55 @@
+schema_version: 1
+id: WP-95
+title: Live translation ADR and documentation updates
+priority: normal
+type: task
+status: done
+created_at: '2026-08-26T16:33:01Z'
+updated_at: '2026-08-27T11:39:51Z'
+parent_id: WP-91
+description: 'Record the live-translation capability in the project''s authoritative documents.
+
+
+  New ADR under docs/decisions/ capturing the decision and its rationale: translation reuses the bundled summary LLM through llama.cpp rather than adding a translation model to the catalog; translation runs concurrently with live capture on a single-flight queue, which supersedes the previous no-LLM-while-capturing stance that Prettify and Craft MFU still follow; the paragraph is the translation and alignment unit; target languages are English and Russian only while source language stays per-window auto-detected; and translations persist per session, paragraph and target language. Relates the ADR to ADR-014 (Streaming scope) and ADR-006 (llama.cpp summarization) without restating them.
+
+
+  docs/design.md: document the Streaming transcript header''s three-slot layout (title group, Live Translation control, action cluster), the MFU panel toggle on both screens with its default and per-screen persistence, the split paired-row transcript view and its column minimums with the MFU panel open, and the pending, translating, failed and mirrored row states.
+
+
+  docs/glossary.md: add entries for live translation, target language, and the paragraph translation unit.
+
+
+  docs/features/: add or update the Streaming feature folder with requirements, tasks and scenarios for translation and the MFU toggle, then run the index sync so docs/INDEX.md reflects the new rows.
+
+
+  Happy path: after this item, a reader with no conversation context can learn from docs alone what the two toggles do, why translation uses the summary LLM, and what runs concurrently with capture.
+
+  Failure behavior: none at runtime — documentation only.
+
+  Edge case: if implementation diverges from the confirmed design, the ADR and design records state what shipped, not what was planned.
+
+
+  Scope boundary: documentation only. No code, no test, and no behavior change.
+
+
+  Scenarios:
+
+  Given the shipped feature, When a reader opens docs/decisions/, Then an ADR states the engine choice, the concurrency stance and its relationship to the earlier no-LLM-while-capturing rule.
+
+  Given the shipped feature, When a reader opens docs/design.md, Then the Streaming transcript header slots, the MFU toggle and the split translated view with its states are described.
+
+  Given the docs changes, When docs/INDEX.md is rebuilt, Then its decision log and feature registry list the new ADR and the updated feature rows.
+
+
+  Target surfaces: docs/decisions/ (new ADR), docs/design.md, docs/glossary.md, docs/features/, docs/INDEX.md.
+
+
+  Constraints: each document stays inside its ownership boundary per .claude/conventions/sdd-doc-set.md; INDEX.md generated regions are rebuilt by the index sync, never hand-edited.'
+dod:
+- A new ADR exists under docs/decisions/ recording the engine choice, the single-flight concurrency stance and its relationship to the earlier no-LLM-while-capturing rule, the paragraph unit, the two target languages, and per-session persistence; it links ADR-014 and ADR-006 without restating them.
+- docs/design.md describes the Streaming transcript header's three slots, the MFU panel toggle with its default and per-screen persistence, the split paired-row view with column minimums, and the pending, translating, failed and mirrored row states.
+- docs/glossary.md defines live translation, target language, and the paragraph translation unit.
+- The Streaming feature folder under docs/features/ carries requirements, tasks and scenarios covering translation and the MFU toggle, each traceable to a scope item and a milestone.
+- docs/INDEX.md is rebuilt by the index sync and lists the new ADR and the updated feature rows.
+- No production code or test file is modified by this item.
+created_by: Aleksei_Platkovskii

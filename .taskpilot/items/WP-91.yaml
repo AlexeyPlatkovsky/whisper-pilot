@@ -1,0 +1,66 @@
+schema_version: 1
+id: WP-91
+title: Streaming Live Translation (EN/RU) with split original/translated transcript
+priority: normal
+type: feature
+status: done
+created_at: '2026-08-26T16:31:13Z'
+updated_at: '2026-08-27T18:20:58Z'
+description: 'Give the Streaming screen a Live Translation control in the middle of its transcript panel header — the label "Live Translation", a switch, and a target-language dropdown offering English and Русский. While the switch is ON the transcript area splits vertically into two columns inside one scroll container: the original transcript on the left, its translation into the selected target language on the right, rendered as paired rows so a paragraph and its translation always sit at the same vertical position. Translation runs locally through the existing llama.cpp path with the active summary LLM model; no new model and no new catalog entry (see ADR-014 for Streaming''s offline scope).
+
+
+  Standalone feature: no parent epic. The Streaming epic WP-68 is closed; this is a follow-on capability on the same screen.
+
+
+  Child breakdown:
+
+  - Backend: a translation entry point in src-tauri/src/llm.rs, its Tauri command, and a new streaming_translations store keyed by session, paragraph and target language.
+
+  - UI: the header control, the split paired-row pane, the live single-flight translation queue, backfill, per-row states, and the mutual exclusion with Prettify.
+
+  - Copy/export: paired original + translation output for a session whose translation is on.
+
+  - Documentation: an ADR plus docs/design.md, docs/glossary.md, and feature-doc updates recording the engine choice, the concurrency stance, and the UI contract.
+
+
+  Feature-level rules every child inherits:
+
+  - Translation unit is the paragraph produced by groupWindowsIntoParagraphs; a paragraph whose every window is already in the target language is not sent to the LLM and its right cell mirrors the original text in a muted style.
+
+  - Translation is single-flight and never blocks decoding: a paragraph is enqueued when it closes, at most one translation runs at a time, and live capture keeps priority.
+
+  - The target-language dropdown is locked while the switch is ON; changing target means switching off, choosing the language, and switching on again.
+
+  - Switching ON backfills the whole session from the oldest paragraph; persisted translations are reused instead of re-running the LLM.
+
+  - Live Translation and Prettify are mutually exclusive in both directions, each disabled with a stated reason while the other is active.
+
+  - Live Translation is disabled with a stated reason when no LLM model is ready.
+
+  - The MFU panel keeps its fixed width when translation is on; the transcript panel splits the remaining width evenly.
+
+
+  Scope boundary: Streaming only. The Meeting screen gets no translation. Target languages are English and Russian only; source language keeps Streaming''s per-window auto-detection. No cloud service, no new downloadable model.
+
+
+  Scenarios:
+
+  Given a running Streaming session in Russian with an LLM model ready, When the user switches Live Translation on with target English, Then the transcript area splits and each Russian paragraph gains an English translation at the same vertical position, with existing paragraphs backfilled oldest-first.
+
+  Given Live Translation is on, When the user opens the target-language dropdown, Then it is disabled and switching the toggle off re-enables it.
+
+  Given a prettified transcript is active, When the user tries to switch Live Translation on, Then the switch is disabled and states that Prettify must be reverted first.
+
+
+  Target surfaces: src-tauri/src/llm.rs, src-tauri/src/streaming_store.rs, src-tauri/src/lib.rs, src/ipc.ts, src/StreamingView.tsx, src/paragraphs.ts, src/export.ts, src/styles.css, docs/decisions/, docs/design.md, docs/glossary.md, docs/features/.
+
+
+  Constraints: offline only, no network calls at translation time; translation shares the Metal GPU with live Whisper decoding, so transcription quality and window cadence take priority over translation latency; the split view must stay usable at the app''s minimum supported window width with the MFU panel open; interaction contract per the child UI item.'
+dod:
+- All child items are done and their DoD evidence is recorded.
+- A live Streaming session with the switch on shows every closed paragraph translated into the selected target language at the same vertical position as its original, backfilling existing paragraphs oldest-first; verified on a real Metal run with mixed Russian/English audio.
+- 'Transcription behavior during a translated session is unchanged from a non-translated session: no dropped or failed windows attributable to translation, verified against the real-Metal transcription gate.'
+- Live Translation and Prettify cannot both be active, the target dropdown is locked while the switch is on, and the control is disabled with a stated reason when no LLM model is ready.
+- Reopening a stopped session with stored translations renders them without running the LLM.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+created_by: Aleksei_Platkovskii

@@ -1,0 +1,47 @@
+schema_version: 1
+id: WP-96
+title: MFU panel toggle in the Meeting and Streaming transcript headers
+priority: normal
+type: task
+status: done
+created_at: '2026-08-26T16:30:44Z'
+updated_at: '2026-08-27T02:28:53Z'
+description: 'Add a labelled MFU switch at the right end of the transcript panel header action cluster (.wp-transcript-actions) on both the Meeting screen (src/App.tsx) and the Streaming screen (src/StreamingView.tsx), after the existing Diarize (Meeting) / Prettify (Streaming) actions. The switch shows or hides that screen''s existing MFU aside (aside.wp-mfu); when hidden, the transcript panel takes the full workspace width. It is view-only: it never gates or disables Craft MFU, never clears or edits MFU content, and never blocks any other control. Default is ON, matching the current layout. State persists in app settings under two independent keys, one per screen, and is restored on launch. Running Craft MFU while the panel is hidden reveals it (switch flips to ON) so generated content is never left behind a hidden panel.
+
+
+  Happy path: on Meeting the user switches MFU off, the aside stops rendering and the transcript fills the workspace; after an app restart the Meeting panel is still hidden while Streaming keeps its own stored state.
+
+
+  Failure behavior: a settings read or write failure must not break the screen — fall back to the ON default, keep the screen usable, and do not surface a blocking error.
+
+
+  Edge cases: the switch stays enabled while a transcription, streaming session, Prettify, or Craft MFU run is in flight; hiding the panel while MFU generation is running does not cancel it, and the completed result reveals the panel.
+
+
+  Scope boundary: presentation and persistence of panel visibility only. MFU generation, content, editing, storage, and the header Craft MFU action are unchanged. Streaming''s Live Translation control is a separate item.
+
+
+  Scenarios:
+
+  Given the Meeting screen with the MFU panel shown, When the user switches MFU off, Then aside.wp-mfu is not rendered and the transcript panel occupies the full workspace width.
+
+  Given the Streaming screen with the MFU panel hidden, When Craft MFU finishes, Then the panel renders and the switch reads on.
+
+  Given MFU was switched off on Meeting and left on for Streaming, When the app restarts, Then Meeting opens with the panel hidden and Streaming opens with it shown.
+
+
+  Target surfaces: src/App.tsx, src/StreamingView.tsx, a shared switch component under src/, src/styles.css (.wp-transcript-actions, .wp-workspace grid), src/ipc.ts, src-tauri/src/settings.rs (two new boolean-valued setting keys with validation), src-tauri/src/lib.rs if the settings key list is surfaced there.
+
+
+  Constraints: the switch is a keyboard-focusable control with an accessible name and a checked state exposed to assistive technology; its position in the header never changes (docs/design.md, Header controls). No transcription, model, or security impact.'
+dod:
+- The MFU switch renders at the right end of the transcript header action cluster on both the Meeting and the Streaming screen, is keyboard-focusable, and exposes its checked state to assistive technology; covered by React/vitest component tests.
+- Switching MFU off stops rendering aside.wp-mfu and gives the transcript panel the full workspace width; switching it on restores the panel. Covered by React/vitest tests on both screens.
+- Panel visibility persists per screen through two new validated settings keys, restores on launch, and a settings read/write failure falls back to the ON default without breaking the screen; covered by Rust unit tests for the settings keys and React tests for the fallback.
+- Craft MFU run while the panel is hidden reveals the panel and leaves the switch on, without cancelling or altering the generation; covered by React/vitest tests on both screens.
+- Craft MFU, Prettify, Diarize, Transcribe, and Start/Stop keep their existing enabled/disabled behavior regardless of the MFU switch state.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  relates_to:
+  - WP-93
+created_by: Aleksei_Platkovskii

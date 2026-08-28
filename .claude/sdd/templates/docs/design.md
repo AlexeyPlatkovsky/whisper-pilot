@@ -2,7 +2,7 @@
 
 <!-- Owns: product/UX design — flows, screens, states, interaction patterns, and
      accessibility. Keep technical structure in architecture.md. Keep UI system detail
-     here unless it grows enough to warrant the optional design-book.md extension.
+     here unless it grows enough to warrant the optional designbook.md extension.
      Omit this file entirely on the Lean tier. -->
 
 ## UX Principles

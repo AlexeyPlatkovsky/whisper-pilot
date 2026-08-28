@@ -1,4 +1,14 @@
-import type { MeetingMfu, Segment } from "./ipc";
+import type {
+  MeetingMfu,
+  Segment,
+  StreamingTranslationTargetLanguage,
+  StreamingWindow,
+} from "./ipc";
+import {
+  paragraphTranslatedText,
+  plainTranscript,
+  type TranslationEntry,
+} from "./streamingText";
 
 export type ExportFileType = "plain_text" | "markdown";
 
@@ -77,4 +87,60 @@ export function renderForExport(
 
 export function exportFileExtension(fileType: ExportFileType): string {
   return fileType === "markdown" ? "md" : "txt";
+}
+
+// --- WP-94: Streaming Copy/Export paired original+translation rendering ---
+// Scoped to Streaming only — Meeting's export above is untouched. Kept
+// decoupled from StreamingView's component state (a narrow structural type
+// instead of importing its TranslationEntry) so the renderer is unit-
+// testable without rendering; StreamingView.tsx's translations Map is
+// already structurally compatible and is passed straight through.
+
+/** Display names for the translation target languages — the single source
+ * for the Streaming select, the split grid's target-column header, and the
+ * exported block labels. */
+export const STREAMING_TARGET_LANGUAGE_NAMES: Record<
+  StreamingTranslationTargetLanguage,
+  string
+> = {
+  en: "English",
+  ru: "Русский",
+};
+
+/** One paragraph as shown on the Streaming screen — its windows, in
+ * on-screen order (WP-103: translation is keyed per window, not per
+ * paragraph, so this is what `renderStreamingPaired` needs to independently
+ * derive both the paragraph's original text and its translated text). */
+export type StreamingExportParagraph = StreamingWindow[];
+
+/** Whether Copy/Export should switch into the paired original+translation
+ * rendering at all — true once at least one window has a translation entry.
+ * False (Live Translation off, or on with nothing recorded yet) means
+ * Copy/Export stay on today's single-column rendering, unchanged (WP-94). */
+export function hasStreamingTranslations(
+  translations: Map<number, TranslationEntry>,
+): boolean {
+  return translations.size > 0;
+}
+
+/**
+ * Pairs each paragraph's original text with its translation for Streaming's
+ * Copy/Export (WP-94, per-window since WP-103), in on-screen order.
+ * "Export what the screen shows" — each translated block comes from
+ * `streamingText.ts`'s `paragraphTranslatedText`, so a partially-translated
+ * paragraph shows real text for its finished windows and a placeholder only
+ * for the unfinished tail, and the two sides never drift out of count.
+ */
+export function renderStreamingPaired(
+  paragraphs: StreamingExportParagraph[],
+  translations: Map<number, TranslationEntry>,
+  targetLanguage: StreamingTranslationTargetLanguage,
+): string {
+  const targetLabel = STREAMING_TARGET_LANGUAGE_NAMES[targetLanguage];
+  const blocks = paragraphs.map((windows) => {
+    const sourceText = plainTranscript(windows);
+    const translatedText = paragraphTranslatedText(windows, translations);
+    return `Original:\n${sourceText}\n\n${targetLabel}:\n${translatedText}`;
+  });
+  return blocks.join("\n\n");
 }

@@ -1,7 +1,8 @@
 //! Local key-value settings store: theme, ui_language, the active
-//! transcription model, export file type, and the configurable status colors
-//! (WP-88), persisted as JSON in the app support directory and applied
-//! immediately and across restarts (F005-R2, F005-T1).
+//! transcription model, export file type, the configurable status colors
+//! (WP-88), and per-screen MFU panel visibility (WP-96), persisted as JSON in
+//! the app support directory and applied immediately and across restarts
+//! (F005-R2, F005-T1).
 
 use crate::error::{AppError, Result};
 use crate::models::CATALOG;
@@ -24,6 +25,11 @@ const KEY_EXPORT_FILE_TYPE: &str = "export_file_type";
 // object string (`{"ready":"#112233",…}`) so the front-end-owned status key
 // set can grow without a settings-store schema change.
 const KEY_STATUS_COLORS: &str = "status_colors";
+// WP-96: view-only visibility of each screen's MFU (summary) panel, one
+// independent boolean key per screen so restoring one on launch never
+// disturbs the other.
+const KEY_MFU_PANEL_MEETING: &str = "mfu_panel_meeting";
+const KEY_MFU_PANEL_STREAMING: &str = "mfu_panel_streaming";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 
@@ -33,6 +39,21 @@ fn default_active_model_diarization() -> String {
 
 fn default_export_file_type() -> String {
     DEFAULT_EXPORT_FILE_TYPE.to_string()
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Strict "true"/"false" only (WP-96 non-goal: no other truthy/falsy spelling).
+fn parse_bool_setting(key: &str, value: &str) -> Result<bool> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(AppError::InvalidSetting(format!(
+            "{key} must be \"true\" or \"false\", got {other}"
+        ))),
+    }
 }
 
 /// All persisted settings, always fully populated with defaults for unset keys.
@@ -56,6 +77,14 @@ pub struct Settings {
     /// then uses the built-in mapping).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status_colors: Option<String>,
+    /// WP-96: whether the Meeting screen's MFU panel is shown. View-only —
+    /// never gates Craft MFU or any other action. Defaults ON.
+    #[serde(default = "default_true")]
+    pub mfu_panel_meeting: bool,
+    /// WP-96: same as `mfu_panel_meeting`, for the Streaming screen. Kept
+    /// independent so restoring one on launch never disturbs the other.
+    #[serde(default = "default_true")]
+    pub mfu_panel_streaming: bool,
 }
 
 impl Default for Settings {
@@ -68,6 +97,8 @@ impl Default for Settings {
             active_model_llm: None,
             export_file_type: default_export_file_type(),
             status_colors: None,
+            mfu_panel_meeting: default_true(),
+            mfu_panel_streaming: default_true(),
         }
     }
 }
@@ -182,6 +213,12 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 }
             }
             settings.status_colors = Some(value.to_string());
+        }
+        KEY_MFU_PANEL_MEETING => {
+            settings.mfu_panel_meeting = parse_bool_setting(KEY_MFU_PANEL_MEETING, value)?;
+        }
+        KEY_MFU_PANEL_STREAMING => {
+            settings.mfu_panel_streaming = parse_bool_setting(KEY_MFU_PANEL_STREAMING, value)?;
         }
         other => {
             return Err(AppError::InvalidSetting(format!(
@@ -457,5 +494,93 @@ mod tests {
             get_settings(dir.path()).active_model_diarization,
             "campplus"
         );
+    }
+
+    // WP-96: MFU panel visibility, one independent boolean key per screen.
+
+    #[test]
+    fn get_settings_defaults_mfu_panel_meeting_to_true() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(get_settings(dir.path()).mfu_panel_meeting);
+    }
+
+    #[test]
+    fn get_settings_defaults_mfu_panel_streaming_to_true() {
+        let dir = tempfile::tempdir().unwrap();
+
+        assert!(get_settings(dir.path()).mfu_panel_streaming);
+    }
+
+    #[test]
+    fn set_setting_persists_mfu_panel_meeting_and_is_readable_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+
+        set_setting(dir.path(), KEY_MFU_PANEL_MEETING, "false").unwrap();
+        let settings = get_settings(dir.path());
+
+        assert!(!settings.mfu_panel_meeting);
+        // The two screens' keys are independent (S-3): changing Meeting's
+        // must not disturb Streaming's default.
+        assert!(settings.mfu_panel_streaming);
+    }
+
+    #[test]
+    fn set_setting_persists_mfu_panel_streaming_independently_of_meeting() {
+        let dir = tempfile::tempdir().unwrap();
+
+        set_setting(dir.path(), KEY_MFU_PANEL_STREAMING, "false").unwrap();
+        let settings = get_settings(dir.path());
+
+        assert!(!settings.mfu_panel_streaming);
+        assert!(settings.mfu_panel_meeting);
+    }
+
+    #[test]
+    fn set_setting_toggling_mfu_panel_meeting_back_to_true_is_readable_after_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_MFU_PANEL_MEETING, "false").unwrap();
+
+        set_setting(dir.path(), KEY_MFU_PANEL_MEETING, "true").unwrap();
+
+        assert!(get_settings(dir.path()).mfu_panel_meeting);
+    }
+
+    #[test]
+    fn set_setting_rejects_invalid_mfu_panel_meeting_value_and_leaves_store_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        set_setting(dir.path(), KEY_MFU_PANEL_MEETING, "false").unwrap();
+
+        // EP: invalid value partition — only the literal strings "true"/
+        // "false" are accepted.
+        for bad in ["yes", "1", "TRUE", "False", "", "no"] {
+            let err = set_setting(dir.path(), KEY_MFU_PANEL_MEETING, bad).unwrap_err();
+            assert!(matches!(err, AppError::InvalidSetting(_)), "value: {bad}");
+        }
+        assert!(!get_settings(dir.path()).mfu_panel_meeting);
+    }
+
+    #[test]
+    fn set_setting_rejects_invalid_mfu_panel_streaming_value_and_leaves_store_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+
+        let err = set_setting(dir.path(), KEY_MFU_PANEL_STREAMING, "off").unwrap_err();
+
+        assert!(matches!(err, AppError::InvalidSetting(_)));
+        assert!(get_settings(dir.path()).mfu_panel_streaming);
+    }
+
+    #[test]
+    fn get_settings_defaults_mfu_panel_keys_to_true_for_a_pre_wp90_store_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // A settings file written before mfu_panel_meeting / mfu_panel_streaming
+        // existed — both keys must default to true rather than fail to parse.
+        let pre_wp90_json = r#"{"theme":"system","ui_language":"en","active_model_diarization":"none","export_file_type":"plain_text"}"#;
+        std::fs::write(dir.path().join(FILE_NAME), pre_wp90_json).unwrap();
+
+        let settings = get_settings(dir.path());
+
+        assert!(settings.mfu_panel_meeting);
+        assert!(settings.mfu_panel_streaming);
     }
 }

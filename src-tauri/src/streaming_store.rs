@@ -26,6 +26,12 @@ pub struct StreamingSessionRecord {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
+    /// WP-101: whether Live Translation was left on for this session — unlike
+    /// the target language (WP-99, never persisted), this survives reopening
+    /// the session and an app restart. Defaults to `false` for both a
+    /// brand-new session and one that predates this column (see the
+    /// `translation_enabled` migration below).
+    pub translation_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,6 +41,7 @@ pub struct StreamingSessionSummary {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
+    pub translation_enabled: bool,
 }
 
 /// One decoded window's text, ready to append. `outcome_ok` distinguishes a
@@ -76,6 +83,34 @@ pub struct StreamingMfu {
     pub participants: String,
 }
 
+/// One window's translation into a target language (WP-92; one row per
+/// window rather than per paragraph as of WP-103), keyed by `(session_id,
+/// window_index, target_language)` — `window_index` is that window's own
+/// index, matching `NewStreamingWindow`/`StoredStreamingWindow`'s field of
+/// the same name. `source_text` is stored alongside the translation so a
+/// caller holding the *current* window text can detect staleness
+/// (`is_stale`) without this store needing any window-grouping concept of
+/// its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingTranslation {
+    pub session_id: StreamingSessionId,
+    pub window_index: i64,
+    pub target_language: String,
+    pub source_text: String,
+    pub translated_text: String,
+    pub updated_at_ms: i64,
+}
+
+impl StreamingTranslation {
+    /// A stored translation is stale once the window it was translated from
+    /// has changed (e.g. a fail-open retry rewrote its text) — compared
+    /// against the *current* text for this `window_index`, which the caller
+    /// supplies since this store has no window-grouping concept of its own.
+    pub fn is_stale(&self, current_source_text: &str) -> bool {
+        self.source_text != current_source_text
+    }
+}
+
 /// Session lifecycle statuses. Plain strings in the schema (matching
 /// `store.rs`'s `meetings.status` convention), typed at the call site so a
 /// typo can't silently create a fourth status.
@@ -97,6 +132,8 @@ impl StreamingStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
         migrate_legacy_streaming_notes(&connection)?;
+        migrate_translation_enabled_column(&connection)?;
+        migrate_translation_window_index_column(&connection)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
         Ok(Self {
             connection: Mutex::new(connection),
@@ -133,6 +170,20 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
+    /// Persists the Live Translation on/off choice for one session (WP-101),
+    /// mirroring `rename_session`'s single-field-update shape and error
+    /// handling for an unknown session id.
+    pub fn set_translation_enabled(&self, id: StreamingSessionId, enabled: bool) -> Result<()> {
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE streaming_sessions SET translation_enabled = ?1 WHERE id = ?2",
+                params![enabled, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "streaming session", id)
+    }
+
     pub fn delete_session(&self, id: StreamingSessionId) -> Result<()> {
         let changed = self
             .connection()?
@@ -145,7 +196,7 @@ impl StreamingStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, title, created_at_ms, updated_at_ms, status
+                "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
                  FROM streaming_sessions ORDER BY updated_at_ms DESC, id DESC",
             )
             .map_err(store_error)?;
@@ -332,6 +383,58 @@ impl StreamingStore {
         Ok(())
     }
 
+    /// Upserts one window's translation, keyed by `(session_id,
+    /// window_index, target_language)` — a repeated call for the same key
+    /// (a re-translate after the window's text changed, or a retry)
+    /// overwrites in place rather than duplicating, the same idiom
+    /// `append_window` uses for `(session_id, window_index)`.
+    pub fn upsert_translation(&self, translation: &StreamingTranslation) -> Result<()> {
+        self.connection()?
+            .execute(
+                "INSERT INTO streaming_translations
+                    (session_id, window_index, target_language, source_text, translated_text, updated_at_ms)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(session_id, window_index, target_language) DO UPDATE SET
+                    source_text = excluded.source_text,
+                    translated_text = excluded.translated_text,
+                    updated_at_ms = excluded.updated_at_ms",
+                params![
+                    translation.session_id,
+                    translation.window_index,
+                    translation.target_language,
+                    translation.source_text,
+                    translation.translated_text,
+                    translation.updated_at_ms,
+                ],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
+    /// All stored translations for one session and target language, ordered
+    /// by window position.
+    pub fn list_translations(
+        &self,
+        session_id: StreamingSessionId,
+        target_language: &str,
+    ) -> Result<Vec<StreamingTranslation>> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT session_id, window_index, target_language, source_text, translated_text, updated_at_ms
+                 FROM streaming_translations
+                 WHERE session_id = ?1 AND target_language = ?2
+                 ORDER BY window_index ASC",
+            )
+            .map_err(store_error)?;
+        let translations = statement
+            .query_map(params![session_id, target_language], translation_from_row)
+            .map_err(store_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(store_error)?;
+        Ok(translations)
+    }
+
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
@@ -405,13 +508,88 @@ fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+/// Adds `translation_enabled` to a `streaming_sessions` table that predates
+/// the column (WP-101), defaulting every existing row to off (`false`).
+/// SQLite's `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` clause, so
+/// this checks the column's presence via `PRAGMA table_info` first (same
+/// shape as `migrate_legacy_streaming_notes`) — a no-op on a brand-new
+/// database (`CREATE TABLE IF NOT EXISTS` below already creates the column)
+/// or one already migrated.
+fn migrate_translation_enabled_column(connection: &Connection) -> Result<()> {
+    let has_table = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_sessions')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if !has_table {
+        return Ok(());
+    }
+    let has_column = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(streaming_sessions)")
+            .map_err(store_error)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(store_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(store_error)?;
+        columns.iter().any(|name| name == "translation_enabled")
+    };
+    if !has_column {
+        connection
+            .execute_batch(
+                "ALTER TABLE streaming_sessions ADD COLUMN translation_enabled INTEGER NOT NULL DEFAULT 0;",
+            )
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
+/// Renames `streaming_translations.paragraph_key` to `window_index` (WP-103),
+/// preserving every row's data. Checked first via `PRAGMA table_info` since
+/// `RENAME COLUMN` errors if `paragraph_key` doesn't exist — a no-op on an
+/// already-migrated or brand-new database instead of an error.
+fn migrate_translation_window_index_column(connection: &Connection) -> Result<()> {
+    let has_table = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_translations')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if !has_table {
+        return Ok(());
+    }
+    let has_old_column = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(streaming_translations)")
+            .map_err(store_error)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(store_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(store_error)?;
+        columns.iter().any(|name| name == "paragraph_key")
+    };
+    if has_old_column {
+        connection
+            .execute_batch(
+                "ALTER TABLE streaming_translations RENAME COLUMN paragraph_key TO window_index;",
+            )
+            .map_err(store_error)?;
+    }
+    Ok(())
+}
+
 fn session_by_id(
     connection: &Connection,
     id: StreamingSessionId,
 ) -> Result<Option<StreamingSessionRecord>> {
     connection
         .query_row(
-            "SELECT id, title, created_at_ms, updated_at_ms, status
+            "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
              FROM streaming_sessions WHERE id = ?1",
             params![id],
             session_from_row,
@@ -427,6 +605,7 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionRecord> {
         created_at_ms: row.get(2)?,
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
+        translation_enabled: row.get(5)?,
     })
 }
 
@@ -437,6 +616,7 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
         created_at_ms: row.get(2)?,
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
+        translation_enabled: row.get(5)?,
     })
 }
 
@@ -463,13 +643,25 @@ fn window_from_row(row: &Row<'_>) -> rusqlite::Result<StoredStreamingWindow> {
     })
 }
 
+fn translation_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingTranslation> {
+    Ok(StreamingTranslation {
+        session_id: row.get(0)?,
+        window_index: row.get(1)?,
+        target_language: row.get(2)?,
+        source_text: row.get(3)?,
+        translated_text: row.get(4)?,
+        updated_at_ms: row.get(5)?,
+    })
+}
+
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS streaming_sessions (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
-    status TEXT NOT NULL
+    status TEXT NOT NULL,
+    translation_enabled INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS streaming_segments (
@@ -495,6 +687,16 @@ CREATE TABLE IF NOT EXISTS streaming_mfu (
 CREATE TABLE IF NOT EXISTS streaming_prettified (
     session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
     text TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS streaming_translations (
+    session_id INTEGER NOT NULL REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+    window_index INTEGER NOT NULL,
+    target_language TEXT NOT NULL,
+    source_text TEXT NOT NULL,
+    translated_text TEXT NOT NULL,
+    updated_at_ms INTEGER NOT NULL,
+    PRIMARY KEY (session_id, window_index, target_language)
 );
 "#;
 
@@ -531,6 +733,9 @@ mod tests {
             .expect("create session");
 
         assert_eq!(created.status, status::STOPPED);
+        // WP-101: a newly created session defaults translation_enabled to
+        // false — nothing has been persisted for it yet.
+        assert!(!created.translation_enabled);
         assert_eq!(
             store.get_session(created.id).expect("get session"),
             Some(created.clone())
@@ -543,6 +748,7 @@ mod tests {
                 created_at_ms: 100,
                 updated_at_ms: 100,
                 status: status::STOPPED.to_string(),
+                translation_enabled: false,
             }]
         );
     }
@@ -1057,5 +1263,501 @@ mod tests {
             .get_session(session_id)
             .expect("get session")
             .is_some());
+    }
+
+    // --- WP-92: streaming_translations ---
+
+    fn translation(
+        session_id: StreamingSessionId,
+        window_index: i64,
+        target_language: &str,
+    ) -> StreamingTranslation {
+        StreamingTranslation {
+            session_id,
+            window_index,
+            target_language: target_language.to_string(),
+            source_text: "Привет, мир.".to_string(),
+            translated_text: "Hello, world.".to_string(),
+            updated_at_ms: 1_000,
+        }
+    }
+
+    #[test]
+    fn given_no_translations_when_listing_then_result_is_empty() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        assert!(store
+            .list_translations(session_id, "en")
+            .expect("list translations")
+            .is_empty());
+    }
+
+    #[test]
+    fn upserted_translation_round_trips_through_list() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        store
+            .upsert_translation(&translation(session_id, 0, "en"))
+            .expect("upsert translation");
+
+        assert_eq!(
+            store.list_translations(session_id, "en").expect("list"),
+            vec![translation(session_id, 0, "en")]
+        );
+    }
+
+    #[test]
+    fn upserting_the_same_window_index_and_language_twice_overwrites_rather_than_duplicates() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .upsert_translation(&translation(session_id, 0, "en"))
+            .expect("first upsert");
+
+        let mut revised = translation(session_id, 0, "en");
+        revised.translated_text = "Hello, everyone.".to_string();
+        revised.updated_at_ms = 2_000;
+        store
+            .upsert_translation(&revised)
+            .expect("second upsert (retranslate)");
+
+        let rows = store.list_translations(session_id, "en").expect("list");
+        assert_eq!(rows.len(), 1, "retranslation must overwrite, not duplicate");
+        assert_eq!(rows[0].translated_text, "Hello, everyone.");
+        assert_eq!(rows[0].updated_at_ms, 2_000);
+    }
+
+    #[test]
+    fn translations_for_different_target_languages_are_independent_rows() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+
+        store
+            .upsert_translation(&translation(session_id, 0, "en"))
+            .expect("upsert en");
+        store
+            .upsert_translation(&translation(session_id, 0, "ru"))
+            .expect("upsert ru");
+
+        assert_eq!(store.list_translations(session_id, "en").unwrap().len(), 1);
+        assert_eq!(store.list_translations(session_id, "ru").unwrap().len(), 1);
+    }
+
+    #[test]
+    fn translations_for_different_sessions_are_independent() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let a = store.create_session(draft("A", 100)).unwrap().id;
+        let b = store.create_session(draft("B", 200)).unwrap().id;
+
+        store
+            .upsert_translation(&translation(a, 0, "en"))
+            .expect("upsert for a");
+
+        assert_eq!(store.list_translations(a, "en").unwrap().len(), 1);
+        assert!(store.list_translations(b, "en").unwrap().is_empty());
+    }
+
+    #[test]
+    fn upserting_a_translation_for_a_nonexistent_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        let result = store.upsert_translation(&translation(999_999, 0, "en"));
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn deleting_a_session_cascades_its_translations() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Disposable", 100)).unwrap().id;
+        store
+            .upsert_translation(&translation(session_id, 0, "en"))
+            .expect("upsert translation");
+
+        store.delete_session(session_id).expect("delete session");
+
+        assert!(store
+            .list_translations(session_id, "en")
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn streaming_translation_reports_stale_when_source_text_no_longer_matches() {
+        let stored = translation(1, 0, "en");
+        assert!(stored.is_stale("Привет, мир! (изменено)"));
+    }
+
+    #[test]
+    fn streaming_translation_reports_not_stale_when_source_text_still_matches() {
+        let stored = translation(1, 0, "en");
+        assert!(!stored.is_stale("Привет, мир."));
+    }
+
+    /// Opening a database that predates the `streaming_translations` table
+    /// (but already has sessions/segments/mfu/prettified data) must both
+    /// preserve that existing data and make the new table usable —
+    /// `CREATE TABLE IF NOT EXISTS` migration, same shape as the
+    /// `streaming_prettified` precedent.
+    #[test]
+    fn opening_a_pre_migration_database_preserves_existing_data_and_adds_translations_table() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let db_path = crate::store::shared_database_path(temp.path());
+        std::fs::create_dir_all(temp.path()).expect("create app-support dir");
+
+        {
+            // Build a pre-WP-92 database by hand: every table this feature's
+            // migration must leave intact, deliberately excluding
+            // streaming_translations.
+            let connection = Connection::open(&db_path).expect("open raw pre-migration database");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE streaming_sessions (
+                        id INTEGER PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL
+                    );
+                    CREATE TABLE streaming_segments (
+                        session_id INTEGER NOT NULL REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+                        window_index INTEGER NOT NULL,
+                        start_ms INTEGER NOT NULL CHECK(start_ms >= 0),
+                        end_ms INTEGER NOT NULL CHECK(end_ms >= start_ms),
+                        text TEXT NOT NULL,
+                        language TEXT NOT NULL,
+                        outcome_ok INTEGER NOT NULL,
+                        PRIMARY KEY (session_id, window_index)
+                    );
+                    CREATE TABLE streaming_mfu (
+                        session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+                        summary TEXT NOT NULL,
+                        decisions TEXT NOT NULL,
+                        action_items TEXT NOT NULL,
+                        open_questions TEXT NOT NULL,
+                        participants TEXT NOT NULL
+                    );
+                    CREATE TABLE streaming_prettified (
+                        session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+                        text TEXT NOT NULL
+                    );
+
+                    INSERT INTO streaming_sessions (id, title, created_at_ms, updated_at_ms, status)
+                        VALUES (1, 'Pre-migration session', 100, 200, 'stopped');
+                    INSERT INTO streaming_segments
+                        (session_id, window_index, start_ms, end_ms, text, language, outcome_ok)
+                        VALUES (1, 0, 0, 7000, 'hello there', 'en', 1);
+                    INSERT INTO streaming_mfu
+                        (session_id, summary, decisions, action_items, open_questions, participants)
+                        VALUES (1, 'Summary.', 'Decisions.', 'Actions.', 'Questions.', 'Alex');
+                    INSERT INTO streaming_prettified (session_id, text)
+                        VALUES (1, 'Cleaned transcript.');
+                    "#,
+                )
+                .expect("seed pre-migration schema and data");
+        }
+
+        let store = StreamingStore::open(temp.path()).expect("open (and migrate) database");
+
+        // Pre-existing data across every prior streaming table survived.
+        let session = store
+            .get_session(1)
+            .expect("get session")
+            .expect("session survives migration");
+        assert_eq!(session.title, "Pre-migration session");
+        assert_eq!(session.status, status::STOPPED);
+
+        let windows = store.list_windows(1).expect("list windows");
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].text, "hello there");
+
+        assert_eq!(
+            store.get_mfu(1).expect("get mfu").map(|m| m.summary),
+            Some("Summary.".to_string())
+        );
+        assert_eq!(
+            store.get_prettified(1).expect("get prettified"),
+            Some("Cleaned transcript.".to_string())
+        );
+
+        // The new table exists and is immediately usable.
+        assert!(store.list_translations(1, "en").expect("list").is_empty());
+        store
+            .upsert_translation(&translation(1, 0, "en"))
+            .expect("upsert into migrated table");
+        assert_eq!(store.list_translations(1, "en").expect("list").len(), 1);
+    }
+
+    // --- WP-103: paragraph_key -> window_index column rename ---
+
+    /// Opening a database whose `streaming_translations` table still has the
+    /// pre-WP-103 `paragraph_key` column must rename it to `window_index` in
+    /// place via `ALTER TABLE ... RENAME COLUMN`, preserving existing rows —
+    /// the same checked-before-ALTER idiom `migrate_translation_enabled_column`
+    /// uses, applied to a rename instead of an add.
+    #[test]
+    fn migrating_a_pre_rename_paragraph_key_column_renames_it_to_window_index_and_preserves_data() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let db_path = crate::store::shared_database_path(temp.path());
+        std::fs::create_dir_all(temp.path()).expect("create app-support dir");
+
+        {
+            // Build a pre-WP-103 streaming_translations table by hand, using
+            // the old paragraph_key column name, with one row of data.
+            let connection = Connection::open(&db_path).expect("open raw pre-rename database");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE streaming_sessions (
+                        id INTEGER PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL,
+                        translation_enabled INTEGER NOT NULL DEFAULT 0
+                    );
+                    CREATE TABLE streaming_translations (
+                        session_id INTEGER NOT NULL REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+                        paragraph_key INTEGER NOT NULL,
+                        target_language TEXT NOT NULL,
+                        source_text TEXT NOT NULL,
+                        translated_text TEXT NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        PRIMARY KEY (session_id, paragraph_key, target_language)
+                    );
+                    INSERT INTO streaming_sessions
+                        (id, title, created_at_ms, updated_at_ms, status, translation_enabled)
+                        VALUES (1, 'Pre-rename session', 100, 200, 'stopped', 0);
+                    INSERT INTO streaming_translations
+                        (session_id, paragraph_key, target_language, source_text, translated_text, updated_at_ms)
+                        VALUES (1, 3, 'en', 'Исходный текст.', 'Source text.', 1000);
+                    "#,
+                )
+                .expect("seed pre-rename schema and data");
+        }
+
+        let store = StreamingStore::open(temp.path()).expect("open (and migrate) database");
+
+        let rows = store.list_translations(1, "en").expect("list translations");
+        assert_eq!(
+            rows,
+            vec![StreamingTranslation {
+                session_id: 1,
+                window_index: 3,
+                target_language: "en".to_string(),
+                source_text: "Исходный текст.".to_string(),
+                translated_text: "Source text.".to_string(),
+                updated_at_ms: 1_000,
+            }]
+        );
+
+        // The column is now writable under its new name, not just readable
+        // with data preserved from before the rename.
+        store
+            .upsert_translation(&StreamingTranslation {
+                session_id: 1,
+                window_index: 4,
+                target_language: "en".to_string(),
+                source_text: "Другой текст.".to_string(),
+                translated_text: "Other text.".to_string(),
+                updated_at_ms: 2_000,
+            })
+            .expect("upsert into migrated (renamed) column");
+        assert_eq!(store.list_translations(1, "en").expect("list").len(), 2);
+    }
+
+    /// Reopening a database whose `streaming_translations` table has already
+    /// been migrated to `window_index` must not error on a duplicate
+    /// `RENAME COLUMN` — the column-presence check must make the migration a
+    /// no-op once the column is already named `window_index`.
+    #[test]
+    fn reopening_an_already_window_index_migrated_database_does_not_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let session_id;
+        {
+            let store = StreamingStore::open(temp.path()).expect("first open");
+            session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+            store
+                .upsert_translation(&StreamingTranslation {
+                    session_id,
+                    window_index: 0,
+                    target_language: "en".to_string(),
+                    source_text: "Привет.".to_string(),
+                    translated_text: "Hi.".to_string(),
+                    updated_at_ms: 1_000,
+                })
+                .expect("upsert translation");
+        }
+
+        let reopened =
+            StreamingStore::open(temp.path()).expect("reopening an already-migrated database");
+        assert_eq!(
+            reopened
+                .list_translations(session_id, "en")
+                .expect("list")
+                .len(),
+            1
+        );
+    }
+
+    // --- WP-101: translation_enabled column, migration, and persistence ---
+
+    /// Opening a database whose `streaming_sessions` table predates the
+    /// `translation_enabled` column must both preserve the existing session
+    /// row and add the column, defaulted to false (off) — the same
+    /// check-then-`ALTER TABLE` shape as `migrate_legacy_streaming_notes`,
+    /// since SQLite's `ADD COLUMN` has no `IF NOT EXISTS` clause to fold into
+    /// the idempotent `CREATE TABLE IF NOT EXISTS` schema batch.
+    #[test]
+    fn opening_a_pre_migration_database_adds_translation_enabled_defaulted_to_false() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let db_path = crate::store::shared_database_path(temp.path());
+        std::fs::create_dir_all(temp.path()).expect("create app-support dir");
+
+        {
+            // A pre-WP-101 streaming_sessions table: every column this
+            // feature's migration must leave intact, deliberately excluding
+            // translation_enabled.
+            let connection = Connection::open(&db_path).expect("open raw pre-migration database");
+            connection
+                .execute_batch(
+                    r#"
+                    CREATE TABLE streaming_sessions (
+                        id INTEGER PRIMARY KEY,
+                        title TEXT NOT NULL,
+                        created_at_ms INTEGER NOT NULL,
+                        updated_at_ms INTEGER NOT NULL,
+                        status TEXT NOT NULL
+                    );
+                    INSERT INTO streaming_sessions (id, title, created_at_ms, updated_at_ms, status)
+                        VALUES (1, 'Pre-migration session', 100, 200, 'stopped');
+                    "#,
+                )
+                .expect("seed pre-migration schema and data");
+        }
+
+        let store = StreamingStore::open(temp.path()).expect("open (and migrate) database");
+
+        let session = store
+            .get_session(1)
+            .expect("get session")
+            .expect("session survives migration");
+        assert_eq!(session.title, "Pre-migration session");
+        assert_eq!(session.status, status::STOPPED);
+        assert!(
+            !session.translation_enabled,
+            "a pre-existing session must default to translation_enabled = false"
+        );
+
+        // The column is now writable, not just readable with a default.
+        store
+            .set_translation_enabled(1, true)
+            .expect("set translation_enabled on the migrated column");
+        assert!(
+            store
+                .get_session(1)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    /// Reopening the (already-migrated) database a second time must not
+    /// error on a duplicate `ALTER TABLE ADD COLUMN` — the column-presence
+    /// check must make the migration a no-op once the column exists.
+    #[test]
+    fn reopening_an_already_migrated_database_does_not_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        {
+            let store = StreamingStore::open(temp.path()).expect("first open");
+            store.create_session(draft("Standup", 100)).unwrap();
+        }
+
+        StreamingStore::open(temp.path()).expect("reopening an already-migrated database");
+    }
+
+    #[test]
+    fn set_translation_enabled_persists_and_is_readable_after_reopen() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let session_id;
+        {
+            let store = StreamingStore::open(temp.path()).expect("open database");
+            session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+            assert!(
+                !store
+                    .get_session(session_id)
+                    .unwrap()
+                    .unwrap()
+                    .translation_enabled
+            );
+
+            store
+                .set_translation_enabled(session_id, true)
+                .expect("set translation_enabled");
+        }
+
+        let reopened = StreamingStore::open(temp.path()).expect("reopen database");
+        assert!(
+            reopened
+                .get_session(session_id)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    #[test]
+    fn set_translation_enabled_back_to_false_overwrites_the_prior_value() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        store
+            .set_translation_enabled(session_id, true)
+            .expect("enable");
+
+        store
+            .set_translation_enabled(session_id, false)
+            .expect("disable");
+
+        assert!(
+            !store
+                .get_session(session_id)
+                .expect("get session")
+                .expect("session exists")
+                .translation_enabled
+        );
+    }
+
+    #[test]
+    fn setting_translation_enabled_for_an_unknown_session_is_a_store_error() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+
+        let result = store.set_translation_enabled(999_999, true);
+
+        assert!(matches!(result, Err(AppError::Store(_))));
+    }
+
+    #[test]
+    fn two_sessions_have_independent_translation_enabled_values() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let a = store.create_session(draft("A", 100)).unwrap().id;
+        let b = store.create_session(draft("B", 200)).unwrap().id;
+
+        store.set_translation_enabled(a, true).expect("enable a");
+
+        assert!(store.get_session(a).unwrap().unwrap().translation_enabled);
+        assert!(!store.get_session(b).unwrap().unwrap().translation_enabled);
     }
 }

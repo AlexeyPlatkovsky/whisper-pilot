@@ -1,0 +1,59 @@
+schema_version: 1
+id: WP-93
+title: Live Translation header control and split paired-row transcript pane
+priority: normal
+type: task
+status: done
+created_at: '2026-08-26T16:32:18Z'
+updated_at: '2026-08-27T07:37:00Z'
+parent_id: WP-91
+description: 'Front-end for Streaming live translation in src/StreamingView.tsx.
+
+
+  Header control: a new middle slot in the transcript panel header (.wp-transcript-header) holding the label "Live Translation", a switch, and a target-language select with English and Русский. The title group stays left and the existing action cluster stays right. The dropdown is disabled while the switch is ON. The switch is disabled, with a stated reason, when no LLM model is ready, when a prettified transcript is active, and while a Prettify review is pending; conversely the Prettify button is disabled with a stated reason while the switch is ON. Target language defaults to English on each launch and is not persisted.
+
+
+  Split pane: while the switch is ON the transcript content renders as a two-column grid inside the single existing scroll container — left cell the original paragraph, right cell its translation — one grid row per paragraph from groupWindowsIntoParagraphs, so a pair can never drift out of vertical alignment. Column headers name the source side and the target language. Each column has a minimum width; the MFU aside keeps its fixed width and the transcript panel splits the remaining space evenly. Switching the toggle OFF restores the current single-column rendering unchanged.
+
+
+  Translation queue: a paragraph is enqueued when it closes (a later window starts a new paragraph, or capture stops), plus a full backfill from the oldest paragraph when the switch turns ON. Exactly one translate call is in flight at a time; results already persisted for this session and target language are loaded first and reused instead of re-running the model. A paragraph whose windows are all already in the target language is never sent to the model and its right cell mirrors the original text in a muted style. Queued paragraphs show a pending state; the paragraph currently in flight shows a translating state.
+
+
+  Happy path: user switches Live Translation on mid-session with target English, existing paragraphs fill in oldest-first while new paragraphs keep arriving on the left and are translated as they close.
+
+  Failure behavior: a paragraph whose translation fails shows "translation failed · retry" in its right cell with a per-row retry control; the queue continues with the next paragraph, capture is never interrupted, and no error dialog appears.
+
+  Edge cases: switching OFF mid-queue cancels pending work and leaves stored results intact; deleting or switching sessions clears the queue; a paragraph whose boundary shifts when a new window arrives is re-enqueued and its stale translation is replaced; the pane stays scrolled to the live edge only when the user was already at the edge.
+
+
+  Scope boundary: Streaming UI only. Command, prompts, validation and persistence are owned by the backend item; copy and export are owned by the export item.
+
+
+  Scenarios:
+
+  Given a running session with Russian paragraphs and an LLM model ready, When the user switches Live Translation on with target English, Then the transcript splits into paired rows, existing paragraphs are translated oldest-first, and each translation renders in the same grid row as its original.
+
+  Given Live Translation is on, When a paragraph''s translation call fails, Then that row shows a retry control, the next paragraph is still translated, and capture continues.
+
+  Given Live Translation is on, When the user switches it off, Then the transcript returns to its single-column rendering and the target-language dropdown becomes editable again.
+
+  Given a paragraph whose windows are all detected as the target language, When it is processed, Then no translate call is made and the right cell shows the original text in a muted style.
+
+
+  Target surfaces: src/StreamingView.tsx, src/paragraphs.ts, src/ipc.ts, src/styles.css (.wp-transcript-header middle slot, split grid, muted and pending row states), a shared switch component under src/, src/Icon.tsx if a new glyph is needed.
+
+
+  Constraints: at most one translate call in flight, and the queue must never delay rendering of incoming windows; the pending, translating, failed and mirrored states must be distinguishable without color alone; the switch and select are keyboard-focusable with accessible names and a disabled reason exposed as a title/aria-description; the split view must stay usable at the app''s minimum supported window width with the MFU panel open.'
+dod:
+- The transcript header renders label + switch + target-language select in a middle slot, leaving the title group left and the action cluster right; both controls are keyboard-focusable with accessible names. Covered by React/vitest tests.
+- Switching on renders a two-column paired-row grid in one scroll container with one row per paragraph, and switching off restores the single-column rendering unchanged; covered by React/vitest tests.
+- Backfill runs oldest-first, at most one translate call is in flight at any time, and already-persisted translations for the session and target language are reused without a model call; covered by React/vitest tests over a mocked ipc layer.
+- A paragraph whose windows are all in the target language triggers no translate call and renders the original text in the muted mirrored style; covered by a React/vitest test.
+- A failed paragraph renders a retry control, the queue continues to the next paragraph, and no dialog or capture interruption occurs; retry re-runs only that paragraph. Covered by React/vitest tests.
+- The dropdown is locked while the switch is on; the switch is disabled with a stated reason when no LLM model is ready or a prettified transcript is active or pending, and Prettify is disabled with a stated reason while the switch is on. Covered by React/vitest tests.
+- With translation and the MFU panel both on, the MFU aside keeps its fixed width, each text column honors its minimum width, and no column collapses at the minimum supported window width; verified by manual UI check on a real app run.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  blocks:
+  - WP-94
+created_by: Aleksei_Platkovskii

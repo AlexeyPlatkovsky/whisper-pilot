@@ -459,6 +459,24 @@ streaming_sessions`, `open_streaming_session`, `rename_streaming_session`,
 (`StreamingSessionDto`, `StreamingWindowDto`) are the JSON shape the
 Streaming tab consumes.
 
+`streaming_translations` (WP-92) is the newest table in this store, keyed by
+`(session_id, window_index, target_language)` with `ON DELETE CASCADE` on
+`session_id`, created in the same `CREATE TABLE IF NOT EXISTS` schema batch as
+`streaming_prettified`. `window_index` was originally the `window_index` of a
+*paragraph's* first window (one row per paragraph); ADR-016/WP-103 renamed
+the column via a checked `ALTER TABLE … RENAME COLUMN` migration when the
+translation unit moved to a single window (one row per window — see Live
+Translation below). `StreamingStore::upsert_translation` follows
+`append_window`'s `ON CONFLICT … DO UPDATE` idiom, so a repeated translate for
+the same key overwrites in place rather than duplicating; `list_translations`
+reads back every stored translation for one session and target language. Each
+row also stores the source text it was translated from, so
+`StreamingTranslation::is_stale(current_source_text)` can tell a caller when
+that window's text changed (e.g. a fail-open retry) and the stored
+translation no longer matches — re-translation, not display, is then the
+caller's job. See Live Translation below for the local-LLM call and command
+that populate this table.
+
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
 
 `stop_streaming_session` in `commands/streaming.rs`, `src/StreamingView.tsx`)
@@ -596,18 +614,137 @@ control calls `revert_streaming_prettify` to delete that row and restore the
 raw per-window transcript for display/copy/export. The two LLM-generation
 commands reuse `streaming::build_streaming_transcript`'s guards (session
 exists, stopped, non-empty transcript); Accept and Revert operate on an
-existing session row. Craft and Prettify are mutually exclusive in flight
-(both are LLM calls against the same shared model).
+existing session row. Craft and Prettify are kept from overlapping only by
+the front end disabling their buttons while either is in flight — there is
+no backend guard between those two commands, so nothing in the core itself
+would stop two concurrent requests from both reaching the shared model. (See
+Live Translation below for the first real backend guard against this
+class of contention, though it currently covers only translation.)
+
+## Live Translation (WP-92 core/persistence, WP-93 UI, WP-103 rolling per-window; `llm.rs`, `src/StreamingView.tsx`)
+
+A third local-LLM use of the same shared model, alongside Craft MFU and
+Prettify: `llm::translate_paragraph` translates one Streaming window's text
+into a target language (`"en"` or `"ru"`) via the same llama.cpp completion
+path — the function itself kept its original name and signature across
+WP-103 (it never had a paragraph-specific concept; only its caller's unit
+changed, see below) — using its own prompt (`build_translate_prompt`,
+branching on the target language) and its own candidate validation
+(`validate_translation_candidate`) — rejecting an empty or whitespace-only
+result, a result disproportionately shorter or longer than the source, and a
+result still predominantly in the source script when the target script
+differs. `ensure_translation_fits_context_budget` rejects (rather than
+truncates) text whose estimated token count would overflow `CTX_SIZE`,
+using a script-aware chars-per-token estimate — Cyrillic tokenizes denser
+than Latin under Qwen/ChatML-style tokenizers, so the same character count
+budgets fewer tokens for Cyrillic text.
+
+Unlike Craft and Prettify (previous section), translation has its own real
+backend concurrency guard: `AppState::translation_busy` (an `AtomicBool`,
+deliberately independent of `whisper_busy` so translation never blocks or is
+blocked by the streaming decode loop) and `llm::TranslationUsageGuard`, a
+non-blocking single-flight RAII guard mirroring `streaming_session::
+WhisperUsageGuard`'s claim/release idiom. Contention returns
+`AppError::TranslationBusy`, a distinct, UI-retryable error, rather than
+queuing or blocking. This guard only single-flights translation against
+itself — it does not also cover Craft or Prettify.
+
+The `translate_streaming_window(session_id, window_index, target_language,
+text, context)` command (`commands/mfu.rs`, renamed from
+`translate_streaming_paragraph` by ADR-016/WP-103) validates the request
+cheaply first (`streaming::ensure_translation_request_is_valid`: supported
+target language, session exists, non-empty source text) before resolving the
+active LLM model path or acquiring the single-flight guard, then runs
+`streaming::translate_and_store` — which calls the model and upserts the
+result into `streaming_translations` (see Streaming Persistence above) — on a
+`spawn_blocking` task, and returns the translated text. `context` (WP-100,
+generalized by WP-103) is threaded unchanged through `translate_and_store`
+into `llm::translate_paragraph`'s `prior_context` parameter; omitted or
+`None`, the call and its resulting prompt are byte-identical to before
+WP-100. `src/ipc.ts` exposes this as a typed `translateStreamingWindow`
+wrapper with a `StreamingTranslationTargetLanguage` type and the matching
+optional `context` parameter.
+
+Its read counterpart, `list_streaming_translations(session_id,
+target_language)` (`commands/streaming.rs` → `streaming::
+list_streaming_translations`), validates the target language and that the
+session exists, then returns every persisted `{window_index, source_text,
+translated_text}` row for that session and target language via
+`StreamingStore::list_translations`. `src/ipc.ts` exposes it as
+`listStreamingTranslations`, typed `StreamingTranslationRow[]`. This closed
+the gap the previous revision of this section left open: WP-92 persisted
+translations but shipped no way to read them back.
+
+**WP-93 (front-end, `src/StreamingView.tsx`):** the transcript header gains
+a Live Translation control between the title group and the action cluster —
+switch + target-language select (English/Русский) — and, while it is on,
+the transcript content renders as a two-column paired-row grid instead of
+`groupWindowsIntoParagraphs`'s usual single-column flow. See `docs/design.md`
+("Center — transcript") for the full layout, row states, and header-control
+rules. `groupWindowsIntoParagraphs` still drives this display grouping
+exactly as before — WP-103 only changed what drives *translation*, not what
+drives the on-screen row layout.
+
+**WP-103 (rolling per-window translation, superseding WP-100's
+paragraph-batch behavior — see ADR-016):** translation is triggered per
+window, not per paragraph, and is entirely decoupled from paragraph
+boundaries/`paragraphs.ts`'s closure heuristic (`isParagraphClosed` was
+deleted as dead code once nothing gated on it). Nothing translates until the
+session has at least 2 windows; at that threshold, window 0 (no context) and
+window 1 (context = window 0's translation) both enqueue in the same
+reconcile pass and fire back to back through the single-flight queue. Every
+window after that translates alone, as soon as it arrives, with `context` set
+to the concatenation, in order, of the up-to-2 immediately preceding windows'
+available (`"done"`/`"mirrored"`) translations — a failed or not-yet-resolved
+predecessor is skipped rather than blocking, so translation always proceeds
+with whatever context exists. Exactly one `translateStreamingWindow` call is
+in flight at a time (unchanged single-flight queue, now keyed by
+`window_index`), and the queue never delays rendering of incoming windows.
+Before queuing anything, an effect calls `listStreamingTranslations` so a row
+already persisted for this session and target language is reused without a
+model call, matched by `window_index` against that one window's own current
+text; a stale match (the window's text changed, e.g. a fail-open retry) is
+re-queued instead. A window whose own language already matches the target is
+mirrored individually — no model call, its own text used verbatim — which now
+correctly handles a paragraph mixing already-translated and needs-translation
+windows, rather than WP-93's original all-or-nothing paragraph-level check.
+Turning the switch on backfills the whole session oldest-first through the
+same per-window mechanism. The paired-row grid's translated cell is built by
+mapping each of a paragraph's windows through its own entry (real text for a
+done/mirrored window, a placeholder for one still in flight or failed) and
+joining them, so a paragraph with an unfinished trailing window shows real
+text for its finished windows and a placeholder only for the tail, instead of
+staying blank until the whole paragraph resolves. The retry affordance stays
+paragraph-scoped — one button per paragraph, re-enqueuing every *failed*
+window within it, not every window. Switching the toggle off mid-queue, or
+switching or deleting the session, cancels pending work and discards any
+in-flight result a subsequent change has superseded, exactly as before
+WP-103.
+
+The switch's own on/off state is persisted (WP-101): `streaming_sessions`
+gains a `translation_enabled` column, written best-effort via
+`set_streaming_translation_enabled` on every toggle (mirroring WP-96's
+MFU-panel-toggle pattern — the switch keeps showing what the user chose even
+if the write fails, with no retry), and read back into both
+`StreamingSessionSummaryDto` and `StreamingSessionDto`. Opening a session
+restores its persisted value, so the state survives closing and reopening a
+session and an app restart. Pressing Start/Resume on the session that is
+*already* open is not a session-identity change, so it leaves the switch,
+its translations, and its in-flight queue untouched — only starting a
+genuinely different session (a brand-new one, or resuming a different past
+session) resets them.
 
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
-(theme, `ui_language`, each task's active model, export file type, and the
+(theme, `ui_language`, each task's active model, export file type, the
 WP-88 `status_colors` JSON mapping of each configurable status to an opaque
-`#RRGGBB` color), applied immediately and
-across restarts. The React layer owns **theming** (light / dark / system, plus
-release themes) and **i18n** (English default, release languages); the OS scheme
-drives the _System_ theme.
+`#RRGGBB` color, and the WP-96 `mfu_panel_meeting`/`mfu_panel_streaming`
+booleans — one independent key per screen, each defaulting to `true`, gating
+only that screen's MFU panel visibility, never Craft MFU itself), applied
+immediately and across restarts. The React layer owns **theming** (light /
+dark / system, plus release themes) and **i18n** (English default, release
+languages); the OS scheme drives the _System_ theme.
 
 `models/` manages a **fixed, app-defined catalog** of the model(s) each task
 needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
@@ -686,8 +823,15 @@ span.
 | `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
+| `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
 | `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
+| `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |
+| `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
+| `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |
+| `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
+| `translate_streaming_window(session_id, window_index, target_language, text, context?)` | Translate one Streaming window into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, window_index, target_language)`; called by the Live Translation queue (WP-93/WP-103). Optional `context` is the up-to-2 immediately preceding windows' own translations, concatenated, passed as reference-only prompt context | WP-92, WP-100, WP-103 |
+| `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
 
 Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
 between the Meeting run's two passes; completion and errors return through the

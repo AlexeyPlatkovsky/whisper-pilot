@@ -1,0 +1,42 @@
+schema_version: 1
+id: WP-102
+title: Fix stale persistedReady letting reopened sessions re-translate already-translated paragraphs
+priority: normal
+type: task
+status: done
+created_at: '2026-08-27T18:39:59Z'
+updated_at: '2026-08-27T21:30:56Z'
+parent_id: WP-91
+description: 'Reopening a session whose Live Translation was on and already had persisted translations causes every already-translated paragraph to be re-sent to the model and re-translated, discarding the correct persisted result.
+
+
+  Root cause: handleOpen (src/StreamingView.tsx) clears persistedTranslationsRef.current and the translations map when opening a session, but never resets the persistedReady state flag. If persistedReady is already true from a previous session (nothing resets it when translation is off, or when switching to a session that doesn''t have translation enabled), the reconcile effect can run on the very next render using the freshly emptied persistedTranslationsRef, before the async listStreamingTranslations fetch for the newly opened session completes and repopulates it. Every closed paragraph looks unpersisted for that one race window and gets enqueued for a fresh model call, overwriting the correct persisted translation. This is the same race class the WP-93 review found and fixed for handleToggleTranslation (which resets persistedReady synchronously); handleOpen was missed, and the same gap exists in startSession''s currently-unreachable "different session" branch and in confirmDelete.
+
+
+  Fix: reset persistedReady to false synchronously everywhere persistedTranslationsRef.current is cleared to a fresh Map (handleOpen, startSession''s different-session branch, confirmDelete), so the reconcile effect can never observe a stale "ready" flag against an empty ref.
+
+
+  Happy path: user has a stopped session with Live Translation on and several already-translated, persisted paragraphs. They open a different session, then reopen the first one. The persisted translations render immediately with no new model calls.
+
+
+  Failure/edge cases: if listStreamingTranslations itself fails (store error), the existing best-effort fallback (proceed with an empty persisted map, translate live) is unchanged - this fix only closes the race, not that fallback. A session with translation on but no persisted rows yet still translates its paragraphs live, exactly as before.
+
+
+  Scenarios:
+
+  Given a session with Live Translation on and paragraphs already translated and persisted, When the user switches to a different session and back to this one, Then no new translateStreamingParagraph calls are made and the persisted translations render as-is.
+
+  Given persistedReady was left true from a previously open session, When a different session is opened next, Then the reconcile effect never runs with that stale ready flag paired against an emptied persistedTranslationsRef.
+
+
+  Target surfaces: src/StreamingView.tsx, src/StreamingView.translation.test.tsx.
+
+
+  Constraints: no change to what gets persisted or to the translate/list IPC contract - purely a client-side ordering fix; no backend changes.'
+dod:
+- 'persistedReady is synchronously reset to false everywhere persistedTranslationsRef.current is cleared to a fresh Map (handleOpen, startSession''s different-session branch, handleCreateNew, confirmDelete), so the reconcile effect can never race ahead of the async persisted-translations fetch. Covered by a React/vitest test reproducing the exact reported sequence: open session A with translation on and persisted rows, open session B, reopen session A, assert translateStreamingParagraph is not called again for the already-persisted paragraphs.'
+- A session with translation on but nothing persisted yet still translates paragraphs live once persistedReady flips true - no regression to the existing happy path, covered by the existing test suite.
+- 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+links:
+  relates_to:
+  - WP-101

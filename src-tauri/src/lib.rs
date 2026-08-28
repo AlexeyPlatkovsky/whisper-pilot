@@ -52,9 +52,11 @@ pub fn run() {
             commands::streaming::open_streaming_session,
             commands::streaming::rename_streaming_session,
             commands::streaming::delete_streaming_session,
+            commands::streaming::list_streaming_translations,
             commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,
+            commands::streaming::set_streaming_translation_enabled,
             commands::dialogs::save_text_dialog,
             commands::settings::get_settings,
             commands::settings::set_setting,
@@ -65,7 +67,8 @@ pub fn run() {
             commands::mfu::generate_streaming_mfu,
             commands::mfu::generate_streaming_prettify,
             commands::mfu::accept_streaming_prettify,
-            commands::mfu::revert_streaming_prettify
+            commands::mfu::revert_streaming_prettify,
+            commands::mfu::translate_streaming_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

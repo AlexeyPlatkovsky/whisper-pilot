@@ -135,6 +135,11 @@ export interface Settings {
   /** JSON mapping of status key → opaque #RRGGBB color (WP-88); absent before
    * the setting is first saved. */
   status_colors?: string;
+  /** Whether the Meeting screen's MFU panel is shown (WP-96); absent before
+   * the setting is first saved — treat as `true` (the default). */
+  mfu_panel_meeting?: boolean;
+  /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
+  mfu_panel_streaming?: boolean;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -221,6 +226,10 @@ export interface StreamingSessionSummary {
   created_at_ms: number;
   updated_at_ms: number;
   status: string;
+  /** Whether Live Translation was left on for this session (WP-101).
+   * Unlike the target language (WP-99), this survives reopening the session
+   * and an app restart. */
+  translation_enabled: boolean;
 }
 
 export interface StreamingWindow {
@@ -249,6 +258,8 @@ export interface StreamingSession {
   windows: StreamingWindow[];
   mfu?: StreamingMfu;
   prettified_text?: string;
+  /** See `StreamingSessionSummary.translation_enabled` (WP-101). */
+  translation_enabled: boolean;
 }
 
 export function generateStreamingMfu(id: number): Promise<StreamingSession> {
@@ -343,4 +354,73 @@ export function onStreamingSessionEnded(
   return listen<{ session_id: number }>("streaming_session_ended", (event) =>
     handler(event.payload),
   );
+}
+
+/** Target languages Streaming paragraph translation supports (WP-92). */
+export type StreamingTranslationTargetLanguage = "en" | "ru";
+
+/**
+ * Translates one Streaming window into `targetLanguage` using the active
+ * local LLM and persists the result, keyed by `(sessionId, windowIndex,
+ * targetLanguage)`. Single-flight in the core: a second concurrent call
+ * rejects with a distinct, retryable error. `context` (WP-100/WP-103) is
+ * whatever rolling context the caller assembles, threaded through unchanged
+ * as ephemeral prompt context.
+ */
+export function translateStreamingWindow(
+  sessionId: number,
+  windowIndex: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+  text: string,
+  context?: string,
+): Promise<string> {
+  return invoke<string>("translate_streaming_window", {
+    sessionId,
+    windowIndex,
+    targetLanguage,
+    text,
+    context,
+  });
+}
+
+/** One persisted window translation, as returned by
+ * `listStreamingTranslations`. `source_text` is the window's own text the
+ * translation was made from — compare it against that window's *current*
+ * text to detect a stale row (the window's text changed since, e.g. a
+ * fail-open retry). */
+export interface StreamingTranslationRow {
+  window_index: number;
+  source_text: string;
+  translated_text: string;
+}
+
+/**
+ * All persisted translations for `sessionId` and `targetLanguage` (WP-93) —
+ * the read counterpart to `translateStreamingWindow`, letting the caller
+ * reuse an already-translated window instead of re-running the model.
+ */
+export function listStreamingTranslations(
+  sessionId: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+): Promise<StreamingTranslationRow[]> {
+  return invoke<StreamingTranslationRow[]>("list_streaming_translations", {
+    sessionId,
+    targetLanguage,
+  });
+}
+
+/**
+ * Persists the Live Translation on/off choice for one session (WP-101).
+ * Best-effort from the caller's perspective — matching WP-96's MFU-panel
+ * toggle pattern, a rejected promise here should be swallowed rather than
+ * surfaced as a blocking error or used to revert the switch.
+ */
+export function setStreamingTranslationEnabled(
+  sessionId: number,
+  enabled: boolean,
+): Promise<void> {
+  return invoke<void>("set_streaming_translation_enabled", {
+    sessionId,
+    enabled,
+  });
 }

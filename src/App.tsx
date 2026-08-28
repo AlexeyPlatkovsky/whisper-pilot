@@ -4,6 +4,7 @@ import {
   deleteMeeting,
   generateMfu,
   getSettings,
+  setSetting,
   listMeetings,
   listTaskModels,
   openMeeting,
@@ -25,6 +26,7 @@ import {
 import { SettingsScreen } from "./SettingsScreen";
 import { StreamingView } from "./StreamingView";
 import { ModeToggle } from "./ModeToggle";
+import { ToggleSwitch } from "./ToggleSwitch";
 import { applyTheme, type Theme } from "./theme";
 import { applyStatusColors, parseStatusColors } from "./statusColors";
 import { t } from "./i18n";
@@ -94,6 +96,12 @@ export function App() {
   );
   const [exportFileType, setExportFileType] =
     useState<ExportFileType>("plain_text");
+  // WP-96: view-only visibility of the MFU (summary) panel, persisted under
+  // its own settings key so it survives a restart independently of
+  // Streaming's. Defaults ON; a settings read/write failure keeps it ON
+  // without surfacing a blocking error (see the getSettings effect below and
+  // handleToggleMfuPanel).
+  const [mfuPanelVisible, setMfuPanelVisible] = useState(true);
   // The meeting currently being transcribed, or null. Kept outside `status`
   // and outside `activeMeeting` so that opening a different meeting cannot
   // discard a run that is still going.
@@ -202,10 +210,25 @@ export function App() {
       .then((s) => {
         applyTheme(s.theme as Theme);
         applyStatusColors(parseStatusColors(s.status_colors));
+        setMfuPanelVisible(s.mfu_panel_meeting ?? true);
       })
-      .catch(() => {});
+      .catch(() => setMfuPanelVisible(true));
     void refreshExportFileType();
   }, [refreshExportFileType]);
+
+  // View-only: never gates Craft MFU, Diarize, Transcribe, or any other
+  // action. Persistence is best-effort — a write failure leaves the switch
+  // exactly as the user set it, with no blocking error (S-1..S-3, DoD 2-3).
+  const handleToggleMfuPanel = useCallback((next: boolean) => {
+    setMfuPanelVisible(next);
+    void (async () => {
+      try {
+        await setSetting("mfu_panel_meeting", next ? "true" : "false");
+      } catch {
+        // Best-effort persistence: the switch already reflects `next`.
+      }
+    })();
+  }, []);
 
   const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
     activeMeetingIdRef.current = meeting.id;
@@ -379,6 +402,9 @@ export function App() {
   async function handleGenerateMfu() {
     if (!activeMeeting) return;
     const id = activeMeeting.id;
+    // A hidden panel is auto-revealed so the generated result is never left
+    // behind it — the generation itself is unaffected either way (DoD 4).
+    handleToggleMfuPanel(true);
     try {
       setGeneratingMfuId(id);
       setStatus({ kind: "idle" });
@@ -986,6 +1012,13 @@ export function App() {
                     busy
                   }
                 />
+                <span className="wp-sep" />
+                <span className="wp-mfu-toggle-label">MFU</span>
+                <ToggleSwitch
+                  checked={mfuPanelVisible}
+                  onChange={handleToggleMfuPanel}
+                  label="MFU panel"
+                />
               </div>
             </div>
             <div className="wp-separator" />
@@ -1065,47 +1098,52 @@ export function App() {
             </div>
           </div>
 
-          {/* MFU (summary) panel */}
-          <aside className="wp-mfu">
-            {mfu ? (
-              <div className="wp-mfu-mfu">
-                {(
-                  [
-                    ["summary", "Summary"],
-                    ["decisions", "Decisions"],
-                    ["action_items", "Action Items"],
-                    ["open_questions", "Open Questions"],
-                    ["participants", "Participants"],
-                  ] as const
-                ).map(([field, heading]) => (
-                  <section className="wp-mfu-section" key={field}>
-                    <h3 className="wp-mfu-heading">{heading}</h3>
-                    <textarea
-                      className="wp-mfu-text wp-mfu-textarea"
-                      value={mfu[field]}
-                      rows={1}
-                      onChange={(e) => editMfuField(field, e.target.value)}
-                      disabled={
-                        activeIsTranscribing ||
-                        isGeneratingMfu ||
-                        activeIsDiarizing
-                      }
-                    />
-                  </section>
-                ))}
-              </div>
-            ) : (
-              <div className="wp-mfu-placeholder">
-                <div className="wp-mfu-icon-frame">
-                  <Icon name="sparkles" size={32} />
+          {/* MFU (summary) panel — hidden by the header switch (WP-96); the
+              transcript panel above fills the freed width via its existing
+              flex:1 in .wp-transcript-panel. */}
+          {mfuPanelVisible && (
+            <aside className="wp-mfu">
+              {mfu ? (
+                <div className="wp-mfu-mfu">
+                  {(
+                    [
+                      ["summary", "Summary"],
+                      ["decisions", "Decisions"],
+                      ["action_items", "Action Items"],
+                      ["open_questions", "Open Questions"],
+                      ["participants", "Participants"],
+                    ] as const
+                  ).map(([field, heading]) => (
+                    <section className="wp-mfu-section" key={field}>
+                      <h3 className="wp-mfu-heading">{heading}</h3>
+                      <textarea
+                        className="wp-mfu-text wp-mfu-textarea"
+                        value={mfu[field]}
+                        rows={1}
+                        onChange={(e) => editMfuField(field, e.target.value)}
+                        disabled={
+                          activeIsTranscribing ||
+                          isGeneratingMfu ||
+                          activeIsDiarizing
+                        }
+                      />
+                    </section>
+                  ))}
                 </div>
-                <p className="wp-mfu-title">Run MFU Craft</p>
-                <p className="wp-mfu-subtitle">
-                  Generate summary, decisions, action items, and open questions.
-                </p>
-              </div>
-            )}
-          </aside>
+              ) : (
+                <div className="wp-mfu-placeholder">
+                  <div className="wp-mfu-icon-frame">
+                    <Icon name="sparkles" size={32} />
+                  </div>
+                  <p className="wp-mfu-title">Run MFU Craft</p>
+                  <p className="wp-mfu-subtitle">
+                    Generate summary, decisions, action items, and open
+                    questions.
+                  </p>
+                </div>
+              )}
+            </aside>
+          )}
         </section>
       </div>
 

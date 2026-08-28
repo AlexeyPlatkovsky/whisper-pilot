@@ -31,6 +31,8 @@ vi.mock("./ipc", () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: revertPrettifyMock,
+  translateStreamingWindow: vi.fn(),
+  listStreamingTranslations: vi.fn(async () => []),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -52,6 +54,19 @@ vi.mock("./ipc", () => ({
     };
   }),
   saveTextDialog: vi.fn(async () => null),
+  // WP-96: the MFU panel toggle reads/writes these; default ON with no
+  // fields set, matching the shipped Settings default.
+  getSettings: vi.fn(async () => ({
+    theme: "system",
+    ui_language: "en",
+    active_model_diarization: "none",
+    export_file_type: "plain_text",
+  })),
+  setSetting: vi.fn(),
+  // WP-93: Live Translation's model-readiness check; no model configured by
+  // default so most existing tests exercise the switch's disabled state
+  // unless a test explicitly opts in.
+  listTaskModels: vi.fn(async () => []),
 }));
 
 const SESSION_A: StreamingSessionSummary = {
@@ -60,6 +75,7 @@ const SESSION_A: StreamingSessionSummary = {
   created_at_ms: 100,
   updated_at_ms: 100,
   status: "stopped",
+  translation_enabled: false,
 };
 
 function openedSession(
@@ -71,6 +87,7 @@ function openedSession(
     created_at_ms: 100,
     updated_at_ms: 100,
     status: "stopped",
+    translation_enabled: false,
     windows: [],
     ...overrides,
   };
@@ -169,6 +186,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
@@ -188,6 +206,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -214,6 +233,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -240,6 +260,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -276,6 +297,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -307,6 +329,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -333,6 +356,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -351,6 +375,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     vi.mocked(ipc.stopStreamingSession).mockResolvedValue(undefined);
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
@@ -445,6 +470,7 @@ describe("StreamingView", () => {
         created_at_ms: 100,
         updated_at_ms: 500,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
@@ -474,6 +500,7 @@ describe("StreamingView", () => {
         created_at_ms: 100,
         updated_at_ms: 500,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
@@ -508,6 +535,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "stopped",
+        translation_enabled: false,
       });
       vi.mocked(ipc.startStreamingSession).mockResolvedValue({
         id: 2,
@@ -515,6 +543,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 201,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
@@ -774,6 +803,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -792,6 +822,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -810,6 +841,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -828,6 +860,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "active",
+      translation_enabled: false,
     });
     vi.mocked(ipc.stopStreamingSession).mockRejectedValue(
       "capture is not responding",
@@ -1082,6 +1115,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "stopped",
+        translation_enabled: false,
       };
       vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
         SESSION_A,
@@ -1147,6 +1181,7 @@ describe("StreamingView", () => {
       created_at_ms: 200,
       updated_at_ms: 200,
       status: "stopped",
+      translation_enabled: false,
     };
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
       SESSION_A,
@@ -1296,6 +1331,7 @@ describe("StreamingView", () => {
         created_at_ms: number;
         updated_at_ms: number;
         status: string;
+        translation_enabled: boolean;
       }) => void;
       vi.mocked(ipc.startStreamingSession).mockReturnValue(
         new Promise((resolve) => {
@@ -1315,6 +1351,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       await waitFor(() => expect(status).toHaveTextContent("On Air"));
       expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
@@ -1342,6 +1379,7 @@ describe("StreamingView", () => {
           created_at_ms: 200,
           updated_at_ms: 200,
           status: "active",
+          translation_enabled: false,
         });
         render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
         const status = await screen.findByRole("status");
@@ -1377,6 +1415,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       const user = userEvent.setup();
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
@@ -1433,6 +1472,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       let resolveStop!: () => void;
       vi.mocked(ipc.stopStreamingSession).mockReturnValue(
@@ -1518,6 +1558,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -1714,6 +1755,7 @@ describe("StreamingView", () => {
         created_at_ms: 100,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
@@ -1998,6 +2040,7 @@ describe("StreamingView", () => {
         created_at_ms: 200,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByRole("button", { name: "Start" }));
@@ -2125,6 +2168,7 @@ describe("StreamingView", () => {
         created_at_ms: 100,
         updated_at_ms: 200,
         status: "active",
+        translation_enabled: false,
       });
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
