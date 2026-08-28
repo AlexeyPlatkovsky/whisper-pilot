@@ -510,14 +510,11 @@ fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
 
 /// Adds `translation_enabled` to a `streaming_sessions` table that predates
 /// the column (WP-101), defaulting every existing row to off (`false`).
-/// SQLite's `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` clause, so —
-/// unlike the other tables here, which fold new tables into the idempotent
-/// `CREATE TABLE IF NOT EXISTS` schema batch — this checks the column's
-/// presence via `PRAGMA table_info` first, the same check-then-alter shape
-/// `migrate_legacy_streaming_notes` uses. A no-op on a brand-new database
-/// (no `streaming_sessions` table yet: `CREATE TABLE IF NOT EXISTS` below
-/// already creates it with the column) and on a database that already has
-/// the column (this feature's own migration, run on a prior launch).
+/// SQLite's `ALTER TABLE ... ADD COLUMN` has no `IF NOT EXISTS` clause, so
+/// this checks the column's presence via `PRAGMA table_info` first (same
+/// shape as `migrate_legacy_streaming_notes`) — a no-op on a brand-new
+/// database (`CREATE TABLE IF NOT EXISTS` below already creates the column)
+/// or one already migrated.
 fn migrate_translation_enabled_column(connection: &Connection) -> Result<()> {
     let has_table = connection
         .query_row(

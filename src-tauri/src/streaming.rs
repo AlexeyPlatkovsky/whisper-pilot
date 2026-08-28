@@ -257,13 +257,11 @@ pub fn ensure_translation_request_is_valid(
 }
 
 /// Runs `translate` (production: `llm::translate_paragraph` bound to the
-/// resolved model path; tests: a fake, so this composition is verifiable
-/// without a real model) and persists the result — the part of
-/// `translate_streaming_window` that needs the shared LLM. Injected so
-/// this can be exercised, including its "write no row on failure"
-/// guarantee, without a real model or Tauri `AppHandle`. `context` (WP-100)
-/// is the immediately preceding window(s)' own translation, passed through
-/// to `translate` unchanged as ephemeral prompt context — it is never
+/// resolved model path; tests: a fake) and persists the result — the part
+/// of `translate_streaming_window` that needs the shared LLM. Injected so
+/// this (including its "write no row on failure" guarantee) is exercisable
+/// without a real model or Tauri `AppHandle`. `context` (WP-100) passes
+/// through to `translate` unchanged as ephemeral prompt context — never
 /// itself persisted.
 #[allow(clippy::too_many_arguments)]
 pub fn translate_and_store(

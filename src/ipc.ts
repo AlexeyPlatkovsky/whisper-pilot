@@ -363,10 +363,9 @@ export type StreamingTranslationTargetLanguage = "en" | "ru";
  * Translates one Streaming window into `targetLanguage` using the active
  * local LLM and persists the result, keyed by `(sessionId, windowIndex,
  * targetLanguage)`. Single-flight in the core: a second concurrent call
- * rejects with a distinct, retryable error. `context` (WP-100/WP-103) is the
- * immediately preceding window(s)' own translation, if any — the caller
- * decides how much rolling context to assemble; this command just threads
- * it through unchanged as ephemeral prompt context.
+ * rejects with a distinct, retryable error. `context` (WP-100/WP-103) is
+ * whatever rolling context the caller assembles, threaded through unchanged
+ * as ephemeral prompt context.
  */
 export function translateStreamingWindow(
   sessionId: number,

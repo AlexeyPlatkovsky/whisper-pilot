@@ -332,18 +332,13 @@ export function StreamingView({
     };
   }, [refreshSessions]);
 
-  // `resumeId` is the session to continue capturing into, or null for a
-  // brand-new one. Either way, any LLM-result state (MFU/prettified/failed
-  // flags) is stale the moment new audio starts arriving, so it's cleared in
-  // both cases — only `windows` survives a resume, since preserving the
-  // session's transcript-so-far is the whole point of resuming into it.
-  //
-  // WP-101: Live Translation state (the switch, its map, and the queue/
-  // token/persisted refs) is the one exception — it's reset only when the
-  // session identity is actually changing (a brand-new session, or resuming
-  // a *different* past session), not when resuming the session that's
-  // already open. `activeIdRef` is always current across renders, unlike the
-  // `activeId` state this callback would otherwise close over.
+  // `resumeId` is the session to continue into, or null for a brand-new
+  // one. LLM-result state (MFU/prettified/failed) is cleared either way —
+  // only `windows` survives a resume. WP-101: Live Translation state is the
+  // exception, reset only on an actual session-identity change (not when
+  // resuming the session already open); `activeIdRef` stays current across
+  // renders, unlike the `activeId` state this callback would otherwise
+  // close over.
   const startSession = useCallback(
     async (resumeId: number | null) => {
       setError(null);
@@ -535,14 +530,12 @@ export function StreamingView({
     }
   }, [deleteTarget, refreshSessions]);
 
-  // Once accepted, the cleaned text is what gets copied/exported — that's
-  // the point of prettifying. Otherwise, when Live Translation is on and at
-  // least one paragraph has a translation entry, Copy/Export switch to the
-  // paired original+translation rendering (WP-94); an empty translations
-  // map (off, or on with nothing recorded yet) falls through to today's
-  // plain transcript unchanged, so that output stays byte-identical.
-  // Mutual exclusion between Prettify and Live Translation (see
-  // `prettifyDisabledByTranslation` below) means `prettifiedText` and
+  // Once accepted, the cleaned text is what gets copied/exported. Otherwise,
+  // when Live Translation is on with at least one translation entry,
+  // Copy/Export switch to the paired original+translation rendering
+  // (WP-94); empty/off falls through to today's plain transcript unchanged.
+  // Prettify and Live Translation are mutually exclusive (see
+  // `prettifyDisabledByTranslation` below), so `prettifiedText` and
   // `translationEnabled` are never both truthy at once.
   const exportText =
     prettifiedText ??
@@ -739,20 +732,14 @@ export function StreamingView({
     runTranslationQueue();
   }
 
-  // View-only; gates nothing else. Clearing translations/queue on both
-  // directions (not just OFF) means turning back ON always re-derives fresh
-  // from the current windows + a fresh persisted-translations fetch, so a
-  // translation from a previous target-language run can never be reused
-  // under a new target language.
-  //
-  // Turning ON also resets `persistedReady` synchronously here, mirroring
-  // the persisted-fetch effect below. Without this, a second activation in
-  // the same session would have the reconcile effect run in the *same*
-  // commit as this toggle, observing the previous activation's leftover
-  // `persistedReady === true` (that effect only flips it back to false
-  // asynchronously, one render later) while `persistedTranslationsRef` has
-  // already been cleared above — so every window would look "not yet
-  // persisted" and get queued for a live call it doesn't need.
+  // Clearing translations/queue on both directions (not just OFF) means
+  // turning back ON always re-derives fresh from current windows + a fresh
+  // persisted-translations fetch, so a stale target-language translation
+  // can never be reused. Also resets `persistedReady` synchronously,
+  // mirroring the persisted-fetch effect below — without this, a second
+  // activation in the same commit would see the previous run's leftover
+  // `persistedReady === true` against an already-cleared
+  // `persistedTranslationsRef`, queuing every window for an unneeded call.
   const handleToggleTranslation = useCallback((next: boolean) => {
     setTranslationEnabled(next);
     commitTranslations(new Map());

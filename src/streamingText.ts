@@ -130,15 +130,12 @@ export function windowTranslationDisplay(
 }
 
 /**
- * A paragraph's translated text (WP-103) — maps each of its windows through
- * `windowTranslationDisplay` and joins the results the same way
- * `plainTranscript` joins the original text (join with `" "`, collapse
- * whitespace), so a paragraph with some windows done and its trailing
- * window still translating renders real text for the finished windows and a
- * placeholder only for the unfinished tail, not a blank/all-placeholder
- * cell. Used by export.ts's `renderStreamingPaired`; the on-screen renderer
- * in StreamingView.tsx uses `windowTranslationDisplay` directly per window
- * so it can show a spinner/"Pending…" instead of plain placeholder text.
+ * A paragraph's translated text (WP-103) — maps each window through
+ * `windowTranslationDisplay` and joins the results the way `plainTranscript`
+ * joins the original, so a still-translating trailing window renders as a
+ * placeholder while finished windows show real text. Used by export.ts; the
+ * on-screen renderer calls `windowTranslationDisplay` directly for its
+ * spinner/"Pending…" states.
  */
 export function paragraphTranslatedText(
   paragraph: StreamingWindow[],

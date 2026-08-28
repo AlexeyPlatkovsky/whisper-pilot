@@ -548,17 +548,12 @@ fn validate_translation_candidate(
 
 /// Translates one Streaming translation unit — a single window as of
 /// WP-103, previously a whole paragraph — into `target_language` ("en" or
-/// "ru") using the active local LLM — the same llama.cpp completion path
-/// `prettify_transcript` uses, with its own prompt and candidate validation.
-/// Callers are responsible for validating `target_language` is supported and
-/// `source_text` is non-empty before calling; this still guards the model's
-/// own context budget and never silently truncates text that doesn't fit.
-/// `prior_context` (WP-100), when `Some`, is the immediately preceding
-/// window's (or, pre-WP-103, paragraph's) own translation, threaded into the
-/// prompt as reference-only context to improve continuity without being
-/// itself re-translated. Signature and name (`translate_paragraph`)
-/// unchanged by WP-103 — only what a caller assembles as `source_text` and
-/// `prior_context` changed, not this function.
+/// "ru") using the same llama.cpp path `prettify_transcript` uses. Callers
+/// validate `target_language`/`source_text` first; this still guards the
+/// model's context budget and never silently truncates. `prior_context`,
+/// when `Some`, is reference-only context, not itself re-translated.
+/// Signature/name unchanged by WP-103 — only what a caller assembles as
+/// `source_text`/`prior_context` changed.
 pub fn translate_paragraph(
     model_path: &Path,
     source_text: &str,

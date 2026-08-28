@@ -125,18 +125,11 @@ export function hasStreamingTranslations(
 
 /**
  * Pairs each paragraph's original text with its translation for Streaming's
- * Copy/Export (WP-94, per-window since WP-103): one "Original" block
- * followed by one target-language block per paragraph, in the same order as
- * the on-screen grid (`groupWindowsIntoParagraphs` order). The rule is
- * "export what the screen shows" — each paragraph's translated block is
- * built by `streamingText.ts`'s `paragraphTranslatedText`, which maps every
- * window in the paragraph through its own translation entry (real text for
- * `done`/`mirrored`, a placeholder for missing/`pending`/`translating`/
- * `failed`/stale) and joins them the same way the original side is joined —
- * so a paragraph with some windows translated and others still in flight
- * shows real text for the finished windows and a placeholder only for the
- * unfinished tail, and the two sides can never drift out of paragraph
- * count.
+ * Copy/Export (WP-94, per-window since WP-103), in on-screen order.
+ * "Export what the screen shows" — each translated block comes from
+ * `streamingText.ts`'s `paragraphTranslatedText`, so a partially-translated
+ * paragraph shows real text for its finished windows and a placeholder only
+ * for the unfinished tail, and the two sides never drift out of count.
  */
 export function renderStreamingPaired(
   paragraphs: StreamingExportParagraph[],
