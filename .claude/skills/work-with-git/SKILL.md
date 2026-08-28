@@ -29,6 +29,12 @@ For trivial work, skip this skill; branch behavior follows `AGENTS.md`
 - For TaskPilot-exempt instruction-system work, use the explicitly approved
   current branch or an explicitly approved descriptive branch; do not require
   or invent a TaskPilot ID.
+- For post-review remediation, keep working on the user-named existing task
+  branch or pull request. For a pull request, resolve and verify its head branch
+  before continuing. The branch name must contain the original task ID. Do not
+  create a follow-up branch or TaskPilot item for an in-scope finding; stop and
+  ask if the branch does not exist, the finding expands beyond its stated scope,
+  or the user directs separate tracking.
 - For an untracked user-authored worktree review, use the explicitly approved
   current branch or an explicitly approved descriptive branch. Verify that the
   staged paths are limited to the frozen boundary; direct review remediation
@@ -73,6 +79,9 @@ the required task-scoped local commits.
   start its two members together, but no third task may start.
 - AI-governance maintenance has no TaskPilot completion-commit requirement and
   follows the explicit commit authority in `AGENTS.md`.
+- A post-review remediation has no TaskPilot lifecycle mutation. Its
+  user-authorized commit begins with the original task ID and includes only the
+  finding remediation, its focused tests, and any required version metadata.
 - An untracked user-authored worktree review has no TaskPilot completion-commit
   requirement. When the user explicitly requests a local commit, it begins
   `review: ` and includes only the frozen boundary and direct remediation

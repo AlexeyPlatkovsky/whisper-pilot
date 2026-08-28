@@ -70,6 +70,17 @@ TaskPilot item solely for that closure work. The direct review route in
 review, and commit requirements. Scope expansion or new behavior returns to
 normal tracked work.
 
+When the user supplies review findings (including GitHub or CI findings) for a
+named existing task branch or pull request, treat an accepted finding as
+**post-review remediation** of that task. Keep the correction on that named
+branch and use the existing task ID for commits. Do not create, reopen, or
+mutate a TaskPilot item solely for the finding, even when the original item is
+already `done`. The direct post-review route in `task-routing` owns its
+focused test, remediation, validation, review, Git, and closure evidence.
+This exception is limited to correcting the reported finding; a new behavior,
+an unrelated path, or a user request for separately tracked work returns to
+normal TaskPilot routing.
+
 AI-governance maintenance of `AGENTS.md` or `.claude/` is TaskPilot-exempt
 when it governs AI execution only; it never exempts `docs/` or
 product/runtime artifacts. Exempt non-trivial work remains Full tier and uses

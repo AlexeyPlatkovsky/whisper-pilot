@@ -473,9 +473,37 @@ fn migrate_legacy_streaming_notes(connection: &Connection) -> Result<()> {
         )
         .map_err(store_error)?;
     if has_legacy {
-        connection
-            .execute_batch("ALTER TABLE streaming_notes RENAME TO streaming_mfu;")
+        let has_mfu = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_mfu')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
             .map_err(store_error)?;
+        if has_mfu {
+            connection
+                .execute_batch(
+                    "INSERT INTO streaming_mfu (session_id, summary, decisions, action_items, open_questions, participants)
+                     SELECT streaming_notes.session_id, streaming_notes.summary, streaming_notes.decisions,
+                            streaming_notes.action_items, streaming_notes.open_questions,
+                            streaming_notes.participants
+                     FROM streaming_notes
+                     WHERE EXISTS (
+                         SELECT 1 FROM streaming_sessions
+                         WHERE streaming_sessions.id = streaming_notes.session_id
+                     )
+                       AND NOT EXISTS (
+                         SELECT 1 FROM streaming_mfu
+                         WHERE streaming_mfu.session_id = streaming_notes.session_id
+                     );
+                     DROP TABLE streaming_notes;",
+                )
+                .map_err(store_error)?;
+        } else {
+            connection
+                .execute_batch("ALTER TABLE streaming_notes RENAME TO streaming_mfu;")
+                .map_err(store_error)?;
+        }
     }
     Ok(())
 }
@@ -765,6 +793,146 @@ mod tests {
                 .map(|s| s.updated_at_ms),
             Some(7_500)
         );
+    }
+
+    #[test]
+    fn recovers_mixed_streaming_mfu_schema_with_orphaned_legacy_rows() {
+        // Decision table: streaming_notes-only migrates; mixed schemas preserve current rows, import valid legacy rows, and discard orphans.
+        let legacy_only = tempfile::tempdir().expect("legacy-only app support");
+        let connection = Connection::open(crate::store::shared_database_path(legacy_only.path()))
+            .expect("open legacy db");
+        connection
+            .execute_batch(
+                "CREATE TABLE streaming_sessions (id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, status TEXT NOT NULL);
+                 CREATE TABLE streaming_notes (session_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 INSERT INTO streaming_sessions VALUES (1, 'Legacy', 1, 1, 'stopped');
+                 INSERT INTO streaming_notes VALUES (1, 'Legacy summary', 'Legacy decisions', 'Legacy actions', 'Legacy questions', 'Legacy participants');",
+            )
+            .expect("seed legacy db");
+        drop(connection);
+
+        let legacy_store = StreamingStore::open(legacy_only.path()).expect("migrate legacy db");
+        assert_eq!(
+            legacy_store.get_mfu(1).expect("read migrated mfu"),
+            Some(StreamingMfu {
+                session_id: 1,
+                summary: "Legacy summary".to_string(),
+                decisions: "Legacy decisions".to_string(),
+                action_items: "Legacy actions".to_string(),
+                open_questions: "Legacy questions".to_string(),
+                participants: "Legacy participants".to_string(),
+            })
+        );
+        drop(legacy_store);
+        let reopened_legacy =
+            StreamingStore::open(legacy_only.path()).expect("repeat legacy migration");
+        assert_eq!(
+            reopened_legacy
+                .get_mfu(1)
+                .expect("read reopened legacy mfu"),
+            Some(StreamingMfu {
+                session_id: 1,
+                summary: "Legacy summary".to_string(),
+                decisions: "Legacy decisions".to_string(),
+                action_items: "Legacy actions".to_string(),
+                open_questions: "Legacy questions".to_string(),
+                participants: "Legacy participants".to_string(),
+            })
+        );
+        drop(reopened_legacy);
+        let legacy_notes_exist = Connection::open(crate::store::shared_database_path(legacy_only.path()))
+            .expect("reopen legacy db")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_notes')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("read legacy schema");
+        assert!(!legacy_notes_exist);
+
+        let mixed = tempfile::tempdir().expect("mixed-schema app support");
+        let connection = Connection::open(crate::store::shared_database_path(mixed.path()))
+            .expect("open mixed db");
+        connection
+            .execute_batch(
+                "CREATE TABLE streaming_sessions (id INTEGER PRIMARY KEY, title TEXT NOT NULL, created_at_ms INTEGER NOT NULL, updated_at_ms INTEGER NOT NULL, status TEXT NOT NULL);
+                 CREATE TABLE streaming_notes (session_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 CREATE TABLE streaming_mfu (session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 INSERT INTO streaming_sessions VALUES (1, 'Current', 1, 1, 'stopped'), (2, 'Legacy', 2, 2, 'stopped');
+                 INSERT INTO streaming_mfu VALUES (1, 'Current summary', 'Current decisions', 'Current actions', 'Current questions', 'Current participants');
+                 INSERT INTO streaming_notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants'), (3, 'Orphaned summary', 'Orphaned decisions', 'Orphaned actions', 'Orphaned questions', 'Orphaned participants');",
+            )
+            .expect("seed mixed db");
+        drop(connection);
+
+        let mixed_store = StreamingStore::open(mixed.path()).expect("recover mixed db");
+        assert_eq!(
+            mixed_store.get_mfu(1).expect("read current mfu"),
+            Some(StreamingMfu {
+                session_id: 1,
+                summary: "Current summary".to_string(),
+                decisions: "Current decisions".to_string(),
+                action_items: "Current actions".to_string(),
+                open_questions: "Current questions".to_string(),
+                participants: "Current participants".to_string(),
+            })
+        );
+        assert_eq!(
+            mixed_store.get_mfu(2).expect("read imported mfu"),
+            Some(StreamingMfu {
+                session_id: 2,
+                summary: "Imported summary".to_string(),
+                decisions: "Imported decisions".to_string(),
+                action_items: "Imported actions".to_string(),
+                open_questions: "Imported questions".to_string(),
+                participants: "Imported participants".to_string(),
+            })
+        );
+        assert_eq!(mixed_store.get_mfu(3).expect("read orphaned mfu"), None);
+        drop(mixed_store);
+        let reopened_mixed = StreamingStore::open(mixed.path()).expect("repeat mixed migration");
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(1)
+                .expect("read reopened current mfu"),
+            Some(StreamingMfu {
+                session_id: 1,
+                summary: "Current summary".to_string(),
+                decisions: "Current decisions".to_string(),
+                action_items: "Current actions".to_string(),
+                open_questions: "Current questions".to_string(),
+                participants: "Current participants".to_string(),
+            })
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(3)
+                .expect("read reopened orphaned mfu"),
+            None
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(2)
+                .expect("read reopened imported mfu"),
+            Some(StreamingMfu {
+                session_id: 2,
+                summary: "Imported summary".to_string(),
+                decisions: "Imported decisions".to_string(),
+                action_items: "Imported actions".to_string(),
+                open_questions: "Imported questions".to_string(),
+                participants: "Imported participants".to_string(),
+            })
+        );
+        drop(reopened_mixed);
+        let mixed_notes_exist = Connection::open(crate::store::shared_database_path(mixed.path()))
+            .expect("reopen mixed db")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_notes')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("read mixed schema");
+        assert!(!mixed_notes_exist);
     }
 
     #[test]

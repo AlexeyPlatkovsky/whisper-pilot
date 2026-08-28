@@ -109,6 +109,19 @@ selected route's quality, validation, review, Git, documentation, and closure
 gates remain required; only TaskPilot identity, lifecycle, and TaskPilot-record
 commit requirements are waived.
 
+When an assessment accepts an in-scope finding under `AGENTS.md`'s post-review
+remediation exception, declare
+`TaskPilot: exempt — post-review remediation of <existing task ID>`. Record the
+named branch or pull request, the supplied finding, and the precise paths it
+implicates. Keep the correction on that branch; do not create, reopen, or
+mutate a TaskPilot record. Set Parent context and Lifecycle to `not applicable`.
+The direct post-review route requires a behavior-specific test before a
+non-trivial production edit, minimal remediation, local validation, independent
+code review, a documentation decision, user-authorized commit/push handling,
+and closure. An invalid or unproven finding stops after the read-only assessment.
+The route is limited to the accepted finding; any new behavior, unrelated path,
+or separately tracked request returns to normal TaskPilot routing.
+
 For AI-governance instruction-system work exempted by `AGENTS.md`, declare
 `TaskPilot: exempt — AI-governance maintenance` and do not create or mutate a
 TaskPilot item unless the user explicitly requests TaskPilot administration.
@@ -152,6 +165,7 @@ Apply this precedence before using the table:
 | Implement behavior, IPC, UI, or Rust core | `.claude/pipelines/implement-feature.md` |
 | Triage a bug or unexpected behavior with unknown root cause | `.claude/skills/triage-bug/SKILL.md` |
 | Fix a confirmed bug with reproduction steps | `.claude/pipelines/fix-bug.md` |
+| Correct a user-supplied review/CI finding for a named existing task branch or pull request | Manager-declared direct post-review remediation route: assess and accept scope; focused Red test; minimal remediation; local and independent validation; code review; documentation decision; user-authorized commit/push; closure. Do not create or mutate TaskPilot records. |
 | Review or advise on React/TypeScript/Tauri code practices | `.claude/skills/react-tauri-expert/SKILL.md` |
 | Review, validate, remediate, commit, or push a user-designated, pre-existing working-tree diff | Manager-declared direct user-authored worktree review route: frozen boundary record; review; conditional direct remediation; validation; code review; documentation decision; local commit/push; closure |
 | Implement a requested React/TypeScript/Tauri improvement | `.claude/pipelines/implement-feature.md` |
@@ -204,6 +218,39 @@ to normal TaskPilot routing.
 For frozen user-authored logic, the B2 assessment maps every changed observable
 behavior to a focused passing test or explicitly marks it missing.
 
+### Post-Review Remediation Direct Route
+
+Use only for the routing-table row above. Maintain a Route execution record
+with these planned rows:
+
+- `R1` — manager assessment of the supplied finding. Record `accepted`,
+  `invalid`, or `scope expansion`; stop after a read-only report for `invalid`,
+  recording R2–R8 as skipped and continue to R9. Return to normal TaskPilot
+  routing for `scope expansion`; it does not enter this direct route's closure.
+- `R2` — `Skill: testing-pro - output below` Red evidence before a non-trivial
+  production edit, or an exact skip condition when the accepted remediation
+  changes no non-trivial production logic.
+- `R3` — `Remediation: post-review - output below` for the minimal remediation
+  confined to accepted paths. Record terminal status, exhaustive changed paths,
+  affected behavior, and the R2 evidence it addresses.
+- `R4` — `Skill: validate - output below` using manager-declared checks.
+- `R5` — `Agent: test-runner - output below` for every touched runtime layer,
+  or skipped when no runtime layer is touched; record the exact changed paths
+  supporting that skip.
+- `R6` — `Agent: code-reviewer - output below` with no Blocking or Major
+  finding remaining.
+- `R7` — `Skill: documentation-maintenance - output below` when its trigger
+  applies, otherwise a manager documentation-decision record with the exact
+  skip condition.
+- `R8` — local commit and push only when the user explicitly authorized each;
+  otherwise record the exact skip condition.
+- `R9` — `Skill: task-complete - output below`.
+
+A finding from R4, R5, or R6 returns to R2 when production logic must change,
+or R3 otherwise, and invalidates every downstream accepted attempt. Commit and
+push must use the original task ID and named branch. Do not create or mutate a
+TaskPilot record in any route row.
+
 If the task does not match any route:
 
 - stop
@@ -237,7 +284,7 @@ Use this table with no omitted rows:
 |---|---|---|
 | Route run | `<task identity>:<route>:<positive sequence>` | stable identifier unique to this routed invocation; use `untracked-user-authored-worktree-review:<route>:<positive sequence>` for untracked work and bind it to the frozen boundary |
 | Classification | `<complexity>; <risk>; <domain>; <quality tier>` | tier justification and readiness confirmation |
-| Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` / `untracked — user-authored worktree review` | `AGENTS.md` task-identity decision |
+| Task identity | `<TaskPilot ID and status>` / `exempt — AI-governance maintenance` / `exempt — post-review remediation of <existing task ID>` / `untracked — user-authored worktree review` | `AGENTS.md` task-identity decision |
 | Pre-existing diff boundary | `required` / `not applicable` | untracked: pre-review `HEAD` SHA, exhaustive paths, SHA-based tracked-path snapshot, and no-index snapshot for each regular UTF-8 text untracked path; otherwise reason |
 | Parent context | `<expected parent ID>` / `none` / `not applicable` | tracked work: reloaded item parent; exempt/untracked work: reason |
 | Definition of Done | stable `C-<positive integer>` criteria | objective pass/fail criteria; required explicitly for AI-governance work |

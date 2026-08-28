@@ -289,9 +289,30 @@ fn migrate_legacy_notes(connection: &Connection) -> Result<()> {
         )
         .map_err(store_error)?;
     if has_legacy {
-        connection
-            .execute_batch("ALTER TABLE notes RENAME TO mfu;")
+        let has_mfu = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'mfu')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
             .map_err(store_error)?;
+        if has_mfu {
+            connection
+                .execute_batch(
+                    "INSERT INTO mfu (meeting_id, summary, decisions, action_items, open_questions, participants)
+                     SELECT notes.meeting_id, notes.summary, notes.decisions, notes.action_items,
+                            notes.open_questions, notes.participants
+                     FROM notes
+                     WHERE EXISTS (SELECT 1 FROM meetings WHERE meetings.id = notes.meeting_id)
+                       AND NOT EXISTS (SELECT 1 FROM mfu WHERE mfu.meeting_id = notes.meeting_id);
+                     DROP TABLE notes;",
+                )
+                .map_err(store_error)?;
+        } else {
+            connection
+                .execute_batch("ALTER TABLE notes RENAME TO mfu;")
+                .map_err(store_error)?;
+        }
     }
     Ok(())
 }
@@ -527,6 +548,144 @@ mod tests {
             reopened.get_mfu(second_id).expect("get mfu"),
             Some(mfu(second_id))
         );
+    }
+
+    #[test]
+    fn recovers_mixed_mfu_schema_with_orphaned_legacy_rows() {
+        // Decision table: notes-only migrates; mixed schemas preserve current rows, import valid legacy rows, and discard orphans.
+        let legacy_only = tempfile::tempdir().expect("legacy-only app support");
+        let connection =
+            Connection::open(database_path(legacy_only.path())).expect("open legacy db");
+        connection
+            .execute_batch(
+                "CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT NOT NULL, source_path TEXT, source_name TEXT, created_at_ms INTEGER NOT NULL, duration_ms INTEGER, language TEXT NOT NULL, status TEXT NOT NULL);
+                 CREATE TABLE notes (meeting_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 INSERT INTO meetings VALUES (1, 'Legacy', NULL, NULL, 1, NULL, 'en', 'finished');
+                 INSERT INTO notes VALUES (1, 'Legacy summary', 'Legacy decisions', 'Legacy actions', 'Legacy questions', 'Legacy participants');",
+            )
+            .expect("seed legacy db");
+        drop(connection);
+
+        let legacy_store = Store::open(legacy_only.path()).expect("migrate legacy db");
+        assert_eq!(
+            legacy_store.get_mfu(1).expect("read migrated mfu"),
+            Some(MeetingMfu {
+                meeting_id: 1,
+                summary: "Legacy summary".to_string(),
+                decisions: "Legacy decisions".to_string(),
+                action_items: "Legacy actions".to_string(),
+                open_questions: "Legacy questions".to_string(),
+                participants: "Legacy participants".to_string(),
+            })
+        );
+        drop(legacy_store);
+        let reopened_legacy = Store::open(legacy_only.path()).expect("repeat legacy migration");
+        assert_eq!(
+            reopened_legacy
+                .get_mfu(1)
+                .expect("read reopened legacy mfu"),
+            Some(MeetingMfu {
+                meeting_id: 1,
+                summary: "Legacy summary".to_string(),
+                decisions: "Legacy decisions".to_string(),
+                action_items: "Legacy actions".to_string(),
+                open_questions: "Legacy questions".to_string(),
+                participants: "Legacy participants".to_string(),
+            })
+        );
+        drop(reopened_legacy);
+        let legacy_notes_exist = Connection::open(database_path(legacy_only.path()))
+            .expect("reopen legacy db")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("read legacy schema");
+        assert!(!legacy_notes_exist);
+
+        let mixed = tempfile::tempdir().expect("mixed-schema app support");
+        let connection = Connection::open(database_path(mixed.path())).expect("open mixed db");
+        connection
+            .execute_batch(
+                "CREATE TABLE meetings (id INTEGER PRIMARY KEY, title TEXT NOT NULL, source_path TEXT, source_name TEXT, created_at_ms INTEGER NOT NULL, duration_ms INTEGER, language TEXT NOT NULL, status TEXT NOT NULL);
+                 CREATE TABLE notes (meeting_id INTEGER PRIMARY KEY, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 CREATE TABLE mfu (meeting_id INTEGER PRIMARY KEY REFERENCES meetings(id) ON DELETE CASCADE, summary TEXT NOT NULL, decisions TEXT NOT NULL, action_items TEXT NOT NULL, open_questions TEXT NOT NULL, participants TEXT NOT NULL);
+                 INSERT INTO meetings VALUES (1, 'Current', NULL, NULL, 1, NULL, 'en', 'finished'), (2, 'Legacy', NULL, NULL, 2, NULL, 'en', 'finished');
+                 INSERT INTO mfu VALUES (1, 'Current summary', 'Current decisions', 'Current actions', 'Current questions', 'Current participants');
+                 INSERT INTO notes VALUES (1, 'Stale summary', 'Stale decisions', 'Stale actions', 'Stale questions', 'Stale participants'), (2, 'Imported summary', 'Imported decisions', 'Imported actions', 'Imported questions', 'Imported participants'), (3, 'Orphaned summary', 'Orphaned decisions', 'Orphaned actions', 'Orphaned questions', 'Orphaned participants');",
+            )
+            .expect("seed mixed db");
+        drop(connection);
+
+        let mixed_store = Store::open(mixed.path()).expect("recover mixed db");
+        assert_eq!(
+            mixed_store.get_mfu(1).expect("read current mfu"),
+            Some(MeetingMfu {
+                meeting_id: 1,
+                summary: "Current summary".to_string(),
+                decisions: "Current decisions".to_string(),
+                action_items: "Current actions".to_string(),
+                open_questions: "Current questions".to_string(),
+                participants: "Current participants".to_string(),
+            })
+        );
+        assert_eq!(
+            mixed_store.get_mfu(2).expect("read imported mfu"),
+            Some(MeetingMfu {
+                meeting_id: 2,
+                summary: "Imported summary".to_string(),
+                decisions: "Imported decisions".to_string(),
+                action_items: "Imported actions".to_string(),
+                open_questions: "Imported questions".to_string(),
+                participants: "Imported participants".to_string(),
+            })
+        );
+        assert_eq!(mixed_store.get_mfu(3).expect("read orphaned mfu"), None);
+        drop(mixed_store);
+        let reopened_mixed = Store::open(mixed.path()).expect("repeat mixed migration");
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(1)
+                .expect("read reopened current mfu"),
+            Some(MeetingMfu {
+                meeting_id: 1,
+                summary: "Current summary".to_string(),
+                decisions: "Current decisions".to_string(),
+                action_items: "Current actions".to_string(),
+                open_questions: "Current questions".to_string(),
+                participants: "Current participants".to_string(),
+            })
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(3)
+                .expect("read reopened orphaned mfu"),
+            None
+        );
+        assert_eq!(
+            reopened_mixed
+                .get_mfu(2)
+                .expect("read reopened imported mfu"),
+            Some(MeetingMfu {
+                meeting_id: 2,
+                summary: "Imported summary".to_string(),
+                decisions: "Imported decisions".to_string(),
+                action_items: "Imported actions".to_string(),
+                open_questions: "Imported questions".to_string(),
+                participants: "Imported participants".to_string(),
+            })
+        );
+        drop(reopened_mixed);
+        let mixed_notes_exist = Connection::open(database_path(mixed.path()))
+            .expect("reopen mixed db")
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'notes')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .expect("read mixed schema");
+        assert!(!mixed_notes_exist);
     }
 
     #[test]
