@@ -3,7 +3,10 @@
 
 use crate::error::{AppError, Result};
 #[cfg(target_os = "macos")]
-use crate::events::{StreamingSessionEndedEvent, StreamingSourcesEvent, StreamingWindowEvent};
+use crate::events::{
+    StreamingErrorEvent, StreamingPartialEvent, StreamingSessionEndedEvent, StreamingSourcesEvent,
+    StreamingWindowEvent,
+};
 #[cfg(target_os = "macos")]
 use crate::state::StreamingRuntime;
 use crate::state::{app_data_dir, now_ms, AppState};
@@ -15,6 +18,11 @@ use crate::streaming_session;
 use crate::streaming_store;
 #[cfg(target_os = "macos")]
 use crate::transcribe;
+#[cfg(target_os = "macos")]
+use crate::{
+    cloud_provider::{CloudProvider, KeychainCredentialStore},
+    cloud_streaming::{CloudStreamingResult, CloudTransport},
+};
 use tauri::State;
 #[cfg(target_os = "macos")]
 use tauri::{Emitter, Manager};
@@ -162,6 +170,7 @@ fn drive_streaming_results(
             "streaming_window",
             StreamingWindowEvent {
                 session_id,
+                item_id: None,
                 window_index: result.window_index as i64,
                 start_ms: result.start_ms as i64,
                 end_ms: end_ms as i64,
@@ -189,6 +198,103 @@ fn drive_streaming_results(
     );
 }
 
+#[cfg(target_os = "macos")]
+fn drive_cloud_results(
+    app: tauri::AppHandle,
+    app_support_dir: std::path::PathBuf,
+    session_id: i64,
+    starting_window_index: u64,
+    results_rx: tokio::sync::mpsc::Receiver<CloudStreamingResult>,
+) {
+    let mut results_rx = results_rx;
+    let mut next_window_index = starting_window_index as i64;
+    let mut previous_end_ms = 0_i64;
+
+    while let Some(result) = results_rx.blocking_recv() {
+        match result {
+            CloudStreamingResult::Partial { item_id, text } => {
+                let _ = app.emit(
+                    "streaming_partial",
+                    StreamingPartialEvent {
+                        session_id,
+                        item_id,
+                        text,
+                    },
+                );
+            }
+            CloudStreamingResult::Final {
+                item_id,
+                text,
+                language,
+                end_ms,
+            } => {
+                let end_ms = end_ms.max(previous_end_ms);
+                let window = streaming_store::NewStreamingWindow {
+                    window_index: next_window_index,
+                    start_ms: previous_end_ms,
+                    end_ms,
+                    text: text.clone(),
+                    language: language.clone(),
+                    outcome_ok: true,
+                };
+                if let Ok(store) = streaming_store::StreamingStore::open(&app_support_dir) {
+                    if let Err(error) =
+                        store.append_window(session_id, &window, now_ms().unwrap_or(end_ms))
+                    {
+                        log::error!("streaming session {session_id}: failed to persist Cloud transcript: {error}");
+                    }
+                }
+                let _ = app.emit(
+                    "streaming_window",
+                    StreamingWindowEvent {
+                        session_id,
+                        item_id,
+                        window_index: next_window_index,
+                        start_ms: previous_end_ms,
+                        end_ms,
+                        text,
+                        language,
+                        outcome_ok: true,
+                    },
+                );
+                next_window_index += 1;
+                previous_end_ms = end_ms;
+            }
+            CloudStreamingResult::Failed { message } => {
+                let _ = app.emit(
+                    "streaming_error",
+                    StreamingErrorEvent {
+                        session_id,
+                        message,
+                    },
+                );
+                let app_for_stop = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app_for_stop.state::<AppState>();
+                    let mut runtime = state.streaming_runtime.lock().await;
+                    if runtime
+                        .as_ref()
+                        .is_some_and(|current| current.session_id == session_id)
+                    {
+                        runtime.take();
+                    }
+                });
+            }
+        }
+    }
+
+    let now = now_ms().unwrap_or(0);
+    if let Ok(store) = streaming_store::StreamingStore::open(&app_support_dir) {
+        if let Err(error) = store.mark_stopped(session_id, now) {
+            log::error!("streaming session {session_id}: failed to mark stopped: {error}");
+        }
+    }
+    let _ = app.emit(
+        "streaming_session_ended",
+        StreamingSessionEndedEvent { session_id },
+    );
+}
+
 /// Start a Streaming session: claims the shared Whisper context (mutually
 /// exclusive with an active Meeting transcription, WP-71), creates the
 /// session's DB record, starts audio capture (mic + system-audio, degrading
@@ -201,14 +307,108 @@ pub(crate) async fn start_streaming_session(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     session_id: Option<streaming_store::StreamingSessionId>,
+    engine: Option<String>,
 ) -> Result<streaming::StreamingSessionSummaryDto> {
     if state.streaming_runtime.lock().await.is_some() {
         return Err(AppError::Capture(
             "a Streaming session is already running".into(),
         ));
     }
-    streaming_session::try_claim_streaming(&state.whisper_busy).map_err(|holder| {
-        AppError::Capture(match holder {
+    let app_support_dir = app_data_dir(&app)?;
+    let requested = match engine.as_deref().unwrap_or("local") {
+        "local" => streaming::StreamingStartConfiguration::Local,
+        "cloud" => {
+            let provider = CloudProvider::try_from(
+                crate::settings::get_settings(&app_support_dir)
+                    .cloud_provider
+                    .as_str(),
+            )?;
+            streaming::StreamingStartConfiguration::Cloud(provider)
+        }
+        _ => {
+            return Err(AppError::InvalidSetting(
+                "unknown Streaming engine".to_string(),
+            ))
+        }
+    };
+    let now = now_ms()?;
+    let id = match session_id {
+        Some(id) => id,
+        None => streaming::create_streaming_session(&app_support_dir, now)?,
+    };
+    let (summary, starting_window_index, configuration) =
+        streaming::prepare_streaming_session_start(&app_support_dir, id, Some(requested), now)?;
+    let session_id = summary.id;
+
+    if let streaming::StreamingStartConfiguration::Cloud(provider) = configuration {
+        let api_key = match KeychainCredentialStore::load_for_transport(provider) {
+            Ok(api_key) => api_key,
+            Err(error) => {
+                let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                    .and_then(|store| store.mark_stopped(session_id, now));
+                return Err(error);
+            }
+        };
+        let transport = match CloudTransport::connect(provider, &api_key).await {
+            Ok(transport) => transport,
+            Err(error) => {
+                let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                    .and_then(|store| store.mark_stopped(session_id, now));
+                return Err(error);
+            }
+        };
+        drop(api_key);
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        let capture = match streaming_audio::StreamingSession::start(samples_tx) {
+            Ok(capture) => capture,
+            Err(error) => {
+                let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                    .and_then(|store| store.mark_stopped(session_id, now));
+                return Err(error);
+            }
+        };
+        let active_sources = capture.active_sources();
+        let (cloud_samples_tx, cloud_samples_rx) = tokio::sync::mpsc::channel(128);
+        std::thread::spawn(move || {
+            for samples in samples_rx {
+                if cloud_samples_tx.blocking_send(samples).is_err() {
+                    break;
+                }
+            }
+        });
+        let (results_tx, results_rx) = tokio::sync::mpsc::channel(64);
+        tauri::async_runtime::spawn(async move {
+            if let Err(error) = transport.run(cloud_samples_rx, results_tx.clone()).await {
+                let _ = results_tx
+                    .send(CloudStreamingResult::Failed {
+                        message: error.to_string(),
+                    })
+                    .await;
+            }
+        });
+        let results_app = app.clone();
+        let results_dir = app_support_dir.clone();
+        tokio::task::spawn_blocking(move || {
+            drive_cloud_results(
+                results_app,
+                results_dir,
+                session_id,
+                starting_window_index,
+                results_rx,
+            )
+        });
+        *state.streaming_runtime.lock().await = Some(StreamingRuntime {
+            session_id,
+            capture,
+        });
+        emit_streaming_sources(&app, session_id, active_sources);
+        return Ok(summary);
+    }
+
+    if let Err(holder) = streaming_session::try_claim_streaming(&state.whisper_busy) {
+        let _ = streaming_store::StreamingStore::open(&app_support_dir)
+            .and_then(|store| store.mark_stopped(session_id, now));
+        return Err(AppError::Capture(match holder {
             streaming_session::WhisperUser::Meeting => {
                 "a meeting is currently transcribing; stop it before starting a Streaming session"
                     .to_string()
@@ -216,53 +416,26 @@ pub(crate) async fn start_streaming_session(
             streaming_session::WhisperUser::Streaming => {
                 "a Streaming session is already running".to_string()
             }
-        })
-    })?;
-
-    let app_support_dir = app_data_dir(&app)?;
+        }));
+    }
 
     let ctx = match state.model(app_support_dir.clone()).await {
         Ok(ctx) => ctx,
         Err(e) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
+            let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                .and_then(|store| store.mark_stopped(session_id, now));
             return Err(e);
         }
     };
-
-    let now = now_ms()?;
-    // A `session_id` continues an existing, previously-stopped session
-    // ("Start" on an open past session resumes it rather than always
-    // spawning a new one) — `starting_window_index` picks up window
-    // numbering where that session left off; the fresh-session branch always
-    // starts at 0.
-    let (summary, starting_window_index) = match session_id {
-        Some(id) => match streaming::resume_streaming_session(&app_support_dir, id, now) {
-            Ok(result) => result,
-            Err(e) => {
-                streaming_session::release_whisper_busy(&state.whisper_busy);
-                return Err(e);
-            }
-        },
-        None => match streaming::create_streaming_session(&app_support_dir, now)
-            .and_then(|id| streaming::resume_streaming_session(&app_support_dir, id, now))
-        {
-            Ok(result) => result,
-            Err(e) => {
-                streaming_session::release_whisper_busy(&state.whisper_busy);
-                return Err(e);
-            }
-        },
-    };
-    let session_id = summary.id;
 
     let (samples_tx, samples_rx) = std::sync::mpsc::channel();
     let capture = match streaming_audio::StreamingSession::start(samples_tx) {
         Ok(capture) => capture,
         Err(e) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
-            // The session record already exists; leave it — an empty,
-            // never-started session is a legitimate (if unfortunate) history
-            // entry, consistent with a Meeting whose transcription failed.
+            let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                .and_then(|store| store.mark_stopped(session_id, now));
             return Err(e);
         }
     };
@@ -289,6 +462,17 @@ pub(crate) async fn start_streaming_session(
         capture,
     });
 
+    emit_streaming_sources(&app, session_id, active_sources);
+
+    Ok(summary)
+}
+
+#[cfg(target_os = "macos")]
+fn emit_streaming_sources(
+    app: &tauri::AppHandle,
+    session_id: i64,
+    active_sources: streaming_audio::ActiveSources,
+) {
     let _ = app.emit(
         "streaming_sources",
         StreamingSourcesEvent {
@@ -304,8 +488,6 @@ pub(crate) async fn start_streaming_session(
             ),
         },
     );
-
-    Ok(summary)
 }
 
 /// Stop the running Streaming session. Dropping the held capture stops both
@@ -327,6 +509,7 @@ pub(crate) async fn stop_streaming_session(state: State<'_, AppState>) -> Result
 pub(crate) async fn start_streaming_session(
     _state: State<'_, AppState>,
     _session_id: Option<streaming_store::StreamingSessionId>,
+    _engine: Option<String>,
 ) -> Result<streaming::StreamingSessionSummaryDto> {
     Err(AppError::Capture(
         "Streaming's audio capture is only available on macOS".into(),

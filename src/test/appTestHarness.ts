@@ -88,6 +88,29 @@ export function createIpcMock() {
       export_file_type: "plain_text",
     })),
     setSetting: vi.fn(),
+    getCloudProviderConfig: vi.fn(async () => ({
+      selected_provider: "deepgram",
+      providers: [
+        {
+          id: "deepgram",
+          name: "Deepgram",
+          model: "Nova-3",
+          configured: false,
+        },
+        {
+          id: "assemblyai",
+          name: "AssemblyAI",
+          model: "Universal-3.5 Pro",
+          configured: false,
+        },
+        {
+          id: "openai",
+          name: "OpenAI",
+          model: "GPT Live Transcribe",
+          configured: false,
+        },
+      ],
+    })),
     listStreamingSessions: vi.fn(async () => []),
     openStreamingSession: vi.fn(),
     renameStreamingSession: vi.fn(),
@@ -97,6 +120,8 @@ export function createIpcMock() {
     onStreamingWindow: vi.fn(async () => () => {}),
     onStreamingSources: vi.fn(async () => () => {}),
     onStreamingSessionEnded: vi.fn(async () => () => {}),
+    onStreamingPartial: vi.fn(async () => () => {}),
+    onStreamingError: vi.fn(async () => () => {}),
   };
 }
 

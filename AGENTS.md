@@ -176,8 +176,9 @@ Unless an entry states otherwise, a skill resolves to
 
 ## Version Management
 
-Before every commit, run `scripts/bump-version.sh` before staging: `patch` for
-fixes/refactors/chores, `major` for user-facing features, and `release` only
+Before every commit, run `scripts/bump-version.sh` before staging: `minor` for
+fixes/refactors/chores (`1.9.0` → `1.9.1`), `major` for user-facing features
+(`1.9.1` → `1.10.0`), and `release` only
 when explicitly requested. Use the highest applicable bump for the pending
 commit; the script updates both Tauri version files.
 

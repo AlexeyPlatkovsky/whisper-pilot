@@ -44,6 +44,16 @@ pub struct StreamingSessionSummary {
     pub translation_enabled: bool,
 }
 
+/// The engine selected immediately before a session's first capture. This is
+/// intentionally a separate, non-secret row: keys stay in Keychain, while a
+/// resumed session can still prove which engine/provider/model owns it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StreamingSessionConfiguration {
+    pub engine: String,
+    pub cloud_provider: Option<String>,
+    pub cloud_model: Option<String>,
+}
+
 /// One decoded window's text, ready to append. `outcome_ok` distinguishes a
 /// successful window (`text` is real transcript) from a fail-open skip
 /// (`text` is empty, per `streaming_session::WindowResult`'s `Err` case) —
@@ -182,6 +192,78 @@ impl StreamingStore {
             )
             .map_err(store_error)?;
         require_changed(changed, "streaming session", id)
+    }
+
+    /// Stores the engine configuration exactly once, before capture begins.
+    /// A prior row means this session has already been started (or at least
+    /// prepared to start), so changing provider/model would make a resumed
+    /// session's transcript provenance ambiguous.
+    pub fn set_session_configuration(
+        &self,
+        id: StreamingSessionId,
+        configuration: &StreamingSessionConfiguration,
+    ) -> Result<()> {
+        let connection = self.connection()?;
+        let status = connection
+            .query_row(
+                "SELECT status FROM streaming_sessions WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?
+            .ok_or_else(|| AppError::Store(format!("streaming session {id} was not found")))?;
+        if status != crate::streaming_store::status::STOPPED {
+            return Err(AppError::Capture(
+                "cannot change a Streaming session's engine while it is active".to_string(),
+            ));
+        }
+        let changed = connection
+            .execute(
+                "INSERT INTO streaming_session_configuration
+                    (session_id, engine, cloud_provider, cloud_model)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    id,
+                    configuration.engine,
+                    configuration.cloud_provider,
+                    configuration.cloud_model,
+                ],
+            )
+            .map_err(|error| match error {
+                rusqlite::Error::SqliteFailure(_, Some(message))
+                    if message.contains("UNIQUE constraint failed") =>
+                {
+                    AppError::Capture(
+                        "cannot change a Streaming session's engine after it has been set"
+                            .to_string(),
+                    )
+                }
+                other => store_error(other),
+            })?;
+        debug_assert_eq!(changed, 1);
+        Ok(())
+    }
+
+    pub fn get_session_configuration(
+        &self,
+        id: StreamingSessionId,
+    ) -> Result<Option<StreamingSessionConfiguration>> {
+        self.connection()?
+            .query_row(
+                "SELECT engine, cloud_provider, cloud_model
+                 FROM streaming_session_configuration WHERE session_id = ?1",
+                params![id],
+                |row| {
+                    Ok(StreamingSessionConfiguration {
+                        engine: row.get(0)?,
+                        cloud_provider: row.get(1)?,
+                        cloud_model: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(store_error)
     }
 
     pub fn delete_session(&self, id: StreamingSessionId) -> Result<()> {
@@ -675,6 +757,17 @@ CREATE TABLE IF NOT EXISTS streaming_segments (
     PRIMARY KEY (session_id, window_index)
 );
 
+CREATE TABLE IF NOT EXISTS streaming_session_configuration (
+    session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
+    engine TEXT NOT NULL CHECK(engine IN ('local', 'cloud')),
+    cloud_provider TEXT,
+    cloud_model TEXT,
+    CHECK(
+        (engine = 'local' AND cloud_provider IS NULL AND cloud_model IS NULL)
+        OR (engine = 'cloud' AND cloud_provider IS NOT NULL AND cloud_model IS NOT NULL)
+    )
+);
+
 CREATE TABLE IF NOT EXISTS streaming_mfu (
     session_id INTEGER PRIMARY KEY REFERENCES streaming_sessions(id) ON DELETE CASCADE,
     summary TEXT NOT NULL,
@@ -751,6 +844,52 @@ mod tests {
                 translation_enabled: false,
             }]
         );
+    }
+
+    #[test]
+    fn persists_a_non_secret_cloud_configuration_once_before_capture() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session = store
+            .create_session(draft("Cloud standup", 100))
+            .expect("create session");
+        let config = StreamingSessionConfiguration {
+            engine: "cloud".to_string(),
+            cloud_provider: Some("openai".to_string()),
+            cloud_model: Some("gpt-live-transcribe".to_string()),
+        };
+
+        store
+            .set_session_configuration(session.id, &config)
+            .expect("store configuration");
+        assert_eq!(
+            store
+                .get_session_configuration(session.id)
+                .expect("read configuration"),
+            Some(config)
+        );
+    }
+
+    #[test]
+    fn rejects_configuration_changes_after_a_session_becomes_active() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let store = StreamingStore::open(temp.path()).expect("open database");
+        let session = store
+            .create_session(draft("Active stream", 100))
+            .expect("create session");
+        store.mark_active(session.id, 200).expect("start session");
+
+        let error = store
+            .set_session_configuration(
+                session.id,
+                &StreamingSessionConfiguration {
+                    engine: "local".to_string(),
+                    cloud_provider: None,
+                    cloud_model: None,
+                },
+            )
+            .expect_err("active session cannot change engine");
+        assert!(error.to_string().contains("cannot change"));
     }
 
     #[test]

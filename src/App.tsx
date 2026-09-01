@@ -60,6 +60,7 @@ export function App() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStreamingOpen, setIsStreamingOpen] = useState(false);
+  const [isStreamingActive, setIsStreamingActive] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
@@ -635,12 +636,18 @@ export function App() {
     return (
       <>
         <StreamingView
-          onClose={() => setIsStreamingOpen(false)}
+          onClose={() => {
+            setIsStreamingOpen(false);
+            setIsStreamingActive(false);
+          }}
           onOpenSettings={() => setIsSettingsOpen(true)}
+          settingsOpen={isSettingsOpen}
+          onStreamingActivityChange={setIsStreamingActive}
         />
         {isSettingsOpen && (
           <div className="settings-overlay">
             <SettingsScreen
+              cloudProviderLocked={isStreamingActive}
               onClose={() => {
                 setIsSettingsOpen(false);
                 void refreshModelAvailability();

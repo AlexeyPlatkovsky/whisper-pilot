@@ -504,9 +504,12 @@ results`) consumes its `WindowResult`s — persisting each via `append_window`
 and emitting `streaming_window` — until the results channel disconnects, at
 which point it marks the session stopped and releases `whisper_busy`.
 `src/StreamingView.tsx`'s Start action resumes the currently-open session
-when it's a past, stopped one (and relabels itself "Resume" accordingly);
-the header's "+"/New icon always starts fresh regardless of what's open,
-via a separate `handleStartNew` that never passes a `session_id`.
+when it's a past, stopped one (and relabels itself "Resume" accordingly),
+unless the user selects a different transcription engine. Session engine
+configuration is immutable for transcript provenance, so that switch starts a
+new session instead of resuming a Cloud session as Local (or vice versa). The
+header's "+"/New icon always starts fresh regardless of what's open, via a
+separate `handleStartNew` that never passes a `session_id`.
 `stop_streaming_session` only has to do one thing: take `streaming_runtime`
 out of `AppState` and let it drop. Dropping the held `streaming_audio::
 StreamingSession` stops both capture streams, which cascades through the
@@ -732,16 +735,57 @@ session and an app restart. Pressing Start/Resume on the session that is
 *already* open is not a session-identity change, so it leaves the switch,
 its translations, and its in-flight queue untouched — only starting a
 genuinely different session (a brand-new one, or resuming a different past
-session) resets them.
+session) resets their result data. A language choice made before a new capture
+starts is preserved, because the active header cannot be changed once capture
+has started.
+
+### Cloud Streaming BYOK (`cloud_provider.rs`, `cloud_streaming.rs`) — WP-106
+
+`cloud_provider.rs` defines the closed `CloudProvider` catalog and models:
+Deepgram/Nova-3, AssemblyAI/Universal-3.5 Pro, and OpenAI/GPT Live Transcribe.
+The selected identifier is the only Cloud field written to `settings.json`
+(`cloud_provider`, default `deepgram`). `KeychainCredentialStore` uses the
+macOS Keychain service `com.whisperpilot.cloud-api-keys`, with the provider id
+as account. It reports only whether a key exists; keys never appear in DTOs,
+settings, errors, logs, or frontend state after submission. The UI requires a
+successful no-audio provider verification before enabling Save, and the save
+command independently repeats that verification before writing Keychain. For
+OpenAI, verification is an authenticated lookup of the selected
+`gpt-live-transcribe` model only: it verifies model access without creating a
+Realtime session or sending audio. The Realtime session configuration is
+validated separately, immediately before capture begins.
+
+The command facade returns a `CloudProviderConfiguration` with provider metadata
+and configured booleans for get/select/save/remove, plus a `verify` command
+which returns no credential material. `cloud_streaming.rs` owns provider-
+neutral PCM conversion, documented WebSocket setup, resampling to OpenAI's
+24 kHz PCM input, transient partial events, and final-turn parsing. OpenAI
+opens the dedicated Realtime transcription socket with
+`intent=transcription`, then selects `gpt-live-transcribe` only inside the
+transcription configuration in `session.update`; no voice/reasoning Realtime
+model is inserted into this path. The configuration uses high transcription
+delay plus a meeting-context prompt, and explicitly disables turn detection
+because GPT Live Transcribe does not support VAD. The connection is established
+before capture starts; OpenAI additionally waits for the asynchronous
+`session.updated` confirmation after its `session.update`. Capture samples are
+then sent only to the selected provider. OpenAI audio is committed in explicit
+seven-second turns, with remaining non-empty audio committed and its completion
+drained before shutdown, so each turn has more context before decoding and
+final turns are persisted locally. OpenAI's incremental delta fragments are
+accumulated per provider `item_id`; the IPC event keeps that id so an out-of-
+order final clears only its matching transient partial rather than flashing
+individual words or removing a newer turn. Failure emits a safe, stage-specific
+retryable error, stops capture, and never falls back to Local.
 
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
 (theme, `ui_language`, each task's active model, export file type, the
 WP-88 `status_colors` JSON mapping of each configurable status to an opaque
-`#RRGGBB` color, and the WP-96 `mfu_panel_meeting`/`mfu_panel_streaming`
+`#RRGGBB` color, the WP-96 `mfu_panel_meeting`/`mfu_panel_streaming`
 booleans — one independent key per screen, each defaulting to `true`, gating
-only that screen's MFU panel visibility, never Craft MFU itself), applied
+only that screen's MFU panel visibility, never Craft MFU itself — and the
+WP-106 non-secret `cloud_provider` identifier), applied
 immediately and across restarts. The React layer owns **theming** (light /
 dark / system, plus release themes) and **i18n** (English default, release
 languages); the OS scheme drives the _System_ theme.
@@ -818,13 +862,16 @@ span.
 | `list_task_models()`                                                   | Per-task model catalog with download state                                                                                                                                                    | M2        |
 | `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
 | `set_active_model(task, id)`                                           | Choose the active model for a task                                                                                                                                                            | M3        |
+| `get_cloud_provider_config()` / `select_cloud_provider(provider)`      | Read the fixed provider/model catalog and persist only the selected non-secret provider id                                                                                                   | WP-106    |
+| `verify_cloud_provider_api_key(provider, api_key)`                     | Check provider authentication/model access without saving or returning the key, and without captured audio                                                                                   | WP-106    |
+| `save_cloud_provider_api_key(provider, api_key)` / `remove_cloud_provider_api_key(provider)` | Verify then add/replace, or delete, exactly one provider Keychain credential; responses contain status metadata only, never the key | WP-106 |
 | `check_update()` / `apply_update()`                                    | App update                                                                                                                                                                                    | M3        |
 | `generate_mfu(id)`                                                   | Generate structured MFU MFU (Create MFU)                                                                                                                                                    | M3        |
 | `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
 | `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
-| `start_streaming_session()`                                            | Claim the shared Whisper context, create the session record, start mic+system-audio capture and the decode/persist loop; returns once capture starts (macOS only — errors on other platforms) | WP-68     |
+| `start_streaming_session(engine?)`                                     | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before mic+system-audio capture, persists final turns, and returns once capture starts (macOS only) | WP-106    |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 | `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |
 | `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
@@ -855,14 +902,17 @@ loop has fully ended after `stop_streaming_session`.
 
 ## Security And Privacy
 
-**Transcription and MFU detail generation make no network calls** — they run
-entirely on-device, and there is **no telemetry**. The **only** networked
-operation is **user-initiated model downloads** (and, at release, the app
-update), fetched from known URLs and **SHA-verified**. Audio, transcripts, and
-MFU never leave the device. File writes: the temporary ffmpeg WAV (deleted
-after use), the SQLite library and the settings store under the app support
-directory, downloaded model files, and user-chosen export destinations. No
-`.env` or secret handling.
+**Local transcription and MFU detail generation make no network calls** and
+there is **no telemetry**. The only networked operations are user-initiated
+model downloads, optional app update, and explicitly selected Cloud Streaming.
+Cloud Streaming sends live capture audio only to the selected authenticated
+provider over TLS; transcripts remain local. Provider keys are stored only in
+macOS Keychain, not `.env`, settings, logs, or returned IPC values. Cloud
+connection or protocol failures stop capture and cannot silently use Local.
+File writes: the
+temporary ffmpeg WAV (deleted after use), the SQLite library and non-secret
+settings store under the app support directory, downloaded model files, and
+user-chosen export destinations.
 
 ## Build MFU
 
@@ -877,6 +927,8 @@ directory, downloaded model files, and user-chosen export destinations. No
   ScreenCaptureKit is Apple-only. Building `screencapturekit` needs the full
   Xcode.app installed (not just Command Line Tools) — see Streaming Audio
   Capture above.
+- WP-106 adds macOS Keychain credentials plus `tokio-tungstenite` with Rustls
+  roots for Cloud BYOK Streaming WebSocket transports.
 - M2 adds an HTTP client for SHA-verified model downloads and a settings store;
   front-end gains theming (light/dark/system) and i18n (English default).
 - Native dylib packaging (WP-60/WP-86): sherpa-rs-sys and dynamically linked
@@ -913,4 +965,5 @@ directory, downloaded model files, and user-chosen export destinations. No
 | Diarization process isolation                             | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                      |
 | Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
 | Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
+| Cloud provider catalog, Keychain credentials, and command facade | `src-tauri/src/cloud_provider.rs` / `src-tauri/src/commands/settings.rs` |
 | Streaming tab                                             | `src/StreamingView.tsx`                                                                             |

@@ -2,6 +2,7 @@
 //! parallel to `meetings.rs`, matching its "open the store fresh per call"
 //! convention rather than caching a connection in `AppState`.
 
+use crate::cloud_provider::CloudProvider;
 use crate::error::{AppError, Result};
 use crate::streaming_store::{self, NewStreamingSession, StreamingSessionId, StreamingStore};
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,54 @@ pub struct StreamingSessionSummaryDto {
     pub updated_at_ms: i64,
     pub status: String,
     pub translation_enabled: bool,
+}
+
+/// Immutable engine provenance for one Streaming session. The UI supplies a
+/// choice only before the first start; subsequent resumes must use this
+/// stored configuration, never a newly selected provider.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StreamingStartConfiguration {
+    Local,
+    Cloud(CloudProvider),
+}
+
+impl StreamingStartConfiguration {
+    fn into_store(self) -> streaming_store::StreamingSessionConfiguration {
+        match self {
+            Self::Local => streaming_store::StreamingSessionConfiguration {
+                engine: "local".to_string(),
+                cloud_provider: None,
+                cloud_model: None,
+            },
+            Self::Cloud(provider) => streaming_store::StreamingSessionConfiguration {
+                engine: "cloud".to_string(),
+                cloud_provider: Some(provider.id().to_string()),
+                cloud_model: Some(provider.transport_model().to_string()),
+            },
+        }
+    }
+
+    fn from_store(configuration: streaming_store::StreamingSessionConfiguration) -> Result<Self> {
+        match (
+            configuration.engine.as_str(),
+            configuration.cloud_provider.as_deref(),
+            configuration.cloud_model.as_deref(),
+        ) {
+            ("local", None, None) => Ok(Self::Local),
+            ("cloud", Some(provider), Some(model)) => {
+                let provider = CloudProvider::try_from(provider)?;
+                if model != provider.transport_model() {
+                    return Err(AppError::Store(
+                        "Streaming session has an unknown Cloud model configuration".to_string(),
+                    ));
+                }
+                Ok(Self::Cloud(provider))
+            }
+            _ => Err(AppError::Store(
+                "Streaming session has an invalid engine configuration".to_string(),
+            )),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -62,6 +111,9 @@ pub struct StreamingSessionDto {
     pub mfu: Option<StreamingMfuDto>,
     pub prettified_text: Option<String>,
     pub translation_enabled: bool,
+    /// The persisted, non-secret transcription engine. This lets the UI avoid
+    /// presenting a stopped Cloud session as a Local resume target.
+    pub transcription_engine: Option<String>,
 }
 
 pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSessionSummaryDto>> {
@@ -108,6 +160,14 @@ pub fn open_streaming_session(
         participants: n.participants,
     });
     let prettified_text = store.get_prettified(id)?;
+    let transcription_engine = store
+        .get_session_configuration(id)?
+        .map(StreamingStartConfiguration::from_store)
+        .transpose()?
+        .map(|configuration| match configuration {
+            StreamingStartConfiguration::Local => "local".to_string(),
+            StreamingStartConfiguration::Cloud(_) => "cloud".to_string(),
+        });
     Ok(StreamingSessionDto {
         id: session.id,
         title: session.title,
@@ -118,6 +178,7 @@ pub fn open_streaming_session(
         mfu,
         prettified_text,
         translation_enabled: session.translation_enabled,
+        transcription_engine,
     })
 }
 
@@ -216,6 +277,29 @@ pub fn resume_streaming_session(
         },
         next_window_index,
     ))
+}
+
+/// Persists a session's engine choice before the first capture and returns
+/// the durable configuration used by the caller to construct Local or Cloud
+/// runtime work. Resuming always reuses that stored configuration, regardless
+/// of the current settings choice.
+pub fn prepare_streaming_session_start(
+    app_support_dir: &Path,
+    id: StreamingSessionId,
+    requested: Option<StreamingStartConfiguration>,
+    now_ms: i64,
+) -> Result<(StreamingSessionSummaryDto, u64, StreamingStartConfiguration)> {
+    let store = StreamingStore::open(app_support_dir)?;
+    let configured = match store.get_session_configuration(id)? {
+        Some(configuration) => StreamingStartConfiguration::from_store(configuration)?,
+        None => {
+            let requested = requested.unwrap_or(StreamingStartConfiguration::Local);
+            store.set_session_configuration(id, &requested.into_store())?;
+            requested
+        }
+    };
+    let (summary, next_window_index) = resume_streaming_session(app_support_dir, id, now_ms)?;
+    Ok((summary, next_window_index, configured))
 }
 
 /// Persists the Live Translation on/off choice for one session (WP-101) —
@@ -324,6 +408,7 @@ pub fn list_streaming_translations(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::cloud_provider::CloudProvider;
     use crate::streaming_store::NewStreamingWindow;
 
     #[test]
@@ -459,6 +544,76 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir");
 
         assert!(resume_streaming_session(temp.path(), 999_999, 100).is_err());
+    }
+
+    #[test]
+    fn prepare_start_persists_cloud_provider_once_and_reuses_it_on_resume() {
+        let temp = tempfile::tempdir().expect("temporary app support");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        let cloud = StreamingStartConfiguration::Cloud(CloudProvider::OpenAi);
+
+        let (first, _, stored) = prepare_streaming_session_start(temp.path(), id, Some(cloud), 200)
+            .expect("prepare cloud");
+        assert_eq!(first.status, streaming_store::status::ACTIVE);
+        assert_eq!(stored, cloud);
+
+        StreamingStore::open(temp.path())
+            .expect("open store")
+            .mark_stopped(id, 300)
+            .expect("stop");
+        let (_, _, resumed) =
+            prepare_streaming_session_start(temp.path(), id, None, 400).expect("resume cloud");
+        assert_eq!(resumed, cloud);
+    }
+
+    #[test]
+    fn prepare_start_reuses_the_persisted_configuration_when_a_resume_request_changes() {
+        let temp = tempfile::tempdir().expect("temporary app support");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        prepare_streaming_session_start(
+            temp.path(),
+            id,
+            Some(StreamingStartConfiguration::Cloud(CloudProvider::Deepgram)),
+            200,
+        )
+        .expect("prepare cloud");
+        StreamingStore::open(temp.path())
+            .expect("open store")
+            .mark_stopped(id, 300)
+            .expect("stop");
+
+        let (_, _, stored) = prepare_streaming_session_start(
+            temp.path(),
+            id,
+            Some(StreamingStartConfiguration::Local),
+            400,
+        )
+        .expect("resume must retain immutable configuration");
+        assert_eq!(
+            stored,
+            StreamingStartConfiguration::Cloud(CloudProvider::Deepgram)
+        );
+    }
+
+    #[test]
+    fn open_session_exposes_its_non_secret_engine_for_resume_selection() {
+        let temp = tempfile::tempdir().expect("temporary app support");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        prepare_streaming_session_start(
+            temp.path(),
+            id,
+            Some(StreamingStartConfiguration::Cloud(CloudProvider::OpenAi)),
+            200,
+        )
+        .expect("prepare cloud");
+        StreamingStore::open(temp.path())
+            .expect("open store")
+            .mark_stopped(id, 300)
+            .expect("stop");
+
+        let dto = open_streaming_session(temp.path(), id).expect("open");
+
+        assert_eq!(dto.transcription_engine.as_deref(), Some("cloud"));
     }
 
     #[test]
@@ -680,9 +835,11 @@ mod tests {
             }),
             prettified_text: Some("Cleaned transcript.".to_string()),
             translation_enabled: false,
+            transcription_engine: Some("cloud".to_string()),
         };
 
         let json = serde_json::to_value(&original).expect("serialize streaming session DTO");
+        assert_eq!(json["transcription_engine"], "cloud");
         let round_tripped: StreamingSessionDto =
             serde_json::from_value(json).expect("deserialize streaming session DTO");
 
@@ -1124,6 +1281,7 @@ mod tests {
             mfu: None,
             prettified_text: None,
             translation_enabled: true,
+            transcription_engine: Some("local".to_string()),
         };
 
         let json = serde_json::to_value(&original).expect("serialize streaming session DTO");

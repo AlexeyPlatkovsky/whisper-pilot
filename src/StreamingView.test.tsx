@@ -1,9 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
 import type {
+  CloudProviderConfiguration,
   StreamingMfu,
   StreamingSession,
   StreamingSessionSummary,
@@ -16,8 +19,47 @@ let windowHandler: Handler<
 > | null = null;
 let sourcesHandler: Handler<ipc.StreamingSources> | null = null;
 let endedHandler: Handler<{ session_id: number }> | null = null;
+let partialHandler: Handler<ipc.StreamingPartial> | null = null;
 let writeTextMock: ReturnType<typeof vi.spyOn>;
 const revertPrettifyMock = vi.hoisted(() => vi.fn());
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function cloudProviderConfiguration(
+  selectedProvider: CloudProviderConfiguration["selected_provider"],
+): CloudProviderConfiguration {
+  return {
+    selected_provider: selectedProvider,
+    providers: [
+      {
+        id: "deepgram",
+        name: "Deepgram",
+        model: "Nova-3",
+        configured: true,
+      },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Live Transcribe",
+        configured: true,
+      },
+    ],
+  };
+}
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
@@ -53,6 +95,13 @@ vi.mock("./ipc", () => ({
       endedHandler = null;
     };
   }),
+  onStreamingPartial: vi.fn(async (handler: Handler<unknown>) => {
+    partialHandler = handler as Handler<ipc.StreamingPartial>;
+    return () => {
+      partialHandler = null;
+    };
+  }),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   // WP-96: the MFU panel toggle reads/writes these; default ON with no
   // fields set, matching the shipped Settings default.
@@ -67,6 +116,24 @@ vi.mock("./ipc", () => ({
   // default so most existing tests exercise the switch's disabled state
   // unless a test explicitly opts in.
   listTaskModels: vi.fn(async () => []),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: true },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Live Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const SESSION_A: StreamingSessionSummary = {
@@ -117,6 +184,7 @@ beforeEach(() => {
   windowHandler = null;
   sourcesHandler = null;
   endedHandler = null;
+  partialHandler = null;
   revertPrettifyMock.mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   // jsdom provides a real, functional Clipboard implementation on a
@@ -196,6 +264,73 @@ describe("StreamingView", () => {
       await screen.findByRole("button", { name: "Stop" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Listening…")).toBeInTheDocument();
+  });
+
+  it("keeps a newer Cloud partial visible and clears it only when its own final turn arrives", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Cloud session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "newer words",
+      });
+      windowHandler!({
+        session_id: 2,
+        item_id: "turn-1",
+        window_index: 0,
+        start_ms: 0,
+        end_ms: 7_000,
+        text: "older final",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(document.querySelector(".wp-streaming-partial")).toHaveTextContent(
+      "newer words",
+    );
+
+    act(() => {
+      windowHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        window_index: 1,
+        start_ms: 7_000,
+        end_ms: 14_000,
+        text: "newer words",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(document.querySelector(".wp-streaming-partial")).toBeNull();
+  });
+
+  it("insets Streaming transcript content from both panel borders", async () => {
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await screen.findByText(/Start a session, or open one/);
+
+    const transcript = document.querySelector(".wp-transcript-content");
+    expect(transcript).not.toBeNull();
+    expect(transcript).toHaveClass("wp-transcript-content--inset");
+
+    const styles = readFileSync(
+      resolve(process.cwd(), "src/styles.css"),
+      "utf8",
+    );
+    expect(styles).toMatch(
+      /\.wp-transcript-content--inset\s*\{[^}]*padding-left:\s*var\(--wp-space-md\);[^}]*padding-right:\s*var\(--wp-space-md\);/s,
+    );
   });
 
   it("appends a live window for the active session as it arrives", async () => {
@@ -2403,6 +2538,335 @@ describe("StreamingView", () => {
       expect(
         screen.getByText("Already accepted clean text."),
       ).toBeInTheDocument();
+    });
+  });
+
+  describe("Cloud engine selector", () => {
+    // WP-106 scenario/C-4, state-transition: Cloud shows the required notice
+    // on every selection and Local clears it without changing audio state.
+    it("defaults to Local and repeats the cloud audio/billing notice on each Cloud selection", async () => {
+      const user = userEvent.setup();
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      const local = await screen.findByRole("button", {
+        name: "Use local transcription",
+      });
+      const cloud = screen.getByRole("button", {
+        name: "Use cloud transcription",
+      });
+      expect(local).toHaveAttribute("aria-pressed", "true");
+      expect(cloud).toHaveAttribute("aria-pressed", "false");
+
+      await user.click(cloud);
+      expect(
+        await screen.findByText(
+          "Cloud transcription sends live audio to Deepgram. Usage is billed to your account.",
+        ),
+      ).toBeInTheDocument();
+
+      await user.click(local);
+      expect(
+        screen.queryByText(
+          "Cloud transcription sends live audio to Deepgram. Usage is billed to your account.",
+        ),
+      ).not.toBeInTheDocument();
+
+      await user.click(cloud);
+      expect(
+        await screen.findByText(
+          "Cloud transcription sends live audio to Deepgram. Usage is billed to your account.",
+        ),
+      ).toBeInTheDocument();
+    });
+
+    it("starts a configured Cloud session without falling back to Local", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        id: 77,
+        title: "Cloud session",
+        created_at_ms: 1,
+        updated_at_ms: 2,
+        status: "active",
+        translation_enabled: false,
+      });
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(
+        await screen.findByRole("button", { name: "Use cloud transcription" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Start" }));
+
+      await waitFor(() =>
+        expect(ipc.startStreamingSession).toHaveBeenCalledWith(
+          undefined,
+          "cloud",
+        ),
+      );
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(screen.getByText("Cloud session")).toBeInTheDocument();
+    });
+
+    it("starts a new Local session instead of resuming a stopped Cloud session", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({
+          windows: ONE_WINDOW,
+          transcription_engine: "cloud",
+        }),
+      );
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        ...SESSION_A,
+        id: 2,
+        status: "active",
+      });
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(await screen.findByText("Standup"));
+      await user.click(
+        screen.getByRole("button", { name: "Use local transcription" }),
+      );
+      await user.click(await screen.findByRole("button", { name: "Resume" }));
+
+      await waitFor(() =>
+        expect(ipc.startStreamingSession).toHaveBeenCalledWith(undefined),
+      );
+    });
+
+    // WP-106 C-4, EP: an unconfigured provider must explain the prerequisite
+    // and never begin Local capture as a fallback.
+    it("blocks an unconfigured Cloud start before it can start capture", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.getCloudProviderConfig).mockResolvedValue({
+        selected_provider: "assemblyai",
+        providers: [
+          {
+            id: "deepgram",
+            name: "Deepgram",
+            model: "Nova-3",
+            configured: false,
+          },
+          {
+            id: "assemblyai",
+            name: "AssemblyAI",
+            model: "Universal-3.5 Pro",
+            configured: false,
+          },
+          {
+            id: "openai",
+            name: "OpenAI",
+            model: "GPT Live Transcribe",
+            configured: false,
+          },
+        ],
+      });
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(
+        await screen.findByRole("button", { name: "Use cloud transcription" }),
+      );
+      await user.click(screen.getByRole("button", { name: "Start" }));
+
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Configure a AssemblyAI API key in Settings before starting Cloud transcription.",
+      );
+      expect(ipc.startStreamingSession).not.toHaveBeenCalled();
+    });
+
+    // WP-106 C-4, state transition: closing Settings refreshes the mounted
+    // Streaming view so its disclosure and start guard use the selected card.
+    it("refreshes the Cloud provider after Settings closes", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.getCloudProviderConfig)
+        .mockResolvedValueOnce({
+          selected_provider: "deepgram",
+          providers: [
+            {
+              id: "deepgram",
+              name: "Deepgram",
+              model: "Nova-3",
+              configured: true,
+            },
+            {
+              id: "assemblyai",
+              name: "AssemblyAI",
+              model: "Universal-3.5 Pro",
+              configured: false,
+            },
+            {
+              id: "openai",
+              name: "OpenAI",
+              model: "GPT Live Transcribe",
+              configured: false,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          selected_provider: "openai",
+          providers: [
+            {
+              id: "deepgram",
+              name: "Deepgram",
+              model: "Nova-3",
+              configured: true,
+            },
+            {
+              id: "assemblyai",
+              name: "AssemblyAI",
+              model: "Universal-3.5 Pro",
+              configured: false,
+            },
+            {
+              id: "openai",
+              name: "OpenAI",
+              model: "GPT Live Transcribe",
+              configured: true,
+            },
+          ],
+        });
+      const view = render(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen={false}
+        />,
+      );
+      await user.click(
+        await screen.findByRole("button", { name: "Use cloud transcription" }),
+      );
+      expect(
+        await screen.findByText(/sends live audio to Deepgram/i),
+      ).toBeInTheDocument();
+
+      view.rerender(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen
+        />,
+      );
+      view.rerender(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen={false}
+        />,
+      );
+
+      expect(
+        await screen.findByText(/sends live audio to OpenAI/i),
+      ).toBeInTheDocument();
+    });
+
+    // WP-106 C-4, concurrency boundary: a late mount request must not undo
+    // a newer configuration refresh triggered when Settings closes.
+    it("keeps the newest Cloud configuration when refreshes resolve out of order", async () => {
+      const user = userEvent.setup();
+      const first = deferred<CloudProviderConfiguration>();
+      const second = deferred<CloudProviderConfiguration>();
+      vi.mocked(ipc.getCloudProviderConfig)
+        .mockReturnValueOnce(first.promise)
+        .mockReturnValueOnce(second.promise);
+      const view = render(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen={false}
+        />,
+      );
+
+      view.rerender(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen
+        />,
+      );
+      view.rerender(
+        <StreamingView
+          onClose={vi.fn()}
+          onOpenSettings={vi.fn()}
+          settingsOpen={false}
+        />,
+      );
+      await act(async () => {
+        second.resolve(cloudProviderConfiguration("openai"));
+      });
+      await user.click(
+        await screen.findByRole("button", { name: "Use cloud transcription" }),
+      );
+      expect(
+        await screen.findByText(/sends live audio to OpenAI/i),
+      ).toBeInTheDocument();
+
+      await act(async () => {
+        first.resolve(cloudProviderConfiguration("deepgram"));
+      });
+      expect(
+        screen.getByText(/sends live audio to OpenAI/i),
+      ).toBeInTheDocument();
+    });
+
+    // WP-106 C-4, state transition: the mode cannot change while the Local
+    // start request is in flight, before the active session event arrives.
+    it("locks engine selection while a Local start request is pending", async () => {
+      const user = userEvent.setup();
+      const start = deferred<StreamingSessionSummary>();
+      vi.mocked(ipc.startStreamingSession).mockReturnValue(start.promise);
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+      await waitFor(() =>
+        expect(ipc.startStreamingSession).toHaveBeenCalledTimes(1),
+      );
+      expect(
+        screen.getByRole("button", { name: "Use local transcription" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Use cloud transcription" }),
+      ).toBeDisabled();
+
+      await act(async () => {
+        start.resolve({
+          id: 2,
+          title: "New Streaming Session",
+          created_at_ms: 200,
+          updated_at_ms: 200,
+          status: "active",
+          translation_enabled: false,
+        });
+      });
+    });
+
+    // WP-106 scenario/C-4, state-transition: once capture begins, the whole
+    // transcript header becomes unavailable rather than showing a Locked badge.
+    it("disables the transcript-header engine, language, and action controls while streaming", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+        id: 2,
+        title: "New Streaming Session",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "active",
+        translation_enabled: false,
+      });
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(await screen.findByRole("button", { name: "Start" }));
+
+      expect(
+        await screen.findByRole("button", { name: "Use local transcription" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Use cloud transcription" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("switch", { name: "Live Translation" }),
+      ).toBeDisabled();
+      expect(
+        screen.getByRole("button", { name: "Prettify transcript" }),
+      ).toBeDisabled();
+      expect(screen.queryByText("Locked")).not.toBeInTheDocument();
     });
   });
 });

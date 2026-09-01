@@ -5,11 +5,14 @@ import {
   deleteStreamingSession,
   generateStreamingMfu,
   generateStreamingPrettify,
+  getCloudProviderConfig,
   getSettings,
   listStreamingSessions,
   listStreamingTranslations,
   listTaskModels,
   onStreamingSessionEnded,
+  onStreamingError,
+  onStreamingPartial,
   onStreamingSources,
   onStreamingWindow,
   openStreamingSession,
@@ -22,6 +25,7 @@ import {
   stopStreamingSession,
   translateStreamingWindow,
   type StreamingMfu,
+  type CloudProviderConfiguration,
   type StreamingSessionSummary,
   type StreamingTranslationTargetLanguage,
   type StreamingWindow,
@@ -86,9 +90,13 @@ function precedingWindowsContext(
 export function StreamingView({
   onClose,
   onOpenSettings,
+  settingsOpen = false,
+  onStreamingActivityChange,
 }: {
   onClose: () => void;
   onOpenSettings: () => void;
+  settingsOpen?: boolean;
+  onStreamingActivityChange?: (active: boolean) => void;
 }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
   const [sessionSearch, setSessionSearch] = useState("");
@@ -102,7 +110,27 @@ export function StreamingView({
     system_audio: boolean;
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [partialTranscript, setPartialTranscript] = useState<{
+    itemId: string | null;
+    text: string;
+  } | null>(null);
+  const [transcriptionEngine, setTranscriptionEngine] = useState<
+    "local" | "cloud"
+  >("local");
+  // The engine of the currently opened persisted session. Its configuration
+  // is immutable; selecting another engine deliberately starts a new session.
+  const [activeSessionEngine, setActiveSessionEngine] = useState<
+    "local" | "cloud" | null
+  >(null);
+  const [cloudConfiguration, setCloudConfiguration] =
+    useState<CloudProviderConfiguration | null>(null);
+  const cloudConfigurationRequestRef = useRef(0);
+  const [isStartPending, setIsStartPending] = useState(false);
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    onStreamingActivityChange?.(isRunning || isStartPending);
+  }, [isRunning, isStartPending, onStreamingActivityChange]);
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [craftingId, setCraftingId] = useState<number | null>(null);
@@ -247,6 +275,26 @@ export function StreamingView({
       .catch(() => setMfuPanelVisible(true));
   }, []);
 
+  const refreshCloudConfiguration = useCallback(async () => {
+    const request = ++cloudConfigurationRequestRef.current;
+    try {
+      const configuration = await getCloudProviderConfig();
+      if (request === cloudConfigurationRequestRef.current) {
+        setCloudConfiguration(configuration);
+      }
+      return configuration;
+    } catch {
+      if (request === cloudConfigurationRequestRef.current) {
+        setCloudConfiguration(null);
+      }
+      return null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!settingsOpen) void refreshCloudConfiguration();
+  }, [refreshCloudConfiguration, settingsOpen]);
+
   // WP-93: Live Translation's model-readiness gate, mirroring how App.tsx's
   // Meeting screen resolves `llmModelReady` for Craft MFU (listTaskModels +
   // getSettings().active_model_llm) — a failure of either call leaves the
@@ -290,14 +338,26 @@ export function StreamingView({
     let unlistenWindow: (() => void) | undefined;
     let unlistenSources: (() => void) | undefined;
     let unlistenEnded: (() => void) | undefined;
+    let unlistenPartial: (() => void) | undefined;
+    let unlistenError: (() => void) | undefined;
     let cancelled = false;
 
     void (async () => {
-      const [w, s, e] = await Promise.all([
+      const [w, s, e, p, er] = await Promise.all([
         onStreamingWindow((incoming) => {
           setActiveId((current) => {
             if (current === incoming.session_id) {
               setWindows((prev) => upsertWindow(prev, incoming));
+              setPartialTranscript((partial) => {
+                if (
+                  partial === null ||
+                  (incoming.item_id != null &&
+                    incoming.item_id !== partial.itemId)
+                ) {
+                  return partial;
+                }
+                return null;
+              });
             }
             return current;
           });
@@ -310,18 +370,35 @@ export function StreamingView({
         }),
         onStreamingSessionEnded(() => {
           setIsRunning(false);
+          setPartialTranscript(null);
           void refreshSessions();
+        }),
+        onStreamingPartial((incoming) => {
+          if (activeIdRef.current === incoming.session_id) {
+            setPartialTranscript({
+              itemId: incoming.item_id,
+              text: incoming.text,
+            });
+          }
+        }),
+        onStreamingError((incoming) => {
+          if (activeIdRef.current === incoming.session_id)
+            setError(incoming.message);
         }),
       ]);
       if (cancelled) {
         w();
         s();
         e();
+        p();
+        er();
         return;
       }
       unlistenWindow = w;
       unlistenSources = s;
       unlistenEnded = e;
+      unlistenPartial = p;
+      unlistenError = er;
     })();
 
     return () => {
@@ -329,6 +406,8 @@ export function StreamingView({
       unlistenWindow?.();
       unlistenSources?.();
       unlistenEnded?.();
+      unlistenPartial?.();
+      unlistenError?.();
     };
   }, [refreshSessions]);
 
@@ -340,24 +419,28 @@ export function StreamingView({
   // renders, unlike the `activeId` state this callback would otherwise
   // close over.
   const startSession = useCallback(
-    async (resumeId: number | null) => {
+    async (resumeId: number | null, engine: "local" | "cloud") => {
       setError(null);
       setBusy(true);
       try {
         const isSameSessionResume =
           resumeId !== null && resumeId === activeIdRef.current;
-        const summary = await startStreamingSession(resumeId ?? undefined);
+        const summary =
+          engine === "cloud"
+            ? await startStreamingSession(resumeId ?? undefined, engine)
+            : await startStreamingSession(resumeId ?? undefined);
         setActiveId(summary.id);
         setActiveTitle(summary.title);
+        setActiveSessionEngine(engine);
         if (resumeId === null) setWindows([]);
         setSources(null);
+        setPartialTranscript(null);
         setMfu(null);
         setCraftFailed(false);
         setPrettifiedText(null);
         setPrettifyFailed(false);
         setPendingPrettify(null);
         if (!isSameSessionResume) {
-          setTranslationEnabled(false);
           commitTranslations(new Map());
           translationQueueRef.current = [];
           translationTokenRef.current += 1;
@@ -377,10 +460,40 @@ export function StreamingView({
 
   // Reads as "continue what's on screen": resumes the currently open stopped
   // session, otherwise starts fresh — bound to the header's Start icon.
-  const handleStart = useCallback(() => {
-    const resumeId = activeId !== null && !isRunning ? activeId : null;
-    return startSession(resumeId);
-  }, [startSession, activeId, isRunning]);
+  const handleStart = useCallback(async () => {
+    if (transcriptionEngine === "cloud") {
+      const configuration = await refreshCloudConfiguration();
+      const selected = configuration?.providers.find(
+        (provider) => provider.id === configuration.selected_provider,
+      );
+      if (!selected?.configured) {
+        setError(
+          `Configure a ${selected?.name ?? "Cloud provider"} API key in Settings before starting Cloud transcription.`,
+        );
+        return;
+      }
+    }
+    const engineChangedFromOpenedSession =
+      activeSessionEngine !== null &&
+      activeSessionEngine !== transcriptionEngine;
+    const resumeId =
+      activeId !== null && !isRunning && !engineChangedFromOpenedSession
+        ? activeId
+        : null;
+    setIsStartPending(true);
+    try {
+      await startSession(resumeId, transcriptionEngine);
+    } finally {
+      setIsStartPending(false);
+    }
+  }, [
+    activeId,
+    activeSessionEngine,
+    isRunning,
+    refreshCloudConfiguration,
+    startSession,
+    transcriptionEngine,
+  ]);
 
   // Creates a brand-new, stopped session regardless of what's open. The
   // separate Start action is the only path that begins audio capture.
@@ -391,6 +504,7 @@ export function StreamingView({
       const summary = await createStreamingSession();
       setActiveId(summary.id);
       setActiveTitle(summary.title);
+      setActiveSessionEngine(null);
       setWindows([]);
       setIsRunning(false);
       setSources(null);
@@ -434,6 +548,10 @@ export function StreamingView({
       const session = await openStreamingSession(id);
       setActiveId(id);
       setActiveTitle(session.title);
+      setActiveSessionEngine(session.transcription_engine ?? null);
+      if (session.transcription_engine) {
+        setTranscriptionEngine(session.transcription_engine);
+      }
       setWindows(session.windows);
       setIsRunning(false);
       setSources(null);
@@ -507,6 +625,7 @@ export function StreamingView({
     setError(null);
     try {
       await deleteStreamingSession(target.id);
+      if (activeId === target.id) setActiveSessionEngine(null);
       setActiveId((current) => {
         if (current !== target.id) return current;
         setWindows([]);
@@ -528,7 +647,7 @@ export function StreamingView({
     } catch (e) {
       setError(String(e));
     }
-  }, [deleteTarget, refreshSessions]);
+  }, [activeId, deleteTarget, refreshSessions]);
 
   // Once accepted, the cleaned text is what gets copied/exported. Otherwise,
   // when Live Translation is on with at least one translation entry,
@@ -895,13 +1014,16 @@ export function StreamingView({
     // failed) — those don't change which windows are stale.
   }, [windows, translationEnabled, activeId, targetLanguage, persistedReady]);
 
-  const translationDisabledReason = !llmModelReady
-    ? "Live Translation needs a downloaded language model."
-    : prettifiedText !== null
-      ? "Turn off Prettify to use Live Translation."
-      : pendingPrettify !== null
-        ? "Finish or cancel the Prettify review to use Live Translation."
-        : null;
+  const headerLocked = isRunning || isStartPending;
+  const translationDisabledReason = headerLocked
+    ? "Streaming controls are unavailable while capture is active."
+    : !llmModelReady
+      ? "Live Translation needs a downloaded language model."
+      : prettifiedText !== null
+        ? "Turn off Prettify to use Live Translation."
+        : pendingPrettify !== null
+          ? "Finish or cancel the Prettify review to use Live Translation."
+          : null;
   const prettifyDisabledByTranslation = translationEnabled;
 
   // --- end WP-93 -----------------------------------------------------------
@@ -914,18 +1036,20 @@ export function StreamingView({
     (w) => w.outcome_ok && w.text.length > 0,
   );
   const canPrettify =
-    isRunning || !hasCraftableText || isCraftingActive || isPrettifyingActive;
+    headerLocked ||
+    !hasCraftableText ||
+    isCraftingActive ||
+    isPrettifyingActive;
 
-  const windowCountLabel =
-    windows.length === 0
-      ? "No windows"
-      : `${windows.length} window${windows.length === 1 ? "" : "s"}`;
   const durationLabel =
     windows.length === 0
       ? "—"
       : formatClockTime(windows[windows.length - 1].end_ms);
 
   const activeBusy = isRunning || isCraftingActive || isPrettifyingActive;
+  const selectedCloudProvider = cloudConfiguration?.providers.find(
+    (provider) => provider.id === cloudConfiguration.selected_provider,
+  );
 
   return (
     <div className="app streaming-view">
@@ -1147,13 +1271,60 @@ export function StreamingView({
 
         <section className="wp-workspace">
           <div className="wp-transcript-panel wp-transcript-panel--streaming">
-            <div className="wp-transcript-header">
+            <div
+              className={
+                headerLocked
+                  ? "wp-transcript-header wp-transcript-header--locked"
+                  : "wp-transcript-header"
+              }
+            >
               <div className="wp-transcript-title-group">
                 <h2 className="wp-transcript-title">Live Transcript</h2>
-                <span className="wp-transcript-meta">{windowCountLabel}</span>
+                <div
+                  className="wp-ai-engine-toggle"
+                  aria-label="Transcription engine"
+                >
+                  <span className="wp-ai-engine-label">AI</span>
+                  <button
+                    type="button"
+                    className={
+                      transcriptionEngine === "local"
+                        ? "wp-engine-icon-button wp-engine-icon-button--active"
+                        : "wp-engine-icon-button"
+                    }
+                    aria-label="Use local transcription"
+                    aria-pressed={transcriptionEngine === "local"}
+                    title="Local transcription"
+                    onClick={() => {
+                      setError(null);
+                      setTranscriptionEngine("local");
+                    }}
+                    disabled={headerLocked}
+                  >
+                    <Icon name="cpu" size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className={
+                      transcriptionEngine === "cloud"
+                        ? "wp-engine-icon-button wp-engine-icon-button--active"
+                        : "wp-engine-icon-button"
+                    }
+                    aria-label="Use cloud transcription"
+                    aria-pressed={transcriptionEngine === "cloud"}
+                    title="Cloud transcription"
+                    onClick={() => {
+                      setError(null);
+                      setTranscriptionEngine("cloud");
+                    }}
+                    disabled={headerLocked}
+                  >
+                    <Icon name="cloud" size={15} />
+                  </button>
+                </div>
               </div>
               <div className="wp-translation-control">
-                <span className="wp-translation-label">Live Translation</span>
+                <Icon name="languages" size={15} />
                 <ToggleSwitch
                   checked={translationEnabled}
                   onChange={handleToggleTranslation}
@@ -1165,11 +1336,13 @@ export function StreamingView({
                   className="wp-translation-lang-select"
                   aria-label="Live Translation target language"
                   value={targetLanguage}
-                  disabled={translationEnabled}
+                  disabled={translationEnabled || headerLocked}
                   title={
-                    translationEnabled
-                      ? "Turn off Live Translation to change the target language."
-                      : "Target language"
+                    headerLocked
+                      ? "Streaming controls are unavailable while capture is active."
+                      : translationEnabled
+                        ? "Turn off Live Translation to change the target language."
+                        : "Target language"
                   }
                   onChange={(event) =>
                     setTargetLanguage(
@@ -1193,6 +1366,7 @@ export function StreamingView({
                       aria-label="Accept Prettify"
                       title="Accept"
                       onClick={() => void handleAcceptPrettify()}
+                      disabled={headerLocked}
                     >
                       <Icon
                         name="check"
@@ -1206,6 +1380,7 @@ export function StreamingView({
                       aria-label="Cancel Prettify"
                       title="Cancel"
                       onClick={handleCancelPrettify}
+                      disabled={headerLocked}
                     >
                       <Icon name="x" size={15} />
                     </button>
@@ -1218,6 +1393,7 @@ export function StreamingView({
                     aria-label="Cancel Prettify"
                     title="Revert to original transcript"
                     onClick={() => void handleRevertPrettify()}
+                    disabled={headerLocked}
                   >
                     <Icon name="x" size={15} />
                   </button>
@@ -1246,16 +1422,34 @@ export function StreamingView({
                   checked={mfuPanelVisible}
                   onChange={handleToggleMfuPanel}
                   label="MFU panel"
+                  disabled={headerLocked}
+                  disabledReason="Streaming controls are unavailable while capture is active."
                 />
               </div>
             </div>
             <div className="wp-separator" />
 
-            <div className="wp-transcript-content">
+            {transcriptionEngine === "cloud" && (
+              <div className="wp-cloud-notice" role="status">
+                <Icon name="cloud-alert" size={15} />
+                <span>
+                  Cloud transcription sends live audio to{" "}
+                  {selectedCloudProvider?.name ?? "your selected provider"}.
+                  Usage is billed to your account.
+                </span>
+              </div>
+            )}
+
+            <div className="wp-transcript-content wp-transcript-content--inset">
               {error && (
                 <div className="wp-notice wp-notice--error" role="alert">
                   {error}
                 </div>
+              )}
+              {isRunning && partialTranscript && (
+                <p className="wp-streaming-partial" role="status">
+                  {partialTranscript.text}
+                </p>
               )}
 
               {windows.length === 0 ? (

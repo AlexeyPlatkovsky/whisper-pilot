@@ -30,7 +30,11 @@ export type IconName =
   | "rotate-ccw"
   | "mic"
   | "messages-square"
-  | "loader";
+  | "loader"
+  | "cloud"
+  | "cloud-alert"
+  | "languages"
+  | "lock-keyhole";
 
 const PATHS: Record<IconName, ReactElement> = {
   "panel-left": (
@@ -192,6 +196,35 @@ const PATHS: Record<IconName, ReactElement> = {
       <line x1="18" x2="22" y1="12" y2="12" />
       <line x1="4.93" x2="7.76" y1="19.07" y2="16.24" />
       <line x1="16.24" x2="19.07" y1="7.76" y2="4.93" />
+    </>
+  ),
+  cloud: (
+    <>
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9H16a5 5 0 1 1 1.5 9Z" />
+    </>
+  ),
+  "cloud-alert": (
+    <>
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9H16a5 5 0 1 1 1.5 9Z" />
+      <path d="M12 12v.01" />
+      <path d="M12 16h.01" />
+    </>
+  ),
+  languages: (
+    <>
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="M22 22 16 10l-6 12" />
+      <path d="M14 18h6" />
+    </>
+  ),
+  "lock-keyhole": (
+    <>
+      <rect width="18" height="11" x="3" y="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      <path d="M12 15v3" />
     </>
   ),
 };

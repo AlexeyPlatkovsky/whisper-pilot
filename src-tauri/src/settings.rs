@@ -30,8 +30,10 @@ const KEY_STATUS_COLORS: &str = "status_colors";
 // disturbs the other.
 const KEY_MFU_PANEL_MEETING: &str = "mfu_panel_meeting";
 const KEY_MFU_PANEL_STREAMING: &str = "mfu_panel_streaming";
+const KEY_CLOUD_PROVIDER: &str = "cloud_provider";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
+const DEFAULT_CLOUD_PROVIDER: &str = "deepgram";
 
 fn default_active_model_diarization() -> String {
     NONE_DIARIZATION_MODEL.to_string()
@@ -43,6 +45,10 @@ fn default_export_file_type() -> String {
 
 fn default_true() -> bool {
     true
+}
+
+fn default_cloud_provider() -> String {
+    DEFAULT_CLOUD_PROVIDER.to_string()
 }
 
 /// Strict "true"/"false" only (WP-96 non-goal: no other truthy/falsy spelling).
@@ -85,6 +91,10 @@ pub struct Settings {
     /// independent so restoring one on launch never disturbs the other.
     #[serde(default = "default_true")]
     pub mfu_panel_streaming: bool,
+    /// The selected provider identifier only. API-key material is held in
+    /// macOS Keychain and never belongs in this JSON settings file.
+    #[serde(default = "default_cloud_provider")]
+    pub cloud_provider: String,
 }
 
 impl Default for Settings {
@@ -99,6 +109,7 @@ impl Default for Settings {
             status_colors: None,
             mfu_panel_meeting: default_true(),
             mfu_panel_streaming: default_true(),
+            cloud_provider: default_cloud_provider(),
         }
     }
 }
@@ -219,6 +230,14 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
         }
         KEY_MFU_PANEL_STREAMING => {
             settings.mfu_panel_streaming = parse_bool_setting(KEY_MFU_PANEL_STREAMING, value)?;
+        }
+        KEY_CLOUD_PROVIDER => {
+            if !matches!(value, "deepgram" | "assemblyai" | "openai") {
+                return Err(AppError::InvalidSetting(format!(
+                    "unknown cloud provider id: {value}"
+                )));
+            }
+            settings.cloud_provider = value.to_string();
         }
         other => {
             return Err(AppError::InvalidSetting(format!(

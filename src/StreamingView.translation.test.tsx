@@ -52,6 +52,8 @@ vi.mock("./ipc", () => ({
   }),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
+  onStreamingPartial: vi.fn(async () => () => {}),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -62,6 +64,24 @@ vi.mock("./ipc", () => ({
   })),
   setSetting: vi.fn(),
   listTaskModels: vi.fn(async () => [LLM_MODEL_READY]),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: false },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Live Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const LLM_MODEL_READY: TaskModel = {
@@ -229,10 +249,12 @@ async function startRunningSessionWithWindows(
 ) {
   vi.mocked(ipc.startStreamingSession).mockResolvedValue(ACTIVE_SESSION_A);
   render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-  await user.click(await screen.findByRole("button", { name: "Start" }));
-  await waitFor(() => expect(windowHandler).not.toBeNull());
   const toggle = await findTranslationSwitch();
   await user.click(toggle);
+  await user.click(await screen.findByRole("button", { name: "Start" }));
+  await waitFor(() => expect(windowHandler).not.toBeNull());
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+  expect(toggle).toBeDisabled();
   for (const w of windows) {
     windowHandler!({ ...w, session_id: 1 });
   }
@@ -255,7 +277,7 @@ beforeEach(() => {
 });
 
 describe("StreamingView — Live Translation header control", () => {
-  it("renders label + switch + target-language select in a middle slot between the title group and the action cluster", async () => {
+  it("renders the languages icon + switch + target-language select in a middle slot between the title group and the action cluster", async () => {
     const user = userEvent.setup();
     await openSessionWithWindows(user, TWO_PARAGRAPHS);
 
@@ -265,7 +287,8 @@ describe("StreamingView — Live Translation header control", () => {
     const control = header!.querySelector(".wp-translation-control");
     const actions = header!.querySelector(".wp-transcript-actions");
     expect(control).not.toBeNull();
-    expect(control!.textContent).toContain("Live Translation");
+    expect(control!.textContent).not.toContain("Live Translation");
+    expect(control!.querySelector("svg")).not.toBeNull();
 
     const children = Array.from(header!.children);
     expect(children.indexOf(titleGroup as Element)).toBeLessThan(
@@ -894,7 +917,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     );
   });
 
-  it("starting a brand-new session (resumeId null) still resets Live Translation to off", async () => {
+  it("starting a brand-new session preserves a Live Translation choice made before capture", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({
       id: 9,
@@ -906,10 +929,12 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
+    const toggle = await findTranslationSwitch();
+    await user.click(toggle);
     await user.click(await screen.findByRole("button", { name: "Start" }));
 
-    const toggle = await findTranslationSwitch();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    expect(toggle).toBeDisabled();
   });
 
   it("opening a session whose Live Translation was left on restores the switch to on, with no user action", async () => {

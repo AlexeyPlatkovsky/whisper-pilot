@@ -23,8 +23,8 @@ summary.
 
 Drop in an audio or video file and get back an accurate, speaker-labelled,
 editable transcript plus structured meeting MFU — kept in a local library you
-can reopen and edit, entirely on-device, no cloud, with accuracy prioritized over
-speed because processing is offline and batch.
+can reopen and edit. Local processing remains on-device and private, with
+accuracy prioritized over speed because batch processing is offline.
 
 For live audio — a meeting in progress, your own dictated thoughts, or audio
 playing in the background — **Streaming** (ADR-014) gives a near-real-time,
@@ -67,10 +67,23 @@ Meeting's batch-accuracy pipeline, which is unchanged.
   can be translated into English or Russian as it is captured, shown beside
   the original, using the same local summarization model — no new model and
   no cloud service. Streaming only; Meeting transcripts are not translated.
+- **Cloud Streaming BYOK:** before starting a
+  Streaming session, users can select Local or Cloud transcription. Cloud
+  exposes a fixed catalog — Deepgram Nova-3, AssemblyAI Universal-3.5 Pro, and
+  OpenAI GPT Live Transcribe — and stores user-provided API keys only in macOS
+  Keychain, after the provider verifies the key and model access without
+  sending captured audio. Selecting Cloud always states that live audio would
+  leave the device and be billed by the selected provider. Audio begins only
+  after a TLS provider connection and OpenAI session setup succeed; finalized
+  turns are retained locally. A
+  provider/network failure stops capture with a retryable message and never
+  falls back to Local.
 
 ### Out of scope
 
-- Cloud transcription, summarization, or storage.
+- Cloud summarization and cloud storage. Cloud Streaming transcribes the live
+  audio stream only; API keys never leave macOS Keychain except in the
+  authenticated provider connection.
 - Translation between languages, other than Streaming live translation
   into English or Russian (ADR-015). Meeting transcripts are not
   translated, and no other language pair is offered.

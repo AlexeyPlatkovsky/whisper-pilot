@@ -1,10 +1,11 @@
 # WhisperPilot
 
-WhisperPilot is an offline macOS app for turning local **audio and video
-recordings** — meetings, calls, interviews — into accurate, editable
-transcripts. Drop in a file and get back timestamped text you can correct and
-save, entirely **on-device**: no live capture, no cloud, no network access
-during processing.
+WhisperPilot is a macOS app for turning local **audio and video recordings** —
+meetings, calls, interviews — and live Streaming sources into accurate,
+editable transcripts. Local processing stays **on-device**. Streaming also has
+an optional Cloud BYOK streaming mode for supported providers. It stores keys
+in macOS Keychain and sends live audio only after the user explicitly selects
+Cloud and the provider connection succeeds.
 
 Built for accuracy over speed: because processing runs offline in batch, it
 uses full-file context and larger models than a real-time transcriber could

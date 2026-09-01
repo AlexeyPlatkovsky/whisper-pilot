@@ -2,6 +2,8 @@
 //! a summary to come.
 
 pub mod audio;
+pub mod cloud_provider;
+pub mod cloud_streaming;
 mod commands;
 pub mod diarize;
 pub mod diarize_process;
@@ -60,6 +62,11 @@ pub fn run() {
             commands::dialogs::save_text_dialog,
             commands::settings::get_settings,
             commands::settings::set_setting,
+            commands::settings::get_cloud_provider_config,
+            commands::settings::select_cloud_provider,
+            commands::settings::verify_cloud_provider_api_key,
+            commands::settings::save_cloud_provider_api_key,
+            commands::settings::remove_cloud_provider_api_key,
             commands::models::list_task_models,
             commands::models::download_model,
             commands::models::delete_model,

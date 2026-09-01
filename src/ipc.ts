@@ -150,6 +150,63 @@ export function setSetting(key: string, value: string): Promise<Settings> {
   return invoke<Settings>("set_setting", { key, value });
 }
 
+export type CloudProviderId = "deepgram" | "assemblyai" | "openai";
+
+/** Provider metadata and configured status only — never an API key. */
+export interface CloudProviderStatus {
+  id: CloudProviderId;
+  name: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface CloudProviderConfiguration {
+  selected_provider: CloudProviderId;
+  providers: CloudProviderStatus[];
+}
+
+export function getCloudProviderConfig(): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("get_cloud_provider_config");
+}
+
+export function selectCloudProvider(
+  provider: CloudProviderId,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("select_cloud_provider", {
+    provider,
+  });
+}
+
+/** Checks provider authentication/model access without storing or returning the key. */
+export function verifyCloudProviderApiKey(
+  provider: CloudProviderId,
+  apiKey: string,
+): Promise<void> {
+  return invoke<void>("verify_cloud_provider_api_key", {
+    provider,
+    apiKey,
+  });
+}
+
+/** Sends a user-entered key directly to the Keychain command; no secret DTO is returned. */
+export function saveCloudProviderApiKey(
+  provider: CloudProviderId,
+  apiKey: string,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("save_cloud_provider_api_key", {
+    provider,
+    apiKey,
+  });
+}
+
+export function removeCloudProviderApiKey(
+  provider: CloudProviderId,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("remove_cloud_provider_api_key", {
+    provider,
+  });
+}
+
 export interface TaskModel {
   id: string;
   task: string;
@@ -233,6 +290,8 @@ export interface StreamingSessionSummary {
 }
 
 export interface StreamingWindow {
+  /** Cloud provider turn id; absent on persisted and Local windows. */
+  item_id?: string | null;
   window_index: number;
   start_ms: number;
   end_ms: number;
@@ -260,6 +319,8 @@ export interface StreamingSession {
   prettified_text?: string;
   /** See `StreamingSessionSummary.translation_enabled` (WP-101). */
   translation_enabled: boolean;
+  /** Persisted non-secret engine for a stopped session, when known. */
+  transcription_engine?: "local" | "cloud";
 }
 
 export function generateStreamingMfu(id: number): Promise<StreamingSession> {
@@ -312,9 +373,11 @@ export function createStreamingSession(): Promise<StreamingSessionSummary> {
  * continues where it left off) instead of starting a brand-new one. */
 export function startStreamingSession(
   sessionId?: number,
+  engine?: "local" | "cloud",
 ): Promise<StreamingSessionSummary> {
   return invoke<StreamingSessionSummary>("start_streaming_session", {
     sessionId,
+    engine,
   });
 }
 
@@ -352,6 +415,33 @@ export function onStreamingSessionEnded(
   handler: (payload: { session_id: number }) => void,
 ): Promise<UnlistenFn> {
   return listen<{ session_id: number }>("streaming_session_ended", (event) =>
+    handler(event.payload),
+  );
+}
+
+export interface StreamingPartial {
+  session_id: number;
+  item_id: string | null;
+  text: string;
+}
+
+export function onStreamingPartial(
+  handler: (partial: StreamingPartial) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingPartial>("streaming_partial", (event) =>
+    handler(event.payload),
+  );
+}
+
+export interface StreamingError {
+  session_id: number;
+  message: string;
+}
+
+export function onStreamingError(
+  handler: (error: StreamingError) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingError>("streaming_error", (event) =>
     handler(event.payload),
   );
 }

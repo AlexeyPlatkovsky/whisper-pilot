@@ -2,10 +2,12 @@ import { useEffect, useState } from "react";
 import { AiModelsSection } from "./AiModelsSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { AppLanguageSection } from "./AppLanguageSection";
+import { CloudProviderSection } from "./CloudProviderSection";
 import { ExportSection } from "./ExportSection";
 import { AppLogo, Icon, type IconName } from "./Icon";
 
-type SectionId = "ai-models" | "appearance" | "app-language" | "export";
+type SectionId =
+  "ai-models" | "appearance" | "app-language" | "export" | "cloud-provider";
 
 const SECTIONS: {
   id: SectionId;
@@ -32,9 +34,21 @@ const SECTIONS: {
     title: "Export",
     icon: "download",
   },
+  {
+    id: "cloud-provider",
+    label: "Cloud provider",
+    title: "Cloud Provider",
+    icon: "cloud",
+  },
 ];
 
-function SectionContent({ id }: { id: SectionId }) {
+function SectionContent({
+  id,
+  cloudProviderLocked,
+}: {
+  id: SectionId;
+  cloudProviderLocked: boolean;
+}) {
   switch (id) {
     case "ai-models":
       return <AiModelsSection />;
@@ -44,10 +58,18 @@ function SectionContent({ id }: { id: SectionId }) {
       return <AppLanguageSection />;
     case "export":
       return <ExportSection />;
+    case "cloud-provider":
+      return <CloudProviderSection locked={cloudProviderLocked} />;
   }
 }
 
-export function SettingsScreen({ onClose }: { onClose: () => void }) {
+export function SettingsScreen({
+  onClose,
+  cloudProviderLocked = false,
+}: {
+  onClose: () => void;
+  cloudProviderLocked?: boolean;
+}) {
   const [section, setSection] = useState<SectionId>("ai-models");
 
   useEffect(() => {
@@ -121,7 +143,10 @@ export function SettingsScreen({ onClose }: { onClose: () => void }) {
           aria-labelledby={`settings-tab-${section}`}
         >
           <h3 className="settings-tab-title">{active.title}</h3>
-          <SectionContent id={section} />
+          <SectionContent
+            id={section}
+            cloudProviderLocked={cloudProviderLocked}
+          />
         </div>
       </div>
     </div>

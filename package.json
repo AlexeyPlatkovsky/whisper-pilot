@@ -1,7 +1,7 @@
 {
   "name": "whisper-pilot",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.9.8",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -17,7 +17,19 @@
     "lint": "eslint src",
     "lint:comments": "node scripts/check-comment-blocks.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
-    "format:check": "prettier --check \"src/**/*.{ts,tsx}\""
+    "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
+    "version:check": "sh scripts/bump-version.sh verify",
+    "version:sync": "sh scripts/bump-version.sh sync",
+    "version:minor": "sh scripts/bump-version.sh minor",
+    "version:fix": "sh scripts/bump-version.sh minor",
+    "version:feature": "sh scripts/bump-version.sh major",
+    "version:release": "sh scripts/bump-version.sh release",
+    "commit:minor": "sh scripts/commit-with-version.sh minor",
+    "commit:fix": "sh scripts/commit-with-version.sh minor",
+    "commit:feature": "sh scripts/commit-with-version.sh major",
+    "commit:release": "sh scripts/commit-with-version.sh release",
+    "hooks:install": "sh scripts/install-githooks.sh",
+    "prepare": "sh scripts/install-githooks.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.0",

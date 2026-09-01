@@ -1,0 +1,26 @@
+schema_version: 1
+id: WP-105
+title: Design Cloud Streaming selector and provider settings
+priority: normal
+type: task
+status: ready
+created_at: '2026-08-31T14:05:40Z'
+updated_at: '2026-08-31T15:35:17Z'
+parent_id: WP-104
+description: 'Update the existing Pencil Streaming and Settings designs before feature implementation. In the Streaming transcript header, remove the numeric segment-count caption and add a compact icon-based Local/Cloud selector. Local is the default. Selecting Cloud exposes the cloud state and its persistent status-row notice that live audio leaves the device and usage is billed by the selected provider. The selector is visually unavailable while a session is active.
+
+
+  Add a Cloud Provider Settings design state. It contains Deepgram, AssemblyAI, and OpenAI as radio-selectable providers, each with its fixed app-defined model label and a non-secret API-key configuration state. The design must not expose a key value. The selected provider is the provider used when Cloud is chosen for a new Streaming session.
+
+
+  Scenario: Given a stopped Streaming session, when the user selects Cloud, then the Cloud option is active and the status row states that live audio will be sent to the configured provider. Given an active Streaming session, when the user sees the selector, then Local/Cloud and provider selection are visibly locked.
+
+
+  Target: pencil/main_view.pen. Constraints: mutate the Pencil file only through Pencil MCP or the pen CLI; do not modify production code; export the affected frames for visual review; preserve the existing design system and the source frame''s unrelated content.
+
+  '
+dod:
+- The Pencil Streaming frame replaces the Streaming segment-count caption with a compact icon-based Local/Cloud selector and a Cloud privacy/billing status-row state, including the locked active-session state.
+- The Pencil Settings frame includes a Cloud Provider section with radio options for Deepgram, AssemblyAI, and OpenAI; each displays a fixed model label and a key-configured state without rendering a secret.
+- An exported PNG passes the pencil-vision-reviewer comparison against the approved design brief, and the mutated Pencil JSON validates with unique element IDs.
+- No production code, dependency, runtime, or product-documentation file is changed by this task.

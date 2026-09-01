@@ -29,6 +29,8 @@ vi.mock("./ipc", () => ({
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
+  onStreamingPartial: vi.fn(async () => () => {}),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -38,6 +40,24 @@ vi.mock("./ipc", () => ({
   })),
   setSetting: vi.fn(),
   listTaskModels: vi.fn(async () => []),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: false },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Live Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const SESSION_A: StreamingSessionSummary = {

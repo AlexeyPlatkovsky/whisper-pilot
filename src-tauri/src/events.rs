@@ -29,12 +29,33 @@ pub(crate) struct TranscriptionProgressEvent {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingWindowEvent {
     pub(crate) session_id: i64,
+    pub(crate) item_id: Option<String>,
     pub(crate) window_index: i64,
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
     pub(crate) text: String,
     pub(crate) language: String,
     pub(crate) outcome_ok: bool,
+}
+
+/// A transient partial transcript for Cloud Streaming. It is intentionally
+/// never persisted because providers may revise it before a final turn.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct StreamingPartialEvent {
+    pub(crate) session_id: i64,
+    pub(crate) item_id: Option<String>,
+    pub(crate) text: String,
+}
+
+/// A safe Cloud Streaming failure notification. The backend deliberately
+/// maps network/provider detail to app-authored stage messages, so credentials
+/// and remote payloads never enter the Tauri event bus.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct StreamingErrorEvent {
+    pub(crate) session_id: i64,
+    pub(crate) message: String,
 }
 
 /// Emitted once, right after a session starts (`streaming_sources`), naming
@@ -95,5 +116,50 @@ mod tests {
         assert_eq!(json["id"], serde_json::json!(42));
         assert_eq!(json["percent"], serde_json::json!(10));
         assert_eq!(json.as_object().unwrap().len(), 2);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn streaming_error_event_serializes_a_safe_runtime_failure_message() {
+        let event = StreamingErrorEvent {
+            session_id: 42,
+            message: "OpenAI rejected incoming audio for the transcription session.".to_string(),
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["session_id"], serde_json::json!(42));
+        assert_eq!(
+            json["message"],
+            serde_json::json!("OpenAI rejected incoming audio for the transcription session.")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cloud_streaming_events_serialize_the_provider_turn_identifier() {
+        let partial = StreamingPartialEvent {
+            session_id: 42,
+            item_id: Some("turn-a".to_string()),
+            text: "Hello".to_string(),
+        };
+        let final_window = StreamingWindowEvent {
+            session_id: 42,
+            item_id: Some("turn-a".to_string()),
+            window_index: 1,
+            start_ms: 0,
+            end_ms: 7_000,
+            text: "Hello world".to_string(),
+            language: "en".to_string(),
+            outcome_ok: true,
+        };
+
+        assert_eq!(
+            serde_json::to_value(partial).unwrap()["item_id"],
+            serde_json::json!("turn-a")
+        );
+        assert_eq!(
+            serde_json::to_value(final_window).unwrap()["item_id"],
+            serde_json::json!("turn-a")
+        );
     }
 }

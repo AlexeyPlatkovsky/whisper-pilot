@@ -859,6 +859,10 @@ body {
   flex: 0 0 auto;
 }
 
+.wp-transcript-header--locked {
+  opacity: 0.52;
+}
+
 .wp-transcript-title-group {
   display: flex;
   align-items: center;
@@ -866,6 +870,44 @@ body {
   /* Lets the group yield space (and ellipsize its title) instead of
      forcing the header to overflow when the panel is narrow. */
   min-width: 0;
+}
+
+.wp-ai-engine-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: max-content;
+}
+
+.wp-ai-engine-label {
+  margin-right: 2px;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 600;
+}
+
+.wp-engine-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--wp-radius-sm);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.wp-engine-icon-button--active {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: var(--accent);
+}
+
+.wp-engine-icon-button:disabled {
+  cursor: default;
 }
 
 .wp-transcript-title {
@@ -913,6 +955,11 @@ body {
   gap: 2px;
 }
 
+.wp-transcript-content--inset {
+  padding-left: var(--wp-space-md);
+  padding-right: var(--wp-space-md);
+}
+
 /* WP-93: Live Translation's header middle slot — title group stays left,
    this sits centered between it and the action cluster, action cluster
    stays right (all three as siblings of .wp-transcript-header). */
@@ -921,6 +968,23 @@ body {
   align-items: center;
   gap: var(--wp-space-xs);
   flex: 0 0 auto;
+}
+
+.wp-cloud-notice {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  min-height: 32px;
+  padding: 6px var(--wp-space-md);
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--accent) 8%, var(--panel));
+  color: var(--text);
+  font-size: var(--wp-font-size-sm);
+}
+
+.wp-cloud-notice svg {
+  flex: 0 0 auto;
+  color: var(--accent);
 }
 
 .wp-translation-label {
@@ -1491,6 +1555,129 @@ body {
   color: var(--text);
 }
 
+.settings-section-intro {
+  margin: calc(-1 * var(--wp-space-md)) 0 var(--wp-space-lg);
+  color: var(--muted);
+}
+
+.cloud-provider-section {
+  max-width: 640px;
+}
+
+.cloud-provider-list {
+  width: 100%;
+}
+
+.cloud-provider-row {
+  min-width: 0;
+}
+
+.cloud-provider-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.cloud-provider-choice input {
+  margin: 0;
+}
+
+.cloud-provider-lock-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 600;
+}
+
+.cloud-provider-security-note {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-sheet {
+  width: min(368px, calc(100vw - 32px));
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-md);
+}
+
+.cloud-key-sheet-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+}
+
+.cloud-key-sheet-copy,
+.cloud-key-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-error {
+  color: var(--error);
+}
+
+.cloud-key-sheet-caution {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+  line-height: 1.45;
+}
+
+.cloud-key-verified {
+  margin: 0;
+}
+
+.cloud-key-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xs);
+  color: var(--text);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+}
+
+.cloud-key-label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px var(--wp-space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.cloud-key-sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  flex-wrap: nowrap;
+}
+
+.cloud-key-sheet-spacer {
+  flex: 1;
+}
+
+.settings-content .cloud-key-remove {
+  color: var(--error);
+}
+
 .model-sections {
   display: flex;
   flex-direction: column;
@@ -1578,6 +1765,8 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 4px;
+  font-size: var(--wp-font-size-sm);
 }
 
 .model-status--ready {
@@ -1655,6 +1844,18 @@ body {
 .settings-content .model-icon-btn:disabled {
   color: var(--border);
   cursor: default;
+}
+
+/* The Keychain Save action is intentionally disabled until Verify succeeds.
+   Keep that state clearly visible in both themes instead of reducing the icon
+   to the border colour, while the lack of hover and default cursor still make
+   its unavailable state unambiguous. */
+.settings-content .cloud-key-save--awaiting-verification:disabled {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--wp-radius-xs);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: color-mix(in srgb, var(--accent) 68%, var(--text-secondary));
+  opacity: 1;
 }
 
 .settings-radio-group {

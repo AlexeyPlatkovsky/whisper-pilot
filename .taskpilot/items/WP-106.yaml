@@ -1,0 +1,23 @@
+schema_version: 1
+id: WP-106
+title: Cloud provider configuration and UI
+priority: normal
+type: task
+status: in_progress
+created_at: '2026-08-31T17:57:49Z'
+updated_at: '2026-08-31T18:01:46Z'
+parent_id: WP-104
+description: 'Implement the Cloud Streaming configuration/UI foundation only. It defines a provider-neutral, non-secret selection for Deepgram (Nova-3), AssemblyAI (Universal-3.5 Pro), and OpenAI (GPT Live Transcribe); macOS Keychain API-key save, replace, remove, and configured-status operations; and typed IPC that never returns a secret. Build the approved Settings Cloud Provider section with a masked in-app sheet, plus the approved Streaming Local/Cloud engine selector, Cloud audio/billing notice, and active-session UI lock. Local remains the default.
+
+  The UI must never fall back silently: selecting Cloud with no configured key prevents start and explains how to configure it; an attempted Cloud start with a configured key is explicitly unavailable until a provider adapter is delivered, and must not start Local or transmit audio. This task does not verify credentials or connect to provider APIs; those provider-transport responsibilities are excluded and owned by later children.
+
+  Scenario: Given Settings and a provider with no key, when the user opens Manage API key and saves a nonempty masked value, then only configured status is returned and the secret is held in Keychain. Given a stopped Streaming session with a configured provider, when the user selects Cloud, then the notice is shown. Given an active session, when the user views the header, then Local/Cloud and all header actions are unavailable. Given Cloud is selected, when the user starts, then the UI clearly explains that Cloud transcription is not yet available and neither Local transcription nor provider network traffic starts.
+
+  Target surfaces: src-tauri/src/settings.rs, a focused Keychain credential module, src-tauri/src/commands/settings.rs, src-tauri/src/lib.rs, src/ipc.ts, src/SettingsScreen.tsx, src/StreamingView.tsx, their Rust/Vitest tests, and applicable architecture/product-security documentation. Constraints: macOS Keychain is the only secret store; settings, SQLite, IPC response DTOs, UI state after submit, logs, errors, test fixtures, and diagnostics must contain no API-key material. Preserve existing Local Streaming behavior and the user-authored Pencil file.'
+dod:
+- A finite provider/model catalog defines Deepgram Nova-3, AssemblyAI Universal-3.5 Pro, and OpenAI GPT Live Transcribe; only the selected non-secret provider identifier may persist in settings.
+- A macOS Keychain credential boundary saves, replaces, removes, and reports configured status without returning, persisting, logging, or exposing API-key material through IPC, errors, or tests.
+- Settings presents the approved provider radio selection, fixed model details, configured state, and masked in-app key sheet with add, replace, and remove behavior.
+- Streaming defaults to Local, shows the approved notice every time Cloud is selected, locks the full header while active, and blocks Cloud start with an explicit unavailable message without fallback or audio transmission.
+- TDD evidence, focused frontend and Rust tests, UI manual verification, security review, and applicable documentation maintenance pass for this child scope.
+created_by: Codex
