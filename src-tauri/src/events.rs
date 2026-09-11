@@ -58,9 +58,9 @@ pub(crate) struct StreamingErrorEvent {
     pub(crate) message: String,
 }
 
-/// Emitted once, right after a session starts (`streaming_sources`), naming
-/// which capture source(s) actually came up — the mic-only-degradation
-/// indicator WP-73's UI needs, since a silent fallback would be invisible.
+/// Emitted once, right after a session starts (`streaming_sources`). System
+/// audio is the only supported source, so the compatibility payload always
+/// reports `mic: false` and `system_audio: true`.
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingSourcesEvent {

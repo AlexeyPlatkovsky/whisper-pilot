@@ -56,9 +56,9 @@ Meeting's batch-accuracy pipeline, which is unchanged.
 - One language **setting** — the **app UI language** (English by default). The
   **transcription language** is not a setting at all: Whisper detects it per run
   and the meeting records what was detected.
-- **Streaming** (ADR-014): live, near-real-time transcription of microphone
-  and/or system audio for a Streaming session — plain, unattributed running
-  text (no speaker separation), multi-language including mixed-language input
+- **Streaming** (ADR-014): live, near-real-time transcription of system audio
+  for a Streaming session (the microphone is excluded) — plain, unattributed
+  running text (no speaker separation), multi-language including mixed-language input
   within one session, with a roughly 5–10s latency budget. A separate,
   additive capability from Meeting; it does not use or affect Meeting's
   batch pipeline. No raw audio is retained for a Streaming session, so it
@@ -70,7 +70,7 @@ Meeting's batch-accuracy pipeline, which is unchanged.
 - **Cloud Streaming BYOK:** before starting a
   Streaming session, users can select Local or Cloud transcription. Cloud
   exposes a fixed catalog — Deepgram Nova-3, AssemblyAI Universal-3.5 Pro, and
-  OpenAI GPT Live Transcribe — and stores user-provided API keys only in macOS
+  OpenAI GPT Transcribe — and stores user-provided API keys only in macOS
   Keychain, after the provider verifies the key and model access without
   sending captured audio. Selecting Cloud always states that live audio would
   leave the device and be billed by the selected provider. Audio begins only

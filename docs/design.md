@@ -211,7 +211,7 @@ Opened from the header **gear**; a screen with these sections:
   transcription language.
 - **Cloud provider** — select one hardcoded provider/model row, styled like
   the local-AI model rows: **Deepgram — Nova-3**, **AssemblyAI — Universal-3.5
-  Pro**, or **OpenAI — GPT Live Transcribe**. Each row exposes only whether a
+  Pro**, or **OpenAI — GPT Transcribe**. Each row exposes only whether a
   key is configured — a green check with **API Key** — and an icon-only
   **Manage API key** action. The compact in-app sheet uses icon-only
   remove/verify/save actions (with accessible labels), a masked field, and a

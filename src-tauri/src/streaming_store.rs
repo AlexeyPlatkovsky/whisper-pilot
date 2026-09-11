@@ -856,7 +856,7 @@ mod tests {
         let config = StreamingSessionConfiguration {
             engine: "cloud".to_string(),
             cloud_provider: Some("openai".to_string()),
-            cloud_model: Some("gpt-live-transcribe".to_string()),
+            cloud_model: Some("gpt-transcribe".to_string()),
         };
 
         store

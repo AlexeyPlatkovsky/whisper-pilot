@@ -63,7 +63,7 @@ vi.mock("./ipc", () => ({
       {
         id: "openai",
         name: "OpenAI",
-        model: "GPT Live Transcribe",
+        model: "GPT Transcribe",
         configured: false,
       },
     ],

@@ -320,36 +320,26 @@ completes epic WP-1 (M2 speaker-attributed transcription).
 
 Streaming (ADR-014) is a second, separate capture mode from Meeting: near-
 real-time transcription of live audio rather than a finished file. This
-section covers only its capture/mixing layer (WP-70); the rolling-window
+section covers only its capture layer (WP-70); the rolling-window
 decode pipeline that consumes this module's output is WP-71 (see below).
 
-Both capture sources need macOS permissions this app never previously
-required: `src-tauri/Info.plist` declares `NSMicrophoneUsageDescription`
-(mic, via `cpal`) and `NSScreenCaptureUsageDescription` (system-audio
-loopback, via `screencapturekit`), auto-merged into the bundle by Tauri
-(same directory as `tauri.conf.json`). The `NSMicrophoneUsageDescription`
-key is not optional UX polish — without it, macOS crashes the app outright
-the first time it requests microphone access.
+Streaming uses system audio only and never opens or mixes the microphone.
+`src-tauri/Info.plist` therefore declares only
+`NSScreenCaptureUsageDescription` for this path; Tauri auto-merges it into
+the app bundle.
 
-`streaming_audio.rs` hands its consumer a continuous, unbounded stream of
-16 kHz mono f32 chunks (`crate::audio::SAMPLE_RATE`) via a plain
-`std::sync::mpsc::Sender`/`Receiver` pair — mixing granularity (`MIX_TICK`,
-100ms) is independent of WP-71's own 5-10s decode window. A background mixer
-thread drains whichever source buffer(s) are active every tick and sums+
-clamps them (`mix_mono`) to `[-1.0, 1.0]`, or passes one source through
-unmixed if only one is active. Pure logic (`downmix_to_mono`,
-`resample_linear`, `mix_mono`) is unit-tested (12 tests); the two platform
-capture sources, both macOS-only target dependencies:
+`streaming_audio.rs` receives an immutable capture specification before the
+session starts and hands its consumer a continuous, unbounded mono f32 stream
+through a plain `std::sync::mpsc::Sender`/`Receiver` pair. Local transcription,
+Deepgram, and AssemblyAI request ScreenCaptureKit's native 16 kHz rate; OpenAI
+requests its native 24 kHz rate. A background capture pump drains the single
+system-audio buffer every 100 ms, independent of WP-71's 5–10s decode window.
+There is no application resampling, downmix, or two-source mixer.
 
-- **Microphone (`cpal`)** — opens the default input device, downmixes to
-  mono and resamples to 16 kHz per callback using the pure functions above
-  (the device's native rate/channel count vary; ScreenCaptureKit does not
-  need this step, see below).
-- **System-audio loopback (`screencapturekit` crate)** — requests 16 kHz
-  mono directly from `SCStreamConfiguration` (a natively supported
-  rate/channel-count pair), so its `SCStreamOutputTrait::did_output_sample_buffer`
-  callback reinterprets `AudioBufferList`'s raw bytes as little-endian f32
-  with no resampling needed. `screencapturekit`'s mandatory `apple-metal`
+The macOS-only **system-audio loopback** uses the `screencapturekit` crate.
+Its `SCStreamOutputTrait::did_output_sample_buffer` callback reinterprets the
+requested mono `AudioBufferList` bytes as little-endian f32 and forwards them
+unchanged. `screencapturekit`'s mandatory `apple-metal`
   dependency links `libswift_Concurrency.dylib`, an OS-provided Swift
   runtime library that exists only in the dyld shared cache (no standalone
   file, unlike the sherpa-onnx/onnxruntime dylibs WP-60 bundles) — `build.rs`
@@ -360,17 +350,14 @@ capture sources, both macOS-only target dependencies:
   requires the full Xcode.app (not just Command Line Tools), for the Swift
   compatibility libraries `apple-metal` needs at link time.
 
-Mic-only degradation (WP-68 decision: a single-source capture failure
-degrades rather than fails the session) means either source failing to start
-— e.g. system-audio permission denied — falls back to whichever source(s)
-remain; only both failing is a hard error. This path is architecturally real
-but not runtime-verified: granting real microphone/screen-recording
-permissions and running the packaged `.app` is outside what this environment
-can do, so the OS-level capture wrappers are compiled, linked, and reviewed,
-not exercised end-to-end.
+Because system audio is the sole source, inability to start ScreenCaptureKit
+is a hard capture error rather than a microphone fallback. The pure capture
+specification is tested at 16 and 24 kHz; granting real screen-recording
+permission and exercising OS-level audio callbacks still requires manual
+verification in the packaged app.
 
 Mutual exclusion with an active Meeting transcription is WP-71's concern, not
-implemented here — this module only captures and mixes audio, it does not
+implemented here — this module only captures audio, it does not
 decode it.
 
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
@@ -512,12 +499,11 @@ header's "+"/New icon always starts fresh regardless of what's open, via a
 separate `handleStartNew` that never passes a `session_id`.
 `stop_streaming_session` only has to do one thing: take `streaming_runtime`
 out of `AppState` and let it drop. Dropping the held `streaming_audio::
-StreamingSession` stops both capture streams, which cascades through the
-mixer thread → sample channel → decode loop → results channel, ending
-`drive_streaming_results` on its own. Both `SCStream` (`screencapturekit`)
-and `cpal::Stream` are `Send`/`Sync` (the former explicitly, documented in
-the crate itself; the latter via its own `assert_stream_send!`), so storing
-the capture in `AppState`'s tokio `Mutex` needed no additional unsafe code.
+StreamingSession` stops the system-audio stream, which cascades through the
+capture pump → sample channel → decode loop → results channel, ending
+`drive_streaming_results` on its own. `SCStream` (`screencapturekit`) is
+`Send`/`Sync` (explicitly documented in the crate), so storing the capture in
+`AppState`'s tokio `Mutex` needed no additional unsafe code.
 
 On non-macOS targets, `start_streaming_session`/`stop_streaming_session`
 are still registered (same command names, same generated-handler list) but
@@ -547,7 +533,7 @@ session is currently open (`upsertWindow` replaces rather than duplicates a
 resent `window_index`, and ignores events for a session that isn't the open
 one — stale events from a just-stopped session are possible during the
 transition), an Audio Source chip in the info bar for the `streaming_sources`
-indicator so mic-only degradation is visible rather than silent, a header
+indicator showing the active System Audio source, a header
 status widget (WP-76) cycling Ready → Starting… → On Air → Crafting
 MFU…/MFU Failed (WP-77) → Prettifying…/Prettify Failed (WP-75) (elapsed
 timer, `h:mm:ss` past one hour) as `isRunning`/`busy`/`craftingId`/
@@ -742,7 +728,7 @@ has started.
 ### Cloud Streaming BYOK (`cloud_provider.rs`, `cloud_streaming.rs`) — WP-106
 
 `cloud_provider.rs` defines the closed `CloudProvider` catalog and models:
-Deepgram/Nova-3, AssemblyAI/Universal-3.5 Pro, and OpenAI/GPT Live Transcribe.
+Deepgram/Nova-3, AssemblyAI/Universal-3.5 Pro, and OpenAI/GPT Transcribe.
 The selected identifier is the only Cloud field written to `settings.json`
 (`cloud_provider`, default `deepgram`). `KeychainCredentialStore` uses the
 macOS Keychain service `com.whisperpilot.cloud-api-keys`, with the provider id
@@ -751,25 +737,26 @@ settings, errors, logs, or frontend state after submission. The UI requires a
 successful no-audio provider verification before enabling Save, and the save
 command independently repeats that verification before writing Keychain. For
 OpenAI, verification is an authenticated lookup of the selected
-`gpt-live-transcribe` model only: it verifies model access without creating a
+`gpt-transcribe` model only: it verifies model access without creating a
 Realtime session or sending audio. The Realtime session configuration is
 validated separately, immediately before capture begins.
 
 The command facade returns a `CloudProviderConfiguration` with provider metadata
 and configured booleans for get/select/save/remove, plus a `verify` command
 which returns no credential material. `cloud_streaming.rs` owns provider-
-neutral PCM conversion, documented WebSocket setup, resampling to OpenAI's
-24 kHz PCM input, transient partial events, and final-turn parsing. OpenAI
-opens the dedicated Realtime transcription socket with
-`intent=transcription`, then selects `gpt-live-transcribe` only inside the
+neutral PCM conversion, documented WebSocket setup, transient partial events,
+and final-turn parsing. OpenAI opens the dedicated Realtime transcription socket with
+`intent=transcription`, then selects `gpt-transcribe` only inside the
 transcription configuration in `session.update`; no voice/reasoning Realtime
-model is inserted into this path. The configuration uses high transcription
-delay plus a meeting-context prompt, and explicitly disables turn detection
-because GPT Live Transcribe does not support VAD. The connection is established
-before capture starts; OpenAI additionally waits for the asynchronous
+model is inserted into this path. The configuration explicitly disables turn
+detection so the app owns seven-second accuracy-oriented turn boundaries. The
+connection is established before capture starts; OpenAI additionally waits for
+the asynchronous
 `session.updated` confirmation after its `session.update`. Capture samples are
-then sent only to the selected provider. OpenAI audio is committed in explicit
-seven-second turns, with remaining non-empty audio committed and its completion
+then sent only to the selected provider. ScreenCaptureKit supplies OpenAI's
+24 kHz mono samples natively, so the upload path performs no second resample.
+OpenAI audio is committed in explicit seven-second turns, with remaining
+non-empty audio committed and its completion
 drained before shutdown, so each turn has more context before decoding and
 final turns are persisted locally. OpenAI's incremental delta fragments are
 accumulated per provider `item_id`; the IPC event keeps that id so an out-of-
@@ -895,9 +882,9 @@ to a human-readable string.
 end_ms, text, language, outcome_ok }` fires once per decoded window, whether
 it succeeded or fail-open-skipped (`outcome_ok` distinguishes the two, same
 convention as the persisted row). `streaming_sources { session_id, mic,
-system_audio }` fires once, right after a session starts, naming which
-capture source(s) actually came up — the UI's mic-only-degradation
-indicator. `streaming_session_ended { session_id }` fires once the decode
+system_audio }` fires once, right after a session starts. The compatibility
+payload is always `mic: false, system_audio: true` for supported Streaming
+capture. `streaming_session_ended { session_id }` fires once the decode
 loop has fully ended after `stop_streaming_session`.
 
 ## Security And Privacy
@@ -920,10 +907,8 @@ user-chosen export destinations.
 - `whisper-rs = { features = ["metal"] }`; `rusqlite = { features = ["bundled"] }`.
 - ffmpeg on PATH. M2 adds sherpa-onnx (via the `sherpa-rs` crate, prebuilt
   binaries fetched at build time); M3 adds llama.cpp — both Metal, local.
-- Streaming (WP-70) adds `cpal` (microphone) and `screencapturekit`
-  (system-audio loopback), both macOS-only-target dependencies like
-  `whisper-rs`'s `metal` feature — `cpal`'s default Linux backend
-  (`alsa-sys`) needs ALSA dev headers CI does not install, and
+- Streaming (WP-70) adds `screencapturekit` for system-audio loopback, a
+  macOS-only-target dependency like `whisper-rs`'s `metal` feature.
   ScreenCaptureKit is Apple-only. Building `screencapturekit` needs the full
   Xcode.app installed (not just Command Line Tools) — see Streaming Audio
   Capture above.

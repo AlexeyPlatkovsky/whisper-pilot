@@ -39,7 +39,8 @@ fn cloud_provider_configuration_exposes_fixed_models_and_never_serializes_api_ke
     assert_eq!(initial.providers.len(), 3);
     assert_eq!(initial.providers[0].model, "Nova-3");
     assert_eq!(initial.providers[1].model, "Universal-3.5 Pro");
-    assert_eq!(initial.providers[2].model, "GPT Live Transcribe");
+    assert_eq!(initial.providers[2].model, "GPT Transcribe");
+    assert_eq!(CloudProvider::OpenAi.transport_model(), "gpt-transcribe");
     assert!(!initial.providers[0].configured);
 
     service.select(CloudProvider::Deepgram).unwrap();

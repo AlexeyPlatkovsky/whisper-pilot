@@ -12,8 +12,8 @@ import { Icon } from "./Icon";
 
 function verificationErrorMessage(error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  if (detail.includes("OpenAI API key cannot access GPT Live Transcribe")) {
-    return "This OpenAI key cannot access GPT Live Transcribe in its project.";
+  if (detail.includes("OpenAI API key cannot access GPT Transcribe")) {
+    return "This OpenAI key cannot access GPT Transcribe in its project.";
   }
   return "Unable to verify this API key. Check the key, provider access, and network.";
 }

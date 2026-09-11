@@ -28,7 +28,8 @@ did not previously offer at all.
 Add **Streaming** as a second, architecturally separate capture mode alongside
 Meeting:
 
-- Streaming captures mixed microphone + system-audio (loopback) and decodes on
+- Streaming captures system audio only (loopback), excluding the microphone,
+  and decodes on
   rolling ~5-10s windows using the same bundled `large-v3-turbo` Whisper model
   Meeting uses — no new model — re-detecting language per window so mixed-
   language input (e.g. English/Russian/Turkish within one session) is handled.
@@ -55,9 +56,8 @@ addition.
 
 ## Consequences
 
-- The app needs new macOS permissions it has never required before:
-  microphone access and a system-audio-loopback (ScreenCaptureKit-class)
-  permission.
+- The app needs a system-audio-loopback (ScreenCaptureKit-class) macOS
+  permission. It does not request microphone access for Streaming.
 - Streaming and Meeting transcription cannot run concurrently for v1 — a real
   UX constraint (starting one while the other is active is blocked with an
   explanatory message), not merely an implementation detail.

@@ -3,9 +3,9 @@ id: WP-105
 title: Design Cloud Streaming selector and provider settings
 priority: normal
 type: task
-status: ready
+status: done
 created_at: '2026-08-31T14:05:40Z'
-updated_at: '2026-08-31T15:35:17Z'
+updated_at: '2026-09-02T06:07:16Z'
 parent_id: WP-104
 description: 'Update the existing Pencil Streaming and Settings designs before feature implementation. In the Streaming transcript header, remove the numeric segment-count caption and add a compact icon-based Local/Cloud selector. Local is the default. Selecting Cloud exposes the cloud state and its persistent status-row notice that live audio leaves the device and usage is billed by the selected provider. The selector is visually unavailable while a session is active.
 

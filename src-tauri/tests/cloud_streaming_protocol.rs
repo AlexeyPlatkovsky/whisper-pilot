@@ -1,3 +1,4 @@
+use base64::Engine;
 use whisperpilot_lib::cloud_provider::CloudProvider;
 use whisperpilot_lib::cloud_streaming::{
     connection_spec, outbound_audio_message, outbound_commit_message, parse_provider_event,
@@ -100,13 +101,13 @@ fn maps_assemblyai_turns_and_openai_realtime_transcription_events() {
     assert_eq!(
         parse_provider_event(
             CloudProvider::OpenAi,
-            r#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"turn-a","transcript":"final turn"}"#,
+            r#"{"type":"conversation.item.input_audio_transcription.completed","item_id":"turn-a","transcript":"final turn","languages":[{"code":"ru"}]}"#,
         )
         .unwrap(),
         Some(CloudTranscriptEvent::Final {
             item_id: Some("turn-a".into()),
             text: "final turn".into(),
-            language: "auto".into(),
+            language: "ru".into(),
         })
     );
 }
@@ -283,19 +284,16 @@ fn builds_the_documented_provider_connections_without_putting_the_key_in_the_url
     );
     assert_eq!(
         update["session"]["audio"]["input"]["transcription"]["model"],
-        "gpt-live-transcribe"
+        "gpt-transcribe"
     );
-    assert_eq!(
-        update["session"]["audio"]["input"]["transcription"]["delay"],
-        "high"
-    );
-    assert_eq!(
-        update["session"]["audio"]["input"]["transcription"]["prompt"],
-        "A professional meeting with natural pauses that may include names, numbers, acronyms, and technical terms."
-    );
+    let transcription = update["session"]["audio"]["input"]["transcription"]
+        .as_object()
+        .expect("OpenAI transcription configuration must be an object");
+    assert_eq!(transcription.len(), 1);
+    assert!(!transcription.contains_key("delay"));
     let turn_detection = update["session"]["audio"]["input"]
         .get("turn_detection")
-        .expect("GPT Live Transcribe requires turn detection to be explicitly disabled");
+        .expect("GPT Transcribe requires turn detection to be explicitly disabled");
     assert!(turn_detection.is_null());
     assert!(!open_ai.url.contains("test-key"));
 }
@@ -315,18 +313,23 @@ fn encodes_audio_as_binary_for_raw_pcm_providers_and_base64_realtime_events_for_
     };
     let event: serde_json::Value = serde_json::from_str(&payload).unwrap();
     assert_eq!(event["type"], "input_audio_buffer.append");
-    assert!(event["audio"]
-        .as_str()
-        .is_some_and(|audio| !audio.is_empty()));
+    let encoded = event["audio"].as_str().expect("OpenAI audio is base64");
+    assert_eq!(
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap(),
+        pcm_s16le(&samples),
+        "native 24 kHz capture must not be resampled again before upload"
+    );
 }
 
 #[test]
 fn commits_openai_audio_periodically_and_flushes_only_non_empty_final_audio() {
     assert!(outbound_commit_message(CloudProvider::OpenAi, 0, true).is_none());
-    assert!(outbound_commit_message(CloudProvider::OpenAi, 111_999, false).is_none());
+    assert!(outbound_commit_message(CloudProvider::OpenAi, 167_999, false).is_none());
 
     let Some(CloudOutboundMessage::Text(periodic_payload)) =
-        outbound_commit_message(CloudProvider::OpenAi, 112_000, false)
+        outbound_commit_message(CloudProvider::OpenAi, 168_000, false)
     else {
         panic!("seven seconds of OpenAI audio must create a commit event");
     };
@@ -341,8 +344,8 @@ fn commits_openai_audio_periodically_and_flushes_only_non_empty_final_audio() {
     let final_event: serde_json::Value = serde_json::from_str(&final_payload).unwrap();
     assert_eq!(final_event["type"], "input_audio_buffer.commit");
 
-    assert!(outbound_commit_message(CloudProvider::Deepgram, 112_000, true).is_none());
-    assert!(outbound_commit_message(CloudProvider::AssemblyAi, 112_000, true).is_none());
+    assert!(outbound_commit_message(CloudProvider::Deepgram, 168_000, true).is_none());
+    assert!(outbound_commit_message(CloudProvider::AssemblyAi, 168_000, true).is_none());
 }
 
 #[test]

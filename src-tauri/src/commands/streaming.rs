@@ -358,8 +358,17 @@ pub(crate) async fn start_streaming_session(
             }
         };
         drop(api_key);
+        let capture_spec =
+            match streaming_audio::system_audio_capture_spec(transport.input_sample_rate()) {
+                Ok(spec) => spec,
+                Err(error) => {
+                    let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                        .and_then(|store| store.mark_stopped(session_id, now));
+                    return Err(error);
+                }
+            };
         let (samples_tx, samples_rx) = std::sync::mpsc::channel();
-        let capture = match streaming_audio::StreamingSession::start(samples_tx) {
+        let capture = match streaming_audio::StreamingSession::start(samples_tx, capture_spec) {
             Ok(capture) => capture,
             Err(error) => {
                 let _ = streaming_store::StreamingStore::open(&app_support_dir)
@@ -367,7 +376,6 @@ pub(crate) async fn start_streaming_session(
                 return Err(error);
             }
         };
-        let active_sources = capture.active_sources();
         let (cloud_samples_tx, cloud_samples_rx) = tokio::sync::mpsc::channel(128);
         std::thread::spawn(move || {
             for samples in samples_rx {
@@ -401,9 +409,18 @@ pub(crate) async fn start_streaming_session(
             session_id,
             capture,
         });
-        emit_streaming_sources(&app, session_id, active_sources);
+        emit_streaming_sources(&app, session_id, capture_spec);
         return Ok(summary);
     }
+
+    let capture_spec = match streaming_audio::system_audio_capture_spec(crate::audio::SAMPLE_RATE) {
+        Ok(spec) => spec,
+        Err(error) => {
+            let _ = streaming_store::StreamingStore::open(&app_support_dir)
+                .and_then(|store| store.mark_stopped(session_id, now));
+            return Err(error);
+        }
+    };
 
     if let Err(holder) = streaming_session::try_claim_streaming(&state.whisper_busy) {
         let _ = streaming_store::StreamingStore::open(&app_support_dir)
@@ -430,7 +447,7 @@ pub(crate) async fn start_streaming_session(
     };
 
     let (samples_tx, samples_rx) = std::sync::mpsc::channel();
-    let capture = match streaming_audio::StreamingSession::start(samples_tx) {
+    let capture = match streaming_audio::StreamingSession::start(samples_tx, capture_spec) {
         Ok(capture) => capture,
         Err(e) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
@@ -439,8 +456,6 @@ pub(crate) async fn start_streaming_session(
             return Err(e);
         }
     };
-    let active_sources = capture.active_sources();
-
     let (results_tx, results_rx) = std::sync::mpsc::channel();
     tokio::task::spawn_blocking(move || {
         streaming_session::run_windowed_decode(
@@ -462,7 +477,7 @@ pub(crate) async fn start_streaming_session(
         capture,
     });
 
-    emit_streaming_sources(&app, session_id, active_sources);
+    emit_streaming_sources(&app, session_id, capture_spec);
 
     Ok(summary)
 }
@@ -471,27 +486,20 @@ pub(crate) async fn start_streaming_session(
 fn emit_streaming_sources(
     app: &tauri::AppHandle,
     session_id: i64,
-    active_sources: streaming_audio::ActiveSources,
+    capture_spec: streaming_audio::StreamingCaptureSpec,
 ) {
     let _ = app.emit(
         "streaming_sources",
         StreamingSourcesEvent {
             session_id,
-            mic: matches!(
-                active_sources,
-                streaming_audio::ActiveSources::Both | streaming_audio::ActiveSources::MicOnly
-            ),
-            system_audio: matches!(
-                active_sources,
-                streaming_audio::ActiveSources::Both
-                    | streaming_audio::ActiveSources::SystemAudioOnly
-            ),
+            mic: capture_spec.microphone,
+            system_audio: capture_spec.system_audio,
         },
     );
 }
 
-/// Stop the running Streaming session. Dropping the held capture stops both
-/// audio sources; `drive_streaming_results` finishes persisting/emitting on
+/// Stop the running Streaming session. Dropping the held capture stops system
+/// audio; `drive_streaming_results` finishes persisting/emitting on
 /// its own once the resulting sample/decode-loop disconnect cascades
 /// through, releasing `whisper_busy` and marking the session stopped.
 #[cfg(target_os = "macos")]

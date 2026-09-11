@@ -6,7 +6,6 @@
 
 use crate::cloud_provider::CloudProvider;
 use crate::error::{AppError, Result};
-use crate::streaming_audio::resample_linear;
 use crate::transcribe::UNDETECTED_LANGUAGE;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
@@ -21,11 +20,10 @@ use tokio_tungstenite::tungstenite::{
 };
 use tokio_tungstenite::{connect_async, MaybeTlsStream, WebSocketStream};
 
-const CAPTURE_SAMPLE_RATE: u32 = 16_000;
+const STANDARD_SAMPLE_RATE: u32 = 16_000;
 const OPENAI_SAMPLE_RATE: u32 = 24_000;
-const OPENAI_COMMIT_INTERVAL_CAPTURE_SAMPLES: u64 = CAPTURE_SAMPLE_RATE as u64 * 7;
+const OPENAI_COMMIT_INTERVAL_CAPTURE_SAMPLES: u64 = OPENAI_SAMPLE_RATE as u64 * 7;
 const OPENAI_MODEL_API_BASE_URL: &str = "https://api.openai.com/v1/models";
-const OPENAI_TRANSCRIPTION_PROMPT: &str = "A professional meeting with natural pauses that may include names, numbers, acronyms, and technical terms.";
 
 /// Immutable connection details for a single provider session. Credentials are
 /// held only long enough to build the HTTPS/WSS Authorization header; callers
@@ -147,7 +145,7 @@ pub fn connection_spec(provider: CloudProvider, api_key: &str) -> CloudConnectio
                 provider.transport_model()
             ),
             authorization: format!("Token {api_key}"),
-            sample_rate: CAPTURE_SAMPLE_RATE,
+            sample_rate: STANDARD_SAMPLE_RATE,
             initial_messages: Vec::new(),
         },
         CloudProvider::AssemblyAi => CloudConnectionSpec {
@@ -156,7 +154,7 @@ pub fn connection_spec(provider: CloudProvider, api_key: &str) -> CloudConnectio
                 provider.transport_model()
             ),
             authorization: api_key.to_string(),
-            sample_rate: CAPTURE_SAMPLE_RATE,
+            sample_rate: STANDARD_SAMPLE_RATE,
             initial_messages: Vec::new(),
         },
         CloudProvider::OpenAi => CloudConnectionSpec {
@@ -171,9 +169,7 @@ pub fn connection_spec(provider: CloudProvider, api_key: &str) -> CloudConnectio
                         "input": {
                             "format": { "type": "audio/pcm", "rate": OPENAI_SAMPLE_RATE },
                             "transcription": {
-                                "model": provider.transport_model(),
-                                "delay": "high",
-                                "prompt": OPENAI_TRANSCRIPTION_PROMPT
+                                "model": provider.transport_model()
                             },
                             "turn_detection": null
                         }
@@ -185,19 +181,14 @@ pub fn connection_spec(provider: CloudProvider, api_key: &str) -> CloudConnectio
     }
 }
 
-/// Encodes one normalized 16 kHz capture chunk for a provider. Deepgram and
-/// AssemblyAI accept raw PCM WebSocket binary frames; OpenAI accepts a JSON
-/// Realtime append event carrying base64-encoded 24 kHz PCM.
+/// Encodes one normalized capture chunk at the connection's native rate.
+/// Deepgram and AssemblyAI accept raw PCM WebSocket binary frames; OpenAI
+/// accepts a JSON Realtime append event carrying base64-encoded 24 kHz PCM.
 pub fn outbound_audio_message(
     spec: &CloudConnectionSpec,
     capture_samples: &[f32],
 ) -> CloudOutboundMessage {
-    let samples = if spec.sample_rate == CAPTURE_SAMPLE_RATE {
-        capture_samples.to_vec()
-    } else {
-        resample_linear(capture_samples, CAPTURE_SAMPLE_RATE, spec.sample_rate)
-    };
-    let pcm = pcm_s16le(&samples);
+    let pcm = pcm_s16le(capture_samples);
 
     if spec.sample_rate == OPENAI_SAMPLE_RATE {
         CloudOutboundMessage::Text(
@@ -212,7 +203,7 @@ pub fn outbound_audio_message(
     }
 }
 
-/// Creates the explicit turn boundary required by GPT Live Transcribe when
+/// Creates the explicit turn boundary required by GPT Transcribe when
 /// server VAD is disabled. Empty buffers are never committed because OpenAI
 /// rejects them; non-OpenAI providers own their turn boundaries server-side.
 pub fn outbound_commit_message(
@@ -249,7 +240,7 @@ impl CloudTransport {
         let (mut socket, _) = connect_async(request).await.map_err(|_| {
             let message = match provider {
                 CloudProvider::OpenAi => {
-                    "OpenAI transcription setup could not be established. Confirm this project has access to GPT Live Transcribe."
+                    "OpenAI transcription setup could not be established. Confirm this project has access to GPT Transcribe."
                 }
                 CloudProvider::Deepgram | CloudProvider::AssemblyAi => {
                     "Unable to connect to cloud transcription. Check your network and API key."
@@ -277,6 +268,11 @@ impl CloudTransport {
         };
         transport.wait_until_ready().await?;
         Ok(transport)
+    }
+
+    /// Native system-audio rate required by this provider connection.
+    pub fn input_sample_rate(&self) -> u32 {
+        self.spec.sample_rate
     }
 
     /// Authenticates a candidate key without sending captured audio. This is
@@ -456,7 +452,7 @@ impl CloudTransport {
                     }) => {
                         let end_ms = captured_samples
                             .saturating_mul(1_000)
-                            .checked_div(CAPTURE_SAMPLE_RATE as u64)
+                            .checked_div(self.spec.sample_rate as u64)
                             .unwrap_or(0)
                             .min(i64::MAX as u64) as i64;
                         let _ = results_tx
@@ -554,7 +550,7 @@ async fn verify_openai_model_access(api_key: &str) -> Result<()> {
         })?;
     if !response.status().is_success() {
         return Err(AppError::Capture(
-            "OpenAI API key cannot access GPT Live Transcribe.".to_string(),
+            "OpenAI API key cannot access GPT Transcribe.".to_string(),
         ));
     }
     let response_text = response
@@ -565,13 +561,13 @@ async fn verify_openai_model_access(api_key: &str) -> Result<()> {
         .map_err(|_| AppError::Capture("OpenAI returned an invalid model response.".to_string()))?;
     if !openai_model_lookup_is_usable(&payload, model) {
         return Err(AppError::Capture(
-            "OpenAI API key cannot access GPT Live Transcribe.".to_string(),
+            "OpenAI API key cannot access GPT Transcribe.".to_string(),
         ));
     }
     Ok(())
 }
 
-/// Converts the normalized `[-1.0, 1.0]` mixed capture stream to the PCM16
+/// Converts the normalized `[-1.0, 1.0]` system-audio stream to the PCM16
 /// little-endian audio required by every initial Cloud provider adapter.
 pub fn pcm_s16le(samples: &[f32]) -> Vec<u8> {
     samples
@@ -768,7 +764,11 @@ fn parse_open_ai(value: &Value) -> Result<Option<CloudTranscriptEvent>> {
             Ok(Some(CloudTranscriptEvent::Final {
                 item_id,
                 text: text.to_string(),
-                language: UNDETECTED_LANGUAGE.to_string(),
+                language: value
+                    .pointer("/languages/0/code")
+                    .and_then(Value::as_str)
+                    .unwrap_or(UNDETECTED_LANGUAGE)
+                    .to_string(),
             }))
         }
         _ => Ok(None),
@@ -810,16 +810,16 @@ mod tests {
     #[test]
     fn openai_model_lookup_requires_the_requested_model_identifier() {
         assert!(openai_model_lookup_is_usable(
-            &serde_json::json!({ "id": "gpt-live-transcribe" }),
-            "gpt-live-transcribe",
+            &serde_json::json!({ "id": "gpt-transcribe" }),
+            "gpt-transcribe",
         ));
         assert!(!openai_model_lookup_is_usable(
             &serde_json::json!({ "id": "gpt-realtime-2.1" }),
-            "gpt-live-transcribe",
+            "gpt-transcribe",
         ));
         assert!(!openai_model_lookup_is_usable(
             &serde_json::json!({ "object": "model" }),
-            "gpt-live-transcribe",
+            "gpt-transcribe",
         ));
     }
 }

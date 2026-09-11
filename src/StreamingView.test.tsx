@@ -54,7 +54,7 @@ function cloudProviderConfiguration(
       {
         id: "openai",
         name: "OpenAI",
-        model: "GPT Live Transcribe",
+        model: "GPT Transcribe",
         configured: true,
       },
     ],
@@ -129,7 +129,7 @@ vi.mock("./ipc", () => ({
       {
         id: "openai",
         name: "OpenAI",
-        model: "GPT Live Transcribe",
+        model: "GPT Transcribe",
         configured: false,
       },
     ],
@@ -2655,7 +2655,7 @@ describe("StreamingView", () => {
           {
             id: "openai",
             name: "OpenAI",
-            model: "GPT Live Transcribe",
+            model: "GPT Transcribe",
             configured: false,
           },
         ],
@@ -2696,7 +2696,7 @@ describe("StreamingView", () => {
             {
               id: "openai",
               name: "OpenAI",
-              model: "GPT Live Transcribe",
+              model: "GPT Transcribe",
               configured: false,
             },
           ],
@@ -2719,7 +2719,7 @@ describe("StreamingView", () => {
             {
               id: "openai",
               name: "OpenAI",
-              model: "GPT Live Transcribe",
+              model: "GPT Transcribe",
               configured: true,
             },
           ],

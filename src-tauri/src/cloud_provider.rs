@@ -40,7 +40,7 @@ impl CloudProvider {
         match self {
             Self::Deepgram => "Nova-3",
             Self::AssemblyAi => "Universal-3.5 Pro",
-            Self::OpenAi => "GPT Live Transcribe",
+            Self::OpenAi => "GPT Transcribe",
         }
     }
 
@@ -50,7 +50,7 @@ impl CloudProvider {
         match self {
             Self::Deepgram => "nova-3",
             Self::AssemblyAi => "universal-3-5-pro",
-            Self::OpenAi => "gpt-live-transcribe",
+            Self::OpenAi => "gpt-transcribe",
         }
     }
 }

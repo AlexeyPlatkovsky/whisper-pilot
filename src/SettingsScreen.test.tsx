@@ -36,7 +36,7 @@ vi.mock("./ipc", () => ({
       {
         id: "openai",
         name: "OpenAI",
-        model: "GPT Live Transcribe",
+        model: "GPT Transcribe",
         configured: false,
       },
     ],
@@ -65,7 +65,7 @@ const CLOUD_CONFIGURATION = {
     {
       id: "openai" as const,
       name: "OpenAI",
-      model: "GPT Live Transcribe",
+      model: "GPT Transcribe",
       configured: false,
     },
   ],
@@ -192,7 +192,7 @@ describe("SettingsScreen", () => {
       screen.getByRole("radio", { name: /AssemblyAI.*Universal-3.5 Pro/i }),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("radio", { name: /OpenAI.*GPT Live Transcribe/i }),
+      screen.getByRole("radio", { name: /OpenAI.*GPT Transcribe/i }),
     ).toBeInTheDocument();
     expect(
       screen.getAllByRole("button", { name: "Manage API key" }),
@@ -249,7 +249,7 @@ describe("SettingsScreen", () => {
         {
           id: "openai",
           name: "OpenAI",
-          model: "GPT Live Transcribe",
+          model: "GPT Transcribe",
           configured: false,
         },
       ],
@@ -322,7 +322,7 @@ describe("SettingsScreen", () => {
   it("keeps Save unavailable and explains a failed API-key verification", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.verifyCloudProviderApiKey).mockRejectedValue(
-      new Error("OpenAI API key cannot access GPT Live Transcribe."),
+      new Error("OpenAI API key cannot access GPT Transcribe."),
     );
     render(<SettingsScreen onClose={vi.fn()} />);
 
@@ -340,7 +340,7 @@ describe("SettingsScreen", () => {
 
     expect(
       await within(sheet).findByText(
-        "This OpenAI key cannot access GPT Live Transcribe in its project.",
+        "This OpenAI key cannot access GPT Transcribe in its project.",
       ),
     ).toBeInTheDocument();
     expect(
