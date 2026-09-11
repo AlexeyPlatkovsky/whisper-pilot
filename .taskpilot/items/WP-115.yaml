@@ -1,0 +1,37 @@
+schema_version: 1
+id: WP-115
+title: Cache and schedule local LLM inference
+priority: normal
+type: task
+status: in_progress
+created_at: '2026-09-11T19:35:51Z'
+updated_at: '2026-09-11T20:51:06Z'
+parent_id: WP-108
+tags:
+- recorder
+- phase-1
+- llm
+description: 'Introduce a persistent local LLM runtime that reuses loaded model weights across Live Translation, Meeting and Streaming MFU, and Prettify. A single bounded scheduler coordinates job priority, cancellation and model changes. Every job gets isolated logical context while sharing safe immutable model state, and long transcripts are token-budgeted before inference.
+
+
+  Happy path: repeated translations and summaries reuse one loaded model, interactive translation remains responsive, and long MFU or Prettify input is chunked or rejected before context overflow. Primary failure behavior: model load, malformed structured output, cancellation or queue overload produces an explicit per-job result and leaves the runtime usable for the next job. Edge cases include changing or deleting the active model, simultaneous MFU and translation, stale translation source, malformed JSON and app shutdown.
+
+
+  Scenario: Given a model is already loaded, when multiple translation windows and an MFU request arrive, then the weights load once, jobs follow the documented priority and cancelled stale translations are not persisted. Given a transcript exceeds the context budget, when MFU starts, then the defined chunking or explicit refusal path runs before llama decode.
+
+
+  Target surfaces: src-tauri/src/llm.rs, state.rs, commands/mfu.rs, translation commands, model deletion/selection, Streaming translation queue, structured-output parsing, tests and architecture documentation.
+
+
+  Constraints: local-only inference; bounded memory and queue; no transcript logging; selected-model fingerprint keys the cache; malformed JSON is not silently presented as a successful full MFU; existing accepted Prettify safety checks remain.'
+dod:
+- Repeated jobs for one selected model load weights once per runtime generation, proven by focused tests or an injectable load counter.
+- Translation, MFU and Prettify share one bounded scheduler with documented priorities, cancellation and overload behavior; concurrent-command tests prove no unsafe double load.
+- Changing or deleting the selected model invalidates the cache only at a safe boundary and never changes the engine of an active job.
+- Every long-input path performs token preflight and follows the approved chunking or explicit refusal contract without exceeding the configured context.
+- Malformed MFU JSON produces a structured warning or bounded repair path instead of silently reporting empty sections as complete.
+- Latency and peak-RAM measurements improve over the reload-per-call baseline, and all Rust/frontend validation and documentation maintenance pass.
+links:
+  blocks:
+  - WP-129
+created_by: Codex

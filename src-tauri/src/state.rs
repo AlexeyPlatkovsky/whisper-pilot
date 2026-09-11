@@ -2,11 +2,13 @@
 //! shared with Streaming and the running Streaming capture runtime.
 
 use crate::error::{AppError, Result};
+use crate::live_capture::LiveCaptureRuntimeCoordinator;
+use crate::llm;
 #[cfg(target_os = "macos")]
 use crate::streaming_audio;
 use crate::transcribe;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -40,15 +42,17 @@ pub(crate) fn now_ms() -> Result<i64> {
 pub(crate) struct AppState {
     pub(crate) model: Mutex<Option<Arc<WhisperContext>>>,
     pub(crate) whisper_busy: std::sync::atomic::AtomicU8,
-    /// The running Streaming session's audio capture, present only while a
-    /// session is active. Dropping it (via `stop_streaming_session` taking
-    /// it out, or app shutdown dropping `AppState` itself) stops both
-    /// capture streams, which cascades: the mixer thread ends, the sample
-    /// channel disconnects, the decode loop ends, and the results-consuming
-    /// task releases `whisper_busy` and marks the session stopped — see
-    /// `docs/architecture.md`'s Streaming IPC section.
+    /// One bounded local-LLM scheduler and selected-model cache for the app.
+    /// App ownership ensures Metal resources are released during teardown.
+    pub(crate) llm_runtime: Arc<llm::LlmRuntime>,
+    /// Authoritative live-capture lifecycle and native runtime. Dropping the
+    /// runtime stops system-audio capture and cascades through decode and
+    /// persistence. Backend ownership survives navigation and webview
+    /// remounts; see `docs/architecture.md`'s Streaming IPC section.
     #[cfg(target_os = "macos")]
-    pub(crate) streaming_runtime: Mutex<Option<StreamingRuntime>>,
+    pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<StreamingRuntime>>,
+    #[cfg(not(target_os = "macos"))]
+    pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<()>>,
     /// WP-92's single-flight guard for Streaming window translation: at
     /// most one `translate_streaming_window` call runs its LLM inference
     /// at a time, claimed via `llm::TranslationUsageGuard`. Independent of

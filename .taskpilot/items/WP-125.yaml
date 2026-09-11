@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-125
+title: Benchmark Qwen3-ASR runtimes on Apple Silicon
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:39:38Z'
+updated_at: '2026-09-11T19:41:46Z'
+parent_id: WP-111
+tags:
+- recorder
+- phase-4
+- spike
+description: 'Run a reproducible feasibility and quality benchmark for Qwen3-ASR 0.6B and 1.7B on the supported Apple Silicon baseline, comparing them with the current Whisper large-v3-turbo Q8. Evaluate a recent llama.cpp GGUF audio path first and an MLX-native path only if needed. Record model and projector assets, runtime revisions, cold and warm behavior, and a recommendation for offline Meeting and live Recorder or Streaming use.
+
+
+  Happy path: fixed RU, EN and mixed RU/EN inputs produce comparable WER or CER, first-partial and final latency, RTF, peak RAM and stability data sufficient to select or reject each model and runtime per mode. Primary failure behavior: crash, unsupported Metal operation, missing timestamps, excessive memory or unstable streaming is a recorded result, not worked around by silently changing the corpus. Edge cases include long audio, code switching, silence, punctuation, cold load, warm reuse, 30 and 60-minute live sessions and ForcedAligner cost.
+
+
+  Scenario: Given the fixed benchmark corpus and hardware profile, when each engine and variant runs with recorded settings, then the output table contains comparable quality, latency, RTF, memory and stability values. Given a runtime cannot meet a required capability, when the run finishes, then the limitation and affected modes are explicit in the recommendation.
+
+
+  Target surfaces: a reproducible benchmark harness and fixtures outside production paths, recorded TaskPilot evidence, current Whisper engine, candidate recent llama.cpp GGUF and optional MLX runtime, and a short architecture feasibility report.
+
+
+  Constraints: do not add a production dependency; use publisher-verifiable models and revisions; do not send corpus audio to cloud services; keep the corpus and scoring method fixed across engines; distinguish streaming without timestamps from offline forced alignment.'
+dod:
+- A reproducible command, fixed corpus manifest and hardware/runtime configuration run Whisper large-v3-turbo Q8 plus Qwen3-ASR 0.6B and 1.7B on the same RU, EN and mixed RU/EN inputs.
+- The result table records cold load, warm first-partial or first-token latency, final latency, RTF, WER or CER, peak RAM, model bundle size and 30 or 60-minute stability for every viable runtime.
+- Offline, streaming, timestamps, language detection and long-audio capabilities are verified rather than inferred, including separate ForcedAligner cost where applicable.
+- Every crash, unsupported path or invalid output is retained in the evidence with exact runtime and model revisions.
+- The task produces an explicit per-mode adopt or reject recommendation and proposed numerical acceptance thresholds; no production runtime or catalog is changed.
+links:
+  blocks:
+  - WP-126
+created_by: Codex

@@ -54,6 +54,22 @@ type DiarizationOutcome = std::result::Result<
 type PendingDiarization =
     std::pin::Pin<Box<dyn std::future::Future<Output = DiarizationOutcome> + Send>>;
 
+/// Move one decoded allocation into blocking work and return that same
+/// allocation for the next pipeline stage. This avoids cloning an entire
+/// recording merely to satisfy the blocking task's `'static` ownership.
+async fn transcribe_owned_samples<T, F>(samples: Vec<f32>, transcribe: F) -> Result<(T, Vec<f32>)>
+where
+    T: Send + 'static,
+    F: FnOnce(&[f32]) -> Result<T> + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let transcription = transcribe(&samples)?;
+        Ok((transcription, samples))
+    })
+    .await
+    .map_err(|error| AppError::Transcribe(error.to_string()))?
+}
+
 /// Decode and transcribe the file at `path`, returning the transcription and
 /// the samples it was decoded from so diarization can reuse them.
 ///
@@ -70,19 +86,15 @@ async fn decode_and_transcribe(
     let samples = tokio::task::spawn_blocking(move || audio::load_samples(&input))
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
-    let transcription = {
-        let samples = samples.clone();
-        tokio::task::spawn_blocking(move || {
-            transcribe::transcribe_with_progress(&ctx, &samples, move |percent| {
-                let _ = app.emit(
-                    "transcription_progress",
-                    TranscriptionProgressEvent { id, percent },
-                );
-            })
+    let (transcription, samples) = transcribe_owned_samples(samples, move |samples| {
+        transcribe::transcribe_with_progress(&ctx, samples, move |percent| {
+            let _ = app.emit(
+                "transcription_progress",
+                TranscriptionProgressEvent { id, percent },
+            );
         })
-        .await
-        .map_err(|e| AppError::Transcribe(e.to_string()))??
-    };
+    })
+    .await?;
     ensure_non_empty_transcript(&transcription)?;
 
     Ok((transcription, samples))
@@ -432,6 +444,36 @@ mod tests {
     fn ensure_non_empty_transcript_passes_a_decode_with_segments() {
         let t = transcription(vec![segment(0, 1_000, "hello")]);
         ensure_non_empty_transcript(&t).expect("a decode with segments passes");
+    }
+
+    // WP-116 DoD 1: moving the decoded allocation into blocking Whisper work
+    // must not require a full Vec clone merely to retain it for diarization.
+    // Pointer identity makes that ownership behavior observable without a
+    // model, allocator instrumentation, or private media.
+    #[tokio::test]
+    async fn blocking_transcription_owns_and_returns_the_original_sample_allocation() {
+        let samples: Vec<f32> = (0..32_000).map(|sample| sample as f32).collect();
+        let original_pointer = samples.as_ptr() as usize;
+        let observed_pointer = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = Arc::clone(&observed_pointer);
+
+        let (sample_count, returned_samples) = transcribe_owned_samples(samples, move |borrowed| {
+            observed.store(
+                borrowed.as_ptr() as usize,
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            Ok(borrowed.len())
+        })
+        .await
+        .expect("model-free blocking transcription succeeds");
+
+        assert_eq!(sample_count, 32_000);
+        assert_eq!(
+            observed_pointer.load(std::sync::atomic::Ordering::SeqCst),
+            original_pointer
+        );
+        assert_eq!(returned_samples.as_ptr() as usize, original_pointer);
+        assert_eq!(returned_samples.len(), 32_000);
     }
 
     // The whole point of WP-54: the transcript must already be readable from

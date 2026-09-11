@@ -3,6 +3,10 @@
 
 use serde::Serialize;
 
+/// Authoritative live-capture lifecycle snapshot. Every renderer reconciles
+/// these by `revision`, so a delayed event cannot overwrite newer state.
+pub(crate) type LiveCaptureStateEvent = crate::live_capture::LiveCaptureSnapshot;
+
 /// Payload of the `transcription_phase` event, emitted once a run moves from
 /// transcribing into diarizing its samples. `phase` is a fixed literal today
 /// (diarization is the only phase change the UI needs to know about beyond

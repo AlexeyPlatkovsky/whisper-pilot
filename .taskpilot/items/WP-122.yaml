@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-122
+title: Specify the bubble interaction and window design
+priority: normal
+type: task
+status: backlog
+created_at: '2026-09-11T19:38:37Z'
+updated_at: '2026-09-11T19:41:34Z'
+parent_id: WP-110
+tags:
+- recorder
+- phase-3
+- design
+description: 'Specify and obtain approval for the 120 px floating bubble and its relationship to the main and live-caption windows. The design covers idle, listening and actionable error rings plus non-color signals; collapse and restore positioning; drag versus click threshold; Always on Top settings; Spaces, Stage Manager and fullscreen expectations; and the distribution-compatible choice between a transparent Tauri window, an AppKit panel or an approved opaque treatment.
+
+
+  Happy path: implementation can create the exact approved states and window transitions without guessing. Primary failure behavior: failed window creation, stale monitor position or unavailable private API always leaves a visible route back to the main application. Edge cases include movement below and above threshold, synthetic click after drag, multiple display scales, removed monitor, hidden application, fullscreen space and status change while hidden.
+
+
+  Scenario: Given the main window top-left is at a visible coordinate, when the user collapses, then the bubble design appears at that coordinate before main hides. Given distribution rules prohibit the selected transparency mechanism, when the technical feasibility check runs, then the approved fallback appearance and behavior are used without changing the interaction contract.
+
+
+  Target surfaces: pencil/main_view.pen or a dedicated Pencil frame set, Tauri window/config feasibility notes, docs/design.md, docs/architecture.md and an ADR if the native/private-API distribution choice requires one.
+
+
+  Constraints: no production code; 120 by 120 logical pixels initially; preserve the existing app icon; status is not color-only; App Store and direct-DMG constraints are explicit; real-macOS feasibility evidence is required for window claims.'
+dod:
+- Approved Pencil frames cover bubble idle, listening, actionable error, hover, pressed or click, dragging and caption-adjacent states at 120 by 120 logical pixels.
+- The approved contract specifies collapse and restore order, exact coordinate ownership and clamping, drag threshold and synthetic-click suppression.
+- Always on Top, all-Spaces, Stage Manager and fullscreen expectations are separately stated and mapped to verifiable macOS behavior.
+- The transparency or native-panel choice is recorded with its distribution constraint, and an approved fallback keeps the same interaction if the preferred path is unavailable.
+- Failure and recovery states leave an explicit visible route to restore the main window; Pencil visual review and applicable documentation validation pass with no production edits.
+links:
+  blocks:
+  - WP-123
+created_by: Codex

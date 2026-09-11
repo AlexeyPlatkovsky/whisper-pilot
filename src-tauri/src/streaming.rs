@@ -27,6 +27,29 @@ pub enum StreamingStartConfiguration {
     Cloud(CloudProvider),
 }
 
+/// Durable cursor required to resume both persistence indexes and the audio
+/// timeline without resetting timestamps to zero.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamingResumeMetadata {
+    pub next_window_index: u64,
+    pub last_persisted_end_ms: u64,
+}
+
+/// Maps a provider connection's relative final timestamp onto the persisted
+/// session timeline. Every non-saturated final advances at least one
+/// millisecond so repeated or zero provider timestamps cannot overlap the
+/// prior committed window.
+pub fn resumed_cloud_window_bounds(
+    timeline_offset_ms: i64,
+    previous_end_ms: i64,
+    connection_end_ms: i64,
+) -> (i64, i64) {
+    let end_ms = timeline_offset_ms
+        .saturating_add(connection_end_ms.max(0))
+        .max(previous_end_ms.saturating_add(1));
+    (previous_end_ms, end_ms)
+}
+
 impl StreamingStartConfiguration {
     fn into_store(self) -> streaming_store::StreamingSessionConfiguration {
         match self {
@@ -250,7 +273,7 @@ pub fn resume_streaming_session(
     app_support_dir: &Path,
     id: StreamingSessionId,
     now_ms: i64,
-) -> Result<(StreamingSessionSummaryDto, u64)> {
+) -> Result<(StreamingSessionSummaryDto, StreamingResumeMetadata)> {
     let store = StreamingStore::open(app_support_dir)?;
     let session = store
         .get_session(id)?
@@ -260,11 +283,18 @@ pub fn resume_streaming_session(
             "only a stopped Streaming session can be resumed".into(),
         ));
     }
-    let next_window_index = store
-        .list_windows(id)?
+    let windows = store.list_windows(id)?;
+    let resume = windows
         .last()
-        .map(|w| w.window_index as u64 + 1)
-        .unwrap_or(0);
+        .map(|window| StreamingResumeMetadata {
+            next_window_index: u64::try_from(window.window_index)
+                .map_or(0, |index| index.saturating_add(1)),
+            last_persisted_end_ms: window.end_ms.max(0) as u64,
+        })
+        .unwrap_or(StreamingResumeMetadata {
+            next_window_index: 0,
+            last_persisted_end_ms: 0,
+        });
     store.mark_active(id, now_ms)?;
     Ok((
         StreamingSessionSummaryDto {
@@ -275,7 +305,7 @@ pub fn resume_streaming_session(
             status: streaming_store::status::ACTIVE.to_string(),
             translation_enabled: session.translation_enabled,
         },
-        next_window_index,
+        resume,
     ))
 }
 
@@ -288,7 +318,11 @@ pub fn prepare_streaming_session_start(
     id: StreamingSessionId,
     requested: Option<StreamingStartConfiguration>,
     now_ms: i64,
-) -> Result<(StreamingSessionSummaryDto, u64, StreamingStartConfiguration)> {
+) -> Result<(
+    StreamingSessionSummaryDto,
+    StreamingResumeMetadata,
+    StreamingStartConfiguration,
+)> {
     let store = StreamingStore::open(app_support_dir)?;
     let configured = match store.get_session_configuration(id)? {
         Some(configuration) => StreamingStartConfiguration::from_store(configuration)?,
@@ -298,8 +332,8 @@ pub fn prepare_streaming_session_start(
             requested
         }
     };
-    let (summary, next_window_index) = resume_streaming_session(app_support_dir, id, now_ms)?;
-    Ok((summary, next_window_index, configured))
+    let (summary, resume) = resume_streaming_session(app_support_dir, id, now_ms)?;
+    Ok((summary, resume, configured))
 }
 
 /// Persists the Live Translation on/off choice for one session (WP-101) —
@@ -358,7 +392,65 @@ pub fn translate_and_store(
     now_ms: i64,
     translate: impl FnOnce(&str, &str, Option<&str>) -> Result<String>,
 ) -> Result<String> {
+    translate_and_store_after_check(
+        app_support_dir,
+        session_id,
+        window_index,
+        target_language,
+        text,
+        context,
+        now_ms,
+        translate,
+        || Ok(()),
+    )
+}
+
+/// Production translation path: after inference, re-check the persisted
+/// toggle and source window before writing. This makes a UI cancellation or
+/// a revised source authoritative even when inference was already running.
+#[allow(clippy::too_many_arguments)]
+pub fn translate_and_store_if_current(
+    app_support_dir: &Path,
+    session_id: StreamingSessionId,
+    window_index: i64,
+    target_language: &str,
+    text: &str,
+    context: Option<&str>,
+    now_ms: i64,
+    translate: impl FnOnce(&str, &str, Option<&str>) -> Result<String>,
+) -> Result<String> {
     let translated = translate(text, target_language, context)?;
+    let store = StreamingStore::open(app_support_dir)?;
+    let saved = store.upsert_translation_if_current(&streaming_store::StreamingTranslation {
+        session_id,
+        window_index,
+        target_language: target_language.to_string(),
+        source_text: text.to_string(),
+        translated_text: translated.clone(),
+        updated_at_ms: now_ms,
+    })?;
+    if !saved {
+        return Err(AppError::Llm(
+            "translation was cancelled or its source changed before it could be saved".to_string(),
+        ));
+    }
+    Ok(translated)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn translate_and_store_after_check(
+    app_support_dir: &Path,
+    session_id: StreamingSessionId,
+    window_index: i64,
+    target_language: &str,
+    text: &str,
+    context: Option<&str>,
+    now_ms: i64,
+    translate: impl FnOnce(&str, &str, Option<&str>) -> Result<String>,
+    post_inference_check: impl FnOnce() -> Result<()>,
+) -> Result<String> {
+    let translated = translate(text, target_language, context)?;
+    post_inference_check()?;
 
     let store = StreamingStore::open(app_support_dir)?;
     store.upsert_translation(&streaming_store::StreamingTranslation {
@@ -486,20 +578,20 @@ mod tests {
                 &NewStreamingWindow {
                     window_index: 1,
                     start_ms: 7_000,
-                    end_ms: 14_000,
+                    end_ms: 42_000,
                     text: "there".to_string(),
                     language: "en".to_string(),
                     outcome_ok: true,
                 },
-                14_100,
+                42_100,
             )
             .expect("append window 1");
-        store.mark_stopped(id, 15_000).expect("mark stopped");
+        store.mark_stopped(id, 43_000).expect("mark stopped");
 
-        let (summary, next_window_index) =
-            resume_streaming_session(temp.path(), id, 20_000).expect("resume");
+        let (summary, resume) = resume_streaming_session(temp.path(), id, 20_000).expect("resume");
 
-        assert_eq!(next_window_index, 2);
+        assert_eq!(resume.next_window_index, 2);
+        assert_eq!(resume.last_persisted_end_ms, 42_000);
         assert_eq!(summary.status, streaming_store::status::ACTIVE);
         assert_eq!(summary.updated_at_ms, 20_000);
         assert_eq!(summary.title, "New Streaming Session");
@@ -519,10 +611,28 @@ mod tests {
         let id = create_streaming_session(temp.path(), 100).expect("create");
         store.mark_stopped(id, 500).expect("mark stopped");
 
-        let (_summary, next_window_index) =
-            resume_streaming_session(temp.path(), id, 600).expect("resume");
+        let (_summary, resume) = resume_streaming_session(temp.path(), id, 600).expect("resume");
 
-        assert_eq!(next_window_index, 0);
+        assert_eq!(resume.next_window_index, 0);
+        assert_eq!(resume.last_persisted_end_ms, 0);
+    }
+
+    #[test]
+    fn resumed_cloud_timestamps_advance_after_the_persisted_timeline() {
+        assert_eq!(
+            resumed_cloud_window_bounds(42_000, 42_000, 3_000),
+            (42_000, 45_000)
+        );
+        assert_eq!(
+            resumed_cloud_window_bounds(42_000, 45_000, 3_000),
+            (45_000, 45_001),
+            "a repeated provider timestamp still creates a strictly positive window"
+        );
+        assert_eq!(
+            resumed_cloud_window_bounds(0, 0, -10),
+            (0, 1),
+            "negative provider timestamps cannot move the session backwards"
+        );
     }
 
     // S-2, decision-table: status=active is the one rejected cell — resuming
@@ -1027,6 +1137,99 @@ mod tests {
         .expect("translate and store");
 
         assert!(received_context.is_none());
+    }
+
+    #[test]
+    fn production_translation_does_not_persist_after_toggle_cancellation() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        store
+            .append_window(
+                id,
+                &NewStreamingWindow {
+                    window_index: 0,
+                    start_ms: 0,
+                    end_ms: 1_000,
+                    text: "Привет, мир.".to_string(),
+                    language: "ru".to_string(),
+                    outcome_ok: true,
+                },
+                200,
+            )
+            .expect("append source");
+        set_streaming_translation_enabled(temp.path(), id, true).expect("enable translation");
+
+        let error = translate_and_store_if_current(
+            temp.path(),
+            id,
+            0,
+            "en",
+            "Привет, мир.",
+            None,
+            1_000,
+            |_, _, _| {
+                set_streaming_translation_enabled(temp.path(), id, false)
+                    .expect("cancel while inference is in flight");
+                Ok("Hello, world.".to_string())
+            },
+        )
+        .expect_err("cancelled work must not persist");
+
+        assert!(matches!(error, AppError::Llm(_)));
+        assert!(store
+            .list_translations(id, "en")
+            .expect("list translations")
+            .is_empty());
+    }
+
+    #[test]
+    fn production_translation_does_not_persist_after_source_revision() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let original = NewStreamingWindow {
+            window_index: 0,
+            start_ms: 0,
+            end_ms: 1_000,
+            text: "Привет, мир.".to_string(),
+            language: "ru".to_string(),
+            outcome_ok: true,
+        };
+        store
+            .append_window(id, &original, 200)
+            .expect("append source");
+        set_streaming_translation_enabled(temp.path(), id, true).expect("enable translation");
+
+        let error = translate_and_store_if_current(
+            temp.path(),
+            id,
+            0,
+            "en",
+            &original.text,
+            None,
+            1_000,
+            |_, _, _| {
+                store
+                    .append_window(
+                        id,
+                        &NewStreamingWindow {
+                            text: "Привет, новый мир.".to_string(),
+                            ..original.clone()
+                        },
+                        900,
+                    )
+                    .expect("revise source while inference is in flight");
+                Ok("Hello, world.".to_string())
+            },
+        )
+        .expect_err("a translation of obsolete source text must not persist");
+
+        assert!(matches!(error, AppError::Llm(_)));
+        assert!(store
+            .list_translations(id, "en")
+            .expect("list translations")
+            .is_empty());
     }
 
     // --- WP-93: list_streaming_translations, the read counterpart to

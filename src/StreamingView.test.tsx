@@ -20,6 +20,8 @@ let windowHandler: Handler<
 let sourcesHandler: Handler<ipc.StreamingSources> | null = null;
 let endedHandler: Handler<{ session_id: number }> | null = null;
 let partialHandler: Handler<ipc.StreamingPartial> | null = null;
+let liveCaptureHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
+let liveCaptureRevision = 0;
 let writeTextMock: ReturnType<typeof vi.spyOn>;
 const revertPrettifyMock = vi.hoisted(() => vi.fn());
 
@@ -69,6 +71,20 @@ vi.mock("./ipc", () => ({
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async (handler: Handler<unknown>) => {
+    liveCaptureHandler = handler as Handler<ipc.LiveCaptureSnapshot>;
+    return () => {
+      liveCaptureHandler = null;
+    };
+  }),
   generateStreamingMfu: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
@@ -90,7 +106,18 @@ vi.mock("./ipc", () => ({
     };
   }),
   onStreamingSessionEnded: vi.fn(async (handler: Handler<unknown>) => {
-    endedHandler = handler as Handler<{ session_id: number }>;
+    endedHandler = (payload) => {
+      (handler as Handler<{ session_id: number }>)(payload);
+      liveCaptureRevision += 1;
+      liveCaptureHandler?.({
+        phase: "idle",
+        session_id: null,
+        source: null,
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    };
     return () => {
       endedHandler = null;
     };
@@ -185,6 +212,30 @@ beforeEach(() => {
   sourcesHandler = null;
   endedHandler = null;
   partialHandler = null;
+  liveCaptureHandler = null;
+  liveCaptureRevision = 0;
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
+  const startMock = vi.mocked(ipc.startStreamingSession);
+  startMock.mockResolvedValue = ((summary: StreamingSessionSummary) =>
+    startMock.mockImplementation(async () => {
+      liveCaptureRevision += 1;
+      liveCaptureHandler?.({
+        phase: "capturing",
+        session_id: summary.id,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+      return summary;
+    })) as typeof startMock.mockResolvedValue;
   revertPrettifyMock.mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   // jsdom provides a real, functional Clipboard implementation on a
@@ -206,6 +257,106 @@ beforeEach(() => {
 });
 
 describe("StreamingView", () => {
+  it("keeps capture-sensitive controls fail-closed until lifecycle hydration completes", async () => {
+    let resolveSnapshot!: (snapshot: ipc.LiveCaptureSnapshot) => void;
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      }),
+    );
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+
+    expect.soft(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "New streaming session" }))
+      .toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "Use cloud transcription" }))
+      .toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "Settings" }))
+      .toBeDisabled();
+
+    resolveSnapshot({
+      phase: "idle",
+      session_id: null,
+      source: null,
+      generation: 0,
+      revision: 0,
+      error: null,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Start" })).toBeEnabled(),
+    );
+    expect(
+      screen.getByRole("button", { name: "New streaming session" }),
+    ).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Use cloud transcription" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+  });
+
+  it("enables Stop as soon as the backend reports Starting", async () => {
+    vi.mocked(ipc.startStreamingSession).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    act(() => {
+      liveCaptureRevision += 1;
+      liveCaptureHandler!({
+        phase: "starting",
+        session_id: 44,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("rehydrates an active backend capture after a renderer remount", async () => {
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 41,
+      source: "streaming",
+      generation: 3,
+      revision: 12,
+      error: null,
+    });
+
+    const first = render(
+      <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
+    );
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    first.unmount();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+    act(() => {
+      liveCaptureHandler!({
+        phase: "idle",
+        session_id: null,
+        source: null,
+        generation: 3,
+        revision: 13,
+        error: null,
+      });
+    });
+    expect(await screen.findByRole("button", { name: "Start" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
   it("lists persisted sessions on mount", async () => {
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
 
@@ -1478,6 +1629,17 @@ describe("StreamingView", () => {
       expect(status).toHaveTextContent("Ready");
 
       await user.click(await screen.findByRole("button", { name: "Start" }));
+      liveCaptureRevision += 1;
+      act(() => {
+        liveCaptureHandler!({
+          phase: "starting",
+          session_id: 2,
+          source: "streaming",
+          generation: 1,
+          revision: liveCaptureRevision,
+          error: null,
+        });
+      });
       expect(status).toHaveTextContent("Starting…");
 
       resolveStart({
@@ -1487,6 +1649,15 @@ describe("StreamingView", () => {
         updated_at_ms: 200,
         status: "active",
         translation_enabled: false,
+      });
+      liveCaptureRevision += 1;
+      liveCaptureHandler!({
+        phase: "capturing",
+        session_id: 2,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
       });
       await waitFor(() => expect(status).toHaveTextContent("On Air"));
       expect(status.querySelector(".wp-status-timer")?.textContent).toBe(

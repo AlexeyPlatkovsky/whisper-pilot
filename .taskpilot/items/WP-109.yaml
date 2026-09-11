@@ -1,0 +1,50 @@
+schema_version: 1
+id: WP-109
+title: Phase 2 — Deliver Recorder core, workspace and global shortcut
+priority: high
+type: feature
+status: backlog
+created_at: '2026-09-11T19:34:20Z'
+updated_at: '2026-09-11T19:40:42Z'
+parent_id: WP-107
+tags:
+- recorder
+- phase-2
+- microphone
+description: 'Add Recorder as a third first-class WhisperPilot workspace backed by the shared Rust capture coordinator. The feature defines whether and how raw microphone audio is retained, requests macOS microphone permission, creates recoverable Recorder sessions, shows partial and committed RU/EN/mixed text, reuses the existing top control language, and supports start/stop through a configurable global shortcut with a compact live-caption presentation.
+
+
+  Happy path: the user opens Recorder or presses the registered shortcut, grants microphone access, dictates, sees live text, stops, and can reopen, edit, copy and export the saved session; raw-audio playback/export is present when selected by the recording-contract task. Primary failure behavior: denied permission, missing model, device interruption, shortcut conflict, disk-full and finalization failure produce actionable non-destructive states. Edge cases include silence, very short recordings, rapid shortcut toggles, app relaunch after interruption, hidden main window and mixed Russian/English speech.
+
+
+  Scenario: Given a usable microphone, selected Whisper model and registered shortcut, when the user invokes the shortcut while another application has focus, then a new Recorder session begins without stealing focus, live text appears in the caption surface, and a second invocation stops and finalizes the same session. Given microphone permission is denied, when recording is requested, then no capture starts and the UI explains how to recover.
+
+
+  Target surfaces: Info.plist, Cargo dependencies, Rust capture/coordinator and recorder persistence modules, lib.rs command registration, src/ipc.ts, ModeToggle.tsx, App shell, Recorder views, settings/global-shortcut integration, Pencil design, tests and product/architecture/design documentation.
+
+
+  Constraints: microphone audio and transcript stay local; permission is requested only in response to an explicit user action; shortcut callbacks and capture authority live in Rust; UI partials may be revised but committed text is stable; do not add live speaker diarization in Recorder v1.
+
+
+  Child-task breakdown:
+
+  - Define and approve the Recorder storage, shortcut and live-caption interaction contract.
+
+  - Add microphone capture and macOS permission/device handling.
+
+  - Persist and recover Recorder sessions and optional raw audio.
+
+  - Add the third workspace with live partial/committed transcript controls.
+
+  - Add the Rust-owned global shortcut and compact caption surface.'
+dod:
+- Every direct child task is done against its own DoD.
+- Recorder can start and stop from both the main workspace and configured global shortcut, transcribing real Russian, English and mixed speech with explicit partial and committed behavior.
+- Permission denial, device loss, missing model, shortcut conflict, disk-full and interrupted finalization leave no falsely active session and provide an actionable recovery path.
+- Completed and recoverable interrupted sessions follow the approved raw-audio retention contract and can be reopened without corrupting Meeting or Streaming data.
+- Recorder UI keeps the existing top-control design language, is keyboard and screen-reader operable, and does not steal focus when shortcut-started.
+- TDD, real-microphone and Metal validation, frontend and Rust checks, manual WKWebView verification, and documentation maintenance pass.
+links:
+  blocks:
+  - WP-110
+created_by: Codex

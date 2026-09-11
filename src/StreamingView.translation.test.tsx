@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
@@ -26,6 +26,8 @@ type Handler<T> = (payload: T) => void;
 let windowHandler: Handler<
   ipc.StreamingWindow & { session_id: number }
 > | null = null;
+let liveCaptureHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
+let liveCaptureRevision = 0;
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
@@ -54,6 +56,20 @@ vi.mock("./ipc", () => ({
   onStreamingSessionEnded: vi.fn(async () => () => {}),
   onStreamingPartial: vi.fn(async () => () => {}),
   onStreamingError: vi.fn(async () => () => {}),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async (handler: Handler<unknown>) => {
+    liveCaptureHandler = handler as Handler<ipc.LiveCaptureSnapshot>;
+    return () => {
+      liveCaptureHandler = null;
+    };
+  }),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -252,6 +268,17 @@ async function startRunningSessionWithWindows(
   const toggle = await findTranslationSwitch();
   await user.click(toggle);
   await user.click(await screen.findByRole("button", { name: "Start" }));
+  liveCaptureRevision += 1;
+  act(() => {
+    liveCaptureHandler!({
+      phase: "capturing",
+      session_id: ACTIVE_SESSION_A.id,
+      source: "streaming",
+      generation: 1,
+      revision: liveCaptureRevision,
+      error: null,
+    });
+  });
   await waitFor(() => expect(windowHandler).not.toBeNull());
   expect(toggle).toHaveAttribute("aria-checked", "true");
   expect(toggle).toBeDisabled();
@@ -263,6 +290,8 @@ async function startRunningSessionWithWindows(
 beforeEach(() => {
   vi.clearAllMocks();
   windowHandler = null;
+  liveCaptureHandler = null;
+  liveCaptureRevision = 0;
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   vi.mocked(ipc.listTaskModels).mockResolvedValue([LLM_MODEL_READY]);
   vi.mocked(ipc.getSettings).mockResolvedValue({
@@ -932,9 +961,20 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     const toggle = await findTranslationSwitch();
     await user.click(toggle);
     await user.click(await screen.findByRole("button", { name: "Start" }));
+    liveCaptureRevision += 1;
+    act(() => {
+      liveCaptureHandler!({
+        phase: "capturing",
+        session_id: 9,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    });
 
     expect(toggle).toHaveAttribute("aria-checked", "true");
-    expect(toggle).toBeDisabled();
+    await waitFor(() => expect(toggle).toBeDisabled());
   });
 
   it("opening a session whose Live Translation was left on restores the switch to on, with no user action", async () => {

@@ -1,0 +1,37 @@
+schema_version: 1
+id: WP-123
+title: Implement bubble lifecycle, positioning and Always on Top
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:38:43Z'
+updated_at: '2026-09-11T19:41:40Z'
+parent_id: WP-110
+tags:
+- recorder
+- phase-3
+- windowing
+description: 'Implement the approved bubble as a separate least-privilege window coordinated from Rust. Collapse shows it at the main window top-left before hiding main. Drag moves only the bubble. A click below the movement threshold hides the bubble, moves main top-left to the clamped bubble position, shows and focuses main. The persisted setting controls Always on Top and the approved Spaces behavior.
+
+
+  Happy path: bubble position and status survive normal hide, restore and relaunch behavior, and backend capture state updates it while main is hidden. Primary failure behavior: a window API error or invalid monitor coordinate rolls back to a visible main window or known safe bubble, never leaving both inaccessible. Edge cases include synthetic click after native drag, logical versus physical coordinates, Retina/non-Retina display crossing, monitor removal, duplicate collapse/restore, sleep/wake and caption coexistence.
+
+
+  Scenario: Given the bubble is idle, when pointer movement exceeds the approved threshold before release, then native dragging completes and no restore action fires. Given a click occurs, when the bubble position is partially off-screen, then main restores at the nearest valid work-area coordinate.
+
+
+  Target surfaces: tauri.conf.json or dynamic window creation, capability files, a Rust window coordinator with macOS-specific code behind cfg, settings.rs atomic position storage, bubble React entry/styles, app shell events and focused Rust/Vitest tests.
+
+
+  Constraints: no capture lifecycle in JavaScript; least-privilege capability for bubble and caption labels; correct logical/physical conversions; no broad private API use beyond the approved design; one visible recovery window after every failed transition.'
+dod:
+- Collapse and restore implement the approved show-before-hide order and transactional rollback so a window API failure cannot make the application unreachable.
+- Movement above the threshold performs drag only; movement below it performs click restore only; automated tests cover boundary values and synthetic-click suppression.
+- Main restores with its top-left at the bubble position clamped to the current display work area, including mixed-scale displays and removed-monitor fallback.
+- Always on Top and the approved Spaces behavior persist, apply without restart where specified, and do not change capture state.
+- Bubble receives coordinator status with no hidden-webview lifecycle dependency and uses a least-privilege capability.
+- Frontend/Rust validation and real-macOS smoke checks pass for normal collapse, drag, restore, relaunch and failure rollback.
+links:
+  blocks:
+  - WP-124
+created_by: Codex

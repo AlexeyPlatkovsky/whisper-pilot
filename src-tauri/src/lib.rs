@@ -9,6 +9,7 @@ pub mod diarize;
 pub mod diarize_process;
 pub mod error;
 mod events;
+pub mod live_capture;
 pub mod llm;
 pub mod meetings;
 pub mod models;
@@ -58,6 +59,7 @@ pub fn run() {
             commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,
+            commands::streaming::get_live_capture_snapshot,
             commands::streaming::set_streaming_translation_enabled,
             commands::dialogs::save_text_dialog,
             commands::settings::get_settings,

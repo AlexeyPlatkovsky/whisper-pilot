@@ -1,0 +1,37 @@
+schema_version: 1
+id: WP-112
+title: Own live capture lifecycle in Rust
+priority: high
+type: task
+status: in_progress
+created_at: '2026-09-11T19:35:34Z'
+updated_at: '2026-09-11T20:24:08Z'
+parent_id: WP-108
+tags:
+- recorder
+- phase-1
+- streaming
+description: 'Move authoritative live-capture state out of StreamingView into a Rust coordinator shared by Streaming, Recorder, the main window, the bubble and shortcut handling. The coordinator exposes typed snapshot and monotonic state events for Idle, Starting, Capturing, Stopping and Error, associates every event with session and generation identity, and enforces one active live source.
+
+
+  Happy path: any newly mounted UI queries the current snapshot, subscribes without a race, renders the same session state and can stop the active session. Primary failure behavior: failed start or stop reaches a recoverable Error or Idle state and releases owned resources exactly once. Edge cases include switching to Meeting during capture, renderer remount, duplicate Start or Stop, stale events, app shutdown and a subscriber joining between snapshot and event delivery.
+
+
+  Scenario: Given system-audio Streaming is capturing, when StreamingView unmounts and remounts, then the new view reports Capturing for the same session and Stop terminates it. Given a stale event from a prior generation, when a newer session is active, then every UI client ignores the stale event.
+
+
+  Target surfaces: src-tauri/src/state.rs, commands/streaming.rs, a focused capture coordinator module, events.rs, lib.rs, src/ipc.ts, App.tsx, StreamingView.tsx and focused Rust/Vitest tests.
+
+
+  Constraints: Rust is the source of truth; the coordinator owns native handles; no UI-local boolean may authorize capture actions; one live capture at a time; cloud and local engines preserve their current security boundaries.'
+dod:
+- A typed Rust capture-state model and snapshot command cover Idle, Starting, Capturing, Stopping and Error with session and generation identity.
+- Starting, stopping, switching views, hiding and restoring the main window, and remounting the renderer cannot orphan a native capture; focused Rust and Vitest tests cover each transition.
+- Duplicate or stale commands and events are idempotently rejected or ignored, and every failed start or stop releases resources exactly once.
+- Streaming controls derive their enabled state from the backend snapshot and events, and the existing active-session Settings lock remains correct after remount.
+- Cargo tests, clippy with warnings denied, fmt, typecheck, lint, frontend tests and affected documentation validation pass.
+links:
+  blocks:
+  - WP-113
+  - WP-114
+created_by: Codex

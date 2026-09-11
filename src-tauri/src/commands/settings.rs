@@ -4,10 +4,11 @@ use crate::cloud_provider::{
     CloudProvider, CloudProviderConfiguration, CloudProviderService, KeychainCredentialStore,
 };
 use crate::cloud_streaming::CloudTransport;
-use crate::error::Result;
+use crate::error::{AppError, Result};
+use crate::models;
 use crate::settings;
 use crate::settings::Settings;
-use crate::state::app_data_dir;
+use crate::state::{app_data_dir, AppState};
 
 /// Read all settings (theme, ui_language, active model), applying beta
 /// defaults for any key never set.
@@ -20,9 +21,39 @@ pub(crate) fn get_settings(app: tauri::AppHandle) -> Result<Settings> {
 /// Update one known setting (theme, ui_language, or active_model.transcription)
 /// and persist it immediately; rejects an unknown key or an invalid value.
 #[tauri::command]
-pub(crate) fn set_setting(app: tauri::AppHandle, key: String, value: String) -> Result<Settings> {
+pub(crate) async fn set_setting(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    key: String,
+    value: String,
+) -> Result<Settings> {
     let dir = app_data_dir(&app)?;
-    settings::set_setting(&dir, &key, &value)
+    if key == "active_model.llm" {
+        let runtime = std::sync::Arc::clone(&state.llm_runtime);
+        tokio::task::spawn_blocking(move || {
+            runtime.mutate_selected_model(|| {
+                ensure_llm_selection_is_downloaded(&dir, &value)?;
+                settings::set_setting(&dir, &key, &value)
+            })
+        })
+        .await
+        .map_err(|error| AppError::Llm(error.to_string()))?
+    } else {
+        settings::set_setting(&dir, &key, &value)
+    }
+}
+
+fn ensure_llm_selection_is_downloaded(dir: &std::path::Path, value: &str) -> Result<()> {
+    if value.trim().is_empty()
+        || models::list_task_models(dir)
+            .iter()
+            .any(|model| model.task == "llm" && model.id == value && model.downloaded)
+    {
+        return Ok(());
+    }
+    Err(AppError::InvalidSetting(format!(
+        "local LLM model is not downloaded: {value}"
+    )))
 }
 
 fn cloud_provider_service(
@@ -77,4 +108,35 @@ pub(crate) fn remove_cloud_provider_api_key(
     provider: CloudProvider,
 ) -> Result<CloudProviderConfiguration> {
     cloud_provider_service(&app)?.remove_api_key(provider)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn selected_llm_must_be_downloaded_but_clearing_selection_is_allowed() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let entry = models::CATALOG
+            .iter()
+            .find(|entry| entry.task == "llm")
+            .expect("LLM catalog entry");
+
+        ensure_llm_selection_is_downloaded(temp.path(), "")
+            .expect("clearing selection must remain available");
+        ensure_llm_selection_is_downloaded(temp.path(), entry.id)
+            .expect_err("missing model must not become active");
+
+        let asset = entry.assets.first().expect("LLM asset");
+        let path = models::asset_paths(temp.path(), entry.id)
+            .expect("known model")
+            .remove(0);
+        std::fs::create_dir_all(path.parent().expect("model parent")).expect("create model dir");
+        let file = std::fs::File::create(path).expect("create sparse model placeholder");
+        file.set_len(asset.size_bytes)
+            .expect("match downloaded asset size");
+
+        ensure_llm_selection_is_downloaded(temp.path(), entry.id)
+            .expect("complete downloaded model may become active");
+    }
 }

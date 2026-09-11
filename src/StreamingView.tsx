@@ -6,11 +6,13 @@ import {
   generateStreamingMfu,
   generateStreamingPrettify,
   getCloudProviderConfig,
+  getLiveCaptureSnapshot,
   getSettings,
   listStreamingSessions,
   listStreamingTranslations,
   listTaskModels,
   onStreamingSessionEnded,
+  onLiveCaptureState,
   onStreamingError,
   onStreamingPartial,
   onStreamingSources,
@@ -29,7 +31,12 @@ import {
   type StreamingSessionSummary,
   type StreamingTranslationTargetLanguage,
   type StreamingWindow,
+  type LiveCaptureSnapshot,
 } from "./ipc";
+import {
+  isLiveCaptureActive,
+  reconcileLiveCaptureSnapshot,
+} from "./liveCaptureState";
 import {
   hasStreamingTranslations,
   renderStreamingPaired,
@@ -91,12 +98,10 @@ export function StreamingView({
   onClose,
   onOpenSettings,
   settingsOpen = false,
-  onStreamingActivityChange,
 }: {
   onClose: () => void;
   onOpenSettings: () => void;
   settingsOpen?: boolean;
-  onStreamingActivityChange?: (active: boolean) => void;
 }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
   const [sessionSearch, setSessionSearch] = useState("");
@@ -104,6 +109,10 @@ export function StreamingView({
   const [activeTitle, setActiveTitle] = useState<string>("Streaming Session");
   const [windows, setWindows] = useState<StreamingWindow[]>([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [captureHydrated, setCaptureHydrated] = useState(false);
+  const [liveCapturePhase, setLiveCapturePhase] =
+    useState<LiveCaptureSnapshot["phase"]>("idle");
+  const liveCaptureSnapshotRef = useRef<LiveCaptureSnapshot | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [sources, setSources] = useState<{
     mic: boolean;
@@ -126,11 +135,9 @@ export function StreamingView({
     useState<CloudProviderConfiguration | null>(null);
   const cloudConfigurationRequestRef = useRef(0);
   const [isStartPending, setIsStartPending] = useState(false);
+  const [isStopPending, setIsStopPending] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
-    onStreamingActivityChange?.(isRunning || isStartPending);
-  }, [isRunning, isStartPending, onStreamingActivityChange]);
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
   const [craftingId, setCraftingId] = useState<number | null>(null);
@@ -225,19 +232,22 @@ export function StreamingView({
 
   // Derived, not stored, so it can't drift from Start/Stop; isRunning wins
   // over busy so a Stop-in-flight still reads as On Air.
-  const widgetStatus = isRunning
-    ? "on-air"
-    : busy
+  const widgetStatus =
+    liveCapturePhase === "starting"
       ? "starting"
-      : isCraftingActive
-        ? "crafting"
-        : isPrettifyingActive
-          ? "prettifying"
-          : craftFailed
-            ? "mfu-failed"
-            : prettifyFailed
-              ? "prettify-failed"
-              : "ready";
+      : isRunning
+        ? "on-air"
+        : busy
+          ? "starting"
+          : isCraftingActive
+            ? "crafting"
+            : isPrettifyingActive
+              ? "prettifying"
+              : craftFailed
+                ? "mfu-failed"
+                : prettifyFailed
+                  ? "prettify-failed"
+                  : "ready";
   const widget = resolveStreamingWidgetStatus(widgetStatus);
   const filteredSessions = useMemo(() => {
     const query = sessionSearch.trim().toLocaleLowerCase();
@@ -294,6 +304,45 @@ export function StreamingView({
   useEffect(() => {
     if (!settingsOpen) void refreshCloudConfiguration();
   }, [refreshCloudConfiguration, settingsOpen]);
+
+  // Rust owns whether capture is active. Subscribe first, then query; the
+  // monotonic revision closes the event-between-listen-and-query race.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const applySnapshot = (incoming: LiveCaptureSnapshot) => {
+      if (cancelled) return;
+      const current = liveCaptureSnapshotRef.current;
+      const next = reconcileLiveCaptureSnapshot(current, incoming);
+      if (next === current) return;
+      liveCaptureSnapshotRef.current = next;
+      setCaptureHydrated(true);
+      setLiveCapturePhase(next.phase);
+      const belongsToStreaming =
+        next.source === "streaming" || next.source == null;
+      const active = belongsToStreaming && isLiveCaptureActive(next);
+      setIsRunning(active);
+      if (active && next.session_id !== null) setActiveId(next.session_id);
+      if (next.phase === "error" && next.error) setError(next.error);
+    };
+    void (async () => {
+      try {
+        const stopListening = await onLiveCaptureState(applySnapshot);
+        if (cancelled) {
+          stopListening();
+          return;
+        }
+        unlisten = stopListening;
+        applySnapshot(await getLiveCaptureSnapshot());
+      } catch {
+        // Existing command events remain usable; never manufacture state.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // WP-93: Live Translation's model-readiness gate, mirroring how App.tsx's
   // Meeting screen resolves `llmModelReady` for Craft MFU (listTaskModels +
@@ -368,9 +417,10 @@ export function StreamingView({
             system_audio: incoming.system_audio,
           });
         }),
-        onStreamingSessionEnded(() => {
-          setIsRunning(false);
-          setPartialTranscript(null);
+        onStreamingSessionEnded((incoming) => {
+          if (activeIdRef.current === incoming.session_id) {
+            setPartialTranscript(null);
+          }
           void refreshSessions();
         }),
         onStreamingPartial((incoming) => {
@@ -421,7 +471,6 @@ export function StreamingView({
   const startSession = useCallback(
     async (resumeId: number | null, engine: "local" | "cloud") => {
       setError(null);
-      setBusy(true);
       try {
         const isSameSessionResume =
           resumeId !== null && resumeId === activeIdRef.current;
@@ -447,12 +496,9 @@ export function StreamingView({
           persistedTranslationsRef.current = new Map();
           setPersistedReady(false); // WP-102: see handleOpen.
         }
-        setIsRunning(true);
         await refreshSessions();
       } catch (e) {
         setError(String(e));
-      } finally {
-        setBusy(false);
       }
     },
     [refreshSessions],
@@ -506,7 +552,6 @@ export function StreamingView({
       setActiveTitle(summary.title);
       setActiveSessionEngine(null);
       setWindows([]);
-      setIsRunning(false);
       setSources(null);
       setMfu(null);
       setCraftFailed(false);
@@ -529,7 +574,7 @@ export function StreamingView({
 
   const handleStop = useCallback(async () => {
     setError(null);
-    setBusy(true);
+    setIsStopPending(true);
     try {
       await stopStreamingSession();
       // isRunning flips to false when streaming_session_ended fires, not
@@ -538,7 +583,7 @@ export function StreamingView({
     } catch (e) {
       setError(String(e));
     } finally {
-      setBusy(false);
+      setIsStopPending(false);
     }
   }, []);
 
@@ -553,7 +598,6 @@ export function StreamingView({
         setTranscriptionEngine(session.transcription_engine);
       }
       setWindows(session.windows);
-      setIsRunning(false);
       setSources(null);
       setMfu(session.mfu ?? null);
       setCraftFailed(false);
@@ -1014,7 +1058,7 @@ export function StreamingView({
     // failed) — those don't change which windows are stale.
   }, [windows, translationEnabled, activeId, targetLanguage, persistedReady]);
 
-  const headerLocked = isRunning || isStartPending;
+  const headerLocked = !captureHydrated || isRunning || isStartPending;
   const translationDisabledReason = headerLocked
     ? "Streaming controls are unavailable while capture is active."
     : !llmModelReady
@@ -1079,7 +1123,7 @@ export function StreamingView({
                 aria-label="New streaming session"
                 title="New streaming session"
                 onClick={() => void handleCreateNew()}
-                disabled={busy || isRunning}
+                disabled={!captureHydrated || busy || isRunning}
               >
                 <Icon name="plus" size={18} />
               </button>
@@ -1089,6 +1133,7 @@ export function StreamingView({
                 className="wp-icon-btn"
                 aria-label="Settings"
                 onClick={onOpenSettings}
+                disabled={!captureHydrated}
               >
                 <Icon name="settings" size={18} />
               </button>
@@ -1157,14 +1202,14 @@ export function StreamingView({
                   : "Start"
               }
               onClick={() => void handleStart()}
-              disabled={busy || isRunning}
+              disabled={!captureHydrated || busy || isRunning || isStartPending}
             />
             <span className="wp-sep" />
             <ActionIcon
               icon="square"
               label="Stop"
               onClick={() => void handleStop()}
-              disabled={busy || !isRunning}
+              disabled={!captureHydrated || !isRunning || isStopPending}
             />
             <span className="wp-sep" />
             <ActionIcon

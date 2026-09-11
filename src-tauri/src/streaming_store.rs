@@ -493,6 +493,46 @@ impl StreamingStore {
         Ok(())
     }
 
+    /// Atomically persist an inferred translation only while both the
+    /// session toggle and source window still match the request that entered
+    /// inference. The single INSERT ... SELECT closes the cancellation/source
+    /// TOCTOU window without holding a database lock while the model runs.
+    pub fn upsert_translation_if_current(
+        &self,
+        translation: &StreamingTranslation,
+    ) -> Result<bool> {
+        let changed = self
+            .connection()?
+            .execute(
+                "INSERT INTO streaming_translations
+                    (session_id, window_index, target_language, source_text, translated_text, updated_at_ms)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6
+                 WHERE EXISTS (
+                    SELECT 1
+                    FROM streaming_sessions AS session
+                    JOIN streaming_segments AS window ON window.session_id = session.id
+                    WHERE session.id = ?1
+                      AND session.translation_enabled = 1
+                      AND window.window_index = ?2
+                      AND window.text = ?4
+                 )
+                 ON CONFLICT(session_id, window_index, target_language) DO UPDATE SET
+                    source_text = excluded.source_text,
+                    translated_text = excluded.translated_text,
+                    updated_at_ms = excluded.updated_at_ms",
+                params![
+                    translation.session_id,
+                    translation.window_index,
+                    translation.target_language,
+                    translation.source_text,
+                    translation.translated_text,
+                    translation.updated_at_ms,
+                ],
+            )
+            .map_err(store_error)?;
+        Ok(changed == 1)
+    }
+
     /// All stored translations for one session and target language, ordered
     /// by window position.
     pub fn list_translations(

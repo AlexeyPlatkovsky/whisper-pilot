@@ -21,7 +21,7 @@ checklist), and the build/lint/format/typecheck gates pass.
 
 | Level | Scope | Tooling |
 | --- | --- | --- |
-| Unit (Rust) | Audio decode validation, timestamp math, M2 merge algorithm, error mapping | `cargo test` (`npm run test:api`) |
+| Unit (Rust) | Audio decode validation, timestamp math, bounded queues/windows, model-cache scheduling, M2 merge, error mapping | `cargo test` (`npm run test:api`) |
 | End-to-end pipeline | file → ffmpeg → Whisper → segments, on a real model | `cargo test --test pipeline -- --ignored` (needs model + ffmpeg) |
 | Unit/Component (front-end) | IPC bindings, transcript state, editing, save | Vitest (`npm run test`) |
 | Typecheck | TS ↔ Rust IPC shape agreement | `npm run typecheck` |
@@ -54,6 +54,37 @@ The manual checklist is run before a TaskPilot item closes, per
   before a transcription-affecting change is considered done.
 - Model-quality claims (accuracy, speaker attribution) are evidenced by a
   recorded manual run, not asserted numerically in CI.
+
+## Resource Regression Budgets
+
+Phase 1 uses deterministic payload accounting for the two-hour, 16 kHz mono
+boundary, plus opt-in real-process measurements. The synthetic input contains
+115,200,000 samples. These figures exclude model weights and allocator/runtime
+overhead, so they are an audio-buffer budget rather than a claim about total
+RSS:
+
+- direct s16le conversion peaks at one 219.73 MiB PCM buffer plus one 439.45
+  MiB f32 buffer (659.18 MiB), below the 700 MiB payload target and 25% below
+  the previous PCM + synthetic WAV + f32 path (878.91 MiB);
+- blocking Meeting transcription retains one 439.45 MiB f32 allocation, not a
+  second full clone;
+- 90%-overlap segmentation would eagerly materialize 7,191 windows (4,389.04
+  MiB); the 32-window iterator caps its input batch at 19.53 MiB, including the
+  tested zero-padded tail;
+- diarization transport serialization and deserialization add at most a 16 KiB
+  byte buffer instead of another 439.45 MiB byte vector.
+
+Streaming regressions additionally cover backend-owned lifecycle hydration,
+Stop during asynchronous `starting`, 100 ms contiguous-pause VAD boundaries,
+short meaningful prefixes before capture gaps, terminal cloud-gap ordering,
+model-mutation/path-resolution ordering, and atomic cancellation of stale
+translations after either a toggle-off or source revision.
+
+The model-free contracts live in `audio.rs`, `commands/transcription.rs`,
+`diarize/segmentation.rs`, `diarize_process/transport.rs`,
+`streaming_audio.rs`, `streaming_session.rs`, and
+`tests/llm_runtime_contract.rs`. Real-Metal and real diarization runs remain
+the authority for end-to-end quality and total process RSS.
 
 ## Environments
 

@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-119
+title: Persist and recover Recorder sessions
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:37:36Z'
+updated_at: '2026-09-11T19:43:05Z'
+parent_id: WP-109
+tags:
+- recorder
+- phase-2
+- persistence
+description: 'Implement the Recorder persistence domain according to the approved storage contract. Sessions and committed transcript segments are stored independently from Meeting and Streaming while using compatible editing, copy and export shapes. If raw audio retention is approved, write it incrementally to a crash-tolerant temporary or container format, finalize atomically and reconcile interrupted artifacts on launch.
+
+
+  Happy path: Start creates one session, committed segments and optional audio are incrementally durable, Stop finalizes them, and reopening restores the exact transcript plus playable or exportable audio required by the contract. Primary failure behavior: disk-full, database failure or interrupted finalization preserves the last safe state, marks recovery status and never presents a corrupt file as complete. Edge cases include zero-length sessions, duplicate finalization, crash after audio write before DB commit, orphan cleanup, rename/delete and migration from an older database.
+
+
+  Scenario: Given a recording has committed text and audio before an app crash, when WhisperPilot relaunches, then it discovers the interrupted session, preserves every durable segment and offers the specified recover or discard outcome. Given session deletion succeeds, when raw audio exists, then database rows and owned audio are removed together or a recoverable cleanup record remains.
+
+
+  Target surfaces: a new recorder store and migrations, coordinator finalization hooks, audio writer/reader and cleanup module, DTOs and commands, src/ipc.ts, history/export integration and focused Rust/Vitest tests.
+
+
+  Constraints: local-only storage; atomic writes and schema migrations; no transcript/audio in logs; user source files outside app-owned storage are never deleted; persistence must not reuse Streaming window assumptions that conflict with partial revisions.'
+dod:
+- Recorder sessions and stable segment identifiers migrate, create, update, reopen, rename and delete independently of Meeting and Streaming tables, with migration and cascade tests.
+- Committed text is incrementally durable and partial text is never misrepresented as committed after relaunch.
+- The approved raw-audio contract is implemented end to end, including atomic finalization, playback/export metadata, disk-full behavior and cleanup of only app-owned artifacts.
+- Crash points before and after each file and database commit recover to an explicitly tested state without corrupting existing sessions.
+- Export/copy uses the approved transcript representation, and Rust/frontend validation plus storage and architecture documentation pass.
+links:
+  blocks:
+  - WP-120
+created_by: Codex

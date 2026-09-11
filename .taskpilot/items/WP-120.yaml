@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-120
+title: Add the Recorder workspace and live transcript UI
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:37:43Z'
+updated_at: '2026-09-11T19:41:29Z'
+parent_id: WP-109
+tags:
+- recorder
+- phase-2
+- ui
+description: 'Add Recorder to the top-level mode control and build its main workspace using the approved design. Reuse the visual top controls for Start, Stop, copy, export and applicable editing; show microphone/model state; render unstable partial text separately from stable committed segments; list saved Recorder sessions; and keep the view synchronized from the Rust coordinator snapshot rather than local lifecycle booleans.
+
+
+  Happy path: the user selects Recorder, starts from the top controls, watches partial text stabilize, stops through a finalizing state and reopens the saved result. Primary failure behavior: permission, model, persistence and capture errors show actionable status while preserving usable committed content. Edge cases include entering Recorder while Streaming is active, remount during capture, empty/silent session, rapid navigation, long transcript, stale events and keyboard-only operation.
+
+
+  Scenario: Given no live capture is active, when the user selects Recorder and presses Start, then the workspace creates a session and renders coordinator-driven recording state and text. Given Recorder remounts during capture, when its snapshot loads, then it attaches to the same session and Stop remains available.
+
+
+  Target surfaces: src/ModeToggle.tsx, App.tsx/app shell, new Recorder components and state hooks, styles, Icon.tsx, src/ipc.ts, accessibility behavior, Pencil parity and Vitest/manual WKWebView tests.
+
+
+  Constraints: preserve the existing Meeting and Streaming top-control layout; backend state is authoritative; stable React keys come from persisted segment IDs; status is not color-only; avoid adding another monolithic view; long transcript rendering is profiled before virtualization.'
+dod:
+- ModeToggle exposes Meeting, Streaming and Recorder with correct pressed state, keyboard behavior and no unsafe switch that orphans active capture.
+- Recorder renders coordinator-derived Idle, Starting, Capturing, Stopping, Finalizing and Error states, including separate partial and committed transcript presentation.
+- Start, Stop, edit, copy, export, history reopen, rename and delete implement the approved availability rules and persistence behavior.
+- Remount, stale event, silence, long transcript and active-other-mode scenarios have Vitest coverage using stable segment IDs.
+- Rendered UI matches the approved Pencil states and passes accessibility, real-WKWebView manual verification, frontend/Rust validation and documentation maintenance.
+links:
+  blocks:
+  - WP-121
+created_by: Codex

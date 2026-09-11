@@ -11,11 +11,11 @@ core unit is a **Meeting** (one transcription of one source file).
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meetings list                    lib.rs        crate root; `run()` registration
   meeting workspace                commands/     thin Tauri command layer (per-domain modules)
-  transcript editor                audio.rs      ffmpeg normalize + WAV decode
+  transcript editor                audio.rs      ffmpeg normalize + direct PCM decode
   MFU panel                        transcribe.rs whisper (Metal) decode; Streaming progress callback
   settings screen                  store.rs      SQLite meeting library (meetings, segments, MFU)
   ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
-  theming / i18n                   state.rs      AppState (model cache, running-run slots)
+  theming / i18n                   state.rs      AppState (Whisper cache, live-capture owner)
   [WP-68] StreamingView.tsx        error.rs      AppError → serialized to JS
                                    settings.rs   key–value settings store (theme, ui_language, active models)
                                    models/       model catalog (`catalog.rs`) + download (`download.rs`)
@@ -81,10 +81,12 @@ persisted; only segment text and MFU are in WP-17's scope.
 
 ## Audio Ingestion (`audio.rs`)
 
-Any input — audio or video — is normalized through **one** path: ffmpeg produces
-a temporary 16 kHz mono WAV (`-vn -ac 1 -ar 16000`), decoded with `hound` into
-f32 samples. ffmpeg extracts audio from video and resamples audio identically, so
-no branch on file type is needed. The temporary WAV is deleted after decoding.
+Any input — audio or video — is normalized through **one** path: ffmpeg emits
+16 kHz mono signed-16-bit PCM (`-vn -ac 1 -ar 16000 -f s16le`) to stdout, and
+`audio.rs` converts those bytes directly into normalized f32 samples. There is
+no synthetic in-memory WAV copy and no temporary audio file. An incomplete
+final PCM sample is rejected rather than truncated. ffmpeg extracts audio from
+video and resamples audio identically, so no branch on file type is needed.
 ffmpeg is a required external dependency (system binary on PATH for now).
 
 ## Transcription (`transcribe.rs`)
@@ -127,6 +129,11 @@ The **Transcribe** run is a two-phase pipeline: transcription, then **diarizatio
   the run still finishes with plain (speaker-less) segments. Re-running
   Transcribe on a meeting that already has
   a transcript replaces it (and any MFU) after a confirmation.
+
+The decoded `Vec<f32>` is moved into the blocking Whisper task and returned
+from that task for diarization; the whole recording is not cloned merely to
+satisfy `spawn_blocking` ownership. The allocation remains the same across
+the two stages until it is staged for the isolated diarization worker.
 
 The model is the `large-v3-turbo` artifact downloaded and SHA-verified via the
 Settings AI models section (F005, `models/`) into the app support directory;
@@ -177,7 +184,11 @@ or the framework directory. It configures that dylib and creates one ONNX
 Runtime environment per worker process before opening segmentation sessions.
 Segmentation advances its 160,000-sample inference window by the model's
 documented 10% stride; `receptive_field_shift` is used separately to timestamp
-output frames. The implementation pins `ort` v1.16.3 because its declared Rust
+output frames. Overlapping input windows are produced lazily in batches of at
+most 32, including a zero-padded final partial window. This bounds temporary
+segmentation input to one inference batch instead of materializing every
+overlapping window for a long recording at once. The implementation pins
+`ort` v1.16.3 because its declared Rust
 1.70 minimum is compatible with this project's Rust 1.80 toolchain;
 the current `ort` 2.x line requires a newer compiler.
 
@@ -221,7 +232,9 @@ records model provenance after the run completes.
 Three supervision details are load-bearing. Samples (~55MB for the longest
 test recording) cross as a raw `f32` file under `<app-support>/cache/diarize`
 rather than a pipe, which would need concurrent write-and-read handling to
-avoid filling the pipe buffer. The child is killed on an **inactivity**
+avoid filling the pipe buffer. Both parent serialization and worker
+deserialization use a fixed 16 KiB byte buffer rather than constructing a
+second recording-sized byte vector. The child is killed on an **inactivity**
 budget rather than a total one, driven by progress reported during direct
 segmentation batches and embedding extraction. And the child watches
 its stdin for EOF: when the app quits mid-run the pipe closes and the worker
@@ -329,12 +342,24 @@ Streaming uses system audio only and never opens or mixes the microphone.
 the app bundle.
 
 `streaming_audio.rs` receives an immutable capture specification before the
-session starts and hands its consumer a continuous, unbounded mono f32 stream
-through a plain `std::sync::mpsc::Sender`/`Receiver` pair. Local transcription,
+session starts and hands its consumer a continuous mono f32 stream through a
+bounded `std::sync::mpsc::SyncSender`/`Receiver` pair. Local transcription,
 Deepgram, and AssemblyAI request ScreenCaptureKit's native 16 kHz rate; OpenAI
 requests its native 24 kHz rate. A background capture pump drains the single
 system-audio buffer every 100 ms, independent of WP-71's 5–10s decode window.
-There is no application resampling, downmix, or two-source mixer.
+The callback staging buffer is capped at four seconds at the highest supported
+native rate; the downstream queue holds 32 chunks. Both boundaries use an
+explicit drop-newest policy without blocking the ScreenCaptureKit producer.
+Each delivered chunk also carries its position on the original capture clock,
+so dropped spans become explicit failed transcript windows instead of silently
+compressing all later timestamps. There is no application resampling, downmix,
+or two-source mixer.
+
+Local decode results use a separate 16-event synchronous queue. A full result
+queue backpressures the decoder; if that pressure reaches the independently
+bounded audio queue, capture applies the same observable drop-newest policy.
+The cloud relay (128 audio chunks) and provider-result queue (64 events) are
+also bounded and propagate backpressure toward that first producer boundary.
 
 The macOS-only **system-audio loopback** uses the `screencapturekit` crate.
 Its `SCStreamOutputTrait::did_output_sample_buffer` callback reinterprets the
@@ -362,9 +387,20 @@ decode it.
 
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
 
-Decodes the continuous sample stream `streaming_audio.rs` produces on fixed,
-non-overlapping ~7s windows (`WINDOW_SECONDS`, the midpoint of WP-68's
-approved 5-10s latency budget). One session decodes every window through a
+Decodes the continuous sample stream `streaming_audio.rs` produces around
+non-overlapping commit windows capped at ~7s (`WINDOW_SECONDS`, the midpoint
+of WP-68's approved 5-10s latency budget). Before that hard boundary, the
+decoder scans the final second at 20 ms steps for a contiguous quiet pause of
+at least 100 ms and commits at the end of that pause when available, reducing
+word splits without treating an isolated low-energy frame as a boundary or
+duplicating audio.
+Once the unstable suffix reaches five seconds, local decode also emits a
+transient partial and revises it for each additional second; partials are sent
+as `streaming_partial` events and never persisted. A committed window replaces
+that suffix with one committed
+`streaming_window`. On Stop, a meaningful trailing suffix of at least 500 ms
+is decoded and committed exactly once; silence and sub-threshold callback
+noise are discarded. One session decodes every result through a
 single `WhisperState` (WP-82): `run_windowed_decode` builds one
 `WhisperSessionDecoder` when the loop starts and reuses it via
 `transcribe::transcribe_with_state`, because each state owns a full GPU
@@ -374,14 +410,18 @@ init/free cycle per window. State reuse across calls is upstream's own
 clears the self-attention KV cache); Meeting keeps one state per whole-file
 run. Each window gets its own language detection, unlike Meeting's
 once-per-file detection (ADR-012), since a live session has no single fixed
-language the way a finished file does. A word can split across a window
-boundary — an accepted, documented trade-off for non-overlapping windows,
-not a silent one.
+language the way a finished file does. A word can still split across a
+committed window boundary — an accepted, documented trade-off for
+non-overlapping persistence windows, not a silent one.
 
 **Fail-open per window** (mirroring diarization, ADR-013): a window whose
 decode errors is skipped — logged, no text emitted for that span — rather
 than ending the session. `WindowResult.outcome` carries the `Result` through
 rather than the loop propagating it.
+
+Capture-clock discontinuities are persisted as failed windows. If a meaningful
+prefix before a discontinuity is shorter than the 500 ms minimum decode tail,
+that prefix is folded into the failed span rather than silently discarded.
 
 **Mutual exclusion** (`WhisperUsageGuard`, backed by a new `AppState.
 whisper_busy: AtomicU8`): a Meeting transcription and a Streaming session
@@ -470,10 +510,17 @@ that populate this table.
 
 Starting a session ties `streaming_audio.rs` (capture), `streaming_
 session.rs` (decode/mutual-exclusion), and `streaming_store.rs`
-(persistence) together via two new `AppState` fields:
-`whisper_busy` (WP-71's guard) and `streaming_runtime: Mutex<Option<
-StreamingRuntime>>` (macOS-only — the type doesn't exist on the Linux CI
-target), holding the live `streaming_audio::StreamingSession` capture.
+(persistence) together through `whisper_busy` and the backend-owned
+`LiveCaptureRuntimeCoordinator`. The coordinator holds the macOS capture
+runtime and a typed `idle → starting → capturing → stopping/error` snapshot
+with monotonic generation and revision numbers. `get_live_capture_snapshot`
+plus `live_capture_state` let any newly mounted renderer subscribe first and
+then reconcile the current snapshot without an event/query race. View changes,
+hidden windows and webview remounts therefore cannot orphan capture or unlock
+capture-sensitive Settings controls. Those controls fail closed until the
+initial snapshot has hydrated. Stop remains available while the backend is in
+`starting`; cancellation then stays visibly `stopping` until any asynchronous
+setup resource has been released and the session's stopped status is durable.
 
 `start_streaming_session` claims `whisper_busy`, then either creates a fresh
 session row (no `session_id` argument) or **resumes** a previously-stopped
@@ -481,12 +528,12 @@ one: given a `session_id`, `streaming::resume_streaming_session` validates
 the session exists and is `STOPPED` (rejecting an already-`ACTIVE` one —
 resuming it would double-capture), computes the window index to continue
 counting from (one past the last persisted window, or 0 if none was ever
-saved), and flips its status back to `ACTIVE` via the new `StreamingStore::
-mark_active`. Either way it then starts capture and spawns two `spawn_
-blocking` tasks: one runs `run_windowed_decode` (now taking a `starting_
-window_index` so a resume's window numbering — and thus each window's
-`start_ms`, still an offset into this take's audio timeline, not wall-clock
-time — continues rather than restarting at 0), the other (`drive_streaming_
+saved) and the last persisted `end_ms`, and flips its status back to `ACTIVE`
+via the new `StreamingStore::mark_active`. Either way it then starts capture
+and spawns two `spawn_
+blocking` tasks: one runs `run_windowed_decode_from` with the persisted index
+and timeline offset so both indexes and sample-derived timestamps continue
+strictly after the prior take, the other (`drive_streaming_
 results`) consumes its `WindowResult`s — persisting each via `append_window`
 and emitting `streaming_window` — until the results channel disconnects, at
 which point it marks the session stopped and releases `whisper_busy`.
@@ -497,13 +544,13 @@ configuration is immutable for transcript provenance, so that switch starts a
 new session instead of resuming a Cloud session as Local (or vice versa). The
 header's "+"/New icon always starts fresh regardless of what's open, via a
 separate `handleStartNew` that never passes a `session_id`.
-`stop_streaming_session` only has to do one thing: take `streaming_runtime`
-out of `AppState` and let it drop. Dropping the held `streaming_audio::
+`stop_streaming_session` atomically moves the coordinator to `stopping`, takes
+its runtime and lets it drop. Dropping the held `streaming_audio::
 StreamingSession` stops the system-audio stream, which cascades through the
 capture pump → sample channel → decode loop → results channel, ending
 `drive_streaming_results` on its own. `SCStream` (`screencapturekit`) is
 `Send`/`Sync` (explicitly documented in the crate), so storing the capture in
-`AppState`'s tokio `Mutex` needed no additional unsafe code.
+`AppState`'s standard mutex needs no additional unsafe code.
 
 On non-macOS targets, `start_streaming_session`/`stop_streaming_session`
 are still registered (same command names, same generated-handler list) but
@@ -583,6 +630,26 @@ same way (enabled only once the session is stopped) and persisted in its own
 `streaming_notes` table (`streaming_store.rs`), parallel to but independent
 of Meeting's `MFU` table.
 
+MFU, Prettify and Live Translation share one application-owned `LlmRuntime`
+stored in Tauri's managed `AppState`. Its bounded eight-job scheduler runs one
+llama.cpp context at a time, prioritizes interactive translations ahead of
+queued MFU and Prettify work, and returns an explicit retryable error on
+overload. Immutable model weights are cached by canonical asset path, size and
+modification time; each job receives a fresh logical context. Selecting or
+deleting the active model enters a highest-priority mutation barrier after the
+current inference, bumps the model generation, clears the cache, and cancels
+jobs that were already queued against the old selection. Every prompt is
+conservatively preflighted, then checked again with the
+real tokenizer before decode. MFU output that is not valid structured JSON
+fails explicitly instead of being presented as a summary-only success.
+Application ownership also releases cached Metal resources before llama.cpp's
+process-global teardown.
+
+Commands resolve the selected model path only after their job owns the runtime
+scheduler lease. A higher-priority model mutation therefore completes before a
+queued old-generation job can observe a path, closing the settings/deletion
+TOCTOU window as well as invalidating the cached weights.
+
 ## Transcript Prettify (WP-75, `llm.rs`, `src/diff.ts`) — Streaming only
 
 A second, distinct local-LLM use of the same model: `llm::prettify_transcript`
@@ -603,12 +670,9 @@ control calls `revert_streaming_prettify` to delete that row and restore the
 raw per-window transcript for display/copy/export. The two LLM-generation
 commands reuse `streaming::build_streaming_transcript`'s guards (session
 exists, stopped, non-empty transcript); Accept and Revert operate on an
-existing session row. Craft and Prettify are kept from overlapping only by
-the front end disabling their buttons while either is in flight — there is
-no backend guard between those two commands, so nothing in the core itself
-would stop two concurrent requests from both reaching the shared model. (See
-Live Translation below for the first real backend guard against this
-class of contention, though it currently covers only translation.)
+existing session row. The shared backend scheduler prevents Craft, Prettify
+and Translation from executing concurrent llama.cpp contexts even if a caller
+bypasses the UI's disabled controls.
 
 ## Live Translation (WP-92 core/persistence, WP-93 UI, WP-103 rolling per-window; `llm.rs`, `src/StreamingView.tsx`)
 
@@ -628,25 +692,29 @@ using a script-aware chars-per-token estimate — Cyrillic tokenizes denser
 than Latin under Qwen/ChatML-style tokenizers, so the same character count
 budgets fewer tokens for Cyrillic text.
 
-Unlike Craft and Prettify (previous section), translation has its own real
-backend concurrency guard: `AppState::translation_busy` (an `AtomicBool`,
+Translation additionally retains its non-blocking request guard:
+`AppState::translation_busy` (an `AtomicBool`,
 deliberately independent of `whisper_busy` so translation never blocks or is
 blocked by the streaming decode loop) and `llm::TranslationUsageGuard`, a
 non-blocking single-flight RAII guard mirroring `streaming_session::
 WhisperUsageGuard`'s claim/release idiom. Contention returns
 `AppError::TranslationBusy`, a distinct, UI-retryable error, rather than
-queuing or blocking. This guard only single-flights translation against
-itself — it does not also cover Craft or Prettify.
+queuing or blocking. This guard single-flights translation requests against
+each other; the shared `LlmRuntime` scheduler coordinates all three job kinds.
 
 The `translate_streaming_window(session_id, window_index, target_language,
 text, context)` command (`commands/mfu.rs`, renamed from
 `translate_streaming_paragraph` by ADR-016/WP-103) validates the request
 cheaply first (`streaming::ensure_translation_request_is_valid`: supported
-target language, session exists, non-empty source text) before resolving the
-active LLM model path or acquiring the single-flight guard, then runs
-`streaming::translate_and_store` — which calls the model and upserts the
-result into `streaming_translations` (see Streaming Persistence above) — on a
-`spawn_blocking` task, and returns the translated text. `context` (WP-100,
+target language, session exists, non-empty source text) before acquiring the
+single-flight guard, then runs `streaming::translate_and_store_if_current` on
+a `spawn_blocking` task. The scheduler-admitted job resolves the active model
+path. After inference, one conditional SQLite `INSERT … SELECT` atomically
+verifies both the enabled session toggle and the exact current source window
+while writing: disabling translation or replacing the source while the model
+is running cancels the write instead of persisting a stale translation. A
+still-current result is upserted into `streaming_translations` (see Streaming
+Persistence above) and returned. `context` (WP-100,
 generalized by WP-103) is threaded unchanged through `translate_and_store`
 into `llm::translate_paragraph`'s `prior_context` parameter; omitted or
 `None`, the call and its resulting prompt are byte-identical to before
@@ -763,6 +831,11 @@ accumulated per provider `item_id`; the IPC event keeps that id so an out-of-
 order final clears only its matching transient partial rather than flashing
 individual words or removing a newer turn. Failure emits a safe, stage-specific
 retryable error, stops capture, and never falls back to Local.
+If bounded capture or relay pressure creates the first capture-clock gap, the
+transport drains already-enqueued provider results in FIFO order, emits one
+failed span ending at the original capture position, closes the connection,
+and moves live capture to the red error state. It does not continue a shifted
+cloud timeline after lost audio.
 
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
@@ -858,8 +931,9 @@ span.
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
 | `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
-| `start_streaming_session(engine?)`                                     | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before mic+system-audio capture, persists final turns, and returns once capture starts (macOS only) | WP-106    |
+| `start_streaming_session(engine?)`                                     | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before system-audio capture, persists final turns, and returns once capture starts (macOS only) | WP-106    |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
+| `get_live_capture_snapshot()`                                          | Read the backend-owned live-capture phase, source, session, generation, revision, and error for renderer hydration                                                                           | WP-112    |
 | `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |
 | `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
 | `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |

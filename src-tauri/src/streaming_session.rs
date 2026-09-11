@@ -3,9 +3,10 @@
 
 use crate::audio::SAMPLE_RATE;
 use crate::error::AppError;
+use crate::streaming_audio::CapturedAudioChunk;
 use crate::transcribe::{self, Transcription};
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::time::{Duration, Instant};
 use whisper_rs::{WhisperContext, WhisperState};
 
@@ -15,6 +16,30 @@ use whisper_rs::{WhisperContext, WhisperState};
 const WINDOW_SECONDS: f64 = 7.0;
 
 const WINDOW_SAMPLES: usize = (WINDOW_SECONDS * SAMPLE_RATE as f64) as usize;
+
+/// Local live text becomes useful before the seven-second persistence
+/// boundary. Re-decode the unstable suffix once it reaches five seconds and
+/// whenever another second arrives; only a full/final window is committed.
+const PARTIAL_MIN_SAMPLES: usize = SAMPLE_RATE as usize * 5;
+const PARTIAL_STEP_SAMPLES: usize = SAMPLE_RATE as usize;
+const VAD_SEARCH_SAMPLES: usize = SAMPLE_RATE as usize;
+const VAD_FRAME_SAMPLES: usize = SAMPLE_RATE as usize / 50;
+const VAD_MIN_SILENCE_SAMPLES: usize = SAMPLE_RATE as usize / 10;
+const VAD_SILENCE_RMS: f64 = 0.003;
+
+/// A half-second is long enough to preserve a spoken trailing word without
+/// decoding callback noise at shutdown.
+const FINAL_MIN_SAMPLES: usize = SAMPLE_RATE as usize / 2;
+const MEANINGFUL_AUDIO_RMS: f64 = 0.001;
+
+/// At most this many decoded partial/committed results may wait for
+/// persistence and renderer emission. A full queue backpressures the decoder;
+/// the independently bounded audio queue then applies its drop-newest policy.
+pub const RESULT_QUEUE_CAPACITY: usize = 16;
+
+pub fn result_channel() -> (SyncSender<WindowResult>, Receiver<WindowResult>) {
+    sync_channel(RESULT_QUEUE_CAPACITY)
+}
 
 /// A window's length in milliseconds, exposed so a caller building a
 /// window's `end_ms` (IPC/persistence, not this module's concern) does not
@@ -109,9 +134,18 @@ pub fn release_whisper_busy(state: &AtomicU8) {
 /// One decoded window, or the error it failed with (fail-open — the session
 /// keeps running either way). `decode_ms` supports the still-outstanding
 /// feasibility spike measuring real per-window latency.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowResultKind {
+    Partial,
+    Committed,
+    Gap,
+}
+
 pub struct WindowResult {
+    pub kind: WindowResultKind,
     pub window_index: u64,
     pub start_ms: u64,
+    pub end_ms: u64,
     pub decode_ms: u64,
     pub outcome: crate::error::Result<Transcription>,
 }
@@ -149,11 +183,36 @@ impl SessionDecoder for WhisperSessionDecoder {
 /// Take exactly one window's worth of samples off the front of `buffer` when
 /// enough have accumulated, leaving any remainder for the next call. Pure —
 /// no I/O, no time — so windowing math is unit-testable without a model.
+#[cfg(test)]
 fn take_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
     if buffer.len() < WINDOW_SAMPLES {
         return None;
     }
     Some(buffer.drain(..WINDOW_SAMPLES).collect())
+}
+
+/// Prefer a quiet commit boundary in the final second when one exists;
+/// otherwise retain the exact seven-second boundary. This reduces clipped
+/// boundary words without overlap that could duplicate identical phrases.
+fn take_commit_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
+    if buffer.len() < WINDOW_SAMPLES {
+        return None;
+    }
+    let search_start = WINDOW_SAMPLES.saturating_sub(VAD_SEARCH_SAMPLES);
+    let mut quietest: Option<(usize, f64)> = None;
+    for start in
+        (search_start..=WINDOW_SAMPLES - VAD_MIN_SILENCE_SAMPLES).step_by(VAD_FRAME_SAMPLES)
+    {
+        let end = start + VAD_MIN_SILENCE_SAMPLES;
+        let rms = root_mean_square(&buffer[start..end]);
+        if quietest.map_or(true, |(_, current)| rms < current) {
+            quietest = Some((end, rms));
+        }
+    }
+    let boundary = quietest
+        .filter(|(_, rms)| *rms <= VAD_SILENCE_RMS)
+        .map_or(WINDOW_SAMPLES, |(end, _)| end);
+    Some(buffer.drain(..boundary).collect())
 }
 
 /// Milliseconds into the session that window `window_index` starts, given
@@ -162,58 +221,291 @@ fn window_start_ms(window_index: u64) -> u64 {
     window_index * (WINDOW_SECONDS * 1000.0) as u64
 }
 
+fn samples_to_ms(samples: usize) -> u64 {
+    samples as u64 * 1_000 / SAMPLE_RATE as u64
+}
+
+fn contains_meaningful_audio(samples: &[f32]) -> bool {
+    root_mean_square(samples) >= MEANINGFUL_AUDIO_RMS
+}
+
+fn root_mean_square(samples: &[f32]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+    let mean_square = samples
+        .iter()
+        .map(|sample| {
+            let sample = *sample as f64;
+            sample * sample
+        })
+        .sum::<f64>()
+        / samples.len() as f64;
+    mean_square.sqrt()
+}
+
+fn decode_result<D: SessionDecoder>(
+    decoder: &mut std::result::Result<D, String>,
+    samples: &[f32],
+    kind: WindowResultKind,
+    window_index: u64,
+    start_ms: u64,
+) -> WindowResult {
+    let decode_start = Instant::now();
+    let outcome = match decoder {
+        Ok(decoder) => decoder.decode_window(samples),
+        Err(message) => Err(AppError::Transcribe(message.clone())),
+    };
+    WindowResult {
+        kind,
+        window_index,
+        start_ms,
+        end_ms: start_ms + samples_to_ms(samples.len()),
+        decode_ms: decode_start.elapsed().as_millis() as u64,
+        outcome,
+    }
+}
+
 /// Blocking decode loop; call from `spawn_blocking` while holding the Streaming
 /// claim. Its decoder is created once and creation failure fails open per window.
 /// `starting_window_index` preserves timeline continuity after a resume.
 pub fn run_windowed_decode<D, F>(
     make_decoder: F,
-    samples_rx: Receiver<Vec<f32>>,
-    results_tx: Sender<WindowResult>,
+    samples_rx: Receiver<CapturedAudioChunk>,
+    results_tx: SyncSender<WindowResult>,
     starting_window_index: u64,
+) where
+    D: SessionDecoder,
+    F: FnOnce() -> crate::error::Result<D>,
+{
+    run_windowed_decode_from(
+        make_decoder,
+        samples_rx,
+        results_tx,
+        starting_window_index,
+        window_start_ms(starting_window_index),
+    );
+}
+
+/// Variant used by resumed sessions whose last persisted end timestamp may
+/// not align to the fixed window size (for example, a committed stop-tail).
+pub fn run_windowed_decode_from<D, F>(
+    make_decoder: F,
+    samples_rx: Receiver<CapturedAudioChunk>,
+    results_tx: SyncSender<WindowResult>,
+    starting_window_index: u64,
+    timeline_start_ms: u64,
 ) where
     D: SessionDecoder,
     F: FnOnce() -> crate::error::Result<D>,
 {
     let mut buffer: Vec<f32> = Vec::new();
     let mut window_index: u64 = starting_window_index;
+    let mut buffer_start_sample = 0_u64;
+    let mut expected_input_sample = 0_u64;
+    let mut last_partial_len = 0_usize;
     // Kept as the message rather than the AppError (not Clone): a creation
     // failure is rebuilt per window so each fail-open result reads exactly
     // like a per-window decode failure.
     let mut decoder = make_decoder().map_err(|e| e.to_string());
 
     loop {
-        match samples_rx.recv_timeout(RECV_POLL) {
-            Ok(chunk) => buffer.extend(chunk),
+        let chunk = match samples_rx.recv_timeout(RECV_POLL) {
+            Ok(chunk) => chunk,
             Err(RecvTimeoutError::Timeout) => continue,
-            Err(RecvTimeoutError::Disconnected) => break,
+            Err(RecvTimeoutError::Disconnected) => {
+                let _ = flush_trailing_buffer(
+                    &mut decoder,
+                    &mut buffer,
+                    &results_tx,
+                    &mut window_index,
+                    timeline_start_ms,
+                    buffer_start_sample,
+                );
+                break;
+            }
+        };
+
+        if chunk.start_sample > expected_input_sample {
+            let gap_start_sample = if !buffer.is_empty()
+                && buffer.len() < FINAL_MIN_SAMPLES
+                && contains_meaningful_audio(&buffer)
+            {
+                buffer_start_sample
+            } else {
+                expected_input_sample
+            };
+            if !flush_trailing_buffer(
+                &mut decoder,
+                &mut buffer,
+                &results_tx,
+                &mut window_index,
+                timeline_start_ms,
+                buffer_start_sample,
+            ) || !send_capture_gap(
+                &results_tx,
+                &mut window_index,
+                timeline_start_ms,
+                gap_start_sample,
+                chunk.start_sample,
+            ) {
+                return;
+            }
+            buffer_start_sample = chunk.start_sample;
+            last_partial_len = 0;
         }
 
-        while let Some(window) = take_window(&mut buffer) {
-            let start_ms = window_start_ms(window_index);
-            let decode_start = Instant::now();
-            // Fail-open (module doc): an Err here is forwarded, not
-            // propagated — the caller skips this window's text and the loop
-            // keeps running on the next one.
-            let outcome = match &mut decoder {
-                Ok(decoder) => decoder.decode_window(&window),
-                Err(message) => Err(AppError::Transcribe(message.clone())),
-            };
-            let decode_ms = decode_start.elapsed().as_millis() as u64;
+        let overlap = expected_input_sample.saturating_sub(chunk.start_sample) as usize;
+        let samples = chunk
+            .samples
+            .get(overlap.min(chunk.samples.len())..)
+            .unwrap_or(&[]);
+        if buffer.is_empty() && !samples.is_empty() {
+            buffer_start_sample = chunk.start_sample.saturating_add(overlap as u64);
+        }
+        buffer.extend_from_slice(samples);
+        let delivered_end = chunk
+            .start_sample
+            .saturating_add(chunk.samples.len() as u64);
+        expected_input_sample = expected_input_sample.max(delivered_end);
 
+        while let Some(window) = take_commit_window(&mut buffer) {
+            let start_ms =
+                timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
             if results_tx
-                .send(WindowResult {
+                .send(decode_result(
+                    &mut decoder,
+                    &window,
+                    WindowResultKind::Committed,
                     window_index,
                     start_ms,
-                    decode_ms,
-                    outcome,
-                })
+                ))
                 .is_err()
             {
                 return;
             }
+            buffer_start_sample = buffer_start_sample.saturating_add(window.len() as u64);
             window_index += 1;
+            last_partial_len = 0;
+        }
+
+        if buffer.len() >= PARTIAL_MIN_SAMPLES
+            && buffer.len().saturating_sub(last_partial_len) >= PARTIAL_STEP_SAMPLES
+            && contains_meaningful_audio(&buffer)
+        {
+            let start_ms =
+                timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
+            if results_tx
+                .send(decode_result(
+                    &mut decoder,
+                    &buffer,
+                    WindowResultKind::Partial,
+                    window_index,
+                    start_ms,
+                ))
+                .is_err()
+            {
+                return;
+            }
+            last_partial_len = buffer.len();
+        }
+
+        if chunk.captured_end_sample > expected_input_sample {
+            let gap_start_sample = if !buffer.is_empty()
+                && buffer.len() < FINAL_MIN_SAMPLES
+                && contains_meaningful_audio(&buffer)
+            {
+                buffer_start_sample
+            } else {
+                expected_input_sample
+            };
+            if !flush_trailing_buffer(
+                &mut decoder,
+                &mut buffer,
+                &results_tx,
+                &mut window_index,
+                timeline_start_ms,
+                buffer_start_sample,
+            ) || !send_capture_gap(
+                &results_tx,
+                &mut window_index,
+                timeline_start_ms,
+                gap_start_sample,
+                chunk.captured_end_sample,
+            ) {
+                return;
+            }
+            expected_input_sample = chunk.captured_end_sample;
+            buffer_start_sample = expected_input_sample;
+            last_partial_len = 0;
         }
     }
+}
+
+fn sample_position_to_ms(sample: u64) -> u64 {
+    sample.saturating_mul(1_000) / SAMPLE_RATE as u64
+}
+
+fn flush_trailing_buffer<D: SessionDecoder>(
+    decoder: &mut std::result::Result<D, String>,
+    buffer: &mut Vec<f32>,
+    results_tx: &SyncSender<WindowResult>,
+    window_index: &mut u64,
+    timeline_start_ms: u64,
+    buffer_start_sample: u64,
+) -> bool {
+    let should_decode = buffer.len() >= FINAL_MIN_SAMPLES && contains_meaningful_audio(buffer);
+    if should_decode {
+        let start_ms = timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
+        if results_tx
+            .send(decode_result(
+                decoder,
+                buffer,
+                WindowResultKind::Committed,
+                *window_index,
+                start_ms,
+            ))
+            .is_err()
+        {
+            return false;
+        }
+        *window_index = window_index.saturating_add(1);
+    }
+    buffer.clear();
+    true
+}
+
+fn send_capture_gap(
+    results_tx: &SyncSender<WindowResult>,
+    window_index: &mut u64,
+    timeline_start_ms: u64,
+    start_sample: u64,
+    end_sample: u64,
+) -> bool {
+    if end_sample <= start_sample {
+        return true;
+    }
+    let start_ms = timeline_start_ms.saturating_add(sample_position_to_ms(start_sample));
+    let end_ms = timeline_start_ms
+        .saturating_add(sample_position_to_ms(end_sample))
+        .max(start_ms.saturating_add(1));
+    let sent = results_tx
+        .send(WindowResult {
+            kind: WindowResultKind::Gap,
+            window_index: *window_index,
+            start_ms,
+            end_ms,
+            decode_ms: 0,
+            outcome: Err(AppError::Capture(
+                "Streaming transcript has a gap because live audio processing was overloaded."
+                    .to_string(),
+            )),
+        })
+        .is_ok();
+    if sent {
+        *window_index = window_index.saturating_add(1);
+    }
+    sent
 }
 
 #[cfg(test)]
@@ -254,6 +546,34 @@ mod tests {
         assert!(take_window(&mut buffer).is_some());
         assert!(take_window(&mut buffer).is_none());
         assert_eq!(buffer.len(), 1);
+    }
+
+    #[test]
+    fn commit_window_moves_to_the_end_of_a_contiguous_quiet_pause() {
+        let mut buffer = vec![0.05_f32; WINDOW_SAMPLES + 100];
+        let quiet_start = WINDOW_SAMPLES - SAMPLE_RATE as usize / 2;
+        let quiet_pause_samples = VAD_FRAME_SAMPLES * 5;
+        buffer[quiet_start..quiet_start + quiet_pause_samples].fill(0.0);
+
+        let window = take_commit_window(&mut buffer).expect("commit window");
+
+        assert_eq!(window.len(), quiet_start + quiet_pause_samples);
+        assert_eq!(buffer.len(), WINDOW_SAMPLES + 100 - window.len());
+    }
+
+    #[test]
+    fn commit_window_ignores_one_quiet_frame_inside_continuous_speech() {
+        let mut buffer = vec![0.05_f32; WINDOW_SAMPLES + 100];
+        let transient_start = WINDOW_SAMPLES - SAMPLE_RATE as usize / 2;
+        buffer[transient_start..transient_start + VAD_FRAME_SAMPLES].fill(0.0);
+
+        let window = take_commit_window(&mut buffer).expect("commit window");
+
+        assert_eq!(
+            window.len(),
+            WINDOW_SAMPLES,
+            "one quiet 20 ms frame is not a speech pause and must not move the boundary"
+        );
     }
 
     #[test]
@@ -329,6 +649,31 @@ mod tests {
         assert_eq!(WINDOW_MS, (WINDOW_SECONDS * 1000.0) as u64);
     }
 
+    #[test]
+    fn decoded_result_queue_has_a_hard_capacity() {
+        let (tx, _rx) = result_channel();
+        let result = |window_index| WindowResult {
+            kind: WindowResultKind::Partial,
+            window_index,
+            start_ms: 0,
+            end_ms: 1,
+            decode_ms: 0,
+            outcome: Ok(Transcription {
+                segments: Vec::new(),
+                language: "en".to_string(),
+            }),
+        };
+
+        for window_index in 0..RESULT_QUEUE_CAPACITY as u64 {
+            tx.try_send(result(window_index))
+                .expect("capacity slots accept decoded results");
+        }
+        assert!(matches!(
+            tx.try_send(result(RESULT_QUEUE_CAPACITY as u64)),
+            Err(std::sync::mpsc::TrySendError::Full(_))
+        ));
+    }
+
     // WP-82: the decode loop must create ONE decoder (one WhisperState, one
     // Metal backend) per session and reuse it for every window — not one per
     // window, which put a full Metal init/free cycle on every 7s window.
@@ -347,20 +692,28 @@ mod tests {
     }
 
     fn two_windows_channel() -> (
-        std::sync::mpsc::Sender<Vec<f32>>,
-        std::sync::mpsc::Receiver<Vec<f32>>,
+        std::sync::mpsc::Sender<CapturedAudioChunk>,
+        std::sync::mpsc::Receiver<CapturedAudioChunk>,
     ) {
         let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(vec![0.0_f32; WINDOW_SAMPLES * 2])
+        tx.send(captured_chunk(0, vec![0.0_f32; WINDOW_SAMPLES * 2]))
             .expect("send two windows of samples");
         (tx, rx)
+    }
+
+    fn captured_chunk(start_sample: u64, samples: Vec<f32>) -> CapturedAudioChunk {
+        CapturedAudioChunk {
+            start_sample,
+            captured_end_sample: start_sample.saturating_add(samples.len() as u64),
+            samples,
+        }
     }
 
     #[test]
     fn decode_loop_creates_one_decoder_for_a_multi_window_session() {
         let creations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let (samples_tx, samples_rx) = two_windows_channel();
-        let (results_tx, results_rx) = std::sync::mpsc::channel();
+        let (results_tx, results_rx) = result_channel();
         drop(samples_tx);
 
         let counter = Arc::clone(&creations);
@@ -394,7 +747,7 @@ mod tests {
     #[test]
     fn decode_loop_fail_opens_every_window_when_decoder_creation_fails() {
         let (samples_tx, samples_rx) = two_windows_channel();
-        let (results_tx, results_rx) = std::sync::mpsc::channel();
+        let (results_tx, results_rx) = result_channel();
         drop(samples_tx);
 
         run_windowed_decode(
@@ -422,25 +775,25 @@ mod tests {
         }
     }
 
-    // A session stopped before one full window accumulates: the decoder is
-    // still created once up front, the partial window is dropped (unchanged
-    // pre-WP-82 behavior), and the loop returns cleanly on disconnect.
+    // WP-113 S-1: disconnect is the Stop boundary. A meaningful suffix must
+    // be decoded once even when it never reaches the regular seven-second
+    // window size.
     #[test]
-    fn decode_loop_creates_the_decoder_once_even_when_no_window_completes() {
-        let creations = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    fn disconnect_flushes_meaningful_trailing_audio_exactly_once() {
+        let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        let trailing_samples = SAMPLE_RATE as usize / 2;
         samples_tx
-            .send(vec![0.0_f32; WINDOW_SAMPLES - 1])
-            .expect("send a partial window");
+            .send(captured_chunk(0, vec![0.05_f32; trailing_samples]))
+            .expect("send a meaningful trailing buffer");
         drop(samples_tx);
-        let (results_tx, results_rx) = std::sync::mpsc::channel();
+        let (results_tx, results_rx) = result_channel();
 
-        let counter = Arc::clone(&creations);
+        let decoded = Arc::clone(&decoded_lengths);
         run_windowed_decode(
             move || {
-                counter.fetch_add(1, Ordering::SeqCst);
-                Ok(FakeDecoder {
-                    decoded: Vec::new(),
+                Ok(RecordingDecoder {
+                    decoded_lengths: decoded,
                 })
             },
             samples_rx,
@@ -448,10 +801,258 @@ mod tests {
             0,
         );
 
-        assert_eq!(creations.load(Ordering::SeqCst), 1);
+        let results: Vec<_> = results_rx.try_iter().collect();
         assert!(
-            results_rx.try_iter().next().is_none(),
-            "a partial trailing window is not decoded"
+            results.len() == 1,
+            "Stop must commit one meaningful trailing decode, got {} results",
+            results.len()
         );
+        assert_eq!(results[0].kind, WindowResultKind::Committed);
+        assert_eq!(
+            results[0].end_ms, 500,
+            "the trailing end timestamp must come from its 8,000 samples, not the 7s window size"
+        );
+        assert_eq!(
+            *decoded_lengths.lock().expect("decoded-length mutex"),
+            vec![trailing_samples],
+            "the trailing samples must reach Whisper exactly once"
+        );
+    }
+
+    // WP-113 failure partition: a final buffer can be non-empty without
+    // containing meaningful speech. Silence and sub-threshold noise must not
+    // invoke Whisper or create a committed result.
+    #[test]
+    fn disconnect_does_not_decode_silence_or_below_threshold_noise() {
+        for samples in [
+            vec![0.0_f32; SAMPLE_RATE as usize / 2],
+            (0..SAMPLE_RATE as usize / 2)
+                .map(|index| if index % 2 == 0 { 0.000_01 } else { -0.000_01 })
+                .collect(),
+        ] {
+            let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+            samples_tx
+                .send(captured_chunk(0, samples))
+                .expect("send trailing noise");
+            drop(samples_tx);
+            let (results_tx, results_rx) = result_channel();
+
+            let decoded = Arc::clone(&decoded_lengths);
+            run_windowed_decode(
+                move || {
+                    Ok(RecordingDecoder {
+                        decoded_lengths: decoded,
+                    })
+                },
+                samples_rx,
+                results_tx,
+                0,
+            );
+
+            assert!(results_rx.try_iter().next().is_none());
+            assert!(
+                decoded_lengths
+                    .lock()
+                    .expect("decoded-length mutex")
+                    .is_empty(),
+                "silence/noise below the meaningful-audio predicate must be skipped"
+            );
+        }
+    }
+
+    #[test]
+    fn capture_gaps_are_explicit_and_keep_the_original_sample_timeline() {
+        let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(0, vec![0.05; SAMPLE_RATE as usize]))
+            .expect("first second");
+        samples_tx
+            .send(captured_chunk(
+                SAMPLE_RATE as u64 * 2,
+                vec![0.05; SAMPLE_RATE as usize],
+            ))
+            .expect("third second after one-second overload gap");
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+
+        let decoded = Arc::clone(&decoded_lengths);
+        run_windowed_decode(
+            move || {
+                Ok(RecordingDecoder {
+                    decoded_lengths: decoded,
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].kind, WindowResultKind::Committed);
+        assert_eq!((results[0].start_ms, results[0].end_ms), (0, 1_000));
+        assert_eq!(results[1].kind, WindowResultKind::Gap);
+        assert_eq!((results[1].start_ms, results[1].end_ms), (1_000, 2_000));
+        assert!(results[1].outcome.is_err());
+        assert_eq!(results[2].kind, WindowResultKind::Committed);
+        assert_eq!((results[2].start_ms, results[2].end_ms), (2_000, 3_000));
+    }
+
+    #[test]
+    fn meaningful_short_prefix_before_capture_gap_is_included_in_failed_gap() {
+        let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        let prefix_samples = SAMPLE_RATE as usize / 4;
+        samples_tx
+            .send(captured_chunk(0, vec![0.05; prefix_samples]))
+            .expect("meaningful 250 ms prefix");
+        samples_tx
+            .send(captured_chunk(
+                SAMPLE_RATE as u64,
+                vec![0.05; SAMPLE_RATE as usize / 2],
+            ))
+            .expect("audio after the capture gap");
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+
+        let decoded = Arc::clone(&decoded_lengths);
+        run_windowed_decode(
+            move || {
+                Ok(RecordingDecoder {
+                    decoded_lengths: decoded,
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        let gap = results
+            .iter()
+            .find(|result| result.kind == WindowResultKind::Gap)
+            .expect("the overloaded interval must be explicit");
+        assert_eq!(
+            (gap.start_ms, gap.end_ms),
+            (0, 1_000),
+            "a meaningful prefix too short to decode must be folded into the failed gap, not dropped"
+        );
+        assert!(gap.outcome.is_err());
+        assert_eq!(
+            *decoded_lengths.lock().expect("decoded-length mutex"),
+            vec![SAMPLE_RATE as usize / 2],
+            "the short prefix is represented by the failed gap rather than sent to Whisper"
+        );
+    }
+
+    // WP-113 reconciliation contract: local rolling decodes expose their
+    // mutability instead of making consumers infer it. Revisions share the
+    // same unstable boundary, while an earlier committed result never moves.
+    #[test]
+    fn local_partials_can_revise_without_moving_committed_boundaries() {
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(0, vec![0.05_f32; WINDOW_SAMPLES]))
+            .expect("send first committed window");
+        samples_tx
+            .send(captured_chunk(
+                WINDOW_SAMPLES as u64,
+                vec![0.05_f32; SAMPLE_RATE as usize * 5],
+            ))
+            .expect("send initial partial");
+        samples_tx
+            .send(captured_chunk(
+                (WINDOW_SAMPLES + SAMPLE_RATE as usize * 5) as u64,
+                vec![0.05_f32; SAMPLE_RATE as usize],
+            ))
+            .expect("send partial revision");
+        samples_tx
+            .send(captured_chunk(
+                (WINDOW_SAMPLES + SAMPLE_RATE as usize * 6) as u64,
+                vec![0.05_f32; SAMPLE_RATE as usize],
+            ))
+            .expect("complete second window");
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+
+        run_windowed_decode(
+            || Ok(RevisionDecoder { decode_index: 0 }),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(results.len(), 4, "one commit, two revisions, one commit");
+        assert_eq!(results[0].kind, WindowResultKind::Committed);
+        assert_eq!((results[0].start_ms, results[0].end_ms), (0, 7_000));
+        assert_eq!(results[1].kind, WindowResultKind::Partial);
+        assert_eq!(results[2].kind, WindowResultKind::Partial);
+        assert_eq!(results[1].start_ms, 7_000);
+        assert_eq!(results[2].start_ms, 7_000);
+        assert_ne!(result_text(&results[1]), result_text(&results[2]));
+        assert_eq!(results[3].kind, WindowResultKind::Committed);
+        assert_eq!((results[3].start_ms, results[3].end_ms), (7_000, 14_000));
+        assert_eq!(
+            (results[0].start_ms, results[0].end_ms),
+            (0, 7_000),
+            "later partial revisions must not mutate a committed boundary"
+        );
+    }
+
+    struct RecordingDecoder {
+        decoded_lengths: Arc<std::sync::Mutex<Vec<usize>>>,
+    }
+
+    impl SessionDecoder for RecordingDecoder {
+        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+            self.decoded_lengths
+                .lock()
+                .expect("decoded-length mutex")
+                .push(samples.len());
+            Ok(Transcription {
+                segments: vec![],
+                language: "en".to_string(),
+            })
+        }
+    }
+
+    struct RevisionDecoder {
+        decode_index: usize,
+    }
+
+    impl SessionDecoder for RevisionDecoder {
+        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+            let text = [
+                "first commit",
+                "draft suffix",
+                "revised suffix",
+                "second commit",
+            ][self.decode_index];
+            self.decode_index += 1;
+            Ok(Transcription {
+                segments: vec![crate::transcribe::Segment {
+                    start_ms: 0,
+                    end_ms: samples.len() as u64 * 1_000 / SAMPLE_RATE as u64,
+                    text: text.to_string(),
+                    speaker_id: None,
+                }],
+                language: "en".to_string(),
+            })
+        }
+    }
+
+    fn result_text(result: &WindowResult) -> &str {
+        result
+            .outcome
+            .as_ref()
+            .expect("test decoder succeeds")
+            .segments
+            .first()
+            .expect("test decoder emits text")
+            .text
+            .as_str()
     }
 }

@@ -6,13 +6,343 @@ use llama_cpp_2::model::params::LlamaModelParams;
 use llama_cpp_2::model::{AddBos, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use serde::Deserialize;
+use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 const MAX_NEW_TOKENS: i32 = 1024;
 const CTX_SIZE: u32 = 16384;
 const N_BATCH: u32 = 2048;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelFingerprint {
+    model_id: String,
+    asset_hash: String,
+}
+
+impl ModelFingerprint {
+    pub fn new(model_id: impl Into<String>, asset_hash: impl Into<String>) -> Self {
+        Self {
+            model_id: model_id.into(),
+            asset_hash: asset_hash.into(),
+        }
+    }
+}
+
+pub struct SelectedModelCache<T> {
+    selected: Option<(ModelFingerprint, Arc<T>)>,
+}
+
+impl<T> Default for SelectedModelCache<T> {
+    fn default() -> Self {
+        Self { selected: None }
+    }
+}
+
+impl<T> SelectedModelCache<T> {
+    pub fn get_or_try_load(
+        &mut self,
+        fingerprint: &ModelFingerprint,
+        load: impl FnOnce() -> Result<T>,
+    ) -> Result<Arc<T>> {
+        if let Some((cached_fingerprint, model)) = &self.selected {
+            if cached_fingerprint == fingerprint {
+                return Ok(Arc::clone(model));
+            }
+        }
+        // Loading a different llama.cpp model requires the previous backend
+        // to be fully released first. Scheduler serialization guarantees no
+        // active job still depends on the cache-owned Arc at this boundary.
+        self.selected = None;
+        let model = Arc::new(load()?);
+        self.selected = Some((fingerprint.clone(), Arc::clone(&model)));
+        Ok(model)
+    }
+
+    pub fn clear(&mut self) {
+        self.selected = None;
+    }
+}
+
+const LLM_QUEUE_CAPACITY: usize = 8;
+
+struct LoadedLlmModel {
+    // Field order is intentional: the model must be freed before its backend.
+    model: LlamaModel,
+    backend: LlamaBackend,
+}
+
+impl LoadedLlmModel {
+    fn load(path: &Path) -> Result<Self> {
+        let backend = LlamaBackend::init().map_err(|error| AppError::Llm(error.to_string()))?;
+        let model = LlamaModel::load_from_file(&backend, path, &LlamaModelParams::default())
+            .map_err(|error| AppError::Llm(format!("model load: {error}")))?;
+        Ok(Self { model, backend })
+    }
+}
+
+/// Application-owned llama.cpp runtime. Calls execute serially because one
+/// shared model is substantially cheaper and safer than racing multiple Metal
+/// contexts. Pending jobs are bounded and ordered by user-visible urgency.
+///
+/// The runtime lives in Tauri's managed [`crate::state::AppState`] rather than
+/// a process static so cached Metal resources are released before llama.cpp's
+/// process-global backend teardown.
+pub struct LlmRuntime {
+    schedule: Mutex<BoundedLlmScheduler>,
+    schedule_changed: Condvar,
+    cache: Mutex<SelectedModelCache<LoadedLlmModel>>,
+    next_job_id: AtomicU64,
+    model_generation: AtomicU64,
+}
+
+impl Default for LlmRuntime {
+    fn default() -> Self {
+        Self {
+            schedule: Mutex::new(BoundedLlmScheduler::new(LLM_QUEUE_CAPACITY)),
+            schedule_changed: Condvar::new(),
+            cache: Mutex::new(SelectedModelCache::default()),
+            next_job_id: AtomicU64::new(1),
+            model_generation: AtomicU64::new(1),
+        }
+    }
+}
+
+impl LlmRuntime {
+    pub fn infer(&self, model_path: &Path, kind: LlmJobKind, prompt: &str) -> Result<String> {
+        self.infer_with_model_resolver(kind, prompt, || Ok(model_path.to_path_buf()))
+    }
+
+    /// Resolve the selected model only after this job owns the scheduler
+    /// lease. A queued model-mutation barrier therefore either waits for this
+    /// active job or completes first and cancels this job's older generation;
+    /// no command can resolve an obsolete path in the gap between Settings
+    /// mutation and scheduler admission.
+    pub fn infer_with_model_resolver(
+        &self,
+        kind: LlmJobKind,
+        prompt: &str,
+        resolve_model: impl FnOnce() -> Result<std::path::PathBuf>,
+    ) -> Result<String> {
+        ensure_prompt_fits_context_budget(prompt)?;
+        let model_generation = self.model_generation.load(Ordering::Acquire);
+        let id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+        self.wait_for_execution_lease(ScheduledLlmJob::new(id, kind))?;
+
+        let result = if self.model_generation.load(Ordering::Acquire) == model_generation {
+            resolve_model().and_then(|model_path| self.run_job(&model_path, prompt))
+        } else {
+            Err(AppError::Llm(
+                "local LLM job was cancelled because the selected model changed".to_string(),
+            ))
+        };
+        self.finish_execution_lease(id)?;
+        result
+    }
+
+    /// Run a selected-model setting or deletion mutation after active
+    /// inference completes. The generation bump cancels already-queued jobs
+    /// that captured the old selection before the mutation barrier.
+    pub fn mutate_selected_model<T>(&self, mutate: impl FnOnce() -> Result<T>) -> Result<T> {
+        let id = self.next_job_id.fetch_add(1, Ordering::Relaxed);
+        self.wait_for_execution_lease(ScheduledLlmJob::new(id, LlmJobKind::ModelMutation))?;
+        self.model_generation.fetch_add(1, Ordering::AcqRel);
+        self.invalidate();
+        let result = mutate();
+        self.finish_execution_lease(id)?;
+        result
+    }
+
+    fn finish_execution_lease(&self, id: u64) -> Result<()> {
+        let mut schedule = self
+            .schedule
+            .lock()
+            .map_err(|_| AppError::Llm("local LLM scheduler lock is poisoned".to_string()))?;
+        schedule
+            .finish(id)
+            .map_err(|_| AppError::Llm("local LLM scheduler lost its active job".to_string()))?;
+        let _ = schedule.start_next();
+        self.schedule_changed.notify_all();
+        Ok(())
+    }
+
+    fn invalidate(&self) {
+        if let Ok(mut cache) = self.cache.lock() {
+            cache.clear();
+        }
+    }
+
+    fn wait_for_execution_lease(&self, job: ScheduledLlmJob) -> Result<()> {
+        let mut schedule = self
+            .schedule
+            .lock()
+            .map_err(|_| AppError::Llm("local LLM scheduler lock is poisoned".to_string()))?;
+        schedule.try_enqueue(job).map_err(|error| match error {
+            LlmScheduleError::QueueFull { capacity } => AppError::Llm(format!(
+                "local LLM queue is full ({capacity} pending jobs); retry shortly"
+            )),
+            LlmScheduleError::UnknownActiveJob { .. } => {
+                AppError::Llm("local LLM scheduler rejected the job".to_string())
+            }
+        })?;
+        let _ = schedule.start_next();
+        while schedule.active != Some(job) {
+            schedule = self
+                .schedule_changed
+                .wait(schedule)
+                .map_err(|_| AppError::Llm("local LLM scheduler lock is poisoned".to_string()))?;
+        }
+        Ok(())
+    }
+
+    fn run_job(&self, model_path: &Path, prompt: &str) -> Result<String> {
+        let fingerprint = model_fingerprint(model_path)?;
+        let model = self
+            .cache
+            .lock()
+            .map_err(|_| AppError::Llm("local LLM model cache lock is poisoned".to_string()))?
+            .get_or_try_load(&fingerprint, || LoadedLlmModel::load(model_path))?;
+        run_inference_with_model(&model, prompt)
+    }
+}
+
+fn model_fingerprint(model_path: &Path) -> Result<ModelFingerprint> {
+    let canonical = model_path.canonicalize().map_err(|error| {
+        AppError::Llm(format!(
+            "could not fingerprint model at {}: {error}",
+            model_path.display()
+        ))
+    })?;
+    let metadata = canonical.metadata().map_err(|error| {
+        AppError::Llm(format!(
+            "could not read model metadata at {}: {error}",
+            canonical.display()
+        ))
+    })?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |duration| duration.as_nanos());
+    Ok(ModelFingerprint::new(
+        canonical.to_string_lossy(),
+        format!("{}:{modified}", metadata.len()),
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LlmJobKind {
+    ModelMutation,
+    Translation,
+    Mfu,
+    Prettify,
+}
+
+impl LlmJobKind {
+    fn priority(self) -> u8 {
+        match self {
+            Self::ModelMutation => 0,
+            Self::Translation => 1,
+            Self::Mfu => 2,
+            Self::Prettify => 3,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ScheduledLlmJob {
+    id: u64,
+    kind: LlmJobKind,
+}
+
+impl ScheduledLlmJob {
+    pub fn new(id: u64, kind: LlmJobKind) -> Self {
+        Self { id, kind }
+    }
+
+    pub fn id(self) -> u64 {
+        self.id
+    }
+
+    pub fn kind(self) -> LlmJobKind {
+        self.kind
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LlmScheduleError {
+    QueueFull { capacity: usize },
+    UnknownActiveJob { id: u64 },
+}
+
+pub struct BoundedLlmScheduler {
+    capacity: usize,
+    pending: VecDeque<ScheduledLlmJob>,
+    active: Option<ScheduledLlmJob>,
+}
+
+impl BoundedLlmScheduler {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            pending: VecDeque::with_capacity(capacity),
+            active: None,
+        }
+    }
+
+    pub fn try_enqueue(
+        &mut self,
+        job: ScheduledLlmJob,
+    ) -> std::result::Result<(), LlmScheduleError> {
+        if self.pending.len() >= self.capacity {
+            return Err(LlmScheduleError::QueueFull {
+                capacity: self.capacity,
+            });
+        }
+        let position = self
+            .pending
+            .iter()
+            .position(|queued| queued.kind.priority() > job.kind.priority())
+            .unwrap_or(self.pending.len());
+        self.pending.insert(position, job);
+        Ok(())
+    }
+
+    pub fn start_next(&mut self) -> Option<ScheduledLlmJob> {
+        if self.active.is_some() {
+            return None;
+        }
+        let job = self.pending.pop_front()?;
+        self.active = Some(job);
+        Some(job)
+    }
+
+    pub fn finish(&mut self, id: u64) -> std::result::Result<(), LlmScheduleError> {
+        match self.active {
+            Some(active) if active.id == id => {
+                self.active = None;
+                Ok(())
+            }
+            _ => Err(LlmScheduleError::UnknownActiveJob { id }),
+        }
+    }
+}
+
+pub fn run_with_token_preflight<T>(
+    prompt_tokens: usize,
+    reserved_output_tokens: usize,
+    context_size: usize,
+    decode: impl FnOnce() -> Result<T>,
+) -> Result<T> {
+    if prompt_tokens.saturating_add(reserved_output_tokens) > context_size {
+        return Err(AppError::Llm(
+            "input exceeds the local model context window".to_string(),
+        ));
+    }
+    decode()
+}
 
 #[derive(Debug, Deserialize)]
 struct MfuJson {
@@ -125,27 +455,38 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedMfu> {
         });
     }
 
-    let fallback = MfuJson {
-        summary: cleaned.to_string(),
-        decisions: String::new(),
-        action_items: String::new(),
-        open_questions: String::new(),
-        participants: String::new(),
-    };
+    Err(AppError::Llm(
+        "model did not return valid structured MFU JSON".to_string(),
+    ))
+}
 
-    Ok(GeneratedMfu {
-        summary: fallback.summary,
-        decisions: String::new(),
-        action_items: String::new(),
-        open_questions: String::new(),
-        participants: String::new(),
+pub fn generate_mfu(
+    runtime: &LlmRuntime,
+    model_path: &Path,
+    transcript: &str,
+) -> Result<GeneratedMfu> {
+    generate_mfu_with_inference(transcript, |prompt| {
+        runtime.infer(model_path, LlmJobKind::Mfu, prompt)
     })
 }
 
-pub fn generate_mfu(model_path: &Path, transcript: &str) -> Result<GeneratedMfu> {
+pub fn generate_mfu_with_model_resolver(
+    runtime: &LlmRuntime,
+    transcript: &str,
+    resolve_model: impl FnOnce() -> Result<std::path::PathBuf>,
+) -> Result<GeneratedMfu> {
+    generate_mfu_with_inference(transcript, |prompt| {
+        runtime.infer_with_model_resolver(LlmJobKind::Mfu, prompt, resolve_model)
+    })
+}
+
+pub fn generate_mfu_with_inference(
+    transcript: &str,
+    inference: impl FnOnce(&str) -> Result<String>,
+) -> Result<GeneratedMfu> {
     let prompt = build_prompt(transcript);
-    let raw_output = run_inference(model_path, &prompt)?;
-    parse_notes_json(&raw_output)
+    ensure_prompt_fits_context_budget(&prompt)?;
+    parse_notes_json(&inference(&prompt)?)
 }
 
 fn build_prettify_prompt(transcript: &str) -> String {
@@ -200,9 +541,33 @@ fn clean_prettify_output(raw: &str) -> String {
     cleaned.trim().to_string()
 }
 
-pub fn prettify_transcript(model_path: &Path, transcript: &str) -> Result<String> {
+pub fn prettify_transcript(
+    runtime: &LlmRuntime,
+    model_path: &Path,
+    transcript: &str,
+) -> Result<String> {
+    prettify_transcript_with_inference(transcript, |prompt| {
+        runtime.infer(model_path, LlmJobKind::Prettify, prompt)
+    })
+}
+
+pub fn prettify_transcript_with_model_resolver(
+    runtime: &LlmRuntime,
+    transcript: &str,
+    resolve_model: impl FnOnce() -> Result<std::path::PathBuf>,
+) -> Result<String> {
+    prettify_transcript_with_inference(transcript, |prompt| {
+        runtime.infer_with_model_resolver(LlmJobKind::Prettify, prompt, resolve_model)
+    })
+}
+
+fn prettify_transcript_with_inference(
+    transcript: &str,
+    inference: impl FnOnce(&str) -> Result<String>,
+) -> Result<String> {
     let prompt = build_prettify_prompt(transcript);
-    let raw_output = run_inference(model_path, &prompt)?;
+    ensure_prompt_fits_context_budget(&prompt)?;
+    let raw_output = inference(&prompt)?;
     let cleaned = clean_prettify_output(&raw_output);
     validate_prettify_candidate(transcript, &cleaned)
 }
@@ -281,16 +646,7 @@ fn validate_prettify_candidate(original: &str, candidate: &str) -> Result<String
     Ok(candidate.to_string())
 }
 
-fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
-    let model_path = model_path.to_path_buf();
-    let prompt = prompt.to_string();
-
-    let backend = LlamaBackend::init().map_err(|e| AppError::Llm(e.to_string()))?;
-
-    let model_params = LlamaModelParams::default();
-    let model = LlamaModel::load_from_file(&backend, &model_path, &model_params)
-        .map_err(|e| AppError::Llm(format!("model load: {e}")))?;
-
+fn run_inference_with_model(loaded: &LoadedLlmModel, prompt: &str) -> Result<String> {
     let n_threads = std::thread::available_parallelism()
         .map(|n| n.get() as i32)
         .unwrap_or(4);
@@ -299,13 +655,22 @@ fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
         .with_n_batch(N_BATCH)
         .with_n_threads(n_threads);
 
-    let mut ctx = model
-        .new_context(&backend, ctx_params)
+    let mut ctx = loaded
+        .model
+        .new_context(&loaded.backend, ctx_params)
         .map_err(|e| AppError::Llm(format!("context create: {e}")))?;
 
-    let tokens_list = model
-        .str_to_token(&prompt, AddBos::Always)
+    let tokens_list = loaded
+        .model
+        .str_to_token(prompt, AddBos::Always)
         .map_err(|e| AppError::Llm(format!("tokenize: {e}")))?;
+
+    run_with_token_preflight(
+        tokens_list.len(),
+        MAX_NEW_TOKENS as usize,
+        CTX_SIZE as usize,
+        || Ok(()),
+    )?;
 
     let total = tokens_list.len();
     let chunk_size = N_BATCH as usize;
@@ -332,9 +697,9 @@ fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
     let mut decoder = encoding_rs::UTF_8.new_decoder();
     let mut sampler = LlamaSampler::greedy();
     let mut output = String::new();
-    let eos_token = model.token_eos();
+    let eos_token = loaded.model.token_eos();
 
-    while n_cur - total as i32 <= MAX_NEW_TOKENS {
+    while n_cur - (total as i32) < MAX_NEW_TOKENS {
         let token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
         sampler.accept(token);
@@ -343,7 +708,7 @@ fn run_inference(model_path: &Path, prompt: &str) -> Result<String> {
             break;
         }
 
-        match model.token_to_piece(token, &mut decoder, true, None) {
+        match loaded.model.token_to_piece(token, &mut decoder, true, None) {
             Ok(piece) => output.push_str(&piece),
             Err(e) => return Err(AppError::Llm(format!("token to piece: {e}"))),
         }
@@ -485,6 +850,15 @@ fn estimated_token_count(text: &str) -> usize {
     text.chars().count() / chars_per_token + 1
 }
 
+fn ensure_prompt_fits_context_budget(prompt: &str) -> Result<()> {
+    run_with_token_preflight(
+        estimated_token_count(prompt),
+        MAX_NEW_TOKENS as usize,
+        CTX_SIZE as usize,
+        || Ok(()),
+    )
+}
+
 /// `prior_context`'s estimated length is added on top of `source_text`'s
 /// (WP-100) — reusing `estimated_token_count`'s own script-aware estimate
 /// for each rather than adding a second detection path — so a combined
@@ -555,14 +929,38 @@ fn validate_translation_candidate(
 /// Signature/name unchanged by WP-103 — only what a caller assembles as
 /// `source_text`/`prior_context` changed.
 pub fn translate_paragraph(
+    runtime: &LlmRuntime,
     model_path: &Path,
     source_text: &str,
     target_language: &str,
     prior_context: Option<&str>,
 ) -> Result<String> {
+    translate_paragraph_with_inference(source_text, target_language, prior_context, |prompt| {
+        runtime.infer(model_path, LlmJobKind::Translation, prompt)
+    })
+}
+
+pub fn translate_paragraph_with_model_resolver(
+    runtime: &LlmRuntime,
+    source_text: &str,
+    target_language: &str,
+    prior_context: Option<&str>,
+    resolve_model: impl FnOnce() -> Result<std::path::PathBuf>,
+) -> Result<String> {
+    translate_paragraph_with_inference(source_text, target_language, prior_context, |prompt| {
+        runtime.infer_with_model_resolver(LlmJobKind::Translation, prompt, resolve_model)
+    })
+}
+
+fn translate_paragraph_with_inference(
+    source_text: &str,
+    target_language: &str,
+    prior_context: Option<&str>,
+    inference: impl FnOnce(&str) -> Result<String>,
+) -> Result<String> {
     ensure_translation_fits_context_budget(source_text, prior_context)?;
     let prompt = build_translate_prompt(source_text, target_language, prior_context);
-    let raw_output = run_inference(model_path, &prompt)?;
+    let raw_output = inference(&prompt)?;
     let cleaned = clean_prettify_output(&raw_output);
     validate_translation_candidate(source_text, &cleaned, target_language)
 }
@@ -599,6 +997,80 @@ impl Drop for TranslationUsageGuard<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::{Duration, Instant};
+
+    fn wait_until_pending(runtime: &LlmRuntime, kind: LlmJobKind) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let queued = runtime
+                .schedule
+                .lock()
+                .expect("scheduler lock")
+                .pending
+                .iter()
+                .any(|job| job.kind == kind);
+            if queued {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for {kind:?} to enter the scheduler"
+            );
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn queued_old_generation_does_not_resolve_model_after_mutation_barrier() {
+        let runtime = Arc::new(LlmRuntime::default());
+        let blocker_id = u64::MAX;
+        {
+            let mut schedule = runtime.schedule.lock().expect("scheduler lock");
+            schedule
+                .try_enqueue(ScheduledLlmJob::new(blocker_id, LlmJobKind::Mfu))
+                .expect("queue blocker");
+            assert_eq!(
+                schedule.start_next().map(ScheduledLlmJob::id),
+                Some(blocker_id)
+            );
+        }
+
+        let resolver_called = Arc::new(AtomicBool::new(false));
+        let inference_runtime = Arc::clone(&runtime);
+        let inference_resolver_called = Arc::clone(&resolver_called);
+        let inference = std::thread::spawn(move || {
+            inference_runtime.infer_with_model_resolver(LlmJobKind::Prettify, "hello", || {
+                inference_resolver_called.store(true, Ordering::Release);
+                Err(AppError::Llm("resolver must not run".to_string()))
+            })
+        });
+        wait_until_pending(&runtime, LlmJobKind::Prettify);
+
+        let mutation_runtime = Arc::clone(&runtime);
+        let mutation = std::thread::spawn(move || {
+            mutation_runtime.mutate_selected_model(|| Ok::<_, AppError>(()))
+        });
+        wait_until_pending(&runtime, LlmJobKind::ModelMutation);
+
+        {
+            let mut schedule = runtime.schedule.lock().expect("scheduler lock");
+            schedule.finish(blocker_id).expect("finish blocker");
+            assert_eq!(
+                schedule.start_next().map(ScheduledLlmJob::kind),
+                Some(LlmJobKind::ModelMutation)
+            );
+        }
+        runtime.schedule_changed.notify_all();
+
+        mutation.join().expect("mutation thread").expect("mutation");
+        let error = inference
+            .join()
+            .expect("inference thread")
+            .expect_err("old generation must be cancelled");
+        assert!(error.to_string().contains("selected model changed"));
+        assert!(!resolver_called.load(Ordering::Acquire));
+    }
 
     #[test]
     fn parse_notes_accepts_valid_json() {
@@ -619,11 +1091,12 @@ mod tests {
     }
 
     #[test]
-    fn parse_notes_falls_back_to_raw_text() {
+    fn parse_notes_rejects_malformed_json_instead_of_reporting_summary_only_success() {
         let raw = "Not valid JSON at all.";
-        let mfu = parse_notes_json(raw).unwrap();
-        assert_eq!(mfu.summary, raw);
-        assert!(mfu.decisions.is_empty());
+        let error = parse_notes_json(raw).expect_err("malformed MFU JSON must be explicit");
+
+        assert!(matches!(error, AppError::Llm(_)));
+        assert!(error.to_string().contains("valid structured MFU"));
     }
 
     #[test]

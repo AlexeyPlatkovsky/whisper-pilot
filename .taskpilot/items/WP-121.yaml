@@ -1,0 +1,33 @@
+schema_version: 1
+id: WP-121
+title: Add the Rust-owned global shortcut and live captions
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:37:50Z'
+updated_at: '2026-09-11T19:37:50Z'
+parent_id: WP-109
+tags:
+- recorder
+- phase-2
+- hotkey
+description: 'Register a configurable macOS global shortcut in Rust and connect it to the Recorder coordinator. The approved action starts or stops one Recorder session even while another app has focus or the main window is hidden. Show a compact caption surface that presents partial, committed, finalizing and actionable error states without taking focus unless the user clicks it.
+
+
+  Happy path: the configured chord registers at launch or after a settings change, a press starts Recorder, live text updates near the bubble or configured caption position, and the stop action finalizes the same session. Primary failure behavior: shortcut conflict, revoked permission, unavailable model or failed window creation starts no hidden recording and leaves an actionable state in Settings/main UI. Edge cases include key repeat, rapid double press, changing the chord, existing capture, app relaunch, screen lock and hidden/unloaded renderer.
+
+
+  Scenario: Given another application owns keyboard focus and the shortcut is registered, when the user invokes it, then Recorder starts without focus theft and captions reflect the backend session. Given registration reports a conflict, when Settings saves the chord, then the prior working registration is retained or the feature is explicitly disabled with recovery instructions.
+
+
+  Target surfaces: Tauri global-shortcut plugin and capabilities, Rust setup/settings/coordinator/window commands, typed IPC/events, Settings shortcut control, caption React entry/style, tests and shortcut/window documentation.
+
+
+  Constraints: handler authority stays in Rust; a hidden webview timer is never required; one key press yields one transition despite repeat; do not intercept normal application keys; keep caption IPC least-privilege and transcript-local.'
+created_by: Codex
+dod:
+- A configurable shortcut registers, unregisters and changes through Rust with persisted settings and a visible report of the active chord.
+- Conflict, invalid chord and registration failure retain a defined safe prior or disabled state and never start an unobservable recording.
+- Shortcut Start and Stop operate the same coordinator/session as the main UI, ignore repeat and stale callbacks, and work with the main webview hidden.
+- The caption surface displays partial, committed, finalizing and error states without focus theft and has keyboard and screen-reader access when activated.
+- Real-macOS checks cover another app focused, rapid presses, relaunch, permission failure and active Streaming; automated frontend/Rust validation and documentation maintenance pass.

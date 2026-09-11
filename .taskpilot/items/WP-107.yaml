@@ -1,0 +1,54 @@
+schema_version: 1
+id: WP-107
+title: Recorder mode and resilient local transcription platform
+priority: high
+type: epic
+status: backlog
+created_at: '2026-09-11T19:31:24Z'
+updated_at: '2026-09-11T20:16:50Z'
+tags:
+- recorder
+- four-phase-plan
+description: 'Deliver a first-class microphone Recorder inside WhisperPilot while hardening the shared local transcription platform that Meeting, Streaming and Recorder use. The user can dictate in Russian, English or mixed speech, see live text, control recording from the main window or a global shortcut, and collapse the application into a movable 120 px status bubble. Whisper remains the default ASR until an evidence-backed Qwen3-ASR integration is ready.
+
+
+  Scope: shared Rust-owned capture lifecycle; Streaming correctness and bounded pipelines; memory and local-LLM improvements needed for sustained use; microphone capture and recoverable Recorder sessions; third workspace mode; global shortcut and live captions; floating bubble behavior; a GGUF-only text-model refresh with Qwen3.5 4B Q4_K_M as the Fast default and two independently qualified Quality options, Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0; engine-aware Qwen3-ASR evaluation and integration. Existing Meeting, Streaming, diarization, MFU, Prettify and export behavior must remain available.
+
+
+  Non-goals: a separate companion application; concurrent microphone and system-audio sessions; cloud storage of recordings; user-defined model URLs; introducing an MLX text runtime in this epic; automatic speaker diarization in live Recorder v1; replacing Whisper before measured acceptance; redesigning unrelated Meeting or Streaming UI.
+
+
+  Constraints: macOS-first Tauri/React/Rust architecture; capture, ASR, persistence and shortcut state remain local and Rust-owned; no transcript or raw audio enters logs; status is not communicated by color alone; hidden webviews are never lifecycle authorities; App Store distribution constraints must be resolved before selecting a transparent private-API window.
+
+
+  Proposed BDD scenarios: Not applicable — epic altitude.
+
+
+  Case-derivation evidence: Not applicable — lower altitude.
+
+
+  Child-task breakdown: Not applicable — epic altitude.
+
+
+  Child-feature breakdown:
+
+  - Phase 1 — transcription and capture foundation: make native session state authoritative, fix Streaming loss/timeline/backpressure, persist the LLM runtime, and reduce long-file memory.
+
+  - Phase 2 — Recorder core and workspace: decide the recording contract, capture microphone audio, persist recoverable sessions, add the third mode, and support shortcut-driven live captions.
+
+  - Phase 3 — floating bubble and GGUF text-model refresh: specify, implement and verify the 120 px draggable status window, replace the Fast default with a qualified Qwen3.5 4B Q4_K_M, and add Qwen3.8 9B Q6_K plus Gemma 4 12B QAT Q4_0 as independently qualified Quality options for MFU, translation, Prettify and Recorder polishing.
+
+  - Phase 4 — Qwen3-ASR: benchmark the candidate runtimes, introduce engine capabilities and integrate a measured Qwen option with Whisper fallback.'
+dod:
+- All four direct child features are done against their own DoD and their ordered blocker relationships remain valid.
+- A user can dictate Russian, English and mixed Russian/English speech from the Recorder workspace or the registered global shortcut, observe partial and committed text, stop without losing meaningful trailing speech, and reopen the persisted session.
+- The 120 px bubble can represent listening, idle and actionable error states without color-only communication; dragging never opens the main window and clicking restores it at the bubble position within a visible work area.
+- Existing Meeting and local/cloud Streaming paths retain their accepted behavior, and sustained live capture plus long-file processing meet the measured memory, latency and correctness gates owned by the child features.
+- The qualified Qwen3.5 4B Q4_K_M is the Fast default, while Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 are separate opt-in Quality profiles for MFU, translation, Prettify and Recorder polishing; all run through the existing GGUF/llama.cpp stack and preserve a safe migration path from previously installed models. Qwen3.8 is exposed for these multilingual workflows only after passing Russian, English and mixed Russian-English acceptance cases.
+- Qwen3-ASR is exposed only after its selected local runtime passes the recorded Apple Silicon quality, latency, memory and stability thresholds; Whisper remains a working default and fallback.
+- Required TDD, Rust/frontend validation, real-Metal transcription, real-macOS window verification, security review and documentation maintenance pass, and a roll-up completion comment links all child evidence.
+links:
+  relates_to:
+  - WP-104
+  - WP-61
+created_by: Codex

@@ -55,9 +55,53 @@ pub enum CloudStreamingResult {
         language: String,
         end_ms: i64,
     },
+    /// A capture-clock span that could not be forwarded because a bounded
+    /// native queue overflowed. No audio or provider payload is included.
+    Degraded {
+        start_ms: i64,
+        end_ms: i64,
+        message: String,
+    },
     /// A safe, app-authored error message. Remote provider payloads and
     /// credentials must never be placed in this variant.
     Failed { message: String },
+}
+
+async fn send_cloud_capture_gap(
+    results_tx: &mpsc::Sender<CloudStreamingResult>,
+    start_sample: u64,
+    end_sample: u64,
+    sample_rate: u32,
+) {
+    if end_sample <= start_sample {
+        return;
+    }
+    let to_ms = |sample: u64| {
+        sample
+            .saturating_mul(1_000)
+            .checked_div(sample_rate as u64)
+            .unwrap_or(0)
+            .min(i64::MAX as u64) as i64
+    };
+    let _ = results_tx
+        .send(CloudStreamingResult::Degraded {
+            start_ms: to_ms(start_sample),
+            end_ms: to_ms(end_sample).max(to_ms(start_sample).saturating_add(1)),
+            message: "Cloud transcript has a gap because live audio processing was overloaded."
+                .to_string(),
+        })
+        .await;
+}
+
+fn capture_gap_end(
+    captured_samples: u64,
+    chunk: &crate::streaming_audio::CapturedAudioChunk,
+) -> Option<u64> {
+    let delivered_end = chunk
+        .start_sample
+        .saturating_add(chunk.samples.len() as u64);
+    (chunk.start_sample > captured_samples || chunk.captured_end_sample > delivered_end)
+        .then_some(chunk.captured_end_sample.max(chunk.start_sample))
 }
 
 /// One authenticated provider socket. Neither this type nor its errors expose
@@ -237,17 +281,24 @@ impl CloudTransport {
         })?;
         request.headers_mut().insert(AUTHORIZATION, authorization);
 
-        let (mut socket, _) = connect_async(request).await.map_err(|_| {
-            let message = match provider {
-                CloudProvider::OpenAi => {
-                    "OpenAI transcription setup could not be established. Confirm this project has access to GPT Transcribe."
-                }
-                CloudProvider::Deepgram | CloudProvider::AssemblyAi => {
-                    "Unable to connect to cloud transcription. Check your network and API key."
-                }
-            };
-            AppError::Capture(message.to_string())
-        })?;
+        let (mut socket, _) = timeout(Duration::from_secs(10), connect_async(request))
+            .await
+            .map_err(|_| {
+                AppError::Capture(
+                    "Cloud transcription connection timed out. Check your network.".to_string(),
+                )
+            })?
+            .map_err(|_| {
+                let message = match provider {
+                    CloudProvider::OpenAi => {
+                        "OpenAI transcription setup could not be established. Confirm this project has access to GPT Transcribe."
+                    }
+                    CloudProvider::Deepgram | CloudProvider::AssemblyAi => {
+                        "Unable to connect to cloud transcription. Check your network and API key."
+                    }
+                };
+                AppError::Capture(message.to_string())
+            })?;
         for message in &spec.initial_messages {
             socket
                 .send(Message::Text(message.clone()))
@@ -348,7 +399,7 @@ impl CloudTransport {
     /// error; provider payloads and credentials never cross this boundary.
     pub async fn run(
         mut self,
-        mut samples_rx: mpsc::Receiver<Vec<f32>>,
+        mut samples_rx: mpsc::Receiver<crate::streaming_audio::CapturedAudioChunk>,
         results_tx: mpsc::Sender<CloudStreamingResult>,
     ) -> Result<()> {
         let mut captured_samples: u64 = 0;
@@ -359,11 +410,28 @@ impl CloudTransport {
             tokio::select! {
                 maybe_samples = samples_rx.recv() => {
                     match maybe_samples {
-                        Some(samples) => {
-                            captured_samples = captured_samples.saturating_add(samples.len() as u64);
-                            self.send_audio(&samples).await?;
+                        Some(chunk) => {
+                            if let Some(gap_end) = capture_gap_end(captured_samples, &chunk) {
+                                // A provider may still owe a final for audio already sent. Stop
+                                // forwarding at the first gap and cover every not-yet-confirmed
+                                // capture span conservatively. Results already received remain
+                                // ahead of this degraded marker in the FIFO result queue; no late
+                                // final can be shifted past the missing span.
+                                send_cloud_capture_gap(
+                                    &results_tx,
+                                    0,
+                                    gap_end,
+                                    self.spec.sample_rate,
+                                ).await;
+                                self.finish().await;
+                                return Ok(());
+                            }
+                            if !chunk.samples.is_empty() {
+                                self.send_audio(&chunk.samples).await?;
+                            }
                             buffered_openai_samples = buffered_openai_samples
-                                .saturating_add(samples.len() as u64);
+                                .saturating_add(chunk.samples.len() as u64);
+                            captured_samples = captured_samples.max(chunk.captured_end_sample);
                             if let Some(commit) = outbound_commit_message(
                                 self.provider,
                                 buffered_openai_samples,
@@ -522,7 +590,7 @@ impl CloudTransport {
         .map_err(|_| AppError::Capture("Cloud transcription finalization timed out.".to_string()))?
     }
 
-    async fn finish(&mut self) {
+    pub(crate) async fn finish(&mut self) {
         let termination = match self.provider {
             CloudProvider::Deepgram => Some(r#"{"type":"CloseStream"}"#),
             CloudProvider::AssemblyAi => Some(r#"{"type":"Terminate"}"#),
@@ -821,5 +889,47 @@ mod tests {
             &serde_json::json!({ "object": "model" }),
             "gpt-transcribe",
         ));
+    }
+
+    #[tokio::test]
+    async fn capture_gap_uses_the_original_capture_clock() {
+        let (results_tx, mut results_rx) = mpsc::channel(1);
+        send_cloud_capture_gap(&results_tx, 16_000, 32_000, STANDARD_SAMPLE_RATE).await;
+
+        match results_rx.recv().await.expect("one degraded result") {
+            CloudStreamingResult::Degraded {
+                start_ms,
+                end_ms,
+                message,
+            } => {
+                assert_eq!((start_ms, end_ms), (1_000, 2_000));
+                assert!(message.contains("gap"));
+            }
+            _ => panic!("capture loss must be an explicit degraded result"),
+        }
+    }
+
+    #[test]
+    fn first_cloud_capture_gap_terminates_at_the_original_clock_position() {
+        let queued_gap = crate::streaming_audio::CapturedAudioChunk {
+            start_sample: 32_000,
+            captured_end_sample: 40_000,
+            samples: vec![0.1; 8_000],
+        };
+        assert_eq!(capture_gap_end(16_000, &queued_gap), Some(40_000));
+
+        let native_tail_gap = crate::streaming_audio::CapturedAudioChunk {
+            start_sample: 16_000,
+            captured_end_sample: 40_000,
+            samples: vec![0.1; 8_000],
+        };
+        assert_eq!(capture_gap_end(16_000, &native_tail_gap), Some(40_000));
+
+        let contiguous = crate::streaming_audio::CapturedAudioChunk {
+            start_sample: 16_000,
+            captured_end_sample: 24_000,
+            samples: vec![0.1; 8_000],
+        };
+        assert_eq!(capture_gap_end(16_000, &contiguous), None);
     }
 }

@@ -1,5 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LiveCaptureSnapshot } from "./liveCaptureState";
+
+export type { LiveCapturePhase, LiveCaptureSnapshot } from "./liveCaptureState";
 
 export interface Segment {
   start_ms: number;
@@ -383,6 +386,19 @@ export function startStreamingSession(
 
 export function stopStreamingSession(): Promise<void> {
   return invoke<void>("stop_streaming_session");
+}
+
+/** Current Rust-owned lifecycle for the application's one live capture. */
+export function getLiveCaptureSnapshot(): Promise<LiveCaptureSnapshot> {
+  return invoke<LiveCaptureSnapshot>("get_live_capture_snapshot");
+}
+
+export function onLiveCaptureState(
+  handler: (snapshot: LiveCaptureSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<LiveCaptureSnapshot>("live_capture_state", (event) =>
+    handler(event.payload),
+  );
 }
 
 /** One decoded window, live — whether it succeeded or fail-open-skipped. */

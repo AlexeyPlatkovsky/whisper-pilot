@@ -58,7 +58,7 @@ level.
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   meetings list                    lib.rs        crate root; `run()` registration
   meeting workspace                commands/     thin Tauri command layer
-  transcript editor                audio.rs      ffmpeg normalize + WAV decode
+  transcript editor                audio.rs      ffmpeg normalize + direct PCM decode
   ...                               store.rs      SQLite meeting library
 ```
 

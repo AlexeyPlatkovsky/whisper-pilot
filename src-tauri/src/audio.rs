@@ -2,8 +2,8 @@
 //!
 //! ffmpeg extracts audio from video and resamples audio identically, so both
 //! input kinds go through one path — no need to branch on file type.
-//! ffmpeg writes raw PCM to stdout (pipe:1); a valid WAV header is prepended
-//! in memory so hound can decode without a temp file on disk.
+//! ffmpeg writes raw PCM to stdout (pipe:1), which is converted directly to
+//! normalized samples without constructing a second in-memory WAV copy.
 
 use crate::error::{AppError, Result};
 use std::io::Cursor;
@@ -12,32 +12,6 @@ use std::process::Command;
 
 /// Whisper's required input rate.
 pub const SAMPLE_RATE: u32 = 16_000;
-
-const BITS_PER_SAMPLE: u16 = 16;
-const NUM_CHANNELS: u16 = 1;
-
-/// Build a canonical 44-byte WAV header for 16-bit mono PCM at `SAMPLE_RATE` Hz.
-fn wav_header(pcm_len: u32) -> [u8; 44] {
-    let byte_rate = SAMPLE_RATE * NUM_CHANNELS as u32 * (BITS_PER_SAMPLE / 8) as u32;
-    let block_align = NUM_CHANNELS * (BITS_PER_SAMPLE / 8);
-    let riff_size = 36 + pcm_len;
-
-    let mut h = [0u8; 44];
-    h[0..4].copy_from_slice(b"RIFF");
-    h[4..8].copy_from_slice(&riff_size.to_le_bytes());
-    h[8..12].copy_from_slice(b"WAVE");
-    h[12..16].copy_from_slice(b"fmt ");
-    h[16..20].copy_from_slice(&16u32.to_le_bytes()); // PCM chunk size
-    h[20..22].copy_from_slice(&1u16.to_le_bytes()); // PCM format
-    h[22..24].copy_from_slice(&NUM_CHANNELS.to_le_bytes());
-    h[24..28].copy_from_slice(&SAMPLE_RATE.to_le_bytes());
-    h[28..32].copy_from_slice(&byte_rate.to_le_bytes());
-    h[32..34].copy_from_slice(&block_align.to_le_bytes());
-    h[34..36].copy_from_slice(&BITS_PER_SAMPLE.to_le_bytes());
-    h[36..40].copy_from_slice(b"data");
-    h[40..44].copy_from_slice(&pcm_len.to_le_bytes());
-    h
-}
 
 /// Resolve the ffmpeg binary, searching PATH first, then common Homebrew
 /// locations.  GUI apps on macOS inherit a minimal PATH that doesn't include
@@ -69,7 +43,7 @@ fn resolve_ffmpeg() -> PathBuf {
 }
 
 /// Run ffmpeg to produce 16 kHz mono raw PCM in memory from `input`.
-/// Returns raw s16le bytes — caller prepends a WAV header for hound.
+/// Returns raw s16le bytes for direct sample conversion.
 pub fn normalize_to_memory(input: &Path) -> Result<Vec<u8>> {
     let output = Command::new(resolve_ffmpeg())
         .args(["-i"])
@@ -122,13 +96,58 @@ pub fn decode_wav_16k_mono(data: &[u8]) -> Result<Vec<f32>> {
     samples.map_err(|e| AppError::Audio(e.to_string()))
 }
 
+/// Convert ffmpeg's canonical mono s16le output directly to normalized f32.
+/// Reject an incomplete final sample instead of silently dropping it.
+pub fn decode_pcm_s16le(data: &[u8]) -> Result<Vec<f32>> {
+    if data.len() % 2 != 0 {
+        return Err(AppError::Audio(format!(
+            "raw s16le audio is truncated ({} bytes)",
+            data.len()
+        )));
+    }
+    Ok(data
+        .chunks_exact(2)
+        .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]) as f32 / i16::MAX as f32)
+        .collect())
+}
+
 /// Convenience: normalize `input` through ffmpeg and decode it.
-/// Assembles the WAV header + raw PCM in memory — no temp file.
+/// Converts raw PCM directly, avoiding a simultaneous synthetic WAV copy.
 pub fn load_samples(input: &Path) -> Result<Vec<f32>> {
     let pcm = normalize_to_memory(input)?;
-    let header = wav_header(pcm.len() as u32);
-    let mut wav = Vec::with_capacity(header.len() + pcm.len());
-    wav.extend_from_slice(&header);
-    wav.extend_from_slice(&pcm);
-    decode_wav_16k_mono(&wav)
+    decode_pcm_s16le(&pcm)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // WP-116 DoD 1: ffmpeg already emits canonical s16le, so conversion can
+    // consume those raw bytes directly without allocating a synthetic WAV.
+    // Expected values intentionally preserve the existing hound path's
+    // `i16::MAX` normalization contract.
+    #[test]
+    fn decode_pcm_s16le_converts_raw_little_endian_samples_directly() {
+        let source = [i16::MIN, -16_384, 0, 16_384, i16::MAX];
+        let bytes: Vec<u8> = source
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+
+        let decoded = decode_pcm_s16le(&bytes).expect("valid raw s16le decodes");
+
+        let expected: Vec<f32> = source
+            .iter()
+            .map(|sample| *sample as f32 / i16::MAX as f32)
+            .collect();
+        assert_eq!(decoded, expected);
+    }
+
+    #[test]
+    fn decode_pcm_s16le_rejects_a_trailing_odd_byte() {
+        let error = decode_pcm_s16le(&[0x00, 0x80, 0xff])
+            .expect_err("an incomplete i16 sample must not be truncated silently");
+
+        assert!(matches!(error, AppError::Audio(_)));
+    }
 }

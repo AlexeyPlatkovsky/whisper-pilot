@@ -1,0 +1,60 @@
+schema_version: 1
+id: WP-110
+title: Phase 3 — Add the floating bubble and refresh GGUF text models
+priority: normal
+type: feature
+status: backlog
+created_at: '2026-09-11T19:34:26Z'
+updated_at: '2026-09-11T20:16:50Z'
+parent_id: WP-107
+tags:
+- recorder
+- phase-3
+- windowing
+- llm
+- gguf
+- model-profiles
+description: 'Deliver two independent Phase 3 tracks: the floating Recorder status bubble and a GGUF-only refresh of local text models. Bubble failures must not affect model execution, and LLM failures must not affect the recoverability of the main or bubble windows.
+
+
+  Add a 120 by 120 logical-pixel floating WhisperPilot bubble as a separate window. Collapsing the main application places the bubble at the main window top-left and hides the main window; dragging moves only the bubble; a click restores and focuses the main window with its top-left at the bubble position, clamped to a visible monitor. A setting controls Always on Top, and any all-Spaces/fullscreen behavior is explicitly specified.
+
+
+  The ring is green during live microphone or system-audio capture, yellow when no live capture is active, and red only for a persistent actionable capture or ASR error. Every state also has a non-color icon and accessible name. Primary failure behavior: an invalid saved position, removed monitor or failed window operation falls back to a visible location and leaves the main window recoverable. Edge cases include drag followed by synthetic click, Retina scaling, multiple displays, Spaces, Stage Manager, fullscreen applications, sleep/wake and hidden webview throttling.
+
+
+  Scenario: Given the bubble is visible and idle, when the user drags beyond the movement threshold, then its position changes and the main window remains hidden. Given the user clicks without crossing the threshold, when restore completes, then the bubble hides and the main window appears at the clamped bubble position. Given live capture changes state while main is hidden, then the ring and accessible state update from the backend snapshot/event.
+
+
+  Scenario: Given the pinned GGUF candidates have passed their profile-specific acceptance matrix, when the Fast profile is used, then Qwen3.5 4B serves latency-sensitive local work; when a Quality profile is selected, then either Qwen3.8 9B or Gemma 4 12B serves MFU, translation, Prettify and Recorder polishing without exposing thinking tokens. Qwen3.8 is eligible for Russian and mixed-language work only after it passes the product corpus despite its source model card declaring English. Given any candidate fails qualification or loading, then it is not promoted and a previously working local model remains available.
+
+
+  Target surfaces: Tauri window configuration and capabilities, a focused Rust window coordinator or AppKit integration if required, bubble/caption React entry points and styles, settings persistence, icon assets, GGUF catalog and download boundaries, model-aware prompt templates and generation settings, MFU/translation/polish workflows, tests, Pencil design, architecture and windowing/design documentation.
+
+
+  Constraints: the bubble has least-privilege IPC capabilities; capture never depends on hidden-webview timers; transparency/private-API choice must respect the selected distribution channel; movement uses logical/physical coordinates correctly; status is not color-only. Text inference remains local and uses the existing llama.cpp engine; no MLX runtime is introduced. New defaults and profiles require qualification and cannot strand existing downloaded models.
+
+
+  Child-task breakdown:
+
+  - Specify the bubble interaction and distribution-compatible window design.
+
+  - Implement bubble lifecycle, drag/click, positioning and Always on Top.
+
+  - Validate accessibility and the real-macOS window behavior matrix.
+
+  - Qualify pinned Qwen3.5 4B Q4_K_M Fast, Qwen3.8 9B Q6_K Quality and Gemma 4 12B QAT Q4_0 Quality candidates.
+
+  - Integrate the qualified single-file GGUF candidates, model-aware prompting and Fast/Quality selection.'
+dod:
+- Every direct child task is done against its own DoD.
+- The 120 px bubble implements the approved idle, listening and error presentation with non-color status, and the Always on Top setting persists and takes effect.
+- Drag never restores the main window; click restores it at the bubble top-left; saved and restored positions are clamped to an available work area.
+- The Rust capture session continues independently of main and bubble renderer visibility, and all windows recover from a failed operation or stale display position.
+- Real-macOS verification passes on the supported Retina and multi-monitor, Spaces, Stage Manager, fullscreen, and sleep and wake matrix.
+- Qwen3.5 4B Q4_K_M becomes the Fast default, while Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 become separate opt-in Quality profiles only after their quality, schema, memory, latency, license and packaging gates pass; all use GGUF/llama.cpp without thinking-token leakage, and Qwen3.8 must specifically pass Russian, English and mixed Russian-English MFU, translation and polishing cases.
+- Tauri capability review, accessibility checks, frontend and Rust validation, and documentation maintenance pass.
+links:
+  blocks:
+  - WP-111
+created_by: Codex

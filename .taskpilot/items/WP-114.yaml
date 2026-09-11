@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-114
+title: Bound live audio queues and preserve cloud resume time
+priority: high
+type: task
+status: in_progress
+created_at: '2026-09-11T19:35:45Z'
+updated_at: '2026-09-11T20:35:49Z'
+parent_id: WP-108
+tags:
+- recorder
+- phase-1
+- streaming
+description: 'Make every live audio and result queue bounded from the first producer boundary and repair cloud-session resume timestamps. Each queue documents its capacity, blocking or drop behavior and overload signal. A resumed provider connection adds the last persisted session end time to connection-relative audio time so stored windows remain monotonic.
+
+
+  Happy path: local and cloud consumers keep up, all chunks flow within capacity, and resumed cloud finals continue after the prior timeline. Primary failure behavior: a slow decoder or network cannot grow memory without bound; the coordinator reports overload and applies the documented safe policy without leaking credentials or provider payloads. Edge cases include an already-full first queue, provider disconnect, partial-only response, clock saturation, session with no prior windows and multiple resumes.
+
+
+  Scenario: Given a cloud session ends at 42000 ms, when it resumes and the new transport finalizes at relative 3000 ms, then the persisted end is 45000 ms and the start is no earlier than 42000 ms. Given a producer outruns a consumer past capacity, when the queue fills, then measured memory stays bounded and the configured overload behavior is observable.
+
+
+  Target surfaces: src-tauri/src/streaming_audio.rs, commands/streaming.rs, cloud_streaming.rs, streaming_session.rs, events.rs, persistence queries and provider-independent Rust tests.
+
+
+  Constraints: do not block a native audio callback indefinitely; never log provider payloads or secrets; no silent fallback from cloud to local; overload handling must preserve session recoverability; retain current provider protocol contracts.'
+dod:
+- All live capture and result channels are bounded at the first producer boundary, with capacities and full behavior represented in code and covered by boundary tests.
+- A sustained slow-consumer test proves memory remains within the approved bound and emits the expected overload or degraded-state signal without deadlock.
+- Cloud resume derives a transactional timeline offset from the last committed window; zero-window, one-window and repeated-resume tests prove strictly monotonic persisted timestamps.
+- Provider disconnect, partial-only output and queue closure finalize or fail the session once without leaking secrets or silently switching engines.
+- Rust validation, existing cloud protocol tests, local Streaming tests and affected architecture documentation pass.
+links:
+  relates_to:
+  - WP-104
+created_by: Codex

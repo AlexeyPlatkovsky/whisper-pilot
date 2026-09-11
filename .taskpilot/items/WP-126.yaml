@@ -1,0 +1,39 @@
+schema_version: 1
+id: WP-126
+title: Introduce an ASR engine and capability-aware model bundles
+priority: high
+type: task
+status: backlog
+created_at: '2026-09-11T19:39:45Z'
+updated_at: '2026-09-11T19:42:22Z'
+parent_id: WP-111
+tags:
+- recorder
+- phase-4
+- architecture
+description: 'Refactor transcription behind an ASR engine contract that supports file and live modes without assuming every model is a single Whisper asset. Model catalog entries describe engine identity, required model, projector and optional aligner assets, offline or streaming support, timestamp capability, language detection and compatible modes. AppState caches are keyed and safely invalidated by engine, model variant and asset fingerprint.
+
+
+  Happy path: existing Whisper Meeting and local Streaming execute through the new contract with identical output, while a test double demonstrates a multi-asset engine and capability-gated mode selection. Primary failure behavior: missing assets, unsupported capability, unknown legacy setting or cache invalidation returns a typed pre-start error and does not silently choose the first catalog asset. Edge cases include existing installs with legacy transcription setting, deleted active model, model change during a running session, partial bundle download and rollback.
+
+
+  Scenario: Given an existing installation with Whisper downloaded and no variant setting, when the new catalog loads, then it resolves deterministically to the compatible Whisper default without redownload. Given a selected engine lacks Streaming or timestamps, when a mode requests that capability, then the backend and UI reject it before capture.
+
+
+  Target surfaces: models/catalog.rs and downloader, settings validation/migration, transcribe.rs, state.rs caches, new ASR traits and adapters, Meeting/Streaming/Recorder commands, typed IPC/model UI, tests and architecture/model documentation.
+
+
+  Constraints: preserve current Whisper Metal behavior and existing asset path; verify every model asset by source and SHA-256; never resolve by catalog order; active-session engine is immutable; capability enforcement exists in backend as well as UI; retain local-only inference.'
+dod:
+- Whisper Meeting and local Streaming run through a typed ASR engine interface with no accepted output, timestamp, language-detection or Metal regression.
+- Catalog and DTOs represent engine identity, compatible modes, required multi-asset bundles and timestamp, streaming and language-detection capabilities without catalog-order selection.
+- Legacy unset and transcription settings, unknown values, partial downloads, deleted active assets and cache invalidation have deterministic migration and error behavior covered by tests.
+- Backend rejects unsupported mode or capability before capture or decode, and UI renders the same availability and reason.
+- Model cache keys include engine, variant and verified asset fingerprint and cannot switch an active session mid-run.
+- TDD, real-Metal regression, model-management, frontend/Rust validation and documentation maintenance pass.
+links:
+  blocks:
+  - WP-127
+  relates_to:
+  - WP-64
+created_by: Codex

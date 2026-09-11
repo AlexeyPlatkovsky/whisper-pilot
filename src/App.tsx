@@ -3,6 +3,7 @@ import {
   createMeeting,
   deleteMeeting,
   generateMfu,
+  getLiveCaptureSnapshot,
   getSettings,
   setSetting,
   listMeetings,
@@ -14,6 +15,7 @@ import {
   diarizeMeeting,
   onTranscriptionPhase,
   onTranscriptionProgress,
+  onLiveCaptureState,
   saveTextDialog,
   renameMeeting,
   updateSegment,
@@ -22,7 +24,12 @@ import {
   type MeetingSummary,
   type MeetingMfu,
   type Segment,
+  type LiveCaptureSnapshot,
 } from "./ipc";
+import {
+  isLiveCaptureActive,
+  reconcileLiveCaptureSnapshot,
+} from "./liveCaptureState";
 import { SettingsScreen } from "./SettingsScreen";
 import { StreamingView } from "./StreamingView";
 import { ModeToggle } from "./ModeToggle";
@@ -60,7 +67,12 @@ export function App() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStreamingOpen, setIsStreamingOpen] = useState(false);
-  const [isStreamingActive, setIsStreamingActive] = useState(false);
+  const [liveCaptureSnapshot, setLiveCaptureSnapshot] =
+    useState<LiveCaptureSnapshot | null>(null);
+  // Unknown must fail closed: until the backend snapshot arrives, Settings
+  // cannot safely assume no capture owns a model/provider configuration.
+  const isStreamingActive =
+    liveCaptureSnapshot === null || isLiveCaptureActive(liveCaptureSnapshot);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [elapsed, setElapsed] = useState(0);
   const [transcriptionModelReady, setTranscriptionModelReady] = useState<
@@ -150,6 +162,39 @@ export function App() {
   useEffect(() => {
     transcribingIdRef.current = transcribingId;
   }, [transcribingId]);
+
+  // Subscribe before reading the snapshot. Revision reconciliation closes the
+  // event-between-listen-and-query race and keeps Settings locked even when
+  // StreamingView is unmounted.
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    const applySnapshot = (incoming: LiveCaptureSnapshot) => {
+      if (!cancelled) {
+        setLiveCaptureSnapshot((current) =>
+          reconcileLiveCaptureSnapshot(current, incoming),
+        );
+      }
+    };
+    void (async () => {
+      try {
+        const stopListening = await onLiveCaptureState(applySnapshot);
+        if (cancelled) {
+          stopListening();
+          return;
+        }
+        unlisten = stopListening;
+        applySnapshot(await getLiveCaptureSnapshot());
+      } catch {
+        // A failed lifecycle query does not manufacture an idle state. The
+        // native coordinator remains authoritative and can recover on event.
+      }
+    })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
 
   // Tick a once-per-second elapsed clock while a run is in flight.
   useEffect(() => {
@@ -638,11 +683,9 @@ export function App() {
         <StreamingView
           onClose={() => {
             setIsStreamingOpen(false);
-            setIsStreamingActive(false);
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
           settingsOpen={isSettingsOpen}
-          onStreamingActivityChange={setIsStreamingActive}
         />
         {isSettingsOpen && (
           <div className="settings-overlay">
@@ -664,6 +707,7 @@ export function App() {
     return (
       <div className="app">
         <SettingsScreen
+          cloudProviderLocked={isStreamingActive}
           onClose={() => {
             setIsSettingsOpen(false);
             void refreshModelAvailability();
