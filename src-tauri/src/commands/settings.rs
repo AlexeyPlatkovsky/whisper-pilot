@@ -41,9 +41,59 @@ pub(crate) async fn set_setting(
         })
         .await
         .map_err(|error| AppError::Llm(error.to_string()))?
+    } else if key == "active_model.recorder" || key == "recorder_language" {
+        let _asr_mutation = state.recorder_asr_mutation.lock().await;
+        #[cfg(target_os = "macos")]
+        {
+            if crate::streaming_session::current_whisper_user(&state.whisper_busy)
+                == Some(crate::streaming_session::WhisperUser::Recorder)
+            {
+                return Err(AppError::InvalidSetting(
+                    "Recorder ASR and language cannot change until capture and finalization have fully ended"
+                        .into(),
+                ));
+            }
+            let snapshot = state
+                .live_capture
+                .lock()
+                .map_err(|_| AppError::InvalidSetting("live capture lock is poisoned".into()))?
+                .snapshot();
+            if snapshot.source == Some(crate::live_capture::LiveCaptureSource::Recorder)
+                && !matches!(
+                    snapshot.phase,
+                    crate::live_capture::LiveCapturePhase::Idle
+                        | crate::live_capture::LiveCapturePhase::Error
+                )
+            {
+                return Err(AppError::InvalidSetting(
+                    "Recorder ASR cannot change while a session is active".into(),
+                ));
+            }
+        }
+        if key == "active_model.recorder" {
+            ensure_asr_selection_is_downloaded(&dir, &value)?;
+        }
+        let updated = settings::set_setting(&dir, &key, &value)?;
+        #[cfg(target_os = "macos")]
+        if key == "active_model.recorder" {
+            state.clear_qwen_asr_model().await;
+        }
+        Ok(updated)
     } else {
         settings::set_setting(&dir, &key, &value)
     }
+}
+
+fn ensure_asr_selection_is_downloaded(dir: &std::path::Path, value: &str) -> Result<()> {
+    if models::list_task_models(dir)
+        .iter()
+        .any(|model| model.task == "transcription" && model.id == value && model.downloaded)
+    {
+        return Ok(());
+    }
+    Err(AppError::InvalidSetting(format!(
+        "Recorder transcription model is not downloaded: {value}"
+    )))
 }
 
 #[tauri::command]
@@ -295,5 +345,29 @@ mod tests {
 
         ensure_llm_selection_is_downloaded(temp.path(), entry.id)
             .expect("complete downloaded model may become active");
+    }
+
+    #[test]
+    fn recorder_asr_selection_requires_the_complete_bundle() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let entry = models::CATALOG
+            .iter()
+            .find(|entry| entry.id == crate::asr::QWEN3_ASR_06_MODEL_ID)
+            .expect("Qwen ASR catalog entry");
+        ensure_asr_selection_is_downloaded(temp.path(), entry.id)
+            .expect_err("missing bundle must not become active");
+
+        for (path, asset) in models::asset_paths(temp.path(), entry.id)
+            .unwrap()
+            .into_iter()
+            .zip(entry.assets)
+        {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(path).unwrap();
+            file.set_len(asset.size_bytes).unwrap();
+        }
+
+        ensure_asr_selection_is_downloaded(temp.path(), entry.id)
+            .expect("complete bundle may become active");
     }
 }

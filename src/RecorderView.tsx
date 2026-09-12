@@ -315,6 +315,16 @@ export function RecorderView({
     [active],
   );
   const transcript = active?.polished_text ?? rawTranscript;
+  const asrLabel =
+    active?.asr_model_id === "qwen3-asr-0.6b"
+      ? "Qwen3-ASR 0.6B"
+      : "Whisper large-v3-turbo";
+  const asrLanguage =
+    active?.asr_language === "ru"
+      ? "Russian"
+      : active?.asr_language === "en"
+        ? "English"
+        : "Auto / mixed";
   const destructiveDisabled =
     active?.status === "recording" ||
     active?.status === "finalizing" ||
@@ -511,6 +521,10 @@ export function RecorderView({
           </span>
           {active ? (
             <>
+              <p className="settings-description">
+                {asrLabel} · {asrLanguage} · local {active.sample_rate / 1_000}
+                kHz audio
+              </p>
               <div className="recorder-toolbar">
                 <button
                   type="button"

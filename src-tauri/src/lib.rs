@@ -1,6 +1,7 @@
 //! WhisperPilot core: offline file transcription (language auto-detected) with
 //! a summary to come.
 
+pub mod asr;
 pub mod audio;
 pub mod bubble_window;
 pub mod cloud_provider;

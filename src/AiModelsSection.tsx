@@ -12,7 +12,8 @@ const STAGE_LABELS: Record<string, string> = {
 const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   transcription: {
     title: "Transcription Models",
-    subtitle: "Choose the Whisper model used to transcribe your meetings.",
+    subtitle:
+      "Choose Recorder ASR. Meeting and Streaming keep Whisper for timestamps and mixed-language safety.",
   },
   diarization: {
     title: "Speaker Diarization",
@@ -42,11 +43,14 @@ export function AiModelsSection() {
     diarizationSelectError,
     llmModel,
     llmSelectError,
+    recorderModel,
+    recorderSelectError,
     setDownloadModalId,
     setConfirmDeleteId,
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
+    handleSelectRecorderModel,
     handleDelete,
   } = useModelLibrary();
 
@@ -110,6 +114,7 @@ export function AiModelsSection() {
                 const variantValue =
                   task === "diarization" ? m.id.slice(`${task}-`.length) : null;
                 const isLlm = task === "llm";
+                const isAsr = task === "transcription";
                 return (
                   <li key={m.id} className="model-row">
                     {variantValue !== null ? (
@@ -131,6 +136,15 @@ export function AiModelsSection() {
                         checked={llmModel === m.id}
                         disabled={!m.downloaded}
                         onChange={() => handleSelectLlmModel(m.id)}
+                      />
+                    ) : isAsr ? (
+                      <input
+                        type="radio"
+                        name="recorder-asr-model"
+                        aria-label={m.label}
+                        checked={m.downloaded && recorderModel === m.id}
+                        disabled={!m.downloaded}
+                        onChange={() => handleSelectRecorderModel(m.id)}
                       />
                     ) : (
                       // A task with no selectable variants still shows the
@@ -156,6 +170,22 @@ export function AiModelsSection() {
                           {m.profile === "legacy"
                             ? "Legacy"
                             : `${m.profile === "fast" ? "Fast" : "Quality"} · ${m.min_memory_gb}+ GB RAM · ${m.license}`}
+                        </small>
+                      )}
+                      {m.engine === "qwen3_asr" && (
+                        <small className="model-guidance">
+                          Recorder only · Russian or English · no model
+                          timestamps
+                          {m.min_memory_gb
+                            ? ` · ${m.min_memory_gb}+ GB RAM`
+                            : ""}
+                          {m.license ? ` · ${m.license}` : ""}
+                        </small>
+                      )}
+                      {m.engine === "whisper" && isAsr && (
+                        <small className="model-guidance">
+                          All modes · auto language · timestamps ·
+                          mixed-language default
                         </small>
                       )}
                     </span>
@@ -224,6 +254,11 @@ export function AiModelsSection() {
             {task === "llm" && llmSelectError && (
               <p className="model-row-error" role="alert">
                 {llmSelectError}
+              </p>
+            )}
+            {task === "transcription" && recorderSelectError && (
+              <p className="model-row-error" role="alert">
+                {recorderSelectError}
               </p>
             )}
           </section>

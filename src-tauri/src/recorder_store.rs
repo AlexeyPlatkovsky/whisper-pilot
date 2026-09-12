@@ -51,6 +51,9 @@ pub struct NewRecorderSession {
     pub title: String,
     pub created_at_ms: i64,
     pub sample_rate: u32,
+    pub asr_model_id: String,
+    pub asr_engine: String,
+    pub asr_language: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,6 +67,9 @@ pub struct RecorderSession {
     pub status: RecorderStatus,
     pub audio_path: PathBuf,
     pub recovery_reason: Option<String>,
+    pub asr_model_id: String,
+    pub asr_engine: String,
+    pub asr_language: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,6 +120,7 @@ impl RecorderStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
+        migrate_recorder_schema(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             recordings_dir,
@@ -131,9 +138,16 @@ impl RecorderStore {
         transaction
             .execute(
                 "INSERT INTO recorder_sessions
-                    (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path)
-                 VALUES (?1, ?2, ?2, ?3, 0, 'recording', '')",
-                params![session.title, session.created_at_ms, session.sample_rate],
+                    (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, asr_model_id, asr_engine, asr_language)
+                 VALUES (?1, ?2, ?2, ?3, 0, 'recording', '', ?4, ?5, ?6)",
+                params![
+                    session.title,
+                    session.created_at_ms,
+                    session.sample_rate,
+                    session.asr_model_id,
+                    session.asr_engine,
+                    session.asr_language
+                ],
             )
             .map_err(store_error)?;
         let id = transaction.last_insert_rowid();
@@ -520,9 +534,9 @@ impl RecorderStore {
 }
 
 const SESSION_SELECT_BASE: &str =
-    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason FROM recorder_sessions";
+    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language FROM recorder_sessions";
 const SESSION_SELECT_BY_ID: &str =
-    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason FROM recorder_sessions WHERE id = ?1";
+    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language FROM recorder_sessions WHERE id = ?1";
 
 fn session_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSession> {
     let status: String = row.get(6)?;
@@ -536,6 +550,9 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSession> {
         status: RecorderStatus::parse(&status)?,
         audio_path: PathBuf::from(row.get::<_, String>(7)?),
         recovery_reason: row.get(8)?,
+        asr_model_id: row.get(9)?,
+        asr_engine: row.get(10)?,
+        asr_language: row.get(11)?,
     })
 }
 
@@ -572,7 +589,10 @@ CREATE TABLE IF NOT EXISTS recorder_sessions (
     duration_ms     INTEGER NOT NULL DEFAULT 0,
     status          TEXT NOT NULL CHECK (status IN ('recording', 'finalizing', 'completed', 'recoverable', 'delete_failed')),
     audio_path      TEXT NOT NULL,
-    recovery_reason TEXT
+    recovery_reason TEXT,
+    asr_model_id   TEXT NOT NULL DEFAULT 'transcription',
+    asr_engine     TEXT NOT NULL DEFAULT 'whisper',
+    asr_language   TEXT NOT NULL DEFAULT 'auto'
 );
 CREATE TABLE IF NOT EXISTS recorder_segments (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -589,3 +609,40 @@ CREATE TABLE IF NOT EXISTS recorder_polished (
     text       TEXT NOT NULL
 );
 "#;
+
+fn migrate_recorder_schema(connection: &Connection) -> Result<()> {
+    let mut statement = connection
+        .prepare("PRAGMA table_info(recorder_sessions)")
+        .map_err(store_error)?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .map_err(store_error)?
+        .collect::<rusqlite::Result<Vec<_>>>()
+        .map_err(store_error)?;
+    drop(statement);
+    if !columns.iter().any(|column| column == "asr_model_id") {
+        connection
+            .execute(
+                "ALTER TABLE recorder_sessions ADD COLUMN asr_model_id TEXT NOT NULL DEFAULT 'transcription'",
+                [],
+            )
+            .map_err(store_error)?;
+    }
+    if !columns.iter().any(|column| column == "asr_engine") {
+        connection
+            .execute(
+                "ALTER TABLE recorder_sessions ADD COLUMN asr_engine TEXT NOT NULL DEFAULT 'whisper'",
+                [],
+            )
+            .map_err(store_error)?;
+    }
+    if !columns.iter().any(|column| column == "asr_language") {
+        connection
+            .execute(
+                "ALTER TABLE recorder_sessions ADD COLUMN asr_language TEXT NOT NULL DEFAULT 'auto'",
+                [],
+            )
+            .map_err(store_error)?;
+    }
+    Ok(())
+}

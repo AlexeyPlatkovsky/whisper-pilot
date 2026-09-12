@@ -206,6 +206,17 @@ pub(crate) async fn transcribe_meeting(
     id: i64,
     state: State<'_, AppState>,
 ) -> Result<TranscribeMeetingResult> {
+    let app_support_dir = app_data_dir(&app)?;
+    let app_settings = settings::get_settings(&app_support_dir);
+    let model_id = app_settings
+        .active_model_transcription
+        .as_deref()
+        .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
+    crate::asr::resolve_selection(
+        model_id,
+        crate::asr::AsrMode::Meeting,
+        crate::asr::AsrLanguage::Auto,
+    )?;
     // WP-71: serialize Meeting work with Streaming and other Meeting runs.
     // Held for this whole command, released on return via Drop.
     let _whisper_guard = streaming_session::WhisperUsageGuard::acquire(
@@ -224,16 +235,13 @@ pub(crate) async fn transcribe_meeting(
         }
     })?;
 
-    let app_support_dir = app_data_dir(&app)?;
     let meeting = crate::meetings::open_meeting(&app_support_dir, id)?;
     let path = meeting.source_path.ok_or_else(|| {
         AppError::Transcribe("meeting has no source file to transcribe".to_string())
     })?;
 
-    let active_diarization_variant = diarization_variant_to_run(
-        &settings::get_settings(&app_support_dir).active_model_diarization,
-    )
-    .map(str::to_string);
+    let active_diarization_variant =
+        diarization_variant_to_run(&app_settings.active_model_diarization).map(str::to_string);
 
     let ctx = state.model(app_support_dir.clone()).await?;
     let (transcription, samples) = decode_and_transcribe(app.clone(), id, ctx, path).await?;

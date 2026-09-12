@@ -81,6 +81,12 @@ where
 
         let final_path = asset_path(app_support_dir, asset);
         let temp_path = dir.join(format!("{}.part", asset.file_name));
+        if let Some(parent) = temp_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = final_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
         let mut partial_size = tokio::fs::metadata(&temp_path)
             .await
             .map(|metadata| metadata.len())
@@ -347,6 +353,44 @@ mod tests {
         let on_disk = tokio::fs::read(&final_path).await.unwrap();
         assert_eq!(on_disk, content);
         assert!(entry_downloaded(dir.path(), &entry));
+    }
+
+    #[tokio::test]
+    async fn download_entry_supports_verified_assets_in_a_nested_bundle_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = b"tokenizer asset".to_vec();
+        let hash = sha256_hex(&content);
+        let asset = ModelAsset {
+            url: "https://test.invalid/vocab.json",
+            sha256: Box::leak(hash.into_boxed_str()),
+            size_bytes: content.len() as u64,
+            file_name: "qwen3-asr-0.6b/vocab.json",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
+        };
+        let entry = ModelCatalogEntry {
+            id: "nested-test",
+            task: "transcription",
+            label: "Nested test",
+            assets: Box::leak(vec![asset].into_boxed_slice()),
+        };
+
+        download_entry(
+            fetch_writing(content.clone()),
+            dir.path(),
+            &assets_of(&entry),
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            tokio::fs::read(asset_path(dir.path(), &entry.assets[0]))
+                .await
+                .unwrap(),
+            content
+        );
     }
 
     #[tokio::test]

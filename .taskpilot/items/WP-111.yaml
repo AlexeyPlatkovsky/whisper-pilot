@@ -3,9 +3,9 @@ id: WP-111
 title: Phase 4 — Evaluate and integrate Qwen3-ASR
 priority: normal
 type: feature
-status: backlog
+status: done
 created_at: '2026-09-11T19:34:32Z'
-updated_at: '2026-09-11T19:34:32Z'
+updated_at: '2026-09-12T17:42:50Z'
 parent_id: WP-107
 tags:
 - recorder
@@ -33,7 +33,6 @@ description: 'Evaluate Qwen3-ASR 0.6B and 1.7B as local transcription engines on
   - Introduce the ASR engine and capability-aware model-bundle architecture.
 
   - Integrate the selected Qwen engine with model UX, persistence and Whisper fallback.'
-created_by: Codex
 dod:
 - Every direct child task is done against its own DoD.
 - The benchmark record compares Whisper large-v3-turbo Q8 with Qwen3-ASR 0.6B and 1.7B on fixed RU, EN and mixed RU/EN inputs, recording WER or CER, first-partial and final latency, RTF, peak RAM and 30 or 60-minute stability.
@@ -41,3 +40,4 @@ dod:
 - A selected and hash-verified Qwen engine works in every mode approved by its benchmark, while unsupported modes fail clearly and Whisper remains a tested default and fallback.
 - Deleting, changing or failing to load the active Qwen bundle never corrupts sessions or silently runs a different engine during an active session.
 - Required TDD, real Apple Silicon and Metal checks, model-download verification, frontend and Rust validation, and documentation maintenance pass.
+created_by: Codex

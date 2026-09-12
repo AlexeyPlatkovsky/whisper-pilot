@@ -5,6 +5,8 @@ use crate::audio::SAMPLE_RATE;
 use crate::error::AppError;
 use crate::streaming_audio::CapturedAudioChunk;
 use crate::transcribe::{self, Transcription};
+#[cfg(target_os = "macos")]
+use qwen_asr::context::{QwenCtx, QwenModel};
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::time::{Duration, Instant};
@@ -140,6 +142,13 @@ pub fn try_claim_recorder(state: &AtomicU8) -> Result<(), WhisperUser> {
     }
 }
 
+/// Read the current exclusive transcription owner without changing it. Model
+/// mutation uses this to distinguish a visible Error snapshot from a Recorder
+/// pipeline that is still draining and owns its ASR assets.
+pub fn current_whisper_user(state: &AtomicU8) -> Option<WhisperUser> {
+    WhisperUser::from_u8(state.load(Ordering::Acquire))
+}
+
 /// Releases whichever user currently holds `state`. Pairs with
 /// [`try_claim_streaming`] (and, in principle, a leaked `WhisperUsageGuard`,
 /// though nothing in this codebase does that).
@@ -193,6 +202,58 @@ impl WhisperSessionDecoder {
 impl SessionDecoder for WhisperSessionDecoder {
     fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
         transcribe::transcribe_with_state(&mut self.state, samples, |_| {})
+    }
+}
+
+/// Recorder-only window decoder backed by Qwen3-ASR. The qualified 0.6B
+/// runtime has no timestamp output, so the surrounding window contract owns
+/// the stable session-relative span while Qwen supplies text only.
+#[cfg(target_os = "macos")]
+pub struct QwenSessionDecoder {
+    context: QwenCtx,
+    language: crate::asr::AsrLanguage,
+}
+
+#[cfg(target_os = "macos")]
+impl QwenSessionDecoder {
+    pub fn new(
+        model: std::sync::Arc<QwenModel>,
+        language: crate::asr::AsrLanguage,
+    ) -> crate::error::Result<Self> {
+        let qwen_language = language.qwen_name().ok_or_else(|| {
+            AppError::InvalidSetting(
+                "Qwen3-ASR requires Russian or English Recorder language".into(),
+            )
+        })?;
+        let mut context = model.new_session();
+        context
+            .set_force_language(qwen_language)
+            .map_err(|()| AppError::ModelLoad(format!("Qwen3-ASR rejected {qwen_language}")))?;
+        context.segment_sec = 30.0;
+        Ok(Self { context, language })
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl SessionDecoder for QwenSessionDecoder {
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        let text = qwen_asr::transcribe::transcribe_audio(&mut self.context, samples)
+            .ok_or_else(|| AppError::Transcribe("Qwen3-ASR failed to decode the window".into()))?;
+        let text = text.trim().to_string();
+        let segments = if text.is_empty() {
+            Vec::new()
+        } else {
+            vec![transcribe::Segment {
+                start_ms: 0,
+                end_ms: samples_to_ms(samples.len()),
+                text,
+                speaker_id: None,
+            }]
+        };
+        Ok(Transcription {
+            segments,
+            language: self.language.code().to_string(),
+        })
     }
 }
 
@@ -647,6 +708,17 @@ mod tests {
         release_whisper_busy(&state);
 
         try_claim_streaming(&state).expect("releasing must allow a new claim");
+    }
+
+    #[test]
+    fn recorder_claim_remains_observable_until_pipeline_release() {
+        let state = AtomicU8::new(IDLE);
+        try_claim_recorder(&state).expect("Recorder claim");
+
+        assert_eq!(current_whisper_user(&state), Some(WhisperUser::Recorder));
+
+        release_whisper_busy(&state);
+        assert_eq!(current_whisper_user(&state), None);
     }
 
     #[test]

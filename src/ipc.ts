@@ -132,6 +132,7 @@ export interface Settings {
   theme: string;
   ui_language: string;
   active_model_transcription?: string;
+  active_model_recorder?: string;
   active_model_diarization: string;
   active_model_llm?: string;
   export_file_type: string;
@@ -144,6 +145,7 @@ export interface Settings {
   /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
   mfu_panel_streaming?: boolean;
   recorder_shortcut?: string;
+  recorder_language?: "auto" | "ru" | "en";
   bubble_always_on_top?: boolean;
   bubble_x?: number;
   bubble_y?: number;
@@ -250,6 +252,11 @@ export interface TaskModel {
   profile?: "legacy" | "fast" | "quality";
   min_memory_gb?: number;
   license?: string;
+  engine?: "whisper" | "qwen3_asr";
+  compatible_modes?: Array<"meeting" | "streaming" | "recorder">;
+  supports_timestamps?: boolean;
+  supports_language_detection?: boolean;
+  supports_mixed_language?: boolean;
 }
 
 /**
@@ -471,6 +478,9 @@ export interface RecorderSession {
   sample_rate: number;
   recovery_reason?: string;
   audio_path?: string;
+  asr_model_id?: string;
+  asr_engine?: string;
+  asr_language?: string;
   segments: RecorderSegment[];
   polished_text?: string;
 }

@@ -24,6 +24,9 @@ fn create_recorder(
             title: title.to_string(),
             created_at_ms,
             sample_rate,
+            asr_model_id: "transcription".into(),
+            asr_engine: "whisper".into(),
+            asr_language: "auto".into(),
         })
         .unwrap()
 }
@@ -71,6 +74,9 @@ fn recorder_schema_and_segments_are_isolated_stable_and_committed_only() {
         })
         .unwrap();
     let recorder = create_recorder(&recorder_store, "Recorder", 30, 44_100);
+    assert_eq!(recorder.asr_model_id, "transcription");
+    assert_eq!(recorder.asr_engine, "whisper");
+    assert_eq!(recorder.asr_language, "auto");
 
     assert_eq!(
         recorder_store
@@ -149,6 +155,37 @@ fn recorder_schema_and_segments_are_isolated_stable_and_committed_only() {
     assert!(reopened.list_segments(recorder.id).unwrap().is_empty());
     assert!(meeting_store.get_meeting(meeting.id).unwrap().is_some());
     assert!(streaming_store.get_session(streaming.id).unwrap().is_some());
+}
+
+#[test]
+fn legacy_recorder_rows_migrate_to_deterministic_whisper_identity() {
+    let temp = TempDir::new().unwrap();
+    let connection = Connection::open(temp.path().join(DATABASE_FILE_NAME)).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TABLE recorder_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                created_at_ms INTEGER NOT NULL,
+                updated_at_ms INTEGER NOT NULL,
+                sample_rate INTEGER NOT NULL,
+                duration_ms INTEGER NOT NULL DEFAULT 0,
+                status TEXT NOT NULL,
+                audio_path TEXT NOT NULL,
+                recovery_reason TEXT
+            );
+            INSERT INTO recorder_sessions
+                (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path)
+            VALUES ('Legacy', 1, 1, 48000, 0, 'recoverable', '/missing.caf');",
+        )
+        .unwrap();
+    drop(connection);
+
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let session = store.get_session(1).unwrap().unwrap();
+    assert_eq!(session.asr_model_id, "transcription");
+    assert_eq!(session.asr_engine, "whisper");
+    assert_eq!(session.asr_language, "auto");
 }
 
 #[test]

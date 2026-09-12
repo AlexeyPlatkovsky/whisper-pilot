@@ -627,6 +627,18 @@ pub(crate) async fn start_streaming_session(
             ))
         }
     };
+    if matches!(requested, streaming::StreamingStartConfiguration::Local) {
+        let app_settings = crate::settings::get_settings(&app_support_dir);
+        let model_id = app_settings
+            .active_model_transcription
+            .as_deref()
+            .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
+        crate::asr::resolve_selection(
+            model_id,
+            crate::asr::AsrMode::Streaming,
+            crate::asr::AsrLanguage::Auto,
+        )?;
+    }
     let now = now_ms()?;
     let (id, created_for_start) = match session_id {
         Some(id) => (id, false),

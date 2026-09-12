@@ -27,6 +27,20 @@ const TRANSCRIPTION_DOWNLOADED = {
   downloaded: true,
 };
 
+const QWEN_ASR_DOWNLOADED = {
+  id: "qwen3-asr-0.6b",
+  task: "transcription",
+  label: "Qwen3-ASR 0.6B · Recorder RU/EN",
+  downloaded: true,
+  size_bytes: 1_880_540_390,
+  recommended: true,
+  engine: "qwen3_asr" as const,
+  compatible_modes: ["recorder" as const],
+  supports_timestamps: false,
+  supports_language_detection: false,
+  supports_mixed_language: false,
+};
+
 const CAMPPLUS_DOWNLOADED = {
   id: "diarization-campplus",
   task: "diarization",
@@ -338,6 +352,45 @@ describe("AiModelsSection", () => {
       });
       expect(radio).not.toBeChecked();
       expect(radio).toBeDisabled();
+    });
+
+    it("selects downloaded Qwen for Recorder and explains its capability boundary", async () => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([
+        TRANSCRIPTION_DOWNLOADED,
+        QWEN_ASR_DOWNLOADED,
+      ]);
+      vi.mocked(ipc.getSettings).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_diarization: "none",
+        active_model_recorder: "transcription",
+        recorder_language: "ru",
+        export_file_type: "plain_text",
+      });
+      vi.mocked(ipc.setSetting).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_diarization: "none",
+        active_model_recorder: "qwen3-asr-0.6b",
+        recorder_language: "ru",
+        export_file_type: "plain_text",
+      });
+      const user = userEvent.setup();
+      render(<AiModelsSection />);
+
+      await user.click(
+        await screen.findByRole("radio", {
+          name: "Qwen3-ASR 0.6B · Recorder RU/EN",
+        }),
+      );
+
+      expect(ipc.setSetting).toHaveBeenCalledWith(
+        "active_model.recorder",
+        "qwen3-asr-0.6b",
+      );
+      expect(
+        screen.getByText(/Recorder only.*no model timestamps/),
+      ).toBeInTheDocument();
     });
   });
 

@@ -51,6 +51,7 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-016 | Live translation moves from paragraph-unit to rolling per-window translation | accepted |
 | ADR-017 | Recorder retains recoverable local audio | accepted |
 | ADR-018 | Native floating bubble and qualified GGUF profiles | accepted |
+| ADR-019 | Capability-aware ASR and Qwen3-ASR for monolingual Recorder | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability

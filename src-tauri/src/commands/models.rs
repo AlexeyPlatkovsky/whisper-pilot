@@ -56,12 +56,83 @@ pub(crate) async fn delete_model(
         .map_err(|error| AppError::Llm(error.to_string()))?;
     }
 
+    let is_recorder_asr = crate::asr::spec_by_id(&id).is_some();
+    let _asr_mutation = if is_recorder_asr {
+        Some(state.recorder_asr_mutation.lock().await)
+    } else {
+        None
+    };
+    #[cfg(target_os = "macos")]
+    if recorder_asr_delete_is_blocked(
+        is_recorder_asr,
+        crate::streaming_session::current_whisper_user(&state.whisper_busy),
+    ) {
+        return Err(AppError::InvalidSetting(
+            "Recorder ASR assets cannot be deleted until its capture and finalization pipeline has fully ended"
+                .into(),
+        ));
+    }
+
     let settings = settings::get_settings(&dir);
-    models::delete_model(&dir, &id)?;
+    let reset_recorder_model = settings.active_model_recorder == id;
+    #[cfg(target_os = "macos")]
+    if reset_recorder_model {
+        let snapshot = state
+            .live_capture
+            .lock()
+            .map_err(|_| AppError::InvalidSetting("live capture lock is poisoned".into()))?
+            .snapshot();
+        if snapshot.source == Some(crate::live_capture::LiveCaptureSource::Recorder)
+            && !matches!(
+                snapshot.phase,
+                crate::live_capture::LiveCapturePhase::Idle
+                    | crate::live_capture::LiveCapturePhase::Error
+            )
+        {
+            return Err(AppError::InvalidSetting(
+                "the active Recorder ASR cannot be deleted while recording".into(),
+            ));
+        }
+    }
+    let reset_recorder_to_whisper = reset_recorder_model && id != crate::asr::DEFAULT_ASR_MODEL_ID;
+    let deletion_result = if reset_recorder_to_whisper {
+        delete_selected_recorder_asr_under_barrier(&dir, &id)
+    } else {
+        models::delete_model(&dir, &id)
+    };
+    #[cfg(target_os = "macos")]
+    if id == crate::asr::QWEN3_ASR_06_MODEL_ID {
+        state.clear_qwen_asr_model().await;
+    }
+    deletion_result?;
     if models::delete_clears_active_diarization_variant(&id, &settings.active_model_diarization) {
         settings::set_setting(&dir, "active_model.diarization", "none")?;
     }
     Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn recorder_asr_delete_is_blocked(
+    is_recorder_asr: bool,
+    holder: Option<crate::streaming_session::WhisperUser>,
+) -> bool {
+    is_recorder_asr && holder == Some(crate::streaming_session::WhisperUser::Recorder)
+}
+
+/// Keep the safe Whisper selection after any delete failure. A multi-asset
+/// bundle can fail after an earlier asset was already removed, so restoring
+/// Qwen here could persist a selection that can no longer be loaded.
+fn delete_selected_recorder_asr_under_barrier(dir: &std::path::Path, id: &str) -> Result<()> {
+    settings::set_setting(
+        dir,
+        "active_model.recorder",
+        crate::asr::DEFAULT_ASR_MODEL_ID,
+    )?;
+    models::delete_model(dir, id).map_err(|delete_error| {
+        AppError::Io(format!(
+            "Recorder ASR deletion failed and the selection remains Whisper until the complete bundle is downloaded again: {delete_error}"
+        ))
+    })
 }
 
 /// Called only while the application's selected-model mutation barrier is
@@ -136,5 +207,40 @@ mod tests {
 
         assert!(!asset_path.exists());
         assert_eq!(settings::get_settings(temp.path()).active_model_llm, None);
+    }
+
+    #[test]
+    fn partial_recorder_bundle_deletion_keeps_the_safe_whisper_selection() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let id = crate::asr::QWEN3_ASR_06_MODEL_ID;
+        settings::set_setting(temp.path(), "recorder_language", "ru").expect("set language");
+        settings::set_setting(temp.path(), "active_model.recorder", id).expect("select Qwen");
+        let paths = models::asset_paths(temp.path(), id).expect("Qwen paths");
+        std::fs::create_dir_all(paths[0].parent().expect("model parent"))
+            .expect("create model dir");
+        std::fs::write(&paths[0], b"weights placeholder").expect("write first asset");
+        std::fs::create_dir_all(&paths[1]).expect("make second asset deletion fail");
+
+        delete_selected_recorder_asr_under_barrier(temp.path(), id)
+            .expect_err("second asset directory must fail remove_file");
+
+        assert!(!paths[0].exists(), "the first asset was already removed");
+        assert_eq!(
+            settings::get_settings(temp.path()).active_model_recorder,
+            crate::asr::DEFAULT_ASR_MODEL_ID
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn recorder_pipeline_blocks_asr_delete_even_after_selection_changed_to_whisper() {
+        assert!(recorder_asr_delete_is_blocked(
+            true,
+            Some(crate::streaming_session::WhisperUser::Recorder)
+        ));
+        assert!(!recorder_asr_delete_is_blocked(
+            true,
+            Some(crate::streaming_session::WhisperUser::Streaming)
+        ));
     }
 }

@@ -1,5 +1,6 @@
 //! Recorder persistence, capture and live-transcript IPC.
 
+use crate::asr::{self, AsrEngine, AsrLanguage, AsrMode};
 use crate::error::{AppError, Result};
 use crate::microphone_permission::{self, MicrophonePermissionStatus};
 use crate::recorder_audio::{export_caf_to_wav, RecorderAudioWriter};
@@ -48,6 +49,9 @@ pub(crate) struct RecorderSessionDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery_reason: Option<String>,
     audio_path: String,
+    asr_model_id: String,
+    asr_engine: String,
+    asr_language: String,
     segments: Vec<RecorderSegment>,
     #[serde(skip_serializing_if = "Option::is_none")]
     polished_text: Option<String>,
@@ -65,6 +69,9 @@ pub(crate) struct RecorderSessionSummaryDto {
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery_reason: Option<String>,
     audio_path: String,
+    asr_model_id: String,
+    asr_engine: String,
+    asr_language: String,
 }
 
 impl From<RecorderSession> for RecorderSessionSummaryDto {
@@ -79,6 +86,9 @@ impl From<RecorderSession> for RecorderSessionSummaryDto {
             sample_rate: session.sample_rate,
             recovery_reason: session.recovery_reason,
             audio_path: session.audio_path.to_string_lossy().into_owned(),
+            asr_model_id: session.asr_model_id,
+            asr_engine: session.asr_engine,
+            asr_language: session.asr_language,
         }
     }
 }
@@ -96,6 +106,9 @@ fn session_dto(store: &RecorderStore, session: RecorderSession) -> Result<Record
         sample_rate: session.sample_rate,
         recovery_reason: session.recovery_reason,
         audio_path: session.audio_path.to_string_lossy().into_owned(),
+        asr_model_id: session.asr_model_id,
+        asr_engine: session.asr_engine,
+        asr_language: session.asr_language,
         segments,
         polished_text,
     })
@@ -499,6 +512,7 @@ fn fail_recorder_capture(app: &tauri::AppHandle, generation: u64, message: &str)
 struct RecorderFinalizationChannels {
     tail_persisted_tx: std::sync::mpsc::Sender<()>,
     audio_finalized_rx: Receiver<Result<PathBuf>>,
+    decoder_finished_rx: Receiver<Option<String>>,
     terminal_failure_rx: Receiver<String>,
 }
 
@@ -525,7 +539,7 @@ fn drive_recorder_results(
                 transcription.language,
             ),
             Err(error) => {
-                if result.kind == streaming_session::WindowResultKind::Gap {
+                if recorder_result_error_is_terminal(result.kind) {
                     terminal_error = Some(error.to_string());
                 }
                 continue;
@@ -568,8 +582,16 @@ fn drive_recorder_results(
         }
     }
 
-    if let Ok(message) = finalization.terminal_failure_rx.try_recv() {
-        terminal_error = Some(message);
+    match finalization.decoder_finished_rx.recv() {
+        Ok(Some(message)) => terminal_error = Some(message),
+        Ok(None) => {}
+        Err(_) => {
+            terminal_error =
+                Some("Recorder ASR finalizer disconnected; audio was preserved for recovery".into())
+        }
+    }
+    for message in finalization.terminal_failure_rx {
+        terminal_error.get_or_insert(message);
     }
 
     let _ = finalization.tail_persisted_tx.send(());
@@ -610,12 +632,24 @@ fn drive_recorder_results(
 }
 
 #[cfg(target_os = "macos")]
+fn recorder_result_error_is_terminal(kind: streaming_session::WindowResultKind) -> bool {
+    kind != streaming_session::WindowResultKind::Partial
+}
+
+#[cfg(target_os = "macos")]
+fn decoder_exit_failure(outcome: &std::thread::Result<()>) -> Option<String> {
+    outcome.is_err().then(|| {
+        "Recorder ASR runtime stopped unexpectedly; audio was preserved for recovery".into()
+    })
+}
+
+#[cfg(target_os = "macos")]
 fn spawn_recorder_pipeline(
     app: tauri::AppHandle,
     app_support_dir: PathBuf,
     session: RecorderSession,
     generation: u64,
-    ctx: std::sync::Arc<whisper_rs::WhisperContext>,
+    decoder_model: RecorderDecoderModel,
     samples_rx: Receiver<PooledMicrophoneSamples>,
     mut writer: RecorderAudioWriter,
 ) -> std::sync::mpsc::Sender<String> {
@@ -624,6 +658,7 @@ fn spawn_recorder_pipeline(
     let (tail_persisted_tx, tail_persisted_rx) = std::sync::mpsc::channel();
     let (audio_finalized_tx, audio_finalized_rx) = std::sync::mpsc::channel();
     let (terminal_failure_tx, terminal_failure_rx) = std::sync::mpsc::channel();
+    let (decoder_finished_tx, decoder_finished_rx) = std::sync::mpsc::channel();
     let sample_rate = session.sample_rate;
 
     std::thread::spawn(move || {
@@ -681,12 +716,25 @@ fn spawn_recorder_pipeline(
     });
 
     std::thread::spawn(move || {
-        streaming_session::run_windowed_decode(
-            move || streaming_session::WhisperSessionDecoder::new(&ctx),
-            asr_rx,
-            results_tx,
-            0,
-        )
+        let outcome =
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match decoder_model {
+                RecorderDecoderModel::Whisper(ctx) => streaming_session::run_windowed_decode(
+                    move || streaming_session::WhisperSessionDecoder::new(&ctx),
+                    asr_rx,
+                    results_tx,
+                    0,
+                ),
+                RecorderDecoderModel::Qwen { model, language } => {
+                    streaming_session::run_windowed_decode(
+                        move || streaming_session::QwenSessionDecoder::new(model, language),
+                        asr_rx,
+                        results_tx,
+                        0,
+                    )
+                }
+            }));
+        let failure = decoder_exit_failure(&outcome);
+        let _ = decoder_finished_tx.send(failure);
     });
 
     std::thread::spawn(move || {
@@ -699,6 +747,7 @@ fn spawn_recorder_pipeline(
             RecorderFinalizationChannels {
                 tail_persisted_tx,
                 audio_finalized_rx,
+                decoder_finished_rx,
                 terminal_failure_rx,
             },
         )
@@ -707,11 +756,28 @@ fn spawn_recorder_pipeline(
 }
 
 #[cfg(target_os = "macos")]
+enum RecorderDecoderModel {
+    Whisper(std::sync::Arc<whisper_rs::WhisperContext>),
+    Qwen {
+        model: std::sync::Arc<qwen_asr::context::QwenModel>,
+        language: AsrLanguage,
+    },
+}
+
+#[cfg(target_os = "macos")]
 pub(crate) async fn start_recorder_impl(
     app: tauri::AppHandle,
     state: &AppState,
 ) -> Result<RecorderSessionDto> {
     let app_support_dir = app_data_dir(&app)?;
+    let _asr_mutation = state.recorder_asr_mutation.lock().await;
+    let recorder_settings = crate::settings::get_settings(&app_support_dir);
+    let language = AsrLanguage::parse(&recorder_settings.recorder_language)?;
+    let asr_spec = asr::resolve_selection(
+        &recorder_settings.active_model_recorder,
+        AsrMode::Recorder,
+        language,
+    )?;
     let info = MicrophoneCaptureSession::probe_default_input()?;
     if let Err(holder) = streaming_session::try_claim_recorder(&state.whisper_busy) {
         return Err(AppError::Capture(match holder {
@@ -724,8 +790,18 @@ pub(crate) async fn start_recorder_impl(
             streaming_session::WhisperUser::Recorder => "Recorder is already running".into(),
         }));
     }
-    let ctx = match state.model(app_support_dir.clone()).await {
-        Ok(ctx) => ctx,
+    let decoder_model = match asr_spec.engine {
+        AsrEngine::Whisper => state
+            .model(app_support_dir.clone())
+            .await
+            .map(RecorderDecoderModel::Whisper),
+        AsrEngine::Qwen3Asr => state
+            .qwen_asr_model(app_support_dir.clone(), asr_spec)
+            .await
+            .map(|model| RecorderDecoderModel::Qwen { model, language }),
+    };
+    let decoder_model = match decoder_model {
+        Ok(model) => model,
         Err(error) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
             return Err(error);
@@ -749,6 +825,9 @@ pub(crate) async fn start_recorder_impl(
         title: format!("Recording {now}"),
         created_at_ms: now,
         sample_rate: info.sample_rate,
+        asr_model_id: asr_spec.model_id.to_string(),
+        asr_engine: asr_spec.engine.as_str().to_string(),
+        asr_language: language.code().to_string(),
     }) {
         Ok(session) => session,
         Err(error) => {
@@ -826,7 +905,7 @@ pub(crate) async fn start_recorder_impl(
         app_support_dir.clone(),
         session.clone(),
         generation,
-        ctx,
+        decoder_model,
         samples_rx,
         writer,
     );
@@ -910,4 +989,30 @@ pub(crate) async fn stop_recorder_session(_state: State<'_, AppState>) -> Result
     Err(AppError::Capture(
         "Recorder microphone capture is only available on macOS".into(),
     ))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::{decoder_exit_failure, recorder_result_error_is_terminal};
+    use crate::streaming_session::WindowResultKind;
+
+    #[test]
+    fn committed_and_gap_decode_errors_make_recorder_recoverable() {
+        assert!(recorder_result_error_is_terminal(
+            WindowResultKind::Committed
+        ));
+        assert!(recorder_result_error_is_terminal(WindowResultKind::Gap));
+        assert!(!recorder_result_error_is_terminal(
+            WindowResultKind::Partial
+        ));
+    }
+
+    #[test]
+    fn decoder_panic_becomes_a_synchronized_recoverable_failure() {
+        let outcome = std::panic::catch_unwind(|| panic!("decoder failure"));
+
+        let message = decoder_exit_failure(&outcome).expect("panic must be terminal");
+
+        assert!(message.contains("audio was preserved for recovery"));
+    }
 }

@@ -1,6 +1,6 @@
 # WhisperPilot Architecture
 
-Technical architecture for the offline meeting-mfu workspace. Product scope is
+Technical architecture for the Meeting, Streaming, Recorder, and local-AI workspace. Product scope is
 owned by `docs/idea.md`; UX by `docs/design.md`. This document owns the layer
 map, pipeline, meeting/data model, IPC contract, models, and build MFU. The
 core unit is a **Meeting** (one transcription of one source file).
@@ -17,6 +17,7 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
   ipc.ts / events                  meetings/     meeting persistence facade (`dto.rs` = DTOs/coalesce)
   theming / i18n                   state.rs      AppState (Whisper cache, live-capture owner)
   [WP-68] StreamingView.tsx        error.rs      AppError → serialized to JS
+  RecorderView.tsx                 asr.rs        stable ASR IDs, engines, capabilities
                                    settings.rs   key–value settings store (theme, ui_language, active models)
                                    models/       model catalog (`catalog.rs`) + download (`download.rs`)
                                    [M2] diarize/   sherpa-onnx speaker turns + merge (clustering/segmentation/speakers/pipeline)
@@ -25,6 +26,10 @@ React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
                                    [WP-68] streaming_session.rs  rolling-window decode + mutual exclusion
                                    [WP-68] streaming_store.rs  SQLite streaming_sessions/streaming_segments
                                    [WP-68] streaming.rs  Streaming IPC facade (list/open/rename/delete)
+                                   recorder_store.rs     Recorder SQLite sessions/segments/provenance
+                                   recorder_audio.rs     native-rate CAF durability + WAV export
+                                   microphone_audio.rs   default-input CoreAudio capture
+                                   commands/recorder.rs  Recorder lifecycle and IPC facade
 ```
 
 The Rust core does all heavy work and owns persistence; the React layer is a
@@ -108,10 +113,10 @@ configuration as plain data so it can be asserted in a unit test — notably
 `detect_language_only`, which must stay `false` because whisper.cpp returns
 immediately after detection when it is set, yielding an empty transcript.
 
-Meeting does not install a Whisper progress or abort callback: the bundled
-Metal path is kept identical to the known-good main-branch decode (WP-86).
-Streaming retains its separate state-reuse path. A percent-progress event is
-therefore not emitted during Meeting decode; the UI uses its indeterminate status.
+Meeting installs Whisper's progress callback and emits
+`transcription_progress { id, percent }` during the transcription phase.
+Streaming retains its separate state-reuse path. Diarization has no percentage
+estimate, so that second phase remains indeterminate.
 
 On macOS, `llama-cpp-2` is dynamically linked while Whisper remains static.
 Both engines embed incompatible ggml versions with the same exported symbol
@@ -852,14 +857,16 @@ dark / system, plus release themes) and **i18n** (English default, release
 languages); the OS scheme drives the _System_ theme.
 
 `models/` manages a **fixed, app-defined catalog** of the model(s) each task
-needs (transcription = Whisper, diarization = sherpa-onnx segmentation +
+needs (transcription = Whisper plus optional Recorder-only Qwen3-ASR,
+diarization = sherpa-onnx segmentation +
 selectable embedding, MFU = llama/Qwen at M3). **Download** fetches from a
 known URL, streams progress, and marks a model ready only after **SHA
 verification**; **Delete** removes the local file. A task whose required model
 is absent is disabled or degrades (Transcribe needs the Whisper model;
-diarization degrades per F002-R7). Beta manages **one model per task** for
-transcription; at release other tasks may hold several with an **Active**
-selection. Diarization is ahead of that general timeline (WP-52): its catalog
+diarization degrades per F002-R7). `active_model.transcription` remains the
+Whisper identity for Meeting/Streaming, while `active_model.recorder` selects
+between Whisper and Qwen for future Recorder sessions. Diarization has its own
+multi-entry selection (WP-52): its catalog
 entry already holds one shared segmentation asset plus multiple
 independently-downloadable embedding variants (CAM++, TitaNet-large), addressed
 by a synthetic `"diarization-<variant>"` id, with an `active_model.diarization`
@@ -935,7 +942,7 @@ span.
 | `open_file_dialog`                                                     | Pick a source audio/video file                                                                                                                                                                | M1        |
 | `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
 | `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
-| `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes; Meeting decode emits no percent-progress event.                                           | M2        |
+| `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, emit `transcription_progress`, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes.                                           | M2        |
 | `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
 | `open_meeting(id)`                                                     | Full meeting (segments, MFU, meta)                                                                                                                                                          | M2        |
 | `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
@@ -946,7 +953,6 @@ span.
 | `get_settings()` / `set_setting(key, value)`                           | Read/update settings (theme, ui_language, active model)                                                                                                                                       | M2        |
 | `list_task_models()`                                                   | Per-task model catalog with download state                                                                                                                                                    | M2        |
 | `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
-| `set_active_model(task, id)`                                           | Choose the active model for a task                                                                                                                                                            | M3        |
 | `get_cloud_provider_config()` / `select_cloud_provider(provider)`      | Read the fixed provider/model catalog and persist only the selected non-secret provider id                                                                                                   | WP-106    |
 | `verify_cloud_provider_api_key(provider, api_key)`                     | Check provider authentication/model access without saving or returning the key, and without captured audio                                                                                   | WP-106    |
 | `save_cloud_provider_api_key(provider, api_key)` / `remove_cloud_provider_api_key(provider)` | Verify then add/replace, or delete, exactly one provider Keychain credential; responses contain status metadata only, never the key | WP-106 |
@@ -965,8 +971,17 @@ span.
 | `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
 | `translate_streaming_window(session_id, window_index, target_language, text, context?)` | Translate one Streaming window into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, window_index, target_language)`; called by the Live Translation queue (WP-93/WP-103). Optional `context` is the up-to-2 immediately preceding windows' own translations, concatenated, passed as reference-only prompt context | WP-92, WP-100, WP-103 |
 | `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
+| `get_microphone_permission_status()` / `request_microphone_permission()` | Read TCC state without prompting, or explicitly request microphone access                                                                                                                    | WP-109    |
+| `list_recorder_sessions()` / `open_recorder_session(id)`               | Read Recorder history summaries or a complete session with persisted ASR provenance and segments                                                                                            | WP-109    |
+| `rename_recorder_session(id, title)` / `delete_recorder_session(id)`    | Manage inactive Recorder history and its app-owned audio                                                                                                                                      | WP-109    |
+| `start_recorder_session()` / `stop_recorder_session()`                 | Run preflight and begin default-microphone capture, or enter durable finalization                                                                                                             | WP-109    |
+| `recover_recorder_session(id)` / `export_recorder_wav(id)`             | Reconcile recoverable local audio or export the finalized native-rate CAF as WAV                                                                                                              | WP-109    |
+| `update_recorder_segment(session_id, segment_id, text)`                 | Persist an edit without rewriting raw audio or ASR provenance                                                                                                                                 | WP-109    |
+| `set_recorder_shortcut(value)` / `get_recorder_shortcut_status()`      | Atomically replace the global toggle chord or report its registration state                                                                                                                   | WP-109    |
+| `generate_recorder_polish(id)` / `accept_recorder_polish(id, text)` / `revert_recorder_polish(id)` | Generate, accept, or discard a derived local-LLM presentation while preserving raw segments and audio | WP-109 |
 
-Events: `transcription_phase { id, phase: "diarizing" }` marks the transition
+Events: `transcription_progress { id, percent }` reports Whisper's 0–100
+Meeting decode estimate. `transcription_phase { id, phase: "diarizing" }` marks the transition
 between the Meeting run's two passes; completion and errors return through the
 `transcribe_meeting` invoke promise. `model_download_progress { id, fraction,
 stage }` uses `stage` =
@@ -986,6 +1001,12 @@ payload is always `mic: false, system_audio: true` for supported Streaming
 capture. `streaming_session_ended { session_id }` fires once the decode
 loop has fully ended after `stop_streaming_session`.
 
+**Recorder events:** `recorder_partial { session_id, revision, text }` replaces
+the one provisional phrase; `recorder_segment_committed` and
+`recorder_session_changed` hydrate durable transcript/session updates;
+`recorder_error { session_id?, message }` reports actionable capture, decode,
+or finalization failure. Recorder also emits the shared `live_capture_state`.
+
 ## Recorder Runtime And Storage (ADR-017)
 
 Recorder is a third Rust-owned live source beside Streaming, not a microphone
@@ -997,7 +1018,7 @@ can own native transcription resources. Renderer mount state and the visibility
 of the main or caption window are never lifecycle authorities.
 
 Start has a preflight boundary before durable creation: macOS microphone
-authorization, the selected Whisper model, the system-default input device, and
+authorization, the selected ASR model bundle, the system-default input device, and
 the shortcut caption surface when required must be ready before a Recorder row
 or audio file exists. A typed AVFoundation adapter exposes `not_determined`,
 `denied`, `restricted`, `authorized`, and `unavailable` over IPC. Its status
@@ -1012,11 +1033,35 @@ and releasing a chunk returns a capacity-checked buffer to the pool. Exhaustion
 stops delivery as an explicit overload instead of allocating on CoreAudio's
 real-time thread. The CAF writer encodes that master as signed-16 PCM
 at the same declared rate. Independent, band-limited adapters derive the 16 kHz
-local-Whisper stream, the 24 kHz OpenAI Realtime stream, or a provider-supported
+local-ASR stream, the 24 kHz OpenAI Realtime stream, or a provider-supported
 native-rate stream. Recorder never mixes microphone and system audio. A change
 to the system default does not migrate an active stream; CPAL interruptions and
 bounded-queue overload are surfaced once so the coordinator can end capture as
 a recoverable error.
+
+ASR selection is capability-driven (ADR-019), not inferred from catalog order.
+The static model specification declares engine, compatible modes, streaming,
+timestamps, language detection, mixed-language support, memory guidance,
+license, and an exact asset fingerprint. Meeting and Streaming resolve the
+legacy `transcription` ID to Whisper. Recorder independently persists
+`active_model.recorder` plus `recorder_language`; older settings default to
+Whisper plus `auto`. Qwen3-ASR 0.6B is accepted only for Recorder with explicit
+`ru` or `en`. Unsupported combinations and incomplete bundles fail before
+capture, without implicit fallback.
+
+Whisper retains its existing Metal context. Qwen uses the pinned pure-Rust
+`qwen-asr` 0.11.0 runtime with Apple Accelerate/vDSP and a complete official
+safetensors/vocabulary/merges bundle. Its immutable weights are cached by
+engine, model ID, and the composite fingerprint of all three assets; each Recorder run creates a fresh
+decode session. Both engines implement the same bounded window decoder
+contract. Because the Qwen runtime has no model timestamps, Recorder assigns
+the already-stable capture-window span and never presents it as word timing.
+Every new Recorder row stores `asr_model_id`, `asr_engine`, and `asr_language`, preserving active
+session immutability and historical provenance across settings changes.
+A single async mutation barrier spans selection changes, model loading, and
+deletion until Recorder Start has installed live ownership. Successful Qwen
+deletion also invalidates the in-memory cache; a partial multi-asset deletion
+keeps Whisper selected until the complete bundle is downloaded again.
 
 An observable `finalizing` session state sits between capture and completion.
 It retains live-source ownership while meaningful tail audio is transcribed,
@@ -1110,6 +1155,7 @@ application logs.
 | --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Tauri command layer (per-domain) + registration in `run()`| `src-tauri/src/commands/` + `src-tauri/src/lib.rs`                                                   |
 | App state, model cache, running-run slots                  | `src-tauri/src/state.rs`                                                                            |
+| ASR identity, capabilities, compatibility, bundle fingerprint | `src-tauri/src/asr.rs`                                                                           |
 | IPC event payloads                                        | `src-tauri/src/events.rs`                                                                           |
 | Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
 | Whisper transcription + Streaming progress                | `src-tauri/src/transcribe.rs`                                                                       |
@@ -1121,5 +1167,7 @@ application logs.
 | Diarization process isolation                             | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                      |
 | Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
 | Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
+| Recorder capture / audio / persistence / IPC facade       | `src-tauri/src/microphone_audio.rs` / `recorder_audio.rs` / `recorder_store.rs` / `commands/recorder.rs` |
 | Cloud provider catalog, Keychain credentials, and command facade | `src-tauri/src/cloud_provider.rs` / `src-tauri/src/commands/settings.rs` |
 | Streaming tab                                             | `src/StreamingView.tsx`                                                                             |
+| Recorder tab and settings                                 | `src/RecorderView.tsx` / `src/RecorderSettingsSection.tsx` / `src/AiModelsSection.tsx`              |

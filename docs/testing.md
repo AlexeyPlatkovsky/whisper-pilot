@@ -89,6 +89,15 @@ is ignored by default because it requires explicit macOS TCC approval and audibl
 input; it must be run with the real-Metal gate before Recorder release evidence is
 complete.
 
+ASR engine regressions resolve stable IDs rather than catalog order, capability-
+gate modes and language policy before capture, require all files in a model
+bundle, key caches by engine/model/fingerprint, migrate legacy settings and
+Recorder rows deterministically, and persist immutable session engine identity.
+The ignored real Qwen gate loads the official 0.6B bundle and decodes the fixed
+Russian corpus through the production `QwenSessionDecoder`. The frozen corpus,
+runtime revisions, WER, latency, RTF, memory, long-run results, and per-mode
+decision are recorded in `docs/validation/phase-4-qwen-asr-qualification.md`.
+
 Floating-bubble regressions cover the five-point click/drag boundary, visible
 work-area clamping, removed-monitor fallback, non-color status presentation and
 least-privilege capability. WKWebView/native window behavior additionally needs

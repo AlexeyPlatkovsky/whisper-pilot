@@ -3,9 +3,9 @@ id: WP-126
 title: Introduce an ASR engine and capability-aware model bundles
 priority: high
 type: task
-status: backlog
+status: done
 created_at: '2026-09-11T19:39:45Z'
-updated_at: '2026-09-11T19:42:22Z'
+updated_at: '2026-09-12T17:42:45Z'
 parent_id: WP-111
 tags:
 - recorder

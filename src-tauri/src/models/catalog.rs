@@ -2,6 +2,7 @@
 //! trusted list of models and assets, on-disk path construction, per-target
 //! asset resolution, listing, and deletion.
 
+use crate::asr::{spec_by_id as asr_spec_by_id, AsrEngine, AsrMode};
 use crate::error::{AppError, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -200,6 +201,40 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
         ],
     },
     ModelCatalogEntry {
+        id: "qwen3-asr-0.6b",
+        task: "transcription",
+        label: "Qwen3-ASR 0.6B · Recorder RU/EN",
+        assets: &[
+            ModelAsset {
+                url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/model.safetensors",
+                sha256: "79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea",
+                size_bytes: 1_876_091_704,
+                file_name: "qwen3-asr-0.6b/model.safetensors",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+            ModelAsset {
+                url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/vocab.json",
+                sha256: "ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910",
+                size_bytes: 2_776_833,
+                file_name: "qwen3-asr-0.6b/vocab.json",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+            ModelAsset {
+                url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/merges.txt",
+                sha256: "8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5",
+                size_bytes: 1_671_853,
+                file_name: "qwen3-asr-0.6b/merges.txt",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+        ],
+    },
+    ModelCatalogEntry {
         id: "qwen2.5-3b-q3km",
         task: "llm",
         label: "Qwen2.5 3B Instruct (Q3_K_M)",
@@ -288,6 +323,16 @@ pub struct TaskModel {
     pub min_memory_gb: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<AsrEngine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compatible_modes: Option<Vec<AsrMode>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_timestamps: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_language_detection: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_mixed_language: Option<bool>,
 }
 
 pub(crate) fn models_dir(app_support_dir: &Path) -> PathBuf {
@@ -412,8 +457,21 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                     size_bytes: entry.assets.iter().map(|a| a.size_bytes).sum(),
                     recommended: entry.assets.iter().any(|asset| asset.recommended),
                     profile: llm_spec_by_id(entry.id).map(|spec| spec.profile),
-                    min_memory_gb: llm_spec_by_id(entry.id).map(|spec| spec.min_memory_gb),
-                    license: llm_spec_by_id(entry.id).map(|spec| spec.license.to_string()),
+                    min_memory_gb: llm_spec_by_id(entry.id)
+                        .map(|spec| spec.min_memory_gb)
+                        .or_else(|| asr_spec_by_id(entry.id).map(|spec| spec.min_memory_gb)),
+                    license: llm_spec_by_id(entry.id)
+                        .map(|spec| spec.license.to_string())
+                        .or_else(|| asr_spec_by_id(entry.id).map(|spec| spec.license.to_string())),
+                    engine: asr_spec_by_id(entry.id).map(|spec| spec.engine),
+                    compatible_modes: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.compatible_modes.to_vec()),
+                    supports_timestamps: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.timestamps),
+                    supports_language_detection: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.language_detection),
+                    supports_mixed_language: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.mixed_language),
                 }]
             } else {
                 let shared: Vec<&ModelAsset> = entry
@@ -438,6 +496,11 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                         profile: None,
                         min_memory_gb: None,
                         license: None,
+                        engine: None,
+                        compatible_modes: None,
+                        supports_timestamps: None,
+                        supports_language_detection: None,
+                        supports_mixed_language: None,
                     })
                     .collect()
             }

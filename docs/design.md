@@ -186,12 +186,18 @@ Recorder reuses the shell and fixed top action vocabulary. **Start** performs
 permission, model, system-default microphone, and caption-surface preflight
 before a session is created. **Stop** ends capture and enters **Finalizing**;
 copy, export, delete, and playback become available when their durable inputs
-exist. The source row names the input device, Whisper model, auto-detected
-language scope, and that audio is stored locally.
+exist. The metadata row names the selected ASR model, language scope, and native
+stored-audio sample rate. Whisper is the default and supports
+Auto/mixed input. The optional Qwen3-ASR row is Recorder-only, requires an
+explicit Russian or English setting, and its model row states that model
+timestamps are unavailable. Recorder persists capture-window spans but does not
+currently render them. An unsupported or missing selection blocks Start with a
+Settings action; it never silently starts another engine.
 
-Committed phrases have stable identity, timestamp, and normal text styling. The
-one trailing partial is italic and muted, may change in place, and is replaced
-rather than duplicated when its committed phrase arrives.
+Committed phrases have stable identity and normal text styling. Their capture
+window spans are persisted but are not currently rendered in the Recorder
+workspace. The one trailing partial is italic and muted, may change in place,
+and is replaced rather than duplicated when its committed phrase arrives.
 
 Recorder retains app-owned CAF audio independently of transcript edits. The
 bottom audio surface is disabled during capture, reports safe closing during
@@ -203,7 +209,7 @@ ownership and atomic-finalization rules.
 **Polish transcript** sends the raw committed text to the selected local LLM
 and presents a review candidate above the still-visible raw segments. **Accept
 polish** stores a derived presentation used by copy/export; **Cancel** discards
-the candidate and **Revert polish** returns to the timestamped raw segments.
+the candidate and **Revert polish** returns to the raw segments.
 Generation and acceptance never rewrite captured audio or raw segment rows.
 
 The configurable global shortcut uses **Control + Option + Space** initially and
@@ -258,7 +264,7 @@ would retain the interaction in an opaque 120 px panel.
 
 Opened from the header **gear**; a screen with these sections:
 
-- **AI models** — grouped by task (transcription, diarization; MFU at release).
+- **AI models** — grouped by task (transcription, diarization, and MFU).
   Each required model shows its state with **Download** and **Delete** buttons.
   **Download** opens a blocking dialog (progress bar, spinner, elapsed time),
   the same "blocked with progress shown" pattern as transcription/MFU; it names
@@ -267,10 +273,12 @@ Opened from the header **gear**; a screen with these sections:
   or on error, or if the user dismisses it early with **✕** (the download itself
   keeps running, and the model's row keeps reporting percent-complete and then
   _Verifying…_ until it updates to ready). **Delete** asks for confirmation
-  before removing the file. Beta lists **one model per task**, whose row marks
-  the downloaded model with the same radio the diarization list uses, checked
-  and non-interactive because there is nothing to switch to; at release each
-  task may list 3–4 models, each with a selectable **Active** radio.
+  before removing the file. Tasks may expose one or more fixed catalog entries;
+  selectable entries use an **Active** radio. Transcription currently has two
+  rows that select Recorder ASR: Whisper explains all-mode,
+  auto-language and timestamp support; Qwen3-ASR explains its Recorder-only,
+  explicit RU/EN and no-model-timestamp boundary. Meeting and Streaming remain
+  on Whisper.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
   OS), and **Status Colors**: one configurable color per current semantic
   Meeting/Streaming status (anchored picker popover, per-row revert to the
@@ -348,7 +356,7 @@ Whisper model; diarization degrades without its models).
 3. If the source file is missing, the meeting still opens for reading/editing;
    **Transcribe** is disabled with a "source file missing" detail.
 
-### Record a voice note (planned)
+### Record a voice note
 
 1. Open **Recorder** or invoke its global shortcut while no live source owns the
    transcription resource.

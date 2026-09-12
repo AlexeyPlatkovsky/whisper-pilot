@@ -7,30 +7,33 @@ an optional Cloud BYOK streaming mode for supported providers. It stores keys
 in macOS Keychain and sends live audio only after the user explicitly selects
 Cloud and the provider connection succeeds.
 
-Built for accuracy over speed: because processing runs offline in batch, it
-uses full-file context and larger models than a real-time transcriber could
-afford. Russian is the primary language today, with English and further
-languages planned; the language of each recording is detected automatically.
+Meeting transcription is built for accuracy over speed: it runs offline in
+batch, uses full-file context, and detects language automatically. Streaming
+and Recorder process bounded live windows. Recorder supports automatic/mixed
+Whisper input or explicitly selected Russian or English with Qwen3-ASR.
 
 ## Features
 
 - **Local file transcription** — pick any local audio or video file and
   transcribe it end-to-end on-device.
+- **Recorder** — capture the default microphone into recoverable local audio,
+  see stable live phrases, and start or stop from a global shortcut.
+- **Selectable Recorder ASR** — Whisper remains the automatic/mixed-language
+  default; the optional Qwen3-ASR 0.6B engine provides fast local Russian or
+  English dictation when that language is selected explicitly.
 - **Accurate Russian transcription** — full-file Whisper decoding (Metal
   acceleration) tuned for quality over real-time speed. The spoken language is
   detected automatically; there is nothing to configure.
-- **Editable, timestamped transcript** — every segment shows its start time
-  and can be corrected in place.
+- **Editable transcripts** — Meeting and Streaming show segment start times;
+  Recorder keeps capture spans in storage while its current editor shows text.
 - **Save to a text file** — export the current (edited) transcript whenever
   you're done.
 - **Clear error handling** — missing dependencies or models surface as
   readable messages instead of crashes.
 
-WhisperPilot is pre-1.0 and under active development. A persisted meeting
-library (reopen, rename, delete) and speaker-attributed transcripts (colored
-per-speaker chat) are implemented. Planned next: auto-saved edits, a
-source-missing state for meetings whose file has moved, Markdown/plain-text
-export, and — after that — local AI-generated meeting notes.
+WhisperPilot is under active development. Its persisted Meeting, Streaming,
+and Recorder libraries support reopen/manage flows, recoverable Recorder audio,
+editable transcripts, export, speaker attribution, and local AI processing.
 
 ## Requirements
 

@@ -37,9 +37,47 @@ mod tests {
 
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"transcription"));
+        assert!(ids.contains(&"qwen3-asr-0.6b"));
         assert!(ids.contains(&"diarization-campplus"));
         assert!(ids.contains(&"diarization-titanet-large"));
         assert!(models.iter().all(|m| !m.downloaded));
+    }
+
+    #[tokio::test]
+    async fn qwen_catalog_row_exposes_recorder_only_capabilities_and_requires_all_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = CATALOG
+            .iter()
+            .find(|entry| entry.id == "qwen3-asr-0.6b")
+            .unwrap();
+        let paths = asset_paths(dir.path(), entry.id).unwrap();
+        for (path, asset) in paths.iter().zip(entry.assets).take(2) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(path).unwrap();
+            file.set_len(asset.size_bytes).unwrap();
+        }
+        let partial = list_task_models(dir.path())
+            .into_iter()
+            .find(|model| model.id == entry.id)
+            .unwrap();
+        assert!(!partial.downloaded);
+        assert_eq!(partial.engine, Some(crate::asr::AsrEngine::Qwen3Asr));
+        assert_eq!(
+            partial.compatible_modes,
+            Some(vec![crate::asr::AsrMode::Recorder])
+        );
+        assert_eq!(partial.supports_timestamps, Some(false));
+
+        let last = entry.assets.last().unwrap();
+        let file = std::fs::File::create(paths.last().unwrap()).unwrap();
+        file.set_len(last.size_bytes).unwrap();
+        assert!(
+            list_task_models(dir.path())
+                .into_iter()
+                .find(|model| model.id == entry.id)
+                .unwrap()
+                .downloaded
+        );
     }
 
     #[tokio::test]

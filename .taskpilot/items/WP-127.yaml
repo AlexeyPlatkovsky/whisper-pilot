@@ -3,9 +3,9 @@ id: WP-127
 title: Integrate the selected Qwen3-ASR engine
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-09-11T19:39:51Z'
-updated_at: '2026-09-11T19:39:51Z'
+updated_at: '2026-09-12T17:42:47Z'
 parent_id: WP-111
 tags:
 - recorder
@@ -24,7 +24,6 @@ description: 'Integrate only the Qwen3-ASR variant and local runtime adopted by 
 
 
   Constraints: match the benchmark-selected revisions and quantization; no Python, vLLM or CUDA production dependency; assets and hashes are verified directly; do not claim timestamps where the runtime lacks them; coordinate memory with local LLM and diarization; Whisper remains installed and selectable independently.'
-created_by: Codex
 dod:
 - Only benchmark-approved Qwen variants and modes are shipped, using the recorded runtime revision, quantization and complete hash-verified model bundle.
 - Download, verification, activation, deletion and incomplete-bundle recovery work per asset and never report a partial bundle as ready.
@@ -32,3 +31,4 @@ dod:
 - Start, Stop, long input, warm reuse, app relaunch and runtime-failure paths obey the approved timestamp, finalization and explicit Whisper fallback policy without mixing engines in one active session.
 - Deleting or changing active assets invalidates caches safely and preserves existing session readability.
 - TDD, Apple Silicon runtime checks, real-Metal Whisper fallback, frontend/Rust validation, model-license and security review, and documentation maintenance pass.
+created_by: Codex
