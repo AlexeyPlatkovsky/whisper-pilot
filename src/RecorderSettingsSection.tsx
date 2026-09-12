@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import {
   getRecorderShortcutStatus,
   getSettings,
+  setBubbleAlwaysOnTop,
   setRecorderShortcut,
 } from "./ipc";
 
@@ -12,6 +13,7 @@ export function RecorderSettingsSection() {
   const [saved, setSaved] = useState(DEFAULT_SHORTCUT);
   const [message, setMessage] = useState<string | null>(null);
   const [active, setActive] = useState(false);
+  const [alwaysOnTop, setAlwaysOnTop] = useState(false);
 
   async function refreshStatus() {
     try {
@@ -29,6 +31,7 @@ export function RecorderSettingsSection() {
       const shortcut = settings.recorder_shortcut ?? DEFAULT_SHORTCUT;
       setValue(shortcut);
       setSaved(shortcut);
+      setAlwaysOnTop(settings.bubble_always_on_top ?? false);
     });
     void refreshStatus();
   }, []);
@@ -77,6 +80,30 @@ export function RecorderSettingsSection() {
         {active ? "Save shortcut" : "Retry shortcut"}
       </button>
       {message && <p role="status">{message}</p>}
+      <hr className="settings-divider" />
+      <h4>Floating bubble</h4>
+      <p className="settings-description">
+        Collapse WhisperPilot into a 120 px status bubble. When Over All is
+        enabled, the bubble appears above normal windows and on every Space,
+        including fullscreen Spaces.
+      </p>
+      <label className="settings-toggle-row">
+        <span>Over All</span>
+        <input
+          type="checkbox"
+          aria-label="Keep Recorder bubble over all windows"
+          checked={alwaysOnTop}
+          onChange={(event) => {
+            const next = event.target.checked;
+            setAlwaysOnTop(next);
+            setMessage(null);
+            void setBubbleAlwaysOnTop(next).catch((error) => {
+              setAlwaysOnTop(!next);
+              setMessage(String(error));
+            });
+          }}
+        />
+      </label>
     </section>
   );
 }

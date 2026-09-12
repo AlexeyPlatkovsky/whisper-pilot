@@ -5,6 +5,7 @@ use crate::error::{AppError, Result};
 use crate::llm;
 use crate::meetings::MeetingDto;
 use crate::models;
+use crate::recorder_store::RecorderStore;
 use crate::settings;
 use crate::state::app_data_dir;
 use crate::store;
@@ -171,6 +172,68 @@ pub(crate) async fn revert_streaming_prettify(
     let store = streaming_store::StreamingStore::open(&app_support_dir)?;
     store.delete_prettified(id)?;
     streaming::open_streaming_session(&app_support_dir, id)
+}
+
+/// Generates a cleaned Recorder transcript for explicit user review. Raw
+/// timestamped segments are never modified by generation or acceptance.
+#[tauri::command]
+pub(crate) async fn generate_recorder_polish(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    id: i64,
+) -> Result<String> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = RecorderStore::open_runtime(&app_support_dir)?;
+    let session = store
+        .get_session(id)?
+        .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
+    let segments = store.list_segments(session.id)?;
+    if segments.is_empty() {
+        return Err(AppError::Llm(
+            "Recorder session has no transcript to polish".into(),
+        ));
+    }
+    let transcript = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let model_dir = app_support_dir.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
+    tokio::task::spawn_blocking(move || {
+        llm::prettify_transcript_with_model_resolver(&llm_runtime, &transcript, || {
+            resolve_llm_model_path(&model_dir)
+        })
+    })
+    .await
+    .map_err(|error| AppError::Llm(error.to_string()))?
+}
+
+#[tauri::command]
+pub(crate) fn accept_recorder_polish(
+    app: tauri::AppHandle,
+    id: i64,
+    text: String,
+) -> Result<crate::commands::recorder::RecorderSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = RecorderStore::open_runtime(&app_support_dir)?;
+    if text.trim().is_empty() {
+        return Err(AppError::Llm(
+            "polished transcript must not be empty".into(),
+        ));
+    }
+    store.upsert_polished(id, text.trim())?;
+    crate::commands::recorder::open_recorder_session(app, id)
+}
+
+#[tauri::command]
+pub(crate) fn revert_recorder_polish(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<crate::commands::recorder::RecorderSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    RecorderStore::open_runtime(&app_support_dir)?.delete_polished(id)?;
+    crate::commands::recorder::open_recorder_session(app, id)
 }
 
 /// Translates one Streaming window into `target_language` ("en" or "ru")

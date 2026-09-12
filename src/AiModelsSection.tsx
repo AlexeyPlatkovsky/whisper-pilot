@@ -151,6 +151,13 @@ export function AiModelsSection() {
                       {m.recommended && (
                         <span className="model-badge">Recommended</span>
                       )}
+                      {m.profile && (
+                        <small className="model-guidance">
+                          {m.profile === "legacy"
+                            ? "Legacy"
+                            : `${m.profile === "fast" ? "Fast" : "Quality"} · ${m.min_memory_gb}+ GB RAM · ${m.license}`}
+                        </small>
+                      )}
                     </span>
                     <span className="model-row-spacer" />
                     {state?.kind === "error" && (

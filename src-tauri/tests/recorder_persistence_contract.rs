@@ -139,6 +139,7 @@ fn recorder_schema_and_segments_are_isolated_stable_and_committed_only() {
     assert!(names.contains(&"streaming_sessions".to_string()));
     assert!(names.contains(&"recorder_sessions".to_string()));
     assert!(names.contains(&"recorder_segments".to_string()));
+    assert!(names.contains(&"recorder_polished".to_string()));
 
     reopened
         .mark_recoverable(recorder.id, "test cleanup")
@@ -148,6 +149,43 @@ fn recorder_schema_and_segments_are_isolated_stable_and_committed_only() {
     assert!(reopened.list_segments(recorder.id).unwrap().is_empty());
     assert!(meeting_store.get_meeting(meeting.id).unwrap().is_some());
     assert!(streaming_store.get_session(streaming.id).unwrap().is_some());
+}
+
+#[test]
+fn recorder_polish_round_trips_reverts_and_cascades_without_mutating_segments() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Polish", 50, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 48_000,
+                text: "ну отправь это Alex в 15:30".into(),
+                language: "ru".into(),
+            },
+        )
+        .unwrap();
+
+    store
+        .upsert_polished(recorder.id, "Отправь это Alex в 15:30.")
+        .unwrap();
+    assert_eq!(
+        store.get_polished(recorder.id).unwrap().as_deref(),
+        Some("Отправь это Alex в 15:30.")
+    );
+    assert_eq!(
+        store.list_segments(recorder.id).unwrap()[0].text,
+        "ну отправь это Alex в 15:30"
+    );
+
+    store.delete_polished(recorder.id).unwrap();
+    assert_eq!(store.get_polished(recorder.id).unwrap(), None);
+    store.upsert_polished(recorder.id, "Accepted").unwrap();
+    store.mark_recoverable(recorder.id, "test cleanup").unwrap();
+    store.delete_session(recorder.id).unwrap();
+    assert_eq!(store.get_polished(recorder.id).unwrap(), None);
 }
 
 #[test]

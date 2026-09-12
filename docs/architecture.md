@@ -868,6 +868,30 @@ entirely — the default for every user, including those upgrading from before
 this selection existed). This supersedes the earlier "manual model placement /
 deferred model management" detail.
 
+Local text models now expose explicit profiles while retaining one execution
+stack. Qwen3.5 4B Q4_K_M is the recommended **Fast** profile for fresh installs;
+Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 are opt-in **Quality** profiles. The
+previous Qwen2.5/Qwen3 files remain valid Legacy selections and no upgrade
+downloads a replacement. Catalog metadata owns each model's profile, context,
+sampling, prompt protocol, minimum-memory guidance, license label, exact file
+size and SHA-256. `LlmRuntime` continues to serialize work through its bounded
+priority queue and caches only the exact selected file fingerprint.
+
+Qwen3.5/Qwen3.8 use pinned ChatML with `/no_think` plus a completed empty-think
+assistant prefill. Gemma 4 uses the canonical no-thinking `<|turn>` protocol
+from its pinned GGUF metadata because the compact llama.cpp C template renderer
+does not execute that model's full Jinja. All result paths strip reasoning,
+channel, fence and end-of-turn syntax. MFU accepts string/array/object field
+forms but normalizes them back to the existing five-string DTO and stops on the
+first balanced JSON object. Translation and polishing reject destructive length,
+language, number and identifier changes. The qualification evidence and exact
+hardware results are in `validation/phase-3-llm-qualification.md`.
+
+Large downloads are restart-safe: a valid `.part` length is retained after a
+network failure, free space is checked against only the remaining bytes, HTTP
+Range resumes the transfer, and only a matching final SHA is atomically renamed
+into place. Oversized or hash-mismatched partials are removed.
+
 ## Export
 
 **As actually built, not as originally planned:** there is no `export.rs`
@@ -1008,6 +1032,30 @@ than one transition. A non-activating caption window is a view of coordinator
 state; hidden webview timers do not drive capture. If the required caption surface
 disappears during a shortcut-started hidden recording, the backend requests Stop
 and completes the same finalization path instead of leaving invisible capture.
+
+Recorder polishing uses the same local-LLM scheduler and safety validators as
+Streaming Prettify. Generation returns a review candidate only. Acceptance
+upserts `recorder_polished`, leaving timestamped `recorder_segments` unchanged;
+revert deletes the derived row and immediately restores raw display/copy/export.
+Session deletion cascades to the derived row.
+
+## Floating Bubble Window (ADR-018)
+
+`commands/bubble.rs` coordinates a separate transparent 120-by-120 logical-pixel
+webview. Collapse positions and shows the bubble before hiding main. Restore
+moves, shows and focuses main before hiding the bubble; any intermediate failure
+rolls back to a visible recovery surface. Saved logical coordinates are clamped
+against physical monitor work areas on restore, with the primary monitor as the
+removed-display fallback. A five-point pointer threshold separates click from
+native drag, so the synthetic click after a drag cannot restore main.
+
+The bubble listens to the backend live-capture snapshot and does not own timers
+or capture. Its green/listening, yellow/idle and red/actionable-error rings each
+also carry a distinct icon and accessible name. Always on Top is persisted and
+applied without changing capture; its enabled form is visible on all workspaces.
+The transparent implementation enables Tauri `macos-private-api`, so the
+supported package is the signed/notarized direct DMG. An App Store distribution
+must use the opaque fallback or a separately reviewed native panel.
 
 ## Security And Privacy
 

@@ -3,9 +3,9 @@ id: WP-128
 title: Qualify Qwen3.5 Fast, Qwen3.8 and Gemma 4 Quality
 priority: normal
 type: task
-status: backlog
+status: done
 created_at: '2026-09-11T19:49:09Z'
-updated_at: '2026-09-11T20:16:50Z'
+updated_at: '2026-09-12T16:51:32Z'
 parent_id: WP-110
 tags:
 - recorder

@@ -31,6 +31,118 @@ pub struct ModelCatalogEntry {
     pub assets: &'static [ModelAsset],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProfile {
+    Legacy,
+    Fast,
+    Quality,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LlmModelSpec {
+    pub model_id: &'static str,
+    pub profile: LlmProfile,
+    pub recommended: bool,
+    pub context_tokens: u32,
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: i32,
+    pub min_memory_gb: u16,
+    pub thinking_policy: &'static str,
+    pub chat_template: &'static str,
+    pub template_family: &'static str,
+    pub license: &'static str,
+}
+
+pub const LLM_SPECS: &[LlmModelSpec] = &[
+    LlmModelSpec {
+        model_id: "qwen2.5-3b-q3km",
+        profile: LlmProfile::Legacy,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.0,
+        top_p: 1.0,
+        top_k: 0,
+        min_memory_gb: 8,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "embedded",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "qwen3-4b-q3kl",
+        profile: LlmProfile::Legacy,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.0,
+        top_p: 1.0,
+        top_k: 0,
+        min_memory_gb: 8,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "embedded",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "qwen3.5-4b-q4km",
+        profile: LlmProfile::Fast,
+        recommended: true,
+        context_tokens: 16_384,
+        temperature: 0.2,
+        top_p: 0.9,
+        top_k: 20,
+        min_memory_gb: 12,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "chatml",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "qwen3.8-9b-q6k",
+        profile: LlmProfile::Quality,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.6,
+        top_p: 0.95,
+        top_k: 20,
+        min_memory_gb: 24,
+        thinking_policy: "strip-leading-think",
+        chat_template: "chatml",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "gemma4-12b-q4",
+        profile: LlmProfile::Quality,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.2,
+        top_p: 0.9,
+        top_k: 20,
+        min_memory_gb: 24,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "gemma4-canonical-no-think",
+        template_family: "gemma",
+        license: "Gemma Terms",
+    },
+];
+
+pub fn llm_spec_by_id(id: &str) -> Option<&'static LlmModelSpec> {
+    LLM_SPECS.iter().find(|spec| spec.model_id == id)
+}
+
+pub fn llm_spec_by_file_name(file_name: &str) -> Option<&'static LlmModelSpec> {
+    let entry = CATALOG.iter().find(|entry| {
+        entry.task == "llm"
+            && entry
+                .assets
+                .iter()
+                .any(|asset| asset.file_name == file_name)
+    })?;
+    llm_spec_by_id(entry.id)
+}
+
 /// Beta catalog. Every URL/SHA-256/size below was verified directly against
 /// the publishing source (Hugging Face CDN headers for the Whisper model;
 /// GitHub release checksum.txt / a direct hash of the downloaded archive for
@@ -112,7 +224,49 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
             file_name: "Qwen3-4B-Q3_K_L.gguf",
             variant_id: None,
             variant_label: None,
+            recommended: false,
+        }],
+    },
+    ModelCatalogEntry {
+        id: "qwen3.5-4b-q4km",
+        task: "llm",
+        label: "Qwen3.5 4B (Q4_K_M) · Fast",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf",
+            sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+            size_bytes: 2_740_937_888,
+            file_name: "Qwen3.5-4B-Q4_K_M.gguf",
+            variant_id: None,
+            variant_label: None,
             recommended: true,
+        }],
+    },
+    ModelCatalogEntry {
+        id: "qwen3.8-9b-q6k",
+        task: "llm",
+        label: "Qwen3.8 9B (Q6_K) · Quality",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/760121cd70bb4c36b2b5ec58eb765e0df5987efe/Qwen3.8-9B-Q6_K.gguf",
+            sha256: "0f1271373f899912bfe4ea76299af7dd83722d98ea421b0827501c3a2c6da22b",
+            size_bytes: 7_558_901_056,
+            file_name: "Qwen3.8-9B-Q6_K.gguf",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
+        }],
+    },
+    ModelCatalogEntry {
+        id: "gemma4-12b-q4",
+        task: "llm",
+        label: "Gemma 4 12B QAT (Q4_0) · Quality",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/29d097773436b69ff9feafd636ab4cf873786537/gemma-4-12b-it-qat-q4_0.gguf",
+            sha256: "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+            size_bytes: 6_975_879_296,
+            file_name: "gemma-4-12b-it-qat-q4_0.gguf",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
         }],
     },
 ];
@@ -128,6 +282,12 @@ pub struct TaskModel {
     pub downloaded: bool,
     pub size_bytes: u64,
     pub recommended: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<LlmProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_memory_gb: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
 }
 
 pub(crate) fn models_dir(app_support_dir: &Path) -> PathBuf {
@@ -250,7 +410,10 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                     label: entry.label.to_string(),
                     downloaded: entry_downloaded(app_support_dir, entry),
                     size_bytes: entry.assets.iter().map(|a| a.size_bytes).sum(),
-                    recommended: false,
+                    recommended: entry.assets.iter().any(|asset| asset.recommended),
+                    profile: llm_spec_by_id(entry.id).map(|spec| spec.profile),
+                    min_memory_gb: llm_spec_by_id(entry.id).map(|spec| spec.min_memory_gb),
+                    license: llm_spec_by_id(entry.id).map(|spec| spec.license.to_string()),
                 }]
             } else {
                 let shared: Vec<&ModelAsset> = entry
@@ -272,6 +435,9 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                             && is_asset_downloaded(app_support_dir, asset),
                         size_bytes: shared_size + asset.size_bytes,
                         recommended: asset.recommended,
+                        profile: None,
+                        min_memory_gb: None,
+                        license: None,
                     })
                     .collect()
             }

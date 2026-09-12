@@ -49,6 +49,8 @@ pub(crate) struct RecorderSessionDto {
     recovery_reason: Option<String>,
     audio_path: String,
     segments: Vec<RecorderSegment>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    polished_text: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -83,6 +85,7 @@ impl From<RecorderSession> for RecorderSessionSummaryDto {
 
 fn session_dto(store: &RecorderStore, session: RecorderSession) -> Result<RecorderSessionDto> {
     let segments = store.list_segments(session.id)?;
+    let polished_text = store.get_polished(session.id)?;
     Ok(RecorderSessionDto {
         id: session.id,
         title: session.title,
@@ -94,6 +97,7 @@ fn session_dto(store: &RecorderStore, session: RecorderSession) -> Result<Record
         recovery_reason: session.recovery_reason,
         audio_path: session.audio_path.to_string_lossy().into_owned(),
         segments,
+        polished_text,
     })
 }
 

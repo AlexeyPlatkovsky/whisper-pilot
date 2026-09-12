@@ -1,11 +1,13 @@
 use crate::error::{AppError, Result};
+use crate::models::catalog::{llm_spec_by_file_name, LlmModelSpec};
 use llama_cpp_2::context::params::LlamaContextParams;
 use llama_cpp_2::llama_backend::LlamaBackend;
 use llama_cpp_2::llama_batch::LlamaBatch;
 use llama_cpp_2::model::params::LlamaModelParams;
-use llama_cpp_2::model::{AddBos, LlamaModel};
+use llama_cpp_2::model::{AddBos, LlamaChatMessage, LlamaChatTemplate, LlamaModel};
 use llama_cpp_2::sampling::LlamaSampler;
 use serde::Deserialize;
+use serde_json::Value as JsonValue;
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::path::Path;
@@ -72,6 +74,7 @@ struct LoadedLlmModel {
     // Field order is intentional: the model must be freed before its backend.
     model: LlamaModel,
     backend: LlamaBackend,
+    spec: Option<&'static LlmModelSpec>,
 }
 
 impl LoadedLlmModel {
@@ -79,7 +82,15 @@ impl LoadedLlmModel {
         let backend = LlamaBackend::init().map_err(|error| AppError::Llm(error.to_string()))?;
         let model = LlamaModel::load_from_file(&backend, path, &LlamaModelParams::default())
             .map_err(|error| AppError::Llm(format!("model load: {error}")))?;
-        Ok(Self { model, backend })
+        let spec = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .and_then(llm_spec_by_file_name);
+        Ok(Self {
+            model,
+            backend,
+            spec,
+        })
     }
 }
 
@@ -132,7 +143,7 @@ impl LlmRuntime {
         self.wait_for_execution_lease(ScheduledLlmJob::new(id, kind))?;
 
         let result = if self.model_generation.load(Ordering::Acquire) == model_generation {
-            resolve_model().and_then(|model_path| self.run_job(&model_path, prompt))
+            resolve_model().and_then(|model_path| self.run_job(&model_path, kind, prompt))
         } else {
             Err(AppError::Llm(
                 "local LLM job was cancelled because the selected model changed".to_string(),
@@ -197,14 +208,14 @@ impl LlmRuntime {
         Ok(())
     }
 
-    fn run_job(&self, model_path: &Path, prompt: &str) -> Result<String> {
+    fn run_job(&self, model_path: &Path, kind: LlmJobKind, prompt: &str) -> Result<String> {
         let fingerprint = model_fingerprint(model_path)?;
         let model = self
             .cache
             .lock()
             .map_err(|_| AppError::Llm("local LLM model cache lock is poisoned".to_string()))?
             .get_or_try_load(&fingerprint, || LoadedLlmModel::load(model_path))?;
-        run_inference_with_model(&model, prompt)
+        run_inference_with_model(&model, kind, prompt)
     }
 }
 
@@ -346,13 +357,13 @@ pub fn run_with_token_preflight<T>(
 
 #[derive(Debug, Deserialize)]
 struct MfuJson {
-    summary: String,
-    decisions: String,
+    summary: JsonValue,
+    decisions: JsonValue,
     #[serde(rename = "action_items")]
-    action_items: String,
+    action_items: JsonValue,
     #[serde(rename = "open_questions")]
-    open_questions: String,
-    participants: String,
+    open_questions: JsonValue,
+    participants: JsonValue,
 }
 
 /// Structured mfu generation output, domain-agnostic — the caller (Meeting
@@ -417,27 +428,56 @@ Transcript:\n{transcript}\n\n\
     )
 }
 
-fn strip_think_block(raw: &str) -> &str {
-    if let Some(after_open) = raw.strip_prefix("<think>") {
-        if let Some(idx) = after_open.find("</think>") {
-            return after_open[idx + 8..].trim_start();
+pub fn strip_internal_reasoning(raw: &str) -> String {
+    let mut cleaned = raw.trim();
+    if let Some(after_open) = cleaned.strip_prefix("<think>") {
+        cleaned = if let Some(idx) = after_open.find("</think>") {
+            after_open[idx + 8..].trim_start()
+        } else if let Some(idx) = after_open.find("\n\n") {
+            after_open[idx + 2..].trim_start()
+        } else {
+            ""
+        };
+    }
+    if let Some(channel_end) = cleaned.find("<channel|>") {
+        cleaned = cleaned[channel_end + "<channel|>".len()..].trim_start();
+    }
+    if let Some(fence_start) = cleaned.find("```") {
+        let after_open = &cleaned[fence_start + 3..];
+        let after_language = after_open
+            .strip_prefix("json")
+            .or_else(|| after_open.strip_prefix("text"))
+            .unwrap_or(after_open)
+            .trim_start_matches([' ', '\n', '\r']);
+        if let Some(fence_end) = after_language.find("```") {
+            cleaned = &after_language[..fence_end];
         }
-        if let Some(idx) = after_open.find("\n\n") {
-            return after_open[idx + 2..].trim_start();
+    } else if let Some(next_channel) = cleaned.find("<|channel>") {
+        cleaned = &cleaned[..next_channel];
+    }
+    cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
+    cleaned = cleaned.strip_prefix("```text").unwrap_or(cleaned);
+    cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
+    cleaned = cleaned.strip_prefix('\n').unwrap_or(cleaned);
+    cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
+    loop {
+        let before = cleaned;
+        for token in ["<|im_end|>", "<|endoftext|>", "<end_of_turn>", "<eos>"] {
+            cleaned = cleaned.strip_suffix(token).unwrap_or(cleaned).trim_end();
+        }
+        if cleaned == before {
+            break;
         }
     }
-    raw
+    cleaned.trim().to_string()
 }
 
 fn parse_notes_json(raw: &str) -> Result<GeneratedMfu> {
-    let original = raw.trim();
-    let cleaned = strip_think_block(original);
-    let cleaned = cleaned.strip_prefix("```json").unwrap_or(cleaned);
-    let cleaned = cleaned.strip_prefix('\n').unwrap_or(cleaned);
-    let cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
+    let cleaned_owned = strip_internal_reasoning(raw);
+    let cleaned = cleaned_owned.as_str();
 
-    let json_str = if cleaned.trim_start().starts_with('{') {
-        cleaned.to_string()
+    let json_str = if let Some(object) = first_complete_json_object(cleaned) {
+        object.to_string()
     } else {
         format!("{ASSISTANT_PREFILL}{cleaned}")
     };
@@ -447,17 +487,67 @@ fn parse_notes_json(raw: &str) -> Result<GeneratedMfu> {
 
     if let Ok(parsed) = serde_json::from_str::<MfuJson>(json_str) {
         return Ok(GeneratedMfu {
-            summary: parsed.summary,
-            decisions: parsed.decisions,
-            action_items: parsed.action_items,
-            open_questions: parsed.open_questions,
-            participants: parsed.participants,
+            summary: mfu_value_to_text(parsed.summary),
+            decisions: mfu_value_to_text(parsed.decisions),
+            action_items: mfu_value_to_text(parsed.action_items),
+            open_questions: mfu_value_to_text(parsed.open_questions),
+            participants: mfu_value_to_text(parsed.participants),
         });
     }
 
     Err(AppError::Llm(
         "model did not return valid structured MFU JSON".to_string(),
     ))
+}
+
+fn first_complete_json_object(text: &str) -> Option<&str> {
+    let start = text.find('{')?;
+    let mut depth = 0_u32;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (offset, ch) in text[start..].char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match ch {
+            '"' => in_string = true,
+            '{' => depth += 1,
+            '}' => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some(&text[start..start + offset + ch.len_utf8()]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn mfu_value_to_text(value: JsonValue) -> String {
+    match value {
+        JsonValue::Null => String::new(),
+        JsonValue::String(text) => text,
+        JsonValue::Array(values) => values
+            .into_iter()
+            .map(mfu_value_to_text)
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        JsonValue::Object(fields) => fields
+            .into_iter()
+            .map(|(key, value)| format!("{key}: {}", mfu_value_to_text(value)))
+            .collect::<Vec<_>>()
+            .join(", "),
+        other => other.to_string(),
+    }
 }
 
 pub fn generate_mfu(
@@ -535,10 +625,7 @@ Transcript:\n{transcript}\n\n\
 /// its output in — the same class of cleanup `parse_notes_json` already does
 /// for the JSON path, applied here to plain text instead.
 fn clean_prettify_output(raw: &str) -> String {
-    let cleaned = strip_think_block(raw.trim());
-    let cleaned = cleaned.strip_prefix("```").unwrap_or(cleaned);
-    let cleaned = cleaned.strip_suffix("```").unwrap_or(cleaned);
-    cleaned.trim().to_string()
+    strip_internal_reasoning(raw)
 }
 
 pub fn prettify_transcript(
@@ -646,7 +733,117 @@ fn validate_prettify_candidate(original: &str, candidate: &str) -> Result<String
     Ok(candidate.to_string())
 }
 
-fn run_inference_with_model(loaded: &LoadedLlmModel, prompt: &str) -> Result<String> {
+struct ChatPrompt<'a> {
+    system: &'a str,
+    user: &'a str,
+    assistant_prefill: &'a str,
+}
+
+fn parse_chatml_prompt(prompt: &str) -> Option<ChatPrompt<'_>> {
+    const SYSTEM: &str = "<|im_start|>system\n";
+    const SYSTEM_TO_USER: &str = "<|im_end|>\n<|im_start|>user\n";
+    const USER_TO_ASSISTANT: &str = "<|im_end|>\n<|im_start|>assistant\n";
+    let after_system = prompt.strip_prefix(SYSTEM)?;
+    let (system, user_and_assistant) = after_system.split_once(SYSTEM_TO_USER)?;
+    let (user, assistant_prefill) = user_and_assistant.rsplit_once(USER_TO_ASSISTANT)?;
+    Some(ChatPrompt {
+        system,
+        user,
+        assistant_prefill,
+    })
+}
+
+fn prepare_prompt(loaded: &LoadedLlmModel, raw: &str) -> Result<(String, AddBos)> {
+    let Some(spec) = loaded.spec else {
+        return Ok((raw.to_string(), AddBos::Always));
+    };
+    let Some(chat) = parse_chatml_prompt(raw) else {
+        return Ok((raw.to_string(), AddBos::Always));
+    };
+    if spec.chat_template == "gemma4-canonical-no-think" {
+        let mut prompt = format!(
+            "<|turn>system\n{}<turn|>\n<|turn>user\n{}<turn|>\n<|turn>model\n<|channel>thought\n<channel|>",
+            chat.system.trim(),
+            chat.user.trim()
+        );
+        let prefill = chat
+            .assistant_prefill
+            .trim_start()
+            .strip_prefix("<think>\n\n</think>")
+            .unwrap_or(chat.assistant_prefill.trim_start())
+            .trim_start();
+        prompt.push_str(prefill);
+        return Ok((prompt, AddBos::Always));
+    }
+    let template = if spec.chat_template == "embedded" {
+        loaded
+            .model
+            .chat_template(None)
+            .map_err(|error| AppError::Llm(format!("embedded chat template: {error}")))?
+    } else {
+        LlamaChatTemplate::new(spec.chat_template)
+            .map_err(|error| AppError::Llm(format!("pinned chat template: {error}")))?
+    };
+    let user_content = if spec.template_family == "qwen" && spec.chat_template != "embedded" {
+        format!("{}\n\n/no_think", chat.user)
+    } else {
+        chat.user.to_string()
+    };
+    let messages = [
+        LlamaChatMessage::new("system".into(), chat.system.into())
+            .map_err(|error| AppError::Llm(format!("system chat message: {error}")))?,
+        LlamaChatMessage::new("user".into(), user_content)
+            .map_err(|error| AppError::Llm(format!("user chat message: {error}")))?,
+    ];
+    let mut prompt = match loaded.model.apply_chat_template(&template, &messages, true) {
+        Ok(prompt) => prompt,
+        Err(embedded_error) => {
+            // llama.cpp's compact C template renderer intentionally supports
+            // only common template families. Some GGUFs embed full Jinja
+            // (Gemma 4 does), so use the pinned compatible family instead of
+            // rejecting an otherwise supported model or inventing raw tokens.
+            let fallback = LlamaChatTemplate::new(spec.template_family)
+                .map_err(|error| AppError::Llm(format!("fallback chat template: {error}")))?;
+            loaded
+                .model
+                .apply_chat_template(&fallback, &messages, true)
+                .map_err(|fallback_error| {
+                    AppError::Llm(format!(
+                        "apply embedded chat template: {embedded_error}; fallback {}: {fallback_error}",
+                        spec.template_family
+                    ))
+                })?
+        }
+    };
+    if spec.template_family != "gemma" {
+        prompt.push_str(chat.assistant_prefill.trim_start());
+    }
+    let add_bos = if spec.template_family == "gemma" {
+        AddBos::Always
+    } else {
+        AddBos::Never
+    };
+    Ok((prompt, add_bos))
+}
+
+fn sampler_for(spec: Option<&LlmModelSpec>) -> LlamaSampler {
+    match spec {
+        Some(spec) if spec.temperature > 0.0 => LlamaSampler::chain_simple([
+            LlamaSampler::top_k(spec.top_k),
+            LlamaSampler::top_p(spec.top_p, 1),
+            LlamaSampler::temp(spec.temperature),
+            LlamaSampler::dist(0x5750_4c54),
+        ]),
+        _ => LlamaSampler::greedy(),
+    }
+}
+
+fn run_inference_with_model(
+    loaded: &LoadedLlmModel,
+    kind: LlmJobKind,
+    prompt: &str,
+) -> Result<String> {
+    let (prompt, add_bos) = prepare_prompt(loaded, prompt)?;
     let n_threads = std::thread::available_parallelism()
         .map(|n| n.get() as i32)
         .unwrap_or(4);
@@ -662,7 +859,7 @@ fn run_inference_with_model(loaded: &LoadedLlmModel, prompt: &str) -> Result<Str
 
     let tokens_list = loaded
         .model
-        .str_to_token(prompt, AddBos::Always)
+        .str_to_token(&prompt, add_bos)
         .map_err(|e| AppError::Llm(format!("tokenize: {e}")))?;
 
     run_with_token_preflight(
@@ -695,22 +892,31 @@ fn run_inference_with_model(loaded: &LoadedLlmModel, prompt: &str) -> Result<Str
     }
 
     let mut decoder = encoding_rs::UTF_8.new_decoder();
-    let mut sampler = LlamaSampler::greedy();
+    let mut sampler = sampler_for(loaded.spec);
     let mut output = String::new();
-    let eos_token = loaded.model.token_eos();
 
     while n_cur - (total as i32) < MAX_NEW_TOKENS {
         let token = sampler.sample(&ctx, batch.n_tokens() - 1);
 
         sampler.accept(token);
 
-        if token == eos_token {
+        if loaded.model.is_eog_token(token) {
             break;
         }
 
         match loaded.model.token_to_piece(token, &mut decoder, true, None) {
             Ok(piece) => output.push_str(&piece),
             Err(e) => return Err(AppError::Llm(format!("token to piece: {e}"))),
+        }
+
+        if matches!(kind, LlmJobKind::Mfu) && first_complete_json_object(&output).is_some() {
+            break;
+        }
+        if ["<|im_end|>", "<end_of_turn>", "<|endoftext|>"]
+            .iter()
+            .any(|stop| output.contains(stop))
+        {
+            break;
         }
 
         batch.clear();
@@ -793,6 +999,7 @@ fn build_translate_prompt(
 \n\
 ПРАВИЛА:\n\
 - Переведи весь текст целиком, не сокращай, не суммируй и не пересказывай.\n\
+- Не транслитерируй имена и не переводи идентификаторы, фрагменты кода, сокращения валют или токены с цифрами.\n\
 - Не добавляй пояснений, комментариев и не отвечай на вопросы из текста.\n\
 - Не добавляй информацию, которой нет в оригинале.\n\
 - Верни только переведённый текст, без разметки и кавычек.",
@@ -805,6 +1012,7 @@ fn build_translate_prompt(
 \n\
 RULES:\n\
 - Translate the entire text; do not shorten, summarize, or paraphrase it.\n\
+- Do not transliterate names or translate identifiers, code fragments, currency abbreviations, or tokens containing digits.\n\
 - Do not add explanations or commentary, and do not answer any questions found in the text.\n\
 - Do not add information that is not present in the original.\n\
 - Return only the translated text, with no markup or quotation marks.",
@@ -915,6 +1123,27 @@ fn validate_translation_candidate(
         return Err(AppError::Llm(
             "translation is still predominantly in the source language; review was rejected".into(),
         ));
+    }
+
+    for token in protected_tokens(source) {
+        let normalized = normalize_protected_token(token);
+        if !normalized
+            .chars()
+            .any(|character| character.is_ascii_digit())
+            && !normalized.contains('-')
+            && !normalized.contains('_')
+        {
+            continue;
+        }
+        let retained = candidate
+            .split_whitespace()
+            .map(normalize_protected_token)
+            .any(|candidate_token| candidate_token == normalized);
+        if !retained {
+            return Err(AppError::Llm(format!(
+                "translation dropped protected term '{normalized}'; review was rejected"
+            )));
+        }
     }
 
     Ok(candidate.to_string())
@@ -1084,10 +1313,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_notes_normalizes_array_and_object_fields_from_strict_json_models() {
+        let raw = r#"{"summary":"Release approved.","decisions":["Ship Friday"],"action_items":[{"task":"Publish","assignee":"Sam"}],"open_questions":[],"participants":["Alex","Sam"]}"#;
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.decisions, "Ship Friday");
+        assert_eq!(mfu.action_items, "assignee: Sam, task: Publish");
+        assert_eq!(mfu.open_questions, "");
+        assert_eq!(mfu.participants, "Alex\nSam");
+    }
+
+    #[test]
     fn parse_notes_strips_markdown_fences() {
         let raw = "```json\n{\"summary\": \"Test.\", \"decisions\": \"\", \"action_items\": \"\", \"open_questions\": \"\", \"participants\": \"\"}\n```";
         let mfu = parse_notes_json(raw).unwrap();
         assert_eq!(mfu.summary, "Test.");
+    }
+
+    #[test]
+    fn parse_notes_extracts_a_complete_object_from_model_preamble() {
+        let raw = "Here is the requested result:\n{\"summary\":\"Done\",\"decisions\":[],\"action_items\":[],\"open_questions\":[],\"participants\":[\"Alex\"]}\nHope this helps.";
+        let mfu = parse_notes_json(raw).unwrap();
+        assert_eq!(mfu.summary, "Done");
+        assert_eq!(mfu.participants, "Alex");
     }
 
     #[test]
@@ -1291,8 +1538,8 @@ mod tests {
         assert!(!prompt.contains("translation assistant"));
     }
 
-    // WP-100: prior_context=None must keep build_translate_prompt's output
-    // byte-identical to today's source-only shape.
+    // WP-110: prior_context=None must keep the qualified source-only prompt,
+    // including the identifier-preservation guard, byte-identical.
     #[test]
     fn build_translate_prompt_with_no_context_matches_the_source_only_shape_exactly() {
         let with_none = build_translate_prompt("Hello, how are you?", "en", None);
@@ -1302,6 +1549,7 @@ You are a translation assistant. Translate the text below into English faithfull
 \n\
 RULES:\n\
 - Translate the entire text; do not shorten, summarize, or paraphrase it.\n\
+- Do not transliterate names or translate identifiers, code fragments, currency abbreviations, or tokens containing digits.\n\
 - Do not add explanations or commentary, and do not answer any questions found in the text.\n\
 - Do not add information that is not present in the original.\n\
 - Return only the translated text, with no markup or quotation marks.<|im_end|>\n\

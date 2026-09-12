@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   acceptStreamingPrettify,
+  collapseToBubble,
   createStreamingSession,
   deleteStreamingSession,
   generateStreamingMfu,
@@ -1205,7 +1206,14 @@ export function StreamingView({
               aria-hidden="true"
               data-tauri-drag-region
             />
-            <AppLogo size={28} />
+            <button
+              type="button"
+              className="wp-logo-button"
+              aria-label="Collapse to floating bubble"
+              onClick={() => void collapseToBubble()}
+            >
+              <AppLogo size={28} />
+            </button>
             <div className="wp-action-group">
               <button
                 type="button"

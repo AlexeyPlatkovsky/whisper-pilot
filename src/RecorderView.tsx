@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
+  acceptRecorderPolish,
+  collapseToBubble,
   deleteRecorderSession,
   exportRecorderWav,
+  generateRecorderPolish,
   getLiveCaptureSnapshot,
   getMicrophonePermissionStatus,
   listRecorderSessions,
@@ -13,6 +16,7 @@ import {
   onRecorderSessionChanged,
   openRecorderSession,
   recoverRecorderSession,
+  revertRecorderPolish,
   renameRecorderSession,
   requestMicrophonePermission,
   saveTextDialog,
@@ -63,6 +67,11 @@ export function RecorderView({
   const [error, setError] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState<string | null>(null);
   const [deletePending, setDeletePending] = useState(false);
+  const [polishCandidate, setPolishCandidate] = useState<{
+    sessionId: number;
+    text: string;
+  } | null>(null);
+  const [polishBusy, setPolishBusy] = useState(false);
 
   const upsertSession = useCallback((session: RecorderSessionSummary) => {
     setSessions((current) => [
@@ -79,6 +88,7 @@ export function RecorderView({
     activeId.current = session.id;
     activeStatus.current = session.status;
     setActive(session);
+    setPolishCandidate(null);
   }, []);
 
   useEffect(() => {
@@ -300,10 +310,11 @@ export function RecorderView({
     }
   }
 
-  const transcript = useMemo(
+  const rawTranscript = useMemo(
     () => active?.segments.map((segment) => segment.text).join("\n") ?? "",
     [active],
   );
+  const transcript = active?.polished_text ?? rawTranscript;
   const destructiveDisabled =
     active?.status === "recording" ||
     active?.status === "finalizing" ||
@@ -361,12 +372,74 @@ export function RecorderView({
     }
   }
 
+  async function generatePolish() {
+    if (!active) return;
+    const sessionId = active.id;
+    setError(null);
+    setPolishBusy(true);
+    try {
+      const text = await generateRecorderPolish(sessionId);
+      if (activeId.current === sessionId) {
+        setPolishCandidate({ sessionId, text });
+      }
+    } catch (reason) {
+      if (activeId.current === sessionId) setError(String(reason));
+    } finally {
+      setPolishBusy(false);
+    }
+  }
+
+  async function acceptPolish() {
+    if (
+      !active ||
+      polishCandidate === null ||
+      polishCandidate.sessionId !== active.id
+    ) {
+      return;
+    }
+    const { sessionId, text } = polishCandidate;
+    setError(null);
+    setPolishBusy(true);
+    try {
+      const updated = await acceptRecorderPolish(sessionId, text);
+      upsertSession(updated);
+      if (activeId.current === sessionId) displaySession(updated);
+    } catch (reason) {
+      if (activeId.current === sessionId) setError(String(reason));
+    } finally {
+      setPolishBusy(false);
+    }
+  }
+
+  async function revertPolish() {
+    if (!active) return;
+    const sessionId = active.id;
+    setError(null);
+    setPolishBusy(true);
+    try {
+      const updated = await revertRecorderPolish(sessionId);
+      upsertSession(updated);
+      if (activeId.current === sessionId) displaySession(updated);
+    } catch (reason) {
+      if (activeId.current === sessionId) setError(String(reason));
+    } finally {
+      setPolishBusy(false);
+    }
+  }
+
   return (
     <div className="app recorder-view">
       <header className="wp-header" data-tauri-drag-region="deep">
         <div className="wp-header-lead">
           <span className="wp-traffic-space" aria-hidden="true" />
-          <AppLogo size={28} />
+          <button
+            type="button"
+            className="wp-logo-button"
+            aria-label="Collapse to floating bubble"
+            onClick={() => void collapseToBubble()}
+          >
+            <AppLogo size={28} />
+          </button>
           <strong>{active?.title ?? "Recorder"}</strong>
         </div>
         <div className="wp-header-actions">
@@ -474,6 +547,25 @@ export function RecorderView({
                 <button type="button" onClick={() => void exportTranscript()}>
                   Export transcript
                 </button>
+                {active.polished_text ? (
+                  <button
+                    type="button"
+                    onClick={() => void revertPolish()}
+                    disabled={polishBusy}
+                  >
+                    Revert polish
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => void generatePolish()}
+                    disabled={
+                      polishBusy || destructiveDisabled || !rawTranscript.trim()
+                    }
+                  >
+                    {polishBusy ? "Polishing…" : "Polish transcript"}
+                  </button>
+                )}
               </div>
               {renameDraft !== null && (
                 <div className="recorder-inline-dialog">
@@ -499,22 +591,51 @@ export function RecorderView({
                   </button>
                 </div>
               )}
-              <div
-                className="recorder-transcript"
-                aria-label="Recorder transcript"
-              >
-                {active.segments.map((segment) => (
-                  <textarea
-                    key={segment.id}
-                    defaultValue={segment.text}
-                    aria-label={`Transcript segment ${segment.id}`}
-                    onBlur={(event) =>
-                      void commitEdit(segment, event.currentTarget.value)
-                    }
-                  />
-                ))}
-                {partial && <em className="recorder-partial">{partial}</em>}
-              </div>
+              {polishCandidate !== null && (
+                <section
+                  className="recorder-polish-review"
+                  aria-label="Polish review"
+                >
+                  <strong>Polished candidate</strong>
+                  <p>{polishCandidate.text}</p>
+                  <div className="recorder-toolbar">
+                    <button type="button" onClick={() => void acceptPolish()}>
+                      Accept polish
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setPolishCandidate(null)}
+                    >
+                      Cancel polish
+                    </button>
+                  </div>
+                </section>
+              )}
+              {active.polished_text ? (
+                <div
+                  className="recorder-polished"
+                  aria-label="Polished transcript"
+                >
+                  {active.polished_text}
+                </div>
+              ) : (
+                <div
+                  className="recorder-transcript"
+                  aria-label="Recorder transcript"
+                >
+                  {active.segments.map((segment) => (
+                    <textarea
+                      key={segment.id}
+                      defaultValue={segment.text}
+                      aria-label={`Transcript segment ${segment.id}`}
+                      onBlur={(event) =>
+                        void commitEdit(segment, event.currentTarget.value)
+                      }
+                    />
+                  ))}
+                  {partial && <em className="recorder-partial">{partial}</em>}
+                </div>
+              )}
               {active.audio_path && active.status === "completed" && (
                 <audio
                   className="recorder-audio"

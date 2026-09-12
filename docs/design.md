@@ -200,6 +200,12 @@ interrupted `.caf.partial` remains visible with **Recover** and **Delete**. A
 failed delete remains visible as **Delete failed / Retry**. See ADR-017 for
 ownership and atomic-finalization rules.
 
+**Polish transcript** sends the raw committed text to the selected local LLM
+and presents a review candidate above the still-visible raw segments. **Accept
+polish** stores a derived presentation used by copy/export; **Cancel** discards
+the candidate and **Revert polish** returns to the timestamped raw segments.
+Generation and acceptance never rewrite captured audio or raw segment rows.
+
 The configurable global shortcut uses **Control + Option + Space** initially and
 toggles Recorder Start/Stop from another application without activating the main
 window. A replacement chord is registered before it replaces the persisted
@@ -213,6 +219,25 @@ surface showing icon plus text for Ready, Recording, partial Listening,
 Finalizing, and Error. Clicking it opens Recorder. If the surface disappears
 after hidden capture starts, Recorder stops and finalizes instead of continuing
 an invisible recording, and the main workspace shows the actionable error.
+
+Clicking the app logo collapses main into a separate 120 px circular bubble at
+the main window's former top-left. Idle is a yellow ring with a pause badge,
+live microphone or system-audio capture is green with a microphone badge, and
+a persistent actionable capture/ASR error is red with an alert badge. The
+accessible name states the same status without relying on color. Pointer motion
+through five logical pixels remains a click; motion beyond it starts native
+drag and suppresses restore. Click or Enter/Space restores and focuses main at
+the bubble top-left, clamped onto a visible monitor. Collapse shows the bubble
+before main hides, and restore does the inverse so one recovery surface remains
+visible on failure.
+
+The **Over All** setting controls Always on Top and visibility across Spaces.
+It applies immediately and persists. With it off the bubble behaves as a normal
+floating app window; with it on it follows the user across workspaces and stays
+above ordinary/fullscreen content where macOS permits auxiliary windows. Drag,
+Retina scaling, Stage Manager, sleep/wake, and monitor removal do not start or
+stop backend capture. The direct-DMG build uses transparency; an App Store build
+would retain the interaction in an opaque 120 px panel.
 
 ### MFU section (bottom of the right pane)
 
@@ -253,6 +278,9 @@ Opened from the header **gear**; a screen with these sections:
   and fill the two-column list left-to-right; a low-contrast picker warning
   compares the half-up rounded two-decimal ratio against `4.50:1`. At release,
   3–4 extra named themes, each in a light and dark variant.
+- **Floating bubble** — an **Over All** checkbox for Always on Top/all-Spaces
+  behavior. It applies immediately; the bubble position persists separately and
+  is corrected if its monitor disappears.
 - **App language** — the **UI** language; **English** by default (only option in
   beta). At release: Russian, Turkish, Spanish, German, French. Independent of the
   transcription language.

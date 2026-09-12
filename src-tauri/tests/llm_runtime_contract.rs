@@ -180,3 +180,80 @@ fn repeated_real_jobs_measure_the_cached_model_speedup() {
         "the cached job should avoid first-run model load latency"
     );
 }
+
+#[test]
+#[ignore = "loads a pinned GGUF and runs the frozen multilingual product corpus"]
+fn pinned_model_passes_multilingual_translation_polish_and_mfu_smoke() {
+    let Some(path) = std::env::var_os("WHISPERPILOT_TEST_LLM_MODEL").map(std::path::PathBuf::from)
+    else {
+        eprintln!("SKIP: set WHISPERPILOT_TEST_LLM_MODEL to a local GGUF");
+        return;
+    };
+    let runtime = whisperpilot_lib::llm::LlmRuntime::default();
+    let corpus: serde_json::Value =
+        serde_json::from_str(include_str!("fixtures/llm_profile_corpus.json"))
+            .expect("frozen LLM profile corpus is valid JSON");
+    assert_eq!(corpus["revision"], 1);
+
+    let started = std::time::Instant::now();
+    let into_english = whisperpilot_lib::llm::translate_paragraph(
+        &runtime,
+        &path,
+        "Алексей отправит build WP-129 в 15:30, бюджет 42 USD.",
+        "en",
+        None,
+    )
+    .expect("Russian to English translation");
+    for protected in ["WP-129", "15:30", "42"] {
+        assert!(
+            into_english.contains(protected),
+            "missing {protected}: {into_english}"
+        );
+    }
+
+    let into_russian = whisperpilot_lib::llm::translate_paragraph(
+        &runtime,
+        &path,
+        "Sam will publish build WP-129 at 15:30 with budget 42 USD.",
+        "ru",
+        Some("The release was approved."),
+    )
+    .expect("English to Russian translation");
+    for protected in ["WP-129", "15:30", "42"] {
+        assert!(
+            into_russian.contains(protected),
+            "missing {protected}: {into_russian}"
+        );
+    }
+
+    let polished = whisperpilot_lib::llm::prettify_transcript(
+        &runtime,
+        &path,
+        "Ну, ну, Alex, отправь build WP-129 в 15:30, budget 42 USD.",
+    )
+    .expect("mixed-language Recorder polish");
+    for protected in ["Alex", "WP-129", "15:30", "42", "USD"] {
+        assert!(
+            polished.contains(protected),
+            "missing {protected}: {polished}"
+        );
+    }
+
+    let mfu = whisperpilot_lib::llm::generate_mfu(
+        &runtime,
+        &path,
+        "Алексей: Релиз WP-129 approved. Sam: Я отправлю build 42 в 15:30.",
+    )
+    .expect("mixed-language MFU schema");
+    assert!(!mfu.summary.is_empty());
+    assert!(!mfu.action_items.is_empty());
+    let long_transcript = "Алексей: Релиз WP-129 approved. Sam: Я отправлю build 42 в 15:30. Morgan: Keep API_v2 unchanged and budget at 42 USD.\n".repeat(40);
+    let long_mfu = whisperpilot_lib::llm::generate_mfu(&runtime, &path, &long_transcript)
+        .expect("representative long mixed-language MFU schema");
+    assert!(!long_mfu.summary.is_empty());
+    assert!(!long_mfu.action_items.is_empty());
+    eprintln!(
+        "multilingual corpus elapsed={:?}; en={into_english:?}; ru={into_russian:?}; polish={polished:?}",
+        started.elapsed()
+    );
+}

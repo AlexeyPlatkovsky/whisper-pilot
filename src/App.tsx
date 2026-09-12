@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
+  collapseToBubble,
   createMeeting,
   deleteMeeting,
   generateMfu,
@@ -787,7 +788,14 @@ export function App() {
               aria-hidden="true"
               data-tauri-drag-region
             />
-            <AppLogo size={28} />
+            <button
+              type="button"
+              className="wp-logo-button"
+              aria-label="Collapse to floating bubble"
+              onClick={() => void collapseToBubble()}
+            >
+              <AppLogo size={28} />
+            </button>
             <div className="wp-action-group">
               <button
                 type="button"

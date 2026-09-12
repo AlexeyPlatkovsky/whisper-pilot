@@ -12,8 +12,9 @@ pub(crate) mod download;
 
 pub use catalog::{
     asset_paths, delete_clears_active_diarization_variant, delete_model,
-    is_diarization_variant_downloaded, list_task_models, primary_asset_path,
-    resolve_catalog_target, ModelAsset, ModelCatalogEntry, ResolvedTarget, TaskModel, CATALOG,
+    is_diarization_variant_downloaded, list_task_models, llm_spec_by_file_name, llm_spec_by_id,
+    primary_asset_path, resolve_catalog_target, LlmModelSpec, LlmProfile, ModelAsset,
+    ModelCatalogEntry, ResolvedTarget, TaskModel, CATALOG, LLM_SPECS,
 };
 pub use download::{download_model, DownloadStage};
 

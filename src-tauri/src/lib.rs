@@ -2,6 +2,7 @@
 //! a summary to come.
 
 pub mod audio;
+pub mod bubble_window;
 pub mod cloud_provider;
 pub mod cloud_streaming;
 mod commands;
@@ -54,11 +55,22 @@ pub fn run() {
     builder
         .setup(|app| {
             #[cfg(target_os = "macos")]
-            commands::recorder::setup_recorder(app)?;
+            {
+                commands::recorder::setup_recorder(app)?;
+                if let Err(error) = commands::bubble::setup_bubble(app) {
+                    // The bubble is an optional recovery surface. A failure to
+                    // create it must leave the primary application usable;
+                    // collapse attempts will return a visible error instead.
+                    log::error!("Recorder bubble is unavailable: {error}");
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::dialogs::open_file_dialog,
+            commands::bubble::collapse_to_bubble,
+            commands::bubble::restore_main_from_bubble,
+            commands::bubble::set_bubble_always_on_top,
             commands::meetings::create_meeting,
             commands::meetings::list_meetings,
             commands::meetings::open_meeting,
@@ -109,6 +121,9 @@ pub fn run() {
             commands::mfu::generate_streaming_prettify,
             commands::mfu::accept_streaming_prettify,
             commands::mfu::revert_streaming_prettify,
+            commands::mfu::generate_recorder_polish,
+            commands::mfu::accept_recorder_polish,
+            commands::mfu::revert_recorder_polish,
             commands::mfu::translate_streaming_window
         ])
         .run(tauri::generate_context!())

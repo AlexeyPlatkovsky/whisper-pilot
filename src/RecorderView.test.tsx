@@ -32,6 +32,7 @@ interface RecorderSession {
   sample_rate: number;
   segments: RecorderSegment[];
   recovery_reason?: string;
+  polished_text?: string;
 }
 
 let liveHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
@@ -55,6 +56,9 @@ vi.mock("./ipc", () => ({
   updateRecorderSegment: vi.fn(),
   exportRecorderWav: vi.fn(),
   saveTextDialog: vi.fn(async () => null),
+  generateRecorderPolish: vi.fn(),
+  acceptRecorderPolish: vi.fn(),
+  revertRecorderPolish: vi.fn(),
   getMicrophonePermissionStatus: vi.fn(async () => "authorized"),
   requestMicrophonePermission: vi.fn(),
   getLiveCaptureSnapshot: vi.fn(async () => ({
@@ -112,6 +116,13 @@ const SESSION: RecorderSession = {
   segments: [FIRST_SEGMENT],
 };
 
+const SECOND_SESSION: RecorderSession = {
+  ...SESSION,
+  id: 2,
+  title: "Second note",
+  segments: [{ ...FIRST_SEGMENT, id: 202, text: "Second phrase" }],
+};
+
 function renderRecorder(meetingTranscriptionActive = false) {
   return render(
     <RecorderView
@@ -153,6 +164,14 @@ beforeEach(() => {
   vi.mocked(ipc.updateRecorderSegment).mockImplementation(
     async (_sessionId, _segmentId, text) => ({ ...FIRST_SEGMENT, text }),
   );
+  vi.mocked(ipc.generateRecorderPolish).mockResolvedValue(
+    "Polished committed phrase.",
+  );
+  vi.mocked(ipc.acceptRecorderPolish).mockResolvedValue({
+    ...SESSION,
+    polished_text: "Polished committed phrase.",
+  });
+  vi.mocked(ipc.revertRecorderPolish).mockResolvedValue(SESSION);
   if (!navigator.clipboard) {
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: async () => {} },
@@ -438,6 +457,97 @@ describe("Recorder mode", () => {
       "Edited phrase",
       "Voice note.txt",
     );
+  });
+
+  it("reviews, accepts and reverts Recorder polishing without replacing raw segments", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    expect(ipc.generateRecorderPolish).toHaveBeenCalledWith(1);
+    expect(
+      await screen.findByText("Polished committed phrase."),
+    ).toBeInTheDocument();
+    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Accept polish" }));
+    expect(ipc.acceptRecorderPolish).toHaveBeenCalledWith(
+      1,
+      "Polished committed phrase.",
+    );
+    expect(screen.getByText("Polished committed phrase.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Revert polish" }));
+    expect(ipc.revertRecorderPolish).toHaveBeenCalledWith(1);
+    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
+  });
+
+  it("discards a polish result when the user switches sessions while it is generated", async () => {
+    const user = userEvent.setup();
+    let resolvePolish!: (text: string) => void;
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([
+      SESSION,
+      SECOND_SESSION,
+    ]);
+    vi.mocked(ipc.openRecorderSession).mockImplementation(async (id) =>
+      id === SECOND_SESSION.id ? SECOND_SESSION : SESSION,
+    );
+    vi.mocked(ipc.generateRecorderPolish).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePolish = resolve;
+      }),
+    );
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    await user.click(screen.getByRole("button", { name: "Open Second note" }));
+    await act(async () => resolvePolish("Polish for the first session"));
+
+    expect(screen.getByDisplayValue("Second phrase")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Polish for the first session"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Accept polish" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("does not show an obsolete polish failure after switching sessions", async () => {
+    const user = userEvent.setup();
+    let rejectPolish!: (reason: Error) => void;
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([
+      SESSION,
+      SECOND_SESSION,
+    ]);
+    vi.mocked(ipc.openRecorderSession).mockImplementation(async (id) =>
+      id === SECOND_SESSION.id ? SECOND_SESSION : SESSION,
+    );
+    vi.mocked(ipc.generateRecorderPolish).mockReturnValue(
+      new Promise((_resolve, reject) => {
+        rejectPolish = reject;
+      }),
+    );
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    await user.click(screen.getByRole("button", { name: "Open Second note" }));
+    await act(async () =>
+      rejectPolish(new Error("obsolete first-session failure")),
+    );
+
+    expect(screen.getByDisplayValue("Second phrase")).toBeInTheDocument();
+    expect(
+      screen.queryByText(/obsolete first-session failure/i),
+    ).not.toBeInTheDocument();
   });
 
   it("disables destructive actions during recording and surfaces failed CRUD", async () => {

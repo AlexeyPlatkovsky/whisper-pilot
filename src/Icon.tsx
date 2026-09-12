@@ -34,9 +34,16 @@ export type IconName =
   | "cloud"
   | "cloud-alert"
   | "languages"
-  | "lock-keyhole";
+  | "lock-keyhole"
+  | "pause";
 
 const PATHS: Record<IconName, ReactElement> = {
+  pause: (
+    <>
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
   "panel-left": (
     <>
       <rect width="18" height="18" x="3" y="3" rx="2" />

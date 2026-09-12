@@ -261,6 +261,46 @@ impl RecorderStore {
         Ok(segments)
     }
 
+    pub fn upsert_polished(&self, session_id: RecorderSessionId, text: &str) -> Result<()> {
+        let changed = self
+            .connection()?
+            .execute(
+                "INSERT INTO recorder_polished (session_id, text)
+                 VALUES (?1, ?2)
+                 ON CONFLICT(session_id) DO UPDATE SET text = excluded.text",
+                params![session_id, text],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "Recorder session", session_id)
+    }
+
+    pub fn get_polished(&self, session_id: RecorderSessionId) -> Result<Option<String>> {
+        self.connection()?
+            .query_row(
+                "SELECT text FROM recorder_polished WHERE session_id = ?1",
+                params![session_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(store_error)
+    }
+
+    pub fn delete_polished(&self, session_id: RecorderSessionId) -> Result<()> {
+        let exists = self.get_session(session_id)?.is_some();
+        if !exists {
+            return Err(AppError::Store(format!(
+                "Recorder session {session_id} was not found"
+            )));
+        }
+        self.connection()?
+            .execute(
+                "DELETE FROM recorder_polished WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        Ok(())
+    }
+
     pub fn update_segment_text(
         &self,
         session_id: RecorderSessionId,
@@ -544,4 +584,8 @@ CREATE TABLE IF NOT EXISTS recorder_segments (
 );
 CREATE INDEX IF NOT EXISTS idx_recorder_segments_session_start
     ON recorder_segments(session_id, start_sample, id);
+CREATE TABLE IF NOT EXISTS recorder_polished (
+    session_id INTEGER PRIMARY KEY REFERENCES recorder_sessions(id) ON DELETE CASCADE,
+    text       TEXT NOT NULL
+);
 "#;

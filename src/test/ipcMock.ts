@@ -26,6 +26,9 @@ export const mockCreateIpc = () => ({
     export_file_type: "plain_text",
   })),
   setSetting: vi.fn(),
+  collapseToBubble: vi.fn(),
+  restoreMainFromBubble: vi.fn(),
+  setBubbleAlwaysOnTop: vi.fn(),
   getCloudProviderConfig: vi.fn(async () => ({
     selected_provider: "deepgram",
     providers: [
@@ -71,6 +74,9 @@ export const mockCreateIpc = () => ({
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
+  generateRecorderPolish: vi.fn(),
+  acceptRecorderPolish: vi.fn(),
+  revertRecorderPolish: vi.fn(),
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
 });

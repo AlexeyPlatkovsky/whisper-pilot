@@ -3,9 +3,9 @@ id: WP-110
 title: Phase 3 — Add the floating bubble and refresh GGUF text models
 priority: normal
 type: feature
-status: backlog
+status: in_progress
 created_at: '2026-09-11T19:34:26Z'
-updated_at: '2026-09-11T20:16:50Z'
+updated_at: '2026-09-12T15:46:53Z'
 parent_id: WP-107
 tags:
 - recorder

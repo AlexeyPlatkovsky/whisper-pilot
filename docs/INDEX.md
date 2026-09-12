@@ -50,6 +50,7 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-015 | Live translation reuses the summary LLM and runs concurrently on a single-flight queue | partially superseded by ADR-016 (translation-unit granularity only; engine reuse, single-flight concurrency, target languages, and the persistence-reuse concept stand) |
 | ADR-016 | Live translation moves from paragraph-unit to rolling per-window translation | accepted |
 | ADR-017 | Recorder retains recoverable local audio | accepted |
+| ADR-018 | Native floating bubble and qualified GGUF profiles | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability

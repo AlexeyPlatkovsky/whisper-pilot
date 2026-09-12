@@ -89,6 +89,22 @@ is ignored by default because it requires explicit macOS TCC approval and audibl
 input; it must be run with the real-Metal gate before Recorder release evidence is
 complete.
 
+Floating-bubble regressions cover the five-point click/drag boundary, visible
+work-area clamping, removed-monitor fallback, non-color status presentation and
+least-privilege capability. WKWebView/native window behavior additionally needs
+a packaged-app pass for Retina/mixed-scale displays, monitor removal, Spaces,
+Stage Manager, fullscreen, sleep/wake, VoiceOver, Increase Contrast, Reduce
+Motion, keyboard restore and capture-status changes while main is hidden.
+
+Local text-model qualification uses the frozen synthetic corpus at
+`src-tauri/tests/fixtures/llm_profile_corpus.json` and the reproducible
+`scripts/benchmark-llm-profiles.sh` runner. A candidate is promoted only after
+real-Metal RU/EN/mixed translation, Streaming and Recorder polishing, short and
+long MFU schema, protected-number/identifier, language, reasoning-token and
+malformed-output gates pass. The recorded Phase 3 hardware results live in
+`docs/validation/phase-3-llm-qualification.md`; publisher benchmarks are not
+substitutes for those runs.
+
 The model-free contracts live in `audio.rs`, `commands/transcription.rs`,
 `diarize/segmentation.rs`, `diarize_process/transport.rs`,
 `streaming_audio.rs`, `streaming_session.rs`, and

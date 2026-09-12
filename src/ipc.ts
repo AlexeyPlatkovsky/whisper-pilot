@@ -144,6 +144,9 @@ export interface Settings {
   /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
   mfu_panel_streaming?: boolean;
   recorder_shortcut?: string;
+  bubble_always_on_top?: boolean;
+  bubble_x?: number;
+  bubble_y?: number;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -152,6 +155,18 @@ export function getSettings(): Promise<Settings> {
 
 export function setSetting(key: string, value: string): Promise<Settings> {
   return invoke<Settings>("set_setting", { key, value });
+}
+
+export function collapseToBubble(): Promise<void> {
+  return invoke<void>("collapse_to_bubble");
+}
+
+export function restoreMainFromBubble(): Promise<void> {
+  return invoke<void>("restore_main_from_bubble");
+}
+
+export function setBubbleAlwaysOnTop(value: boolean): Promise<Settings> {
+  return invoke<Settings>("set_bubble_always_on_top", { value });
 }
 
 export function setRecorderShortcut(value: string): Promise<Settings> {
@@ -232,6 +247,9 @@ export interface TaskModel {
   downloaded: boolean;
   size_bytes: number;
   recommended: boolean;
+  profile?: "legacy" | "fast" | "quality";
+  min_memory_gb?: number;
+  license?: string;
 }
 
 /**
@@ -454,6 +472,7 @@ export interface RecorderSession {
   recovery_reason?: string;
   audio_path?: string;
   segments: RecorderSegment[];
+  polished_text?: string;
 }
 
 export type RecorderSessionSummary = Omit<RecorderSession, "segments"> & {
@@ -505,6 +524,22 @@ export function updateRecorderSegment(
 
 export function exportRecorderWav(id: number): Promise<string | null> {
   return invoke<string | null>("export_recorder_wav", { id });
+}
+
+/** Produces a review candidate and leaves the timestamped raw transcript unchanged. */
+export function generateRecorderPolish(id: number): Promise<string> {
+  return invoke<string>("generate_recorder_polish", { id });
+}
+
+export function acceptRecorderPolish(
+  id: number,
+  text: string,
+): Promise<RecorderSession> {
+  return invoke<RecorderSession>("accept_recorder_polish", { id, text });
+}
+
+export function revertRecorderPolish(id: number): Promise<RecorderSession> {
+  return invoke<RecorderSession>("revert_recorder_polish", { id });
 }
 
 export function onRecorderSessionChanged(

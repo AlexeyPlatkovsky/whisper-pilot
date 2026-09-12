@@ -3,9 +3,9 @@ id: WP-123
 title: Implement bubble lifecycle, positioning and Always on Top
 priority: high
 type: task
-status: backlog
+status: in_progress
 created_at: '2026-09-11T19:38:43Z'
-updated_at: '2026-09-11T19:41:40Z'
+updated_at: '2026-09-12T16:44:56Z'
 parent_id: WP-110
 tags:
 - recorder

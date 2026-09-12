@@ -32,6 +32,7 @@ const KEY_MFU_PANEL_MEETING: &str = "mfu_panel_meeting";
 const KEY_MFU_PANEL_STREAMING: &str = "mfu_panel_streaming";
 const KEY_CLOUD_PROVIDER: &str = "cloud_provider";
 const KEY_RECORDER_SHORTCUT: &str = "recorder_shortcut";
+const KEY_BUBBLE_ALWAYS_ON_TOP: &str = "bubble_always_on_top";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 const DEFAULT_CLOUD_PROVIDER: &str = "deepgram";
@@ -68,7 +69,7 @@ fn parse_bool_setting(key: &str, value: &str) -> Result<bool> {
 }
 
 /// All persisted settings, always fully populated with defaults for unset keys.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Settings {
     pub theme: String,
     pub ui_language: String,
@@ -104,6 +105,16 @@ pub struct Settings {
     /// Rust and retains the previous value if a replacement conflicts.
     #[serde(default = "default_recorder_shortcut")]
     pub recorder_shortcut: String,
+    /// When enabled the 120 px Recorder bubble floats above normal windows
+    /// and joins every macOS Space, including fullscreen Spaces.
+    #[serde(default)]
+    pub bubble_always_on_top: bool,
+    /// Last bubble top-left in logical pixels. Both coordinates are optional
+    /// so older settings files and interrupted first moves remain valid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_x: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bubble_y: Option<f64>,
 }
 
 impl Default for Settings {
@@ -120,6 +131,9 @@ impl Default for Settings {
             mfu_panel_streaming: default_true(),
             cloud_provider: default_cloud_provider(),
             recorder_shortcut: default_recorder_shortcut(),
+            bubble_always_on_top: false,
+            bubble_x: None,
+            bubble_y: None,
         }
     }
 }
@@ -255,6 +269,9 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 .as_str()
                 .to_string();
         }
+        KEY_BUBBLE_ALWAYS_ON_TOP => {
+            settings.bubble_always_on_top = parse_bool_setting(KEY_BUBBLE_ALWAYS_ON_TOP, value)?;
+        }
         other => {
             return Err(AppError::InvalidSetting(format!(
                 "unknown setting key: {other}"
@@ -262,6 +279,19 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
         }
     }
 
+    write_settings(app_support_dir, &settings)?;
+    Ok(settings)
+}
+
+pub fn set_bubble_position(app_support_dir: &Path, x: f64, y: f64) -> Result<Settings> {
+    if !x.is_finite() || !y.is_finite() {
+        return Err(AppError::InvalidSetting(
+            "bubble position must contain finite coordinates".into(),
+        ));
+    }
+    let mut settings = get_settings(app_support_dir);
+    settings.bubble_x = Some(x);
+    settings.bubble_y = Some(y);
     write_settings(app_support_dir, &settings)?;
     Ok(settings)
 }
