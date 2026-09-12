@@ -70,7 +70,7 @@ memory may coexist and macOS unified-memory pressure varies by device.
 ## Recommendation
 
 Promote all three independently. Qwen3.5 is the default Fast profile;
-Qwen3.8 and Gemma are explicit Quality choices. Keep Qwen2.5/Qwen3 legacy
+Qwen3.8 and Gemma are explicit Quality choices. Keep Qwen3 legacy
 selections addressable, never auto-download a replacement, and reject a model
 job without altering its transcript when loading, validation, cancellation, or
 resource checks fail.

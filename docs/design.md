@@ -186,11 +186,10 @@ Recorder reuses the shell and fixed top action vocabulary. **Start** performs
 permission, model, system-default microphone, and caption-surface preflight
 before a session is created. **Stop** ends capture and enters **Finalizing**;
 copy, export, delete, and playback become available when their durable inputs
-exist. The metadata row names the selected ASR model, language scope, and native
-stored-audio sample rate. Whisper is the default and supports
-Auto/mixed input. The optional Qwen3-ASR row is Recorder-only, requires an
-explicit Russian or English setting, and its model row states that model
-timestamps are unavailable. Recorder persists capture-window spans but does not
+exist. The metadata row names the selected ASR model, selected language mode,
+and native stored-audio sample rate. Whisper is the default. Qwen3-ASR 0.6B is
+a Recorder-only option; Qwen3-ASR 1.7B Q8_0 is also available with automatic
+language detection. Recorder persists capture-window spans but does not
 currently render them. An unsupported or missing selection blocks Start with a
 Settings action; it never silently starts another engine.
 
@@ -274,11 +273,12 @@ Opened from the header **gear**; a screen with these sections:
   keeps running, and the model's row keeps reporting percent-complete and then
   _Verifying…_ until it updates to ready). **Delete** asks for confirmation
   before removing the file. Tasks may expose one or more fixed catalog entries;
-  selectable entries use an **Active** radio. Transcription currently has two
-  rows that select Recorder ASR: Whisper explains all-mode,
-  auto-language and timestamp support; Qwen3-ASR explains its Recorder-only,
-  explicit RU/EN and no-model-timestamp boundary. Meeting and Streaming remain
-  on Whisper.
+  selectable entries use an **Active** radio. Transcription has three rows:
+  Whisper, Qwen3-ASR 0.6B, and Qwen3-ASR 1.7B Q8_0. Each compatible row exposes
+  a compact Meeting/Streaming selector and a Recorder selector. The 0.6B row
+  exposes Recorder only; Whisper and 1.7B expose both. Model rows show the name,
+  download size/status, and actions without language, timestamp, memory, or
+  license guidance copy.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
   OS), and **Status Colors**: one configurable color per current semantic
   Meeting/Streaming status (anchored picker popover, per-row revert to the

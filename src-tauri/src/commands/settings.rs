@@ -41,15 +41,16 @@ pub(crate) async fn set_setting(
         })
         .await
         .map_err(|error| AppError::Llm(error.to_string()))?
-    } else if key == "active_model.recorder" || key == "recorder_language" {
+    } else if matches!(
+        key.as_str(),
+        "active_model.transcription" | "active_model.recorder" | "recorder_language"
+    ) {
         let _asr_mutation = state.recorder_asr_mutation.lock().await;
         #[cfg(target_os = "macos")]
         {
-            if crate::streaming_session::current_whisper_user(&state.whisper_busy)
-                == Some(crate::streaming_session::WhisperUser::Recorder)
-            {
+            if crate::streaming_session::current_whisper_user(&state.whisper_busy).is_some() {
                 return Err(AppError::InvalidSetting(
-                    "Recorder ASR and language cannot change until capture and finalization have fully ended"
+                    "transcription models cannot change while transcription or capture is active"
                         .into(),
                 ));
             }
@@ -70,12 +71,12 @@ pub(crate) async fn set_setting(
                 ));
             }
         }
-        if key == "active_model.recorder" {
+        if key == "active_model.recorder" || key == "active_model.transcription" {
             ensure_asr_selection_is_downloaded(&dir, &value)?;
         }
         let updated = settings::set_setting(&dir, &key, &value)?;
         #[cfg(target_os = "macos")]
-        if key == "active_model.recorder" {
+        if key == "active_model.recorder" || key == "active_model.transcription" {
             state.clear_qwen_asr_model().await;
         }
         Ok(updated)
@@ -92,7 +93,7 @@ fn ensure_asr_selection_is_downloaded(dir: &std::path::Path, value: &str) -> Res
         return Ok(());
     }
     Err(AppError::InvalidSetting(format!(
-        "Recorder transcription model is not downloaded: {value}"
+        "transcription model is not downloaded: {value}"
     )))
 }
 

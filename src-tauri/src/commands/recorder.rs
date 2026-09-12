@@ -1,6 +1,6 @@
 //! Recorder persistence, capture and live-transcript IPC.
 
-use crate::asr::{self, AsrEngine, AsrLanguage, AsrMode};
+use crate::asr::{self, AsrLanguage, AsrMode, AsrRuntime};
 use crate::error::{AppError, Result};
 use crate::microphone_permission::{self, MicrophonePermissionStatus};
 use crate::recorder_audio::{export_caf_to_wav, RecorderAudioWriter};
@@ -724,7 +724,7 @@ fn spawn_recorder_pipeline(
                     results_tx,
                     0,
                 ),
-                RecorderDecoderModel::Qwen { model, language } => {
+                RecorderDecoderModel::QwenNative { model, language } => {
                     streaming_session::run_windowed_decode(
                         move || streaming_session::QwenSessionDecoder::new(model, language),
                         asr_rx,
@@ -732,6 +732,12 @@ fn spawn_recorder_pipeline(
                         0,
                     )
                 }
+                RecorderDecoderModel::QwenGguf(model) => streaming_session::run_windowed_decode(
+                    move || Ok(streaming_session::QwenGgufSessionDecoder::new(model)),
+                    asr_rx,
+                    results_tx,
+                    0,
+                ),
             }));
         let failure = decoder_exit_failure(&outcome);
         let _ = decoder_finished_tx.send(failure);
@@ -758,10 +764,11 @@ fn spawn_recorder_pipeline(
 #[cfg(target_os = "macos")]
 enum RecorderDecoderModel {
     Whisper(std::sync::Arc<whisper_rs::WhisperContext>),
-    Qwen {
+    QwenNative {
         model: std::sync::Arc<qwen_asr::context::QwenModel>,
         language: AsrLanguage,
     },
+    QwenGguf(std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>),
 }
 
 #[cfg(target_os = "macos")]
@@ -790,15 +797,19 @@ pub(crate) async fn start_recorder_impl(
             streaming_session::WhisperUser::Recorder => "Recorder is already running".into(),
         }));
     }
-    let decoder_model = match asr_spec.engine {
-        AsrEngine::Whisper => state
+    let decoder_model = match asr_spec.runtime {
+        AsrRuntime::WhisperCpp => state
             .model(app_support_dir.clone())
             .await
             .map(RecorderDecoderModel::Whisper),
-        AsrEngine::Qwen3Asr => state
+        AsrRuntime::QwenAsrRust => state
             .qwen_asr_model(app_support_dir.clone(), asr_spec)
             .await
-            .map(|model| RecorderDecoderModel::Qwen { model, language }),
+            .map(|model| RecorderDecoderModel::QwenNative { model, language }),
+        AsrRuntime::LlamaCppMtmd => state
+            .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
+            .await
+            .map(RecorderDecoderModel::QwenGguf),
     };
     let decoder_model = match decoder_model {
         Ok(model) => model,

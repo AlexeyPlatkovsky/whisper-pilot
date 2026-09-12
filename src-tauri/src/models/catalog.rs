@@ -58,20 +58,6 @@ pub struct LlmModelSpec {
 
 pub const LLM_SPECS: &[LlmModelSpec] = &[
     LlmModelSpec {
-        model_id: "qwen2.5-3b-q3km",
-        profile: LlmProfile::Legacy,
-        recommended: false,
-        context_tokens: 16_384,
-        temperature: 0.0,
-        top_p: 1.0,
-        top_k: 0,
-        min_memory_gb: 8,
-        thinking_policy: "disabled-and-stripped",
-        chat_template: "embedded",
-        template_family: "qwen",
-        license: "Apache-2.0",
-    },
-    LlmModelSpec {
         model_id: "qwen3-4b-q3kl",
         profile: LlmProfile::Legacy,
         recommended: false,
@@ -203,7 +189,7 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
     ModelCatalogEntry {
         id: "qwen3-asr-0.6b",
         task: "transcription",
-        label: "Qwen3-ASR 0.6B · Recorder RU/EN",
+        label: "Qwen3-ASR 0.6B",
         assets: &[
             ModelAsset {
                 url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/model.safetensors",
@@ -212,7 +198,7 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
                 file_name: "qwen3-asr-0.6b/model.safetensors",
                 variant_id: None,
                 variant_label: None,
-                recommended: true,
+                recommended: false,
             },
             ModelAsset {
                 url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/vocab.json",
@@ -221,7 +207,7 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
                 file_name: "qwen3-asr-0.6b/vocab.json",
                 variant_id: None,
                 variant_label: None,
-                recommended: true,
+                recommended: false,
             },
             ModelAsset {
                 url: "https://huggingface.co/Qwen/Qwen3-ASR-0.6B/resolve/5eb144179a02acc5e5ba31e748d22b0cf3e303b0/merges.txt",
@@ -230,23 +216,34 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
                 file_name: "qwen3-asr-0.6b/merges.txt",
                 variant_id: None,
                 variant_label: None,
-                recommended: true,
+                recommended: false,
             },
         ],
     },
     ModelCatalogEntry {
-        id: "qwen2.5-3b-q3km",
-        task: "llm",
-        label: "Qwen2.5 3B Instruct (Q3_K_M)",
-        assets: &[ModelAsset {
-            url: "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q3_K_M.gguf",
-            sha256: "8eff4e0eb51a8148abdaa9849f14f187e5ac6cd7d795610caf996a287277c59d",
-            size_bytes: 1_590_475_936,
-            file_name: "Qwen2.5-3B-Instruct-Q3_K_M.gguf",
-            variant_id: None,
-            variant_label: None,
-            recommended: false,
-        }],
+        id: "qwen3-asr-1.7b-q8_0",
+        task: "transcription",
+        label: "Qwen3-ASR 1.7B (Q8_0)",
+        assets: &[
+            ModelAsset {
+                url: "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/36a678687ba7d07a74ca70ccb0e36902e005fb80/Qwen3-ASR-1.7B-Q8_0.gguf",
+                sha256: "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+                size_bytes: 2_165_034_944,
+                file_name: "qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+            ModelAsset {
+                url: "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/36a678687ba7d07a74ca70ccb0e36902e005fb80/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+                sha256: "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+                size_bytes: 355_709_344,
+                file_name: "qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+        ],
     },
     ModelCatalogEntry {
         id: "qwen3-4b-q3kl",

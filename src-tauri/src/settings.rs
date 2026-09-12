@@ -85,8 +85,7 @@ pub struct Settings {
     pub ui_language: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_model_transcription: Option<String>,
-    /// Recorder has an independent ASR choice. Meeting and Streaming retain
-    /// the legacy Whisper selection because Qwen's qualified mode is narrower.
+    /// Recorder has an independent ASR choice from Meeting and Streaming.
     #[serde(default = "default_active_model_recorder")]
     pub active_model_recorder: String,
     #[serde(default = "default_active_model_diarization")]
@@ -119,8 +118,8 @@ pub struct Settings {
     /// Rust and retains the previous value if a replacement conflicts.
     #[serde(default = "default_recorder_shortcut")]
     pub recorder_shortcut: String,
-    /// One of auto, ru, or en. Qwen3-ASR requires an explicit value;
-    /// Whisper remains the auto and mixed-language path.
+    /// One of auto, ru, or en. The legacy 0.6B adapter requires an explicit
+    /// value; Whisper and the GGUF Qwen3-ASR runtime support automatic mode.
     #[serde(default = "default_recorder_language")]
     pub recorder_language: String,
     /// When enabled the 120 px Recorder bubble floats above normal windows
@@ -172,10 +171,18 @@ fn settings_path(app_support_dir: &Path) -> PathBuf {
 /// Read all settings, falling back to defaults when no store file exists yet
 /// or the file cannot be parsed.
 pub fn get_settings(app_support_dir: &Path) -> Settings {
-    std::fs::read_to_string(settings_path(app_support_dir))
+    let mut settings: Settings = std::fs::read_to_string(settings_path(app_support_dir))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_default()
+        .unwrap_or_default();
+    if settings.active_model_llm.as_deref().is_some_and(|id| {
+        !CATALOG
+            .iter()
+            .any(|entry| entry.task == "llm" && entry.id == id)
+    }) {
+        settings.active_model_llm = None;
+    }
+    settings
 }
 
 /// Update one known setting and persist the full store; rejects an unknown
@@ -233,7 +240,10 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
         KEY_ACTIVE_MODEL_LLM => {
             if value.trim().is_empty() {
                 settings.active_model_llm = None;
-            } else if !CATALOG.iter().any(|e| e.id == value) {
+            } else if !CATALOG
+                .iter()
+                .any(|entry| entry.task == "llm" && entry.id == value)
+            {
                 return Err(AppError::InvalidSetting(format!(
                     "unknown model id: {value}",
                 )));
@@ -442,6 +452,28 @@ mod tests {
         let error = set_setting(dir.path(), KEY_RECORDER_LANGUAGE, "auto").unwrap_err();
         assert!(matches!(error, AppError::InvalidSetting(_)));
         assert_eq!(get_settings(dir.path()).recorder_language, "en");
+    }
+
+    #[test]
+    fn qwen_17_gguf_can_be_selected_for_every_local_asr_mode_with_auto_language() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID;
+
+        set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, id).unwrap();
+        let settings = set_setting(dir.path(), KEY_ACTIVE_MODEL_RECORDER, id).unwrap();
+
+        assert_eq!(settings.active_model_transcription.as_deref(), Some(id));
+        assert_eq!(settings.active_model_recorder, id);
+        assert_eq!(settings.recorder_language, "auto");
+    }
+
+    #[test]
+    fn removed_qwen_25_selection_is_safely_cleared_when_old_settings_are_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = r#"{"theme":"system","ui_language":"en","active_model_diarization":"none","active_model_llm":"qwen2.5-3b-q3km","export_file_type":"plain_text"}"#;
+        std::fs::write(dir.path().join(FILE_NAME), old).unwrap();
+
+        assert_eq!(get_settings(dir.path()).active_model_llm, None);
     }
 
     #[test]

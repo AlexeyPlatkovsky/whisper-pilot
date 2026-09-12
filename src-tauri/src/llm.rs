@@ -12,6 +12,7 @@ use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::OnceLock;
 use std::sync::{Arc, Condvar, Mutex};
 
 const MAX_NEW_TOKENS: i32 = 1024;
@@ -70,17 +71,49 @@ impl<T> SelectedModelCache<T> {
 
 const LLM_QUEUE_CAPACITY: usize = 8;
 
+pub(crate) struct SharedLlamaBackend {
+    backend: OnceLock<LlamaBackend>,
+    init: Mutex<()>,
+}
+
+impl Default for SharedLlamaBackend {
+    fn default() -> Self {
+        Self {
+            backend: OnceLock::new(),
+            init: Mutex::new(()),
+        }
+    }
+}
+
+impl SharedLlamaBackend {
+    pub(crate) fn get(&self) -> Result<&LlamaBackend> {
+        if let Some(backend) = self.backend.get() {
+            return Ok(backend);
+        }
+        let _init = self
+            .init
+            .lock()
+            .map_err(|_| AppError::Llm("llama.cpp backend init lock is poisoned".into()))?;
+        if self.backend.get().is_none() {
+            let backend = LlamaBackend::init().map_err(|error| AppError::Llm(error.to_string()))?;
+            let _ = self.backend.set(backend);
+        }
+        self.backend
+            .get()
+            .ok_or_else(|| AppError::Llm("llama.cpp backend did not initialize".into()))
+    }
+}
+
 struct LoadedLlmModel {
     // Field order is intentional: the model must be freed before its backend.
     model: LlamaModel,
-    backend: LlamaBackend,
+    backend: Arc<SharedLlamaBackend>,
     spec: Option<&'static LlmModelSpec>,
 }
 
 impl LoadedLlmModel {
-    fn load(path: &Path) -> Result<Self> {
-        let backend = LlamaBackend::init().map_err(|error| AppError::Llm(error.to_string()))?;
-        let model = LlamaModel::load_from_file(&backend, path, &LlamaModelParams::default())
+    fn load(path: &Path, backend: Arc<SharedLlamaBackend>) -> Result<Self> {
+        let model = LlamaModel::load_from_file(backend.get()?, path, &LlamaModelParams::default())
             .map_err(|error| AppError::Llm(format!("model load: {error}")))?;
         let spec = path
             .file_name()
@@ -102,6 +135,7 @@ impl LoadedLlmModel {
 /// a process static so cached Metal resources are released before llama.cpp's
 /// process-global backend teardown.
 pub struct LlmRuntime {
+    backend: Arc<SharedLlamaBackend>,
     schedule: Mutex<BoundedLlmScheduler>,
     schedule_changed: Condvar,
     cache: Mutex<SelectedModelCache<LoadedLlmModel>>,
@@ -112,6 +146,7 @@ pub struct LlmRuntime {
 impl Default for LlmRuntime {
     fn default() -> Self {
         Self {
+            backend: Arc::new(SharedLlamaBackend::default()),
             schedule: Mutex::new(BoundedLlmScheduler::new(LLM_QUEUE_CAPACITY)),
             schedule_changed: Condvar::new(),
             cache: Mutex::new(SelectedModelCache::default()),
@@ -122,6 +157,9 @@ impl Default for LlmRuntime {
 }
 
 impl LlmRuntime {
+    pub(crate) fn shared_backend(&self) -> Arc<SharedLlamaBackend> {
+        Arc::clone(&self.backend)
+    }
     pub fn infer(&self, model_path: &Path, kind: LlmJobKind, prompt: &str) -> Result<String> {
         self.infer_with_model_resolver(kind, prompt, || Ok(model_path.to_path_buf()))
     }
@@ -214,7 +252,9 @@ impl LlmRuntime {
             .cache
             .lock()
             .map_err(|_| AppError::Llm("local LLM model cache lock is poisoned".to_string()))?
-            .get_or_try_load(&fingerprint, || LoadedLlmModel::load(model_path))?;
+            .get_or_try_load(&fingerprint, || {
+                LoadedLlmModel::load(model_path, self.shared_backend())
+            })?;
         run_inference_with_model(&model, kind, prompt)
     }
 }
@@ -854,7 +894,7 @@ fn run_inference_with_model(
 
     let mut ctx = loaded
         .model
-        .new_context(&loaded.backend, ctx_params)
+        .new_context(loaded.backend.get()?, ctx_params)
         .map_err(|e| AppError::Llm(format!("context create: {e}")))?;
 
     let tokens_list = loaded

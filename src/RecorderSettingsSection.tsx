@@ -86,8 +86,7 @@ export function RecorderSettingsSection() {
       <hr className="settings-divider" />
       <h4>Recorder speech language</h4>
       <p className="settings-description">
-        Whisper supports Auto and mixed Russian/English. Qwen3-ASR requires
-        Russian or English to be selected explicitly.
+        Choose automatic detection or pin the Recorder to one language.
       </p>
       <label className="settings-field">
         Language

@@ -23,7 +23,7 @@ obvious from general software knowledge.
 | **large-v3-turbo** | A multilingual Whisper model with a reduced decoder — fast, strong on Russian; used for transcription. |
 | **Metal** | Apple's GPU API; whisper.cpp and llama.cpp are built with Metal so inference runs on the Apple Silicon GPU. |
 | **sherpa-onnx** | An on-device speech toolkit; WhisperPilot uses its speaker-segmentation and embedding models for diarization (M2). |
-| **llama.cpp / Qwen2.5** | The local LLM stack for summarization (M3): llama.cpp runtime running a quantized Qwen2.5-Instruct model. |
+| **llama.cpp / local GGUF** | The shared local inference stack for MFU, translation, transcript polishing, and Qwen3-ASR 1.7B audio decoding. |
 | **ffmpeg** | External tool that extracts audio from video and resamples audio to the normalized form. |
 | **Settings** | The app-wide configuration screen (F005), opened from the header gear: AI models, Appearance, App language, and (release) Update app. |
 | **Model catalog** | The fixed, app-defined list of the model(s) each task (transcription, diarization, MFU) needs; managed in Settings → AI models (download/delete/verify). Not user-extensible. |

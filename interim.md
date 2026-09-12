@@ -18,9 +18,9 @@
 2. Ввести общий Rust capture coordinator и отдельный адаптер микрофона.
 3. Добавить вкладку Recorder и сохраняемые сессии диктофона.
 4. Поверх coordinator добавить плавающий кружок и глобальный хоткей.
-5. Qwen3-ASR подключать только через абстракцию ASR engine и после реального бенчмарка на Apple Silicon.
+5. Qwen3-ASR подключать через абстракцию ASR engine; GGUF-вариант требует отдельного аудиопроектора и реального бенчмарка на Apple Silicon.
 
-Production-код в рамках ревью не менялся. Добавлен только этот документ.
+После исходного ревью рекомендации были реализованы по фазам. Текущее состояние production-кода отражено ниже; неподтверждённый реальный Metal-бенчмарк отмечен отдельно.
 
 ## Что фактически реализовано сейчас
 
@@ -30,7 +30,7 @@ Production-код в рамках ревью не менялся. Добавле
 - Whisper `large-v3-turbo` Q8 работает через `whisper-rs`/whisper.cpp с Metal и автоопределением языка (`src-tauri/src/transcribe.rs:85-95`, `177-205`).
 - Транскрипт сохраняется до начала diarization (`src-tauri/src/commands/transcription.rs:105-161`).
 - Разделение по голосам — **speaker diarization**: pyannote segmentation плюс выбираемый CAM++ или TitaNet-large embedding и кластеризация на Rust (`src-tauri/src/models/catalog.rs:53-88`, `src-tauri/src/diarize/`).
-- MFU — структурированный результат локальной LLM: summary, decisions, action items, open questions и participants. В каталоге есть Qwen2.5 3B и Qwen3 4B GGUF (`src-tauri/src/models/catalog.rs:90-117`).
+- MFU — структурированный результат локальной LLM: summary, decisions, action items, open questions и participants. Локальные LLM работают через общий llama.cpp backend; Qwen2.5 3B удалён из активного каталога.
 
 ### Streaming: транскрибация системного аудио
 
@@ -251,7 +251,7 @@ Capture нельзя связывать с JavaScript timers при hidden main 
 
 Вероятно, речь о **Qwen3-ASR-1.7B**. На дату ревью официальный model card указывает Russian, English и Turkish среди 30 языков, offline и streaming recognition и language identification. Timestamps даёт отдельный Qwen3-ForcedAligner-0.6B для поддерживаемых языков. Официальный Python streaming path сейчас доступен только через vLLM и не возвращает timestamps.
 
-Сейчас существует ggml-org GGUF conversion для свежего llama.cpp, включая Q8 около 2.17 GB. Это повышает шансы на Apple Silicon, но текущая интеграция WhisperPilot с `llama-cpp-2` — text-only path для MFU/Prettify. Qwen3-ASR требует audio projector/model bundle и более новых multimodal APIs. Одной строкой в catalog рядом с Whisper его корректно не добавить.
+В текущей реализации `Qwen3-ASR-1.7B-Q8_0.gguf` подключён через multimodal API llama.cpp вместе с обязательным `mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`. Комплект доступен для Meeting, Streaming и Recorder; приложение само режет вход на ограниченные окна. Реальный Metal-бенчмарк с полными весами остаётся отдельной обязательной проверкой качества и производительности.
 
 Рекомендуемая абстракция:
 

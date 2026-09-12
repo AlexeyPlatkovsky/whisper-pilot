@@ -1,6 +1,6 @@
 [package]
 name = "whisper-pilot"
-version = "1.13.0"
+version = "1.14.0"
 edition = "2021"
 rust-version = "1.80"
 
@@ -58,7 +58,7 @@ rubato = { version = "1.0.1", default-features = false }
 # compatibility libraries — see streaming_audio.rs's module doc comment.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
-llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal", "dynamic-link"] }
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal", "dynamic-link", "mtmd"] }
 screencapturekit = "8.0.1"
 cpal = "0.17.3"
 objc2 = { version = "0.6.4", default-features = false, features = ["std"] }

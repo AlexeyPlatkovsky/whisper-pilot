@@ -38,9 +38,42 @@ mod tests {
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"transcription"));
         assert!(ids.contains(&"qwen3-asr-0.6b"));
+        assert!(ids.contains(&"qwen3-asr-1.7b-q8_0"));
         assert!(ids.contains(&"diarization-campplus"));
         assert!(ids.contains(&"diarization-titanet-large"));
         assert!(models.iter().all(|m| !m.downloaded));
+    }
+
+    #[test]
+    fn qwen_17_catalog_pins_the_backbone_and_audio_projector_and_removes_qwen_25() {
+        let qwen = CATALOG
+            .iter()
+            .find(|entry| entry.id == "qwen3-asr-1.7b-q8_0")
+            .expect("Qwen3-ASR 1.7B catalog row");
+        assert_eq!(qwen.task, "transcription");
+        assert_eq!(qwen.assets.len(), 2);
+        assert_eq!(
+            qwen.assets[0].file_name,
+            "qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
+        assert_eq!(qwen.assets[0].size_bytes, 2_165_034_944);
+        assert_eq!(
+            qwen.assets[0].sha256,
+            "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57"
+        );
+        assert_eq!(
+            qwen.assets[1].file_name,
+            "qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
+        assert_eq!(qwen.assets[1].size_bytes, 355_709_344);
+        assert_eq!(
+            qwen.assets[1].sha256,
+            "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d"
+        );
+        assert!(CATALOG.iter().all(|entry| entry.id != "qwen2.5-3b-q3km"));
+        assert!(LLM_SPECS
+            .iter()
+            .all(|spec| spec.model_id != "qwen2.5-3b-q3km"));
     }
 
     #[tokio::test]

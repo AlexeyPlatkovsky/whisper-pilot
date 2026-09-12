@@ -603,6 +603,12 @@ fn drive_cloud_results(
 /// persistence loops. Returns once capture has started — decoding continues
 /// in the background; the caller listens for `streaming_window` events.
 #[cfg(target_os = "macos")]
+enum LocalStreamingDecoderModel {
+    Whisper(std::sync::Arc<whisper_rs::WhisperContext>),
+    QwenGguf(std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>),
+}
+
+#[cfg(target_os = "macos")]
 #[tauri::command]
 pub(crate) async fn start_streaming_session(
     app: tauri::AppHandle,
@@ -627,18 +633,20 @@ pub(crate) async fn start_streaming_session(
             ))
         }
     };
-    if matches!(requested, streaming::StreamingStartConfiguration::Local) {
+    let local_asr_spec = if matches!(requested, streaming::StreamingStartConfiguration::Local) {
         let app_settings = crate::settings::get_settings(&app_support_dir);
         let model_id = app_settings
             .active_model_transcription
             .as_deref()
             .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
-        crate::asr::resolve_selection(
+        Some(crate::asr::resolve_selection(
             model_id,
             crate::asr::AsrMode::Streaming,
             crate::asr::AsrLanguage::Auto,
-        )?;
-    }
+        )?)
+    } else {
+        None
+    };
     let now = now_ms()?;
     let (id, created_for_start) = match session_id {
         Some(id) => (id, false),
@@ -846,8 +854,22 @@ pub(crate) async fn start_streaming_session(
         );
     }
 
-    let ctx = match state.model(app_support_dir.clone()).await {
-        Ok(ctx) => ctx,
+    let asr_spec = local_asr_spec.expect("local Streaming has a resolved ASR model");
+    let decoder_model = match asr_spec.runtime {
+        crate::asr::AsrRuntime::WhisperCpp => state
+            .model(app_support_dir.clone())
+            .await
+            .map(LocalStreamingDecoderModel::Whisper),
+        crate::asr::AsrRuntime::LlamaCppMtmd => state
+            .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
+            .await
+            .map(LocalStreamingDecoderModel::QwenGguf),
+        crate::asr::AsrRuntime::QwenAsrRust => Err(AppError::InvalidSetting(
+            "selected Qwen3-ASR model is not compatible with Streaming".into(),
+        )),
+    };
+    let decoder_model = match decoder_model {
+        Ok(model) => model,
         Err(e) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
             return fail_start_after_status_cleanup(
@@ -915,14 +937,21 @@ pub(crate) async fn start_streaming_session(
     };
     emit_live_capture_state(&app, snapshot);
     let (results_tx, results_rx) = streaming_session::result_channel();
-    tokio::task::spawn_blocking(move || {
-        streaming_session::run_windowed_decode_from(
+    tokio::task::spawn_blocking(move || match decoder_model {
+        LocalStreamingDecoderModel::Whisper(ctx) => streaming_session::run_windowed_decode_from(
             move || streaming_session::WhisperSessionDecoder::new(&ctx),
             samples_rx,
             results_tx,
             resume.next_window_index,
             resume.last_persisted_end_ms,
-        )
+        ),
+        LocalStreamingDecoderModel::QwenGguf(model) => streaming_session::run_windowed_decode_from(
+            move || Ok(streaming_session::QwenGgufSessionDecoder::new(model)),
+            samples_rx,
+            results_tx,
+            resume.next_window_index,
+            resume.last_persisted_end_ms,
+        ),
     });
 
     let results_app = app.clone();

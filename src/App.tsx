@@ -235,9 +235,11 @@ export function App() {
   const refreshModelAvailability = useCallback(async () => {
     try {
       const models = await listTaskModels();
-      const transcription = models.find((m) => m.id === "transcription");
-      setTranscriptionModelReady(transcription?.downloaded ?? false);
       const settings = await getSettings();
+      const transcriptionId =
+        settings.active_model_transcription ?? "transcription";
+      const transcription = models.find((m) => m.id === transcriptionId);
+      setTranscriptionModelReady(transcription?.downloaded ?? false);
       const llmId = settings.active_model_llm;
       if (llmId) {
         const llm = models.find((m) => m.id === llmId);

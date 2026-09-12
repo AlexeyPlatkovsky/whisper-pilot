@@ -865,7 +865,9 @@ body {
 }
 
 @keyframes bubble-listening {
-  50% { opacity: 0.55; }
+  50% {
+    opacity: 0.55;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1955,14 +1957,6 @@ body {
   border-bottom: 1px solid var(--border);
 }
 
-.model-guidance {
-  display: block;
-  margin-top: 2px;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 400;
-}
-
 .model-row:last-child {
   border-bottom: none;
 }
@@ -2032,6 +2026,21 @@ body {
   height: 16px;
   margin: 0;
   accent-color: var(--wp-speaker-0);
+}
+
+.model-mode-selectors {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+}
+
+.model-mode-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: var(--wp-font-size-xs, 0.75rem);
+  white-space: nowrap;
 }
 
 .model-badge {

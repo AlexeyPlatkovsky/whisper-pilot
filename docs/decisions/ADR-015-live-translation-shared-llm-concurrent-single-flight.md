@@ -9,13 +9,13 @@
 - **Deciders:** Alexey Platkovsky
 - **Relates to:** [ADR-014](ADR-014-streaming-mode-coexists-with-batch-meeting.md)
   (Streaming's scope and offline stance), [ADR-006](ADR-006-llamacpp-qwen-summary.md)
-  (the llama.cpp + Qwen2.5 summarization stack this decision reuses)
+  (the local llama.cpp summarization stack this decision reuses)
 
 ## Context
 
 Streaming (ADR-014) needed a way to read a live session in a language the user
 does not speak, without waiting for the session to end. WhisperPilot already
-runs a local LLM — llama.cpp + a quantized Qwen2.5-Instruct model — for
+runs a selected local GGUF LLM through llama.cpp for
 Meeting's structured MFU (ADR-006) and, more recently, for Streaming's own
 Prettify rewrite. A decision was needed on what model powers translation, and
 on when translation is allowed to run relative to live capture.
@@ -34,7 +34,7 @@ defeat the point of "live."
 
 **Engine: reuse the bundled summary LLM, add no translation model.**
 `llm::translate_paragraph` calls the same llama.cpp completion path Craft MFU
-and Prettify already use, against whatever Qwen2.5-Instruct model is
+and Prettify already use, against whichever local LLM profile is
 currently active — no new model asset, no new Settings → AI models catalog
 entry, no new download. Translation is offline like every other on-device
 capability (ADR-006, ADR-014). It runs its own prompt
@@ -134,7 +134,7 @@ has changed, not on every read.
 - **Add a dedicated translation model to the catalog** (e.g. a compact
   NLLB/MADLAD-class MT model) — rejected: a new multi-GB downloadable asset,
   a new Settings → AI models entry, and new engine-hosting work, for a
-  capability the bundled Qwen2.5 model can already perform adequately inside
+  capability the selected general-purpose model can already perform adequately inside
   the existing llama.cpp path. Rejected for the same local-first,
   minimal-footprint reasoning ADR-006 applied to summarization.
 - **Gate translation to stopped sessions, matching Craft/Prettify** —

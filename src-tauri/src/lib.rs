@@ -17,6 +17,8 @@ pub mod meetings;
 pub mod microphone_audio;
 pub mod microphone_permission;
 pub mod models;
+#[cfg(target_os = "macos")]
+pub mod qwen_gguf_asr;
 pub mod recorder_audio;
 pub mod recorder_shortcut;
 pub mod recorder_store;

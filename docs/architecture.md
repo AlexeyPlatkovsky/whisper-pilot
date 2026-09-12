@@ -622,8 +622,8 @@ paragraph breaks — a possible follow-on, not yet built.
 
 ## Structured MFU (M3, `llm.rs`)
 
-llama.cpp running quantized Qwen2.5-Instruct on Metal generates **structured
-MFU** from a transcript: summary, key decisions, action items, open
+llama.cpp running the selected quantized local text model on Metal generates
+**structured MFU** from a transcript: summary, key decisions, action items, open
 questions, participants — in Russian or English depending on which the
 transcript itself is in (Cyrillic-character detection in `llm::build_prompt`).
 `llm::generate_mfu` returns a domain-agnostic `GeneratedNotes` (no id field);
@@ -878,8 +878,8 @@ deferred model management" detail.
 Local text models now expose explicit profiles while retaining one execution
 stack. Qwen3.5 4B Q4_K_M is the recommended **Fast** profile for fresh installs;
 Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 are opt-in **Quality** profiles. The
-previous Qwen2.5/Qwen3 files remain valid Legacy selections and no upgrade
-downloads a replacement. Catalog metadata owns each model's profile, context,
+previous Qwen3 file remains a valid Legacy selection and no upgrade downloads
+a replacement. Catalog metadata owns each model's profile, context,
 sampling, prompt protocol, minimum-memory guidance, license label, exact file
 size and SHA-256. `LlmRuntime` continues to serialize work through its bounded
 priority queue and caches only the exact selected file fingerprint.
@@ -1040,28 +1040,33 @@ bounded-queue overload are surfaced once so the coordinator can end capture as
 a recoverable error.
 
 ASR selection is capability-driven (ADR-019), not inferred from catalog order.
-The static model specification declares engine, compatible modes, streaming,
-timestamps, language detection, mixed-language support, memory guidance,
-license, and an exact asset fingerprint. Meeting and Streaming resolve the
-legacy `transcription` ID to Whisper. Recorder independently persists
-`active_model.recorder` plus `recorder_language`; older settings default to
-Whisper plus `auto`. Qwen3-ASR 0.6B is accepted only for Recorder with explicit
-`ru` or `en`. Unsupported combinations and incomplete bundles fail before
-capture, without implicit fallback.
+The static model specification declares engine, runtime, compatible modes,
+streaming, timestamps, language detection, mixed-language support, memory,
+license, and an exact asset fingerprint. `active_model.transcription` controls
+Meeting and local Streaming; Recorder independently persists
+`active_model.recorder` plus `recorder_language`. Older settings default both
+choices to Whisper, with Recorder language `auto`. Qwen3-ASR 0.6B is accepted
+only for Recorder with explicit `ru` or `en`; Qwen3-ASR 1.7B Q8_0 is accepted
+for all three modes with automatic language detection. Unsupported combinations
+and incomplete bundles fail before capture, without implicit fallback.
 
-Whisper retains its existing Metal context. Qwen uses the pinned pure-Rust
-`qwen-asr` 0.11.0 runtime with Apple Accelerate/vDSP and a complete official
-safetensors/vocabulary/merges bundle. Its immutable weights are cached by
-engine, model ID, and the composite fingerprint of all three assets; each Recorder run creates a fresh
-decode session. Both engines implement the same bounded window decoder
-contract. Because the Qwen runtime has no model timestamps, Recorder assigns
-the already-stable capture-window span and never presents it as word timing.
+Whisper retains its existing Metal context. Qwen 0.6B uses pinned pure-Rust
+`qwen-asr` 0.11.0 with Apple Accelerate/vDSP and an official
+safetensors/vocabulary/merges bundle. Qwen 1.7B uses the existing in-process
+`llama.cpp` backend plus MTMD, with a verified text GGUF and required audio
+projector GGUF. Text LLM and GGUF-ASR caches share the one process-global
+`llama.cpp` backend but own independent models and inference contexts. Meeting
+feeds the GGUF runtime bounded 30-second file windows; Streaming and Recorder
+reuse the live at-most-seven-second decoder contract. Qwen output has no model
+timestamps, so the surrounding pipeline assigns stable window spans rather
+than presenting them as word timing.
 Every new Recorder row stores `asr_model_id`, `asr_engine`, and `asr_language`, preserving active
 session immutability and historical provenance across settings changes.
-A single async mutation barrier spans selection changes, model loading, and
-deletion until Recorder Start has installed live ownership. Successful Qwen
-deletion also invalidates the in-memory cache; a partial multi-asset deletion
-keeps Whisper selected until the complete bundle is downloaded again.
+A single async mutation barrier spans ASR selection changes, model loading, and
+deletion. Any active Meeting, Streaming, or Recorder pipeline blocks model
+mutation. Successful Qwen deletion also invalidates both Qwen caches; deleting
+a selected multi-asset bundle first resets every affected mode to Whisper, and
+a partial deletion keeps that safe selection until the bundle is complete.
 
 An observable `finalizing` session state sits between capture and completion.
 It retains live-source ownership while meaningful tail audio is transcribed,

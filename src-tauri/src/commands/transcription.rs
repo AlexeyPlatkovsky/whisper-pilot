@@ -17,6 +17,12 @@ use std::sync::Arc;
 use tauri::{Emitter, State};
 use whisper_rs::WhisperContext;
 
+enum MeetingDecoderModel {
+    Whisper(Arc<WhisperContext>),
+    #[cfg(target_os = "macos")]
+    QwenGguf(Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>),
+}
+
 /// `transcribe_meeting`'s result: the persisted meeting plus a non-fatal
 /// warning when diarization was requested but degraded (its active model's
 /// file was missing or corrupt) — the transcription itself always succeeds
@@ -76,7 +82,7 @@ where
 async fn decode_and_transcribe(
     app: tauri::AppHandle,
     id: i64,
-    ctx: Arc<WhisperContext>,
+    model: MeetingDecoderModel,
     path: String,
 ) -> Result<(transcribe::Transcription, Vec<f32>)> {
     let input = PathBuf::from(&path);
@@ -87,17 +93,52 @@ async fn decode_and_transcribe(
         .await
         .map_err(|e| AppError::Transcribe(e.to_string()))??;
     let (transcription, samples) = transcribe_owned_samples(samples, move |samples| {
-        transcribe::transcribe_with_progress(&ctx, samples, move |percent| {
+        let emit_progress = |percent| {
             let _ = app.emit(
                 "transcription_progress",
                 TranscriptionProgressEvent { id, percent },
             );
-        })
+        };
+        match model {
+            MeetingDecoderModel::Whisper(ctx) => {
+                transcribe::transcribe_with_progress(&ctx, samples, emit_progress)
+            }
+            #[cfg(target_os = "macos")]
+            MeetingDecoderModel::QwenGguf(model) => {
+                transcribe_qwen_recording(&model, samples, emit_progress)
+            }
+        }
     })
     .await?;
     ensure_non_empty_transcript(&transcription)?;
 
     Ok((transcription, samples))
+}
+
+#[cfg(target_os = "macos")]
+fn transcribe_qwen_recording(
+    model: &crate::qwen_gguf_asr::QwenGgufAsrModel,
+    samples: &[f32],
+    mut on_progress: impl FnMut(i32),
+) -> Result<transcribe::Transcription> {
+    const WINDOW_SAMPLES: usize = crate::audio::SAMPLE_RATE as usize * 30;
+    let total_windows = samples.len().div_ceil(WINDOW_SAMPLES).max(1);
+    let mut segments = Vec::new();
+    let mut language = "auto".to_string();
+    for (index, window) in samples.chunks(WINDOW_SAMPLES).enumerate() {
+        let decoded = model.transcribe_window(window)?;
+        if language == "auto" && decoded.language != "auto" {
+            language = decoded.language;
+        }
+        let offset_ms = index as u64 * 30_000;
+        segments.extend(decoded.segments.into_iter().map(|mut segment| {
+            segment.start_ms += offset_ms;
+            segment.end_ms += offset_ms;
+            segment
+        }));
+        on_progress((((index + 1) * 100 / total_windows) as i32).min(100));
+    }
+    Ok(transcribe::Transcription { segments, language })
 }
 
 /// Reject empty Meeting decodes before persistence or diarization. This
@@ -106,7 +147,7 @@ async fn decode_and_transcribe(
 fn ensure_non_empty_transcript(transcription: &transcribe::Transcription) -> Result<()> {
     if transcription.segments.is_empty() {
         return Err(AppError::Transcribe(
-            "Whisper decoded no speech from this file. Check that the source contains \
+            "The selected transcription model decoded no speech from this file. Check that the source contains \
              audible speech and try another recording if needed."
                 .to_string(),
         ));
@@ -212,7 +253,7 @@ pub(crate) async fn transcribe_meeting(
         .active_model_transcription
         .as_deref()
         .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
-    crate::asr::resolve_selection(
+    let asr_spec = crate::asr::resolve_selection(
         model_id,
         crate::asr::AsrMode::Meeting,
         crate::asr::AsrLanguage::Auto,
@@ -243,8 +284,26 @@ pub(crate) async fn transcribe_meeting(
     let active_diarization_variant =
         diarization_variant_to_run(&app_settings.active_model_diarization).map(str::to_string);
 
-    let ctx = state.model(app_support_dir.clone()).await?;
-    let (transcription, samples) = decode_and_transcribe(app.clone(), id, ctx, path).await?;
+    let decoder_model = match asr_spec.runtime {
+        crate::asr::AsrRuntime::WhisperCpp => state
+            .model(app_support_dir.clone())
+            .await
+            .map(MeetingDecoderModel::Whisper),
+        #[cfg(target_os = "macos")]
+        crate::asr::AsrRuntime::LlamaCppMtmd => state
+            .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
+            .await
+            .map(MeetingDecoderModel::QwenGguf),
+        crate::asr::AsrRuntime::QwenAsrRust => Err(AppError::InvalidSetting(
+            "selected Qwen3-ASR model is not compatible with Meeting".into(),
+        )),
+        #[cfg(not(target_os = "macos"))]
+        crate::asr::AsrRuntime::LlamaCppMtmd => Err(AppError::InvalidSetting(
+            "Qwen3-ASR GGUF is currently available on macOS".into(),
+        )),
+    }?;
+    let (transcription, samples) =
+        decode_and_transcribe(app.clone(), id, decoder_model, path).await?;
 
     let diarization: Option<PendingDiarization> = active_diarization_variant.map(|variant| {
         let app = app.clone();

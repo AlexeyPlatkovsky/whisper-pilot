@@ -38,7 +38,7 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-003 | Whisper large-v3-turbo on Metal for transcription | accepted |
 | ADR-004 | ffmpeg as the single audio/video ingestion path | accepted |
 | ADR-005 | sherpa-onnx for speaker diarization | partially superseded by ADR-013 (engine hosting only; sherpa-onnx choice stands) |
-| ADR-006 | llama.cpp + Qwen2.5 for local summarization | accepted |
+| ADR-006 | llama.cpp + Qwen2.5 for local summarization | superseded for model selection by Phase 3 local-LLM qualification; local llama.cpp engine retained |
 | ADR-007 | Russian-first, English added later (auto-detect option) | partially superseded by ADR-012 (language mechanism only; Russian-first focus stands) |
 | ADR-008 | Persisted meeting library (SQLite), reference-only audio, auto-save | accepted |
 | ADR-009 | Structured meeting MFU (full set), editable | accepted |
@@ -51,7 +51,7 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-016 | Live translation moves from paragraph-unit to rolling per-window translation | accepted |
 | ADR-017 | Recorder retains recoverable local audio | accepted |
 | ADR-018 | Native floating bubble and qualified GGUF profiles | accepted |
-| ADR-019 | Capability-aware ASR and Qwen3-ASR for monolingual Recorder | accepted |
+| ADR-019 | Capability-aware ASR with Qwen3-ASR native and GGUF runtimes | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability

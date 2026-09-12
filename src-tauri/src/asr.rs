@@ -7,12 +7,20 @@ use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ASR_MODEL_ID: &str = "transcription";
 pub const QWEN3_ASR_06_MODEL_ID: &str = "qwen3-asr-0.6b";
+pub const QWEN3_ASR_17_GGUF_MODEL_ID: &str = "qwen3-asr-1.7b-q8_0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AsrEngine {
     Whisper,
     Qwen3Asr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AsrRuntime {
+    WhisperCpp,
+    QwenAsrRust,
+    LlamaCppMtmd,
 }
 
 impl AsrEngine {
@@ -93,6 +101,7 @@ pub struct AsrCapabilities {
 pub struct AsrModelSpec {
     pub model_id: &'static str,
     pub engine: AsrEngine,
+    pub runtime: AsrRuntime,
     pub capabilities: AsrCapabilities,
     pub compatible_modes: &'static [AsrMode],
     pub min_memory_gb: u16,
@@ -109,6 +118,7 @@ pub const ASR_SPECS: &[AsrModelSpec] = &[
     AsrModelSpec {
         model_id: DEFAULT_ASR_MODEL_ID,
         engine: AsrEngine::Whisper,
+        runtime: AsrRuntime::WhisperCpp,
         capabilities: AsrCapabilities {
             offline: true,
             streaming: true,
@@ -124,6 +134,7 @@ pub const ASR_SPECS: &[AsrModelSpec] = &[
     AsrModelSpec {
         model_id: QWEN3_ASR_06_MODEL_ID,
         engine: AsrEngine::Qwen3Asr,
+        runtime: AsrRuntime::QwenAsrRust,
         capabilities: AsrCapabilities {
             offline: true,
             streaming: false,
@@ -138,6 +149,25 @@ pub const ASR_SPECS: &[AsrModelSpec] = &[
             "weights:79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea;",
             "vocab:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910;",
             "merges:8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
+        ),
+    },
+    AsrModelSpec {
+        model_id: QWEN3_ASR_17_GGUF_MODEL_ID,
+        engine: AsrEngine::Qwen3Asr,
+        runtime: AsrRuntime::LlamaCppMtmd,
+        capabilities: AsrCapabilities {
+            offline: true,
+            streaming: true,
+            timestamps: false,
+            language_detection: true,
+            mixed_language: true,
+        },
+        compatible_modes: ALL_MODES,
+        min_memory_gb: 8,
+        license: "Apache-2.0",
+        asset_fingerprint: concat!(
+            "model:58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57;",
+            "mmproj:46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d"
         ),
     },
 ];
@@ -160,7 +190,7 @@ pub fn resolve_selection(
             mode.as_str()
         )));
     }
-    if spec.engine == AsrEngine::Qwen3Asr && language == AsrLanguage::Auto {
+    if spec.runtime == AsrRuntime::QwenAsrRust && language == AsrLanguage::Auto {
         return Err(AppError::InvalidSetting(
             "Qwen3-ASR requires Recorder language Russian or English; use Whisper for Auto or mixed speech"
                 .into(),

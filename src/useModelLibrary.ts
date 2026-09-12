@@ -31,6 +31,8 @@ export interface ModelLibrary {
   diarizationSelectError: string | null;
   llmModel: string | null;
   llmSelectError: string | null;
+  transcriptionModel: string;
+  transcriptionSelectError: string | null;
   recorderModel: string;
   recorderSelectError: string | null;
   setDownloadModalId: (id: string | null) => void;
@@ -38,6 +40,7 @@ export interface ModelLibrary {
   handleDownload: (id: string) => Promise<void>;
   handleSelectDiarizationModel: (value: string) => Promise<void>;
   handleSelectLlmModel: (value: string) => Promise<void>;
+  handleSelectTranscriptionModel: (value: string) => Promise<void>;
   handleSelectRecorderModel: (value: string) => Promise<void>;
   handleDelete: (id: string) => Promise<void>;
 }
@@ -55,6 +58,10 @@ export function useModelLibrary(): ModelLibrary {
   >(null);
   const [llmModel, setLlmModel] = useState<string | null>(null);
   const [llmSelectError, setLlmSelectError] = useState<string | null>(null);
+  const [transcriptionModel, setTranscriptionModel] = useState("transcription");
+  const [transcriptionSelectError, setTranscriptionSelectError] = useState<
+    string | null
+  >(null);
   const [recorderModel, setRecorderModel] = useState("transcription");
   const [recorderSelectError, setRecorderSelectError] = useState<string | null>(
     null,
@@ -83,6 +90,9 @@ export function useModelLibrary(): ModelLibrary {
             s.active_model_diarization ?? NONE_DIARIZATION_MODEL,
           );
           setLlmModel(s.active_model_llm ?? null);
+          setTranscriptionModel(
+            s.active_model_transcription ?? "transcription",
+          );
           setRecorderModel(s.active_model_recorder ?? "transcription");
         }
       })
@@ -175,6 +185,18 @@ export function useModelLibrary(): ModelLibrary {
     }
   }
 
+  async function handleSelectTranscriptionModel(value: string) {
+    const previous = transcriptionModel;
+    setTranscriptionSelectError(null);
+    setTranscriptionModel(value);
+    try {
+      await setSetting("active_model.transcription", value);
+    } catch (e) {
+      setTranscriptionModel(previous);
+      setTranscriptionSelectError(String(e));
+    }
+  }
+
   async function handleSelectRecorderModel(value: string) {
     const previous = recorderModel;
     setRecorderSelectError(null);
@@ -200,6 +222,9 @@ export function useModelLibrary(): ModelLibrary {
         settings.active_model_diarization ?? NONE_DIARIZATION_MODEL,
       );
       setLlmModel(settings.active_model_llm ?? null);
+      setTranscriptionModel(
+        settings.active_model_transcription ?? "transcription",
+      );
       setRecorderModel(settings.active_model_recorder ?? "transcription");
     } catch (e) {
       setRowState((prev) => ({
@@ -220,6 +245,8 @@ export function useModelLibrary(): ModelLibrary {
     diarizationSelectError,
     llmModel,
     llmSelectError,
+    transcriptionModel,
+    transcriptionSelectError,
     recorderModel,
     recorderSelectError,
     setDownloadModalId,
@@ -227,6 +254,7 @@ export function useModelLibrary(): ModelLibrary {
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
+    handleSelectTranscriptionModel,
     handleSelectRecorderModel,
     handleDelete,
   };

@@ -318,7 +318,9 @@ export function RecorderView({
   const asrLabel =
     active?.asr_model_id === "qwen3-asr-0.6b"
       ? "Qwen3-ASR 0.6B"
-      : "Whisper large-v3-turbo";
+      : active?.asr_model_id === "qwen3-asr-1.7b-q8_0"
+        ? "Qwen3-ASR 1.7B (Q8_0)"
+        : "Whisper large-v3-turbo";
   const asrLanguage =
     active?.asr_language === "ru"
       ? "Russian"

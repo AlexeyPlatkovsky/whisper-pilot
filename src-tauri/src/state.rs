@@ -46,6 +46,8 @@ pub(crate) struct AppState {
     pub(crate) model: Mutex<Option<Arc<WhisperContext>>>,
     #[cfg(target_os = "macos")]
     pub(crate) qwen_asr_model: Mutex<Option<QwenAsrCache>>,
+    #[cfg(target_os = "macos")]
+    pub(crate) qwen_gguf_asr_model: Mutex<Option<QwenGgufAsrCache>>,
     /// Serializes Recorder ASR selection, loading, and deletion. A Start holds
     /// this until its live-capture state is installed, so model deletion cannot
     /// pass an idle check and remove a bundle being loaded by that Start.
@@ -82,6 +84,12 @@ pub(crate) struct AppState {
 pub(crate) struct QwenAsrCache {
     key: String,
     model: Arc<QwenModel>,
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) struct QwenGgufAsrCache {
+    key: String,
+    model: Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>,
 }
 
 // Both fields are held for their effect, not read back: `session_id`
@@ -179,5 +187,61 @@ impl AppState {
     #[cfg(target_os = "macos")]
     pub(crate) async fn clear_qwen_asr_model(&self) {
         *self.qwen_asr_model.lock().await = None;
+        *self.qwen_gguf_asr_model.lock().await = None;
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(crate) async fn qwen_gguf_asr_model(
+        &self,
+        app_support_dir: PathBuf,
+        spec: &'static crate::asr::AsrModelSpec,
+    ) -> Result<Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>> {
+        let entry = crate::models::CATALOG
+            .iter()
+            .find(|entry| entry.id == spec.model_id)
+            .ok_or_else(|| {
+                AppError::ModelLoad(format!("missing catalog entry {}", spec.model_id))
+            })?;
+        if !entry
+            .assets
+            .iter()
+            .all(|asset| crate::models::catalog::is_asset_downloaded(&app_support_dir, asset))
+        {
+            return Err(AppError::ModelNotFound(format!(
+                "complete verified {} bundle; download it in Settings → AI Models",
+                spec.model_id
+            )));
+        }
+        let key = format!(
+            "{}:{}:{}",
+            spec.engine.as_str(),
+            spec.model_id,
+            spec.asset_fingerprint
+        );
+        let mut guard = self.qwen_gguf_asr_model.lock().await;
+        if let Some(cache) = guard.as_ref().filter(|cache| cache.key == key) {
+            return Ok(Arc::clone(&cache.model));
+        }
+        let paths = crate::models::asset_paths(&app_support_dir, spec.model_id)
+            .ok_or_else(|| AppError::ModelLoad("Qwen3-ASR GGUF bundle is invalid".into()))?;
+        let [model_path, mmproj_path] = paths.as_slice() else {
+            return Err(AppError::ModelLoad(
+                "Qwen3-ASR GGUF requires a model and audio projector".into(),
+            ));
+        };
+        let model_path = model_path.clone();
+        let mmproj_path = mmproj_path.clone();
+        let backend = self.llm_runtime.shared_backend();
+        let model = tokio::task::spawn_blocking(move || {
+            crate::qwen_gguf_asr::QwenGgufAsrModel::load(&model_path, &mmproj_path, backend)
+        })
+        .await
+        .map_err(|error| AppError::ModelLoad(error.to_string()))??;
+        let model = Arc::new(model);
+        *guard = Some(QwenGgufAsrCache {
+            key,
+            model: Arc::clone(&model),
+        });
+        Ok(model)
     }
 }

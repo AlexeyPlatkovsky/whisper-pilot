@@ -24,7 +24,7 @@ a fixed section set:
 MFU are generated **on demand via the Create MFU action** (enabled after
 transcription finishes; UI-blocking — ADR-010), **editable in place**
 (auto-saved), **clearable**, and **regenerable** on demand. Generation is local
-(llama.cpp / Qwen2.5 — ADR-006).
+(local GGUF LLM through llama.cpp — ADR-006).
 
 ## Consequences
 

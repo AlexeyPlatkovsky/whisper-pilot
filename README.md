@@ -7,10 +7,9 @@ an optional Cloud BYOK streaming mode for supported providers. It stores keys
 in macOS Keychain and sends live audio only after the user explicitly selects
 Cloud and the provider connection succeeds.
 
-Meeting transcription is built for accuracy over speed: it runs offline in
-batch, uses full-file context, and detects language automatically. Streaming
-and Recorder process bounded live windows. Recorder supports automatic/mixed
-Whisper input or explicitly selected Russian or English with Qwen3-ASR.
+Meeting transcription runs offline in batch. Streaming and Recorder process
+bounded live windows. Whisper large-v3-turbo remains the default across all
+three modes; Qwen3-ASR 1.7B Q8_0 is an optional local GGUF model for all three.
 
 ## Features
 
@@ -18,9 +17,9 @@ Whisper input or explicitly selected Russian or English with Qwen3-ASR.
   transcribe it end-to-end on-device.
 - **Recorder** — capture the default microphone into recoverable local audio,
   see stable live phrases, and start or stop from a global shortcut.
-- **Selectable Recorder ASR** — Whisper remains the automatic/mixed-language
-  default; the optional Qwen3-ASR 0.6B engine provides fast local Russian or
-  English dictation when that language is selected explicitly.
+- **Selectable local ASR** — choose Whisper or Qwen3-ASR 1.7B Q8_0 separately
+  for Meeting/Streaming and Recorder; the smaller Qwen3-ASR 0.6B remains a
+  Recorder-only option.
 - **Accurate Russian transcription** — full-file Whisper decoding (Metal
   acceleration) tuned for quality over real-time speed. The spoken language is
   detected automatically; there is nothing to configure.

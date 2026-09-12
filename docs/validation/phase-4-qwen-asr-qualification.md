@@ -1,5 +1,13 @@
 # Phase 4 Qwen3-ASR qualification
 
+> **Current runtime note (2026-09-12):** this report qualifies the original
+> pure-Rust experiment. ADR-019 now also adopts the official Qwen3-ASR 1.7B
+> Q8_0 GGUF text/projector pair through `llama.cpp` MTMD for all three modes.
+> Its real-Metal integration smoke gate now passes; a full comparative WER,
+> latency, and sustained-session benchmark remains outstanding. The earlier
+> rejection below is historical evidence for the pure-Rust path, not the
+> current catalog/runtime boundary.
+
 Date: 2026-09-12. Hardware: Apple M5 Pro, 48 GiB unified memory. OS: macOS
 26.6.2. Rust: 1.97.1 aarch64-apple-darwin. All audio remained local.
 
@@ -95,6 +103,29 @@ return no timestamps. The separate ForcedAligner was not promoted or measured:
 it would add another unqualified bundle and latency to a mode whose capture
 window already supplies the required stable span.
 
+## Qwen3-ASR 1.7B GGUF integration evidence
+
+The production `llama-cpp-2` MTMD decoder was run on Apple M5 Pro with the
+pinned `Qwen3-ASR-1.7B-Q8_0.gguf` backbone and
+`mmproj-Qwen3-ASR-1.7B-Q8_0.gguf` projector after both SHA-256 checks matched
+the catalog. Metal initialized, the audio projector encoded the input, and a
+single RU→EN code-switch fixture completed successfully in 4.80 seconds after
+model load. The 8.67-second synthesized input produced both Cyrillic Russian
+and English text in the same result. Two proper nouns were imperfect
+(`Whisper` → `Vesper`, `Qwen` → `Quan`), so this is integration evidence, not
+a quality-equivalence claim.
+
+The reusable opt-in gate is:
+
+```bash
+QWEN3_ASR_GGUF_MODEL=/path/to/Qwen3-ASR-1.7B-Q8_0.gguf \
+QWEN3_ASR_GGUF_MMPROJ=/path/to/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf \
+QWEN3_ASR_GGUF_TEST_AUDIO=/path/to/mixed.wav \
+  cargo test --manifest-path src-tauri/Cargo.toml \
+  qwen_gguf_asr::tests::real_qwen_gguf_audio_smoke_when_fixture_paths_are_available \
+  -- --nocapture
+```
+
 ## Acceptance and recommendation
 
 Numerical gates for an optional Recorder engine were: monolingual RU and EN WER
@@ -110,8 +141,9 @@ unqualified native streaming output.
 
 - Adopt Qwen3-ASR 0.6B for explicit Russian or English Recorder windows.
 - Reject Qwen3-ASR 0.6B for mixed, Meeting, Streaming, and timestamped modes.
-- Reject Qwen3-ASR 1.7B: no accepted-corpus quality gain for its latency,
-  memory, and bundle cost.
+- The original pure-Rust Qwen3-ASR 1.7B candidate was rejected at this point;
+  the later GGUF/MTMD implementation is an explicit selectable engine for all
+  three modes under ADR-019.
 - Retain Whisper as installed default and explicit fallback; never substitute
   it silently after a Qwen session starts.
 

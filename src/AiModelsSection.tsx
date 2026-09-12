@@ -12,8 +12,7 @@ const STAGE_LABELS: Record<string, string> = {
 const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   transcription: {
     title: "Transcription Models",
-    subtitle:
-      "Choose Recorder ASR. Meeting and Streaming keep Whisper for timestamps and mixed-language safety.",
+    subtitle: "Choose local ASR for Meeting and Streaming, and for Recorder.",
   },
   diarization: {
     title: "Speaker Diarization",
@@ -43,6 +42,8 @@ export function AiModelsSection() {
     diarizationSelectError,
     llmModel,
     llmSelectError,
+    transcriptionModel,
+    transcriptionSelectError,
     recorderModel,
     recorderSelectError,
     setDownloadModalId,
@@ -50,6 +51,7 @@ export function AiModelsSection() {
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
+    handleSelectTranscriptionModel,
     handleSelectRecorderModel,
     handleDelete,
   } = useModelLibrary();
@@ -90,7 +92,7 @@ export function AiModelsSection() {
             )}
             <ul
               className="model-list"
-              role="radiogroup"
+              role={task === "transcription" ? undefined : "radiogroup"}
               aria-label={heading ? heading.title : task}
             >
               {task === "diarization" && (
@@ -138,14 +140,39 @@ export function AiModelsSection() {
                         onChange={() => handleSelectLlmModel(m.id)}
                       />
                     ) : isAsr ? (
-                      <input
-                        type="radio"
-                        name="recorder-asr-model"
-                        aria-label={m.label}
-                        checked={m.downloaded && recorderModel === m.id}
-                        disabled={!m.downloaded}
-                        onChange={() => handleSelectRecorderModel(m.id)}
-                      />
+                      <span className="model-mode-selectors">
+                        {m.compatible_modes?.includes("meeting") &&
+                          m.compatible_modes.includes("streaming") && (
+                            <label className="model-mode-choice">
+                              <input
+                                type="radio"
+                                name="transcription-asr-model"
+                                aria-label={`${m.label} for Meeting and Streaming`}
+                                checked={
+                                  m.downloaded && transcriptionModel === m.id
+                                }
+                                disabled={!m.downloaded}
+                                onChange={() =>
+                                  handleSelectTranscriptionModel(m.id)
+                                }
+                              />
+                              <span>M/S</span>
+                            </label>
+                          )}
+                        {m.compatible_modes?.includes("recorder") && (
+                          <label className="model-mode-choice">
+                            <input
+                              type="radio"
+                              name="recorder-asr-model"
+                              aria-label={`${m.label} for Recorder`}
+                              checked={m.downloaded && recorderModel === m.id}
+                              disabled={!m.downloaded}
+                              onChange={() => handleSelectRecorderModel(m.id)}
+                            />
+                            <span>Recorder</span>
+                          </label>
+                        )}
+                      </span>
                     ) : (
                       // A task with no selectable variants still shows the
                       // model in use as a checked option, so "selected" looks
@@ -164,29 +191,6 @@ export function AiModelsSection() {
                       {m.label}
                       {m.recommended && (
                         <span className="model-badge">Recommended</span>
-                      )}
-                      {m.profile && (
-                        <small className="model-guidance">
-                          {m.profile === "legacy"
-                            ? "Legacy"
-                            : `${m.profile === "fast" ? "Fast" : "Quality"} · ${m.min_memory_gb}+ GB RAM · ${m.license}`}
-                        </small>
-                      )}
-                      {m.engine === "qwen3_asr" && (
-                        <small className="model-guidance">
-                          Recorder only · Russian or English · no model
-                          timestamps
-                          {m.min_memory_gb
-                            ? ` · ${m.min_memory_gb}+ GB RAM`
-                            : ""}
-                          {m.license ? ` · ${m.license}` : ""}
-                        </small>
-                      )}
-                      {m.engine === "whisper" && isAsr && (
-                        <small className="model-guidance">
-                          All modes · auto language · timestamps ·
-                          mixed-language default
-                        </small>
                       )}
                     </span>
                     <span className="model-row-spacer" />
@@ -259,6 +263,11 @@ export function AiModelsSection() {
             {task === "transcription" && recorderSelectError && (
               <p className="model-row-error" role="alert">
                 {recorderSelectError}
+              </p>
+            )}
+            {task === "transcription" && transcriptionSelectError && (
+              <p className="model-row-error" role="alert">
+                {transcriptionSelectError}
               </p>
             )}
           </section>

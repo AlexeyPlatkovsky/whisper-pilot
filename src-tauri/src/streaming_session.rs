@@ -257,6 +257,28 @@ impl SessionDecoder for QwenSessionDecoder {
     }
 }
 
+/// Window decoder for the GGUF Qwen3-ASR runtime. llama.cpp/MTMD owns audio
+/// encoding and language detection; the surrounding window supplies stable
+/// session-relative timestamps just as it does for the 0.6B adapter.
+#[cfg(target_os = "macos")]
+pub struct QwenGgufSessionDecoder {
+    model: std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>,
+}
+
+#[cfg(target_os = "macos")]
+impl QwenGgufSessionDecoder {
+    pub fn new(model: std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>) -> Self {
+        Self { model }
+    }
+}
+
+#[cfg(target_os = "macos")]
+impl SessionDecoder for QwenGgufSessionDecoder {
+    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        self.model.transcribe_window(samples)
+    }
+}
+
 /// Take exactly one window's worth of samples off the front of `buffer` when
 /// enough have accumulated, leaving any remainder for the next call. Pure —
 /// no I/O, no time — so windowing math is unit-testable without a model.

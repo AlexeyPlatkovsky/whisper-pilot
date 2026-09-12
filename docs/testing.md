@@ -93,10 +93,15 @@ ASR engine regressions resolve stable IDs rather than catalog order, capability-
 gate modes and language policy before capture, require all files in a model
 bundle, key caches by engine/model/fingerprint, migrate legacy settings and
 Recorder rows deterministically, and persist immutable session engine identity.
-The ignored real Qwen gate loads the official 0.6B bundle and decodes the fixed
-Russian corpus through the production `QwenSessionDecoder`. The frozen corpus,
-runtime revisions, WER, latency, RTF, memory, long-run results, and per-mode
-decision are recorded in `docs/validation/phase-4-qwen-asr-qualification.md`.
+The opt-in real Qwen gates cover both runtimes: the official 0.6B bundle through
+`QwenSessionDecoder`, and the 1.7B text/projector GGUF pair through the
+production MTMD decoder when `QWEN3_ASR_GGUF_MODEL`,
+`QWEN3_ASR_GGUF_MMPROJ`, and `QWEN3_ASR_GGUF_TEST_AUDIO` are set. The frozen
+0.6B corpus, runtime revisions, WER, latency, RTF, memory, and earlier per-mode
+decision are recorded in `docs/validation/phase-4-qwen-asr-qualification.md`;
+the GGUF runtime has real-Metal mixed-language smoke evidence, while equivalent
+full-corpus WER, latency, and sustained-session evidence remains required
+before comparative claims.
 
 Floating-bubble regressions cover the five-point click/drag boundary, visible
 work-area clamping, removed-monitor fallback, non-color status presentation and
