@@ -8,10 +8,12 @@ export function ModeToggle({
   mode,
   onSelectMeeting,
   onSelectStreaming,
+  onSelectRecorder,
 }: {
-  mode: "meeting" | "streaming";
+  mode: "meeting" | "streaming" | "recorder";
   onSelectMeeting: () => void;
   onSelectStreaming: () => void;
+  onSelectRecorder?: () => void;
 }) {
   return (
     <div className="wp-mode-toggle" role="group" aria-label="Workspace mode">
@@ -30,6 +32,14 @@ export function ModeToggle({
         onClick={onSelectStreaming}
       >
         Streaming
+      </button>
+      <button
+        type="button"
+        className={`wp-mode-toggle-segment${mode === "recorder" ? " is-active" : ""}`}
+        aria-pressed={mode === "recorder"}
+        onClick={onSelectRecorder}
+      >
+        Recorder
       </button>
     </div>
   );

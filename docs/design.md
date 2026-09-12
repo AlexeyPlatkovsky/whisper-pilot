@@ -61,6 +61,19 @@ The unit of work is a **Meeting** (one transcription of one source file; see
     current title.
   - **Delete** — with a **confirmation** dialog.
 
+### Workspace mode control
+
+The top of the left pane contains a three-way **Meeting / Streaming / Recorder**
+control. Changing the visible workspace never starts or stops native work. If
+Meeting transcription, Streaming capture, or Recorder capture/finalization owns
+the shared transcription resource, incompatible Start actions remain disabled
+in every workspace until that owner releases it.
+
+Recorder replaces the list beneath the control with saved voice-note sessions
+and a **New recording** action. Each row shows title, date or live state, and
+duration when known. Selecting another mode does not discard the active Recorder
+session or its visible transcript.
+
 ### Header controls (fixed, position never changes)
 
 Row 1 — global, laid out left-to-right immediately after the macOS window
@@ -166,6 +179,40 @@ Single line reflecting the meeting's current state:
   rest of the Streaming header during live capture. Running **Create
   MFU**/**Craft** while the panel is hidden reveals it automatically. Present
   identically on the Meeting and Streaming transcript headers while idle.
+
+### Recorder workspace
+
+Recorder reuses the shell and fixed top action vocabulary. **Start** performs
+permission, model, system-default microphone, and caption-surface preflight
+before a session is created. **Stop** ends capture and enters **Finalizing**;
+copy, export, delete, and playback become available when their durable inputs
+exist. The source row names the input device, Whisper model, auto-detected
+language scope, and that audio is stored locally.
+
+Committed phrases have stable identity, timestamp, and normal text styling. The
+one trailing partial is italic and muted, may change in place, and is replaced
+rather than duplicated when its committed phrase arrives.
+
+Recorder retains app-owned CAF audio independently of transcript edits. The
+bottom audio surface is disabled during capture, reports safe closing during
+Finalizing, and offers playback plus **Export WAV** after completion. An
+interrupted `.caf.partial` remains visible with **Recover** and **Delete**. A
+failed delete remains visible as **Delete failed / Retry**. See ADR-017 for
+ownership and atomic-finalization rules.
+
+The configurable global shortcut uses **Control + Option + Space** initially and
+toggles Recorder Start/Stop from another application without activating the main
+window. A replacement chord is registered before it replaces the persisted
+working chord; failure keeps the previous chord, while first-registration failure
+leaves the feature disabled with an explanation. Key repeats collapse to one
+transition. A shortcut is ignored during Finalizing and cannot start Recorder
+while another live source owns capture.
+
+Shortcut-started recording creates a compact, non-activating live-caption
+surface showing icon plus text for Ready, Recording, partial Listening,
+Finalizing, and Error. Clicking it opens Recorder. If the surface disappears
+after hidden capture starts, Recorder stops and finalizes instead of continuing
+an invisible recording, and the main workspace shows the actionable error.
 
 ### MFU section (bottom of the right pane)
 
@@ -273,6 +320,22 @@ Whisper model; diarization degrades without its models).
 3. If the source file is missing, the meeting still opens for reading/editing;
    **Transcribe** is disabled with a "source file missing" detail.
 
+### Record a voice note (planned)
+
+1. Open **Recorder** or invoke its global shortcut while no live source owns the
+   transcription resource.
+2. On first explicit Start, macOS requests microphone access. Denial creates no
+   history row and the UI links to the relevant System Settings pane.
+3. After preflight, one session begins on the current system-default microphone.
+   Committed phrases accumulate while one replaceable partial shows trailing
+   Russian, English, or mixed speech. Audio checkpoints limit unflushed capture
+   to one second.
+4. Press **Stop** or invoke the shortcut again. The UI shows **Finalizing** until
+   trailing speech and the CAF both reach their durable boundary.
+5. Reopen the saved session to edit, copy, or export text, play its retained
+   audio, or export a separate WAV copy. Deleting the session removes app-owned
+   text and audio after confirmation but never removes an exported file.
+
 ### Review by speaker (M2)
 
 1. Segments render grouped into per-speaker colored bubbles (Спикер 1, Спикер 2,
@@ -318,6 +381,24 @@ Whisper model; diarization degrades without its models).
 - **Model downloading** — a model shows download progress; on SHA-verified
   completion it becomes ready and its task is enabled; Delete returns it to
   not-downloaded.
+- **Recorder ready** — no session or audio exists; Start and the configured
+  shortcut are available when the shared transcription resource is idle.
+- **Recorder permission required** — no session was created; the recovery action
+  opens macOS System Settings and Start retries preflight.
+- **Recorder recording** — microphone capture owns the live resource; status and
+  duration are explicit and Stop is available.
+- **Recorder partial text** — committed phrases remain stable while one styled
+  trailing partial is revised in place.
+- **Recorder finalizing** — Start and shortcut transitions are unavailable while
+  trailing transcription and audio finalization retain resource ownership.
+- **Recorder completed** — transcript editing, playback, text export, and WAV
+  export are available.
+- **Recorder recoverable error** — durable transcript/audio remain visible with
+  the specific recovery action; device loss never leaves a false live state.
+- **Recorder delete failed** — the session stays visible with Retry rather than
+  disappearing behind an unobservable cleanup operation.
+- **Compact live caption** — a non-activating surface communicates Ready,
+  Recording/partial, Finalizing, or Error with icon and text, never color alone.
 
 ## Interaction Patterns
 

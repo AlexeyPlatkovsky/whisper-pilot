@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -364,8 +371,10 @@ describe("StreamingView", () => {
     expect(
       await screen.findByText("hello there", { exact: false }),
     ).toBeInTheDocument();
-    expect(document.querySelector(".wp-status-timer")).toHaveTextContent(
-      "00:07",
+    await waitFor(() =>
+      expect(document.querySelector(".wp-status-timer")).toHaveTextContent(
+        "00:07",
+      ),
     );
     expect(ipc.openStreamingSession).toHaveBeenLastCalledWith(41);
 
@@ -500,6 +509,86 @@ describe("StreamingView", () => {
       });
     });
     expect(document.querySelector(".wp-streaming-partial")).toBeNull();
+  });
+
+  it("follows the latest phrase, pauses after scrolling up, and resumes at the bottom", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Autoscroll session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+
+    const transcript = document.querySelector(
+      ".wp-transcript-content",
+    ) as HTMLDivElement;
+    let scrollHeight = 1_000;
+    let scrollTop = 0;
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+
+    act(() => {
+      windowHandler!({
+        session_id: 2,
+        window_index: 0,
+        start_ms: 0,
+        end_ms: 7_000,
+        text: "first phrase",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(scrollTop).toBe(1_000);
+    expect(
+      document.querySelector(".wp-streaming-autoscroll-tail"),
+    ).not.toBeNull();
+
+    scrollTop = 100;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_100;
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "do not follow me yet",
+      });
+    });
+    expect(scrollTop).toBe(100);
+
+    scrollTop = 700;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_200;
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "following again",
+      });
+    });
+    expect(scrollTop).toBe(1_200);
+
+    const styles = readFileSync(
+      resolve(process.cwd(), "src/styles.css"),
+      "utf8",
+    );
+    expect(styles).toMatch(
+      /\.wp-streaming-autoscroll-tail\s*\{[^}]*flex:\s*0 0 22%;/s,
+    );
   });
 
   it("insets Streaming transcript content from both panel borders", async () => {

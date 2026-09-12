@@ -6,5 +6,8 @@
        (screencapturekit crate). -->
   <key>NSScreenCaptureUsageDescription</key>
   <string>WhisperPilot captures system audio to transcribe a live Streaming session.</string>
+  <!-- Recorder (WP-118): requested only after the user starts recording. -->
+  <key>NSMicrophoneUsageDescription</key>
+  <string>WhisperPilot records microphone audio for local Recorder transcription and playback.</string>
 </dict>
 </plist>

@@ -16,6 +16,7 @@ import {
   onTranscriptionPhase,
   onTranscriptionProgress,
   onLiveCaptureState,
+  onOpenRecorderWorkspace,
   saveTextDialog,
   renameMeeting,
   updateSegment,
@@ -32,6 +33,7 @@ import {
 } from "./liveCaptureState";
 import { SettingsScreen } from "./SettingsScreen";
 import { StreamingView } from "./StreamingView";
+import { RecorderView } from "./RecorderView";
 import { ModeToggle } from "./ModeToggle";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { applyTheme, type Theme } from "./theme";
@@ -67,6 +69,7 @@ export function App() {
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStreamingOpen, setIsStreamingOpen] = useState(false);
+  const [isRecorderOpen, setIsRecorderOpen] = useState(false);
   const [liveCaptureSnapshot, setLiveCaptureSnapshot] =
     useState<LiveCaptureSnapshot | null>(null);
   // Unknown must fail closed: until the backend snapshot arrives, Settings
@@ -190,6 +193,25 @@ export function App() {
         // native coordinator remains authoritative and can recover on event.
       }
     })();
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+    void onOpenRecorderWorkspace(() => {
+      setIsSettingsOpen(false);
+      setIsStreamingOpen(false);
+      setIsRecorderOpen(true);
+    })
+      .then((stop) => {
+        if (cancelled) stop();
+        else unlisten = stop;
+      })
+      .catch(() => {});
     return () => {
       cancelled = true;
       unlisten?.();
@@ -677,6 +699,34 @@ export function App() {
   // own state lives in this component rather than a child) would unmount it
   // and drop its live session state, so Settings layers as an overlay here
   // instead of swapping the tree.
+  if (isRecorderOpen) {
+    return (
+      <>
+        <RecorderView
+          onSelectMeeting={() => setIsRecorderOpen(false)}
+          onSelectStreaming={() => {
+            setIsRecorderOpen(false);
+            setIsStreamingOpen(true);
+          }}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          meetingTranscriptionActive={transcribingId !== null}
+        />
+        {isSettingsOpen && (
+          <div className="settings-overlay">
+            <SettingsScreen
+              cloudProviderLocked={isStreamingActive}
+              onClose={() => {
+                setIsSettingsOpen(false);
+                void refreshModelAvailability();
+                void refreshExportFileType();
+              }}
+            />
+          </div>
+        )}
+      </>
+    );
+  }
+
   if (isStreamingOpen) {
     return (
       <>
@@ -687,6 +737,10 @@ export function App() {
           onOpenSettings={() => setIsSettingsOpen(true)}
           settingsOpen={isSettingsOpen}
           meetingTranscriptionActive={transcribingId !== null}
+          onSelectRecorder={() => {
+            setIsStreamingOpen(false);
+            setIsRecorderOpen(true);
+          }}
         />
         {isSettingsOpen && (
           <div className="settings-overlay">
@@ -984,6 +1038,7 @@ export function App() {
               mode="meeting"
               onSelectMeeting={() => {}}
               onSelectStreaming={() => setIsStreamingOpen(true)}
+              onSelectRecorder={() => setIsRecorderOpen(true)}
             />
             <div className="wp-search">
               <Icon name="search" size={16} />

@@ -337,9 +337,10 @@ section covers only its capture layer (WP-70); the rolling-window
 decode pipeline that consumes this module's output is WP-71 (see below).
 
 Streaming uses system audio only and never opens or mixes the microphone.
-`src-tauri/Info.plist` therefore declares only
-`NSScreenCaptureUsageDescription` for this path; Tauri auto-merges it into
-the app bundle.
+`src-tauri/Info.plist` declares `NSScreenCaptureUsageDescription` for this
+path; Recorder has a separate `NSMicrophoneUsageDescription`. Tauri
+auto-merges both declarations into the app bundle, while each native source
+still opens only from its corresponding explicit user action.
 
 `streaming_audio.rs` receives an immutable capture specification before the
 session starts and hands its consumer a continuous mono f32 stream through a
@@ -961,6 +962,53 @@ payload is always `mic: false, system_audio: true` for supported Streaming
 capture. `streaming_session_ended { session_id }` fires once the decode
 loop has fully ended after `stop_streaming_session`.
 
+## Recorder Runtime And Storage (ADR-017)
+
+Recorder is a third Rust-owned live source beside Streaming, not a microphone
+fallback inside `streaming_audio.rs`. The shared live-capture coordinator now
+owns a typed Streaming-or-Recorder native runtime slot. Recorder commands reuse
+it with the Whisper ownership guard so only one of Meeting
+transcription, Streaming capture, Recorder capture, or Recorder finalization
+can own native transcription resources. Renderer mount state and the visibility
+of the main or caption window are never lifecycle authorities.
+
+Start has a preflight boundary before durable creation: macOS microphone
+authorization, the selected Whisper model, the system-default input device, and
+the shortcut caption surface when required must be ready before a Recorder row
+or audio file exists. A typed AVFoundation adapter exposes `not_determined`,
+`denied`, `restricted`, `authorized`, and `unavailable` over IPC. Its status
+query never opens a device or prompts; only the explicit Recorder request
+command may display TCC, and capture fails closed unless the resulting status is
+`authorized`. The macOS microphone adapter uses CPAL 0.17.3 at the device's
+default PCM format. Its callback converts integer or floating-point
+samples to f32 and averages interleaved channels into an ordered mono master at
+the device's actual rate without waiting for ASR. Callback storage comes from a
+bounded, preallocated recycle pool; downstream receives only a read-only slice,
+and releasing a chunk returns a capacity-checked buffer to the pool. Exhaustion
+stops delivery as an explicit overload instead of allocating on CoreAudio's
+real-time thread. The CAF writer encodes that master as signed-16 PCM
+at the same declared rate. Independent, band-limited adapters derive the 16 kHz
+local-Whisper stream, the 24 kHz OpenAI Realtime stream, or a provider-supported
+native-rate stream. Recorder never mixes microphone and system audio. A change
+to the system default does not migrate an active stream; CPAL interruptions and
+bounded-queue overload are surfaced once so the coordinator can end capture as
+a recoverable error.
+
+An observable `finalizing` session state sits between capture and completion.
+It retains live-source ownership while meaningful tail audio is transcribed,
+the `.caf.partial` file is flushed, synced and closed, the file is atomically
+renamed to `.caf`, and the database row becomes completed. The writer checkpoints
+with at most one second of PCM not yet durable. Startup reconciliation preserves
+and exposes mismatched database/filesystem states rather than deleting them. See
+ADR-017 for the format, recovery, export, retention, and deletion contract.
+
+The global shortcut callback lives in Rust and addresses the same
+coordinator as the main window. Key repeat and stale callbacks cannot create more
+than one transition. A non-activating caption window is a view of coordinator
+state; hidden webview timers do not drive capture. If the required caption surface
+disappears during a shortcut-started hidden recording, the backend requests Stop
+and completes the same finalization path instead of leaving invisible capture.
+
 ## Security And Privacy
 
 **Local transcription and MFU detail generation make no network calls** and
@@ -970,10 +1018,11 @@ Cloud Streaming sends live capture audio only to the selected authenticated
 provider over TLS; transcripts remain local. Provider keys are stored only in
 macOS Keychain, not `.env`, settings, logs, or returned IPC values. Cloud
 connection or protocol failures stop capture and cannot silently use Local.
-File writes: the
-temporary ffmpeg WAV (deleted after use), the SQLite library and non-secret
-settings store under the app support directory, downloaded model files, and
-user-chosen export destinations.
+File writes: the temporary ffmpeg WAV (deleted after use), the SQLite library and
+non-secret settings store under the app support directory, downloaded model
+files, app-owned Recorder CAF artifacts (ADR-017), and user-chosen export
+destinations. Recorder audio and transcripts remain local and must not enter
+application logs.
 
 ## Build MFU
 

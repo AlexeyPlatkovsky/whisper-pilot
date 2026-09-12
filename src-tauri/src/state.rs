@@ -1,9 +1,10 @@
-//! Tauri app state: the cached Whisper context, the mutual-exclusion flag
-//! shared with Streaming and the running Streaming capture runtime.
+//! Tauri app state: shared model runtimes and the single live audio source.
 
 use crate::error::{AppError, Result};
 use crate::live_capture::LiveCaptureRuntimeCoordinator;
 use crate::llm;
+#[cfg(target_os = "macos")]
+use crate::microphone_audio;
 #[cfg(target_os = "macos")]
 use crate::streaming_audio;
 use crate::transcribe;
@@ -50,7 +51,7 @@ pub(crate) struct AppState {
     /// persistence. Backend ownership survives navigation and webview
     /// remounts; see `docs/architecture.md`'s Streaming IPC section.
     #[cfg(target_os = "macos")]
-    pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<StreamingRuntime>>,
+    pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<LiveCaptureRuntime>>,
     #[cfg(not(target_os = "macos"))]
     pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<()>>,
     /// WP-92's single-flight guard for Streaming window translation: at
@@ -60,6 +61,13 @@ pub(crate) struct AppState {
     /// rather than the Whisper context) so translation never blocks or is
     /// blocked by the streaming decode loop.
     pub(crate) translation_busy: std::sync::atomic::AtomicBool,
+    #[cfg(target_os = "macos")]
+    pub(crate) recorder_shortcut_gate: StdMutex<crate::recorder_shortcut::RecorderShortcutGate>,
+    #[cfg(target_os = "macos")]
+    pub(crate) registered_recorder_shortcut:
+        StdMutex<Option<tauri_plugin_global_shortcut::Shortcut>>,
+    #[cfg(target_os = "macos")]
+    pub(crate) recorder_shortcut_error: StdMutex<Option<String>>,
 }
 
 // Both fields are held for their effect, not read back: `session_id`
@@ -71,6 +79,20 @@ pub(crate) struct AppState {
 pub(crate) struct StreamingRuntime {
     pub(crate) session_id: i64,
     pub(crate) capture: streaming_audio::StreamingSession,
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+pub(crate) struct RecorderRuntime {
+    pub(crate) session_id: i64,
+    pub(crate) capture: microphone_audio::MicrophoneCaptureSession,
+}
+
+#[cfg(target_os = "macos")]
+#[allow(dead_code)]
+pub(crate) enum LiveCaptureRuntime {
+    Streaming(StreamingRuntime),
+    Recorder(RecorderRuntime),
 }
 
 impl AppState {

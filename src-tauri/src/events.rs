@@ -7,6 +7,22 @@ use serde::Serialize;
 /// these by `revision`, so a delayed event cannot overwrite newer state.
 pub(crate) type LiveCaptureStateEvent = crate::live_capture::LiveCaptureSnapshot;
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RecorderPartialEvent {
+    pub(crate) session_id: i64,
+    pub(crate) revision: u64,
+    pub(crate) text: String,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RecorderErrorEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_id: Option<i64>,
+    pub(crate) message: String,
+}
+
 /// Payload of the `transcription_phase` event, emitted once a run moves from
 /// transcribing into diarizing its samples. `phase` is a fixed literal today
 /// (diarization is the only phase change the UI needs to know about beyond

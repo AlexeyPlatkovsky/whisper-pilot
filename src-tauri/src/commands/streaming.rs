@@ -9,9 +9,9 @@ use crate::events::{
     StreamingWindowEvent,
 };
 use crate::live_capture::{LiveCaptureSnapshot, LiveCaptureSource};
-#[cfg(target_os = "macos")]
-use crate::state::StreamingRuntime;
 use crate::state::{app_data_dir, now_ms, AppState};
+#[cfg(target_os = "macos")]
+use crate::state::{LiveCaptureRuntime, StreamingRuntime};
 use crate::streaming;
 #[cfg(target_os = "macos")]
 use crate::streaming_audio;
@@ -736,10 +736,10 @@ pub(crate) async fn start_streaming_session(
                 );
             }
         };
-        let runtime = StreamingRuntime {
+        let runtime = LiveCaptureRuntime::Streaming(StreamingRuntime {
             session_id,
             capture,
-        };
+        });
         let snapshot = match state
             .live_capture
             .lock()
@@ -819,6 +819,9 @@ pub(crate) async fn start_streaming_session(
             streaming_session::WhisperUser::Streaming => {
                 "a Streaming session is already running".to_string()
             }
+            streaming_session::WhisperUser::Recorder => {
+                "Recorder is currently capturing; stop it before starting Streaming".to_string()
+            }
         });
         return fail_start_after_status_cleanup(
             &app,
@@ -874,10 +877,10 @@ pub(crate) async fn start_streaming_session(
             );
         }
     };
-    let runtime = StreamingRuntime {
+    let runtime = LiveCaptureRuntime::Streaming(StreamingRuntime {
         session_id,
         capture,
-    };
+    });
     let snapshot = match state
         .live_capture
         .lock()
@@ -953,7 +956,7 @@ pub(crate) async fn stop_streaming_session(
             .lock()
             .map_err(|_| AppError::Capture("live capture coordinator lock is poisoned".into()))?;
         coordinator
-            .begin_stop()
+            .begin_stop_for(LiveCaptureSource::Streaming)
             .map_err(|error| AppError::Capture(error.to_string()))?
     };
     emit_live_capture_state(&app, snapshot);

@@ -5,9 +5,15 @@ import { AppLanguageSection } from "./AppLanguageSection";
 import { CloudProviderSection } from "./CloudProviderSection";
 import { ExportSection } from "./ExportSection";
 import { AppLogo, Icon, type IconName } from "./Icon";
+import { RecorderSettingsSection } from "./RecorderSettingsSection";
 
 type SectionId =
-  "ai-models" | "appearance" | "app-language" | "export" | "cloud-provider";
+  | "ai-models"
+  | "appearance"
+  | "app-language"
+  | "export"
+  | "cloud-provider"
+  | "recorder";
 
 const SECTIONS: {
   id: SectionId;
@@ -40,6 +46,12 @@ const SECTIONS: {
     title: "Cloud Provider",
     icon: "cloud",
   },
+  {
+    id: "recorder",
+    label: "Recorder",
+    title: "Recorder",
+    icon: "mic",
+  },
 ];
 
 function SectionContent({
@@ -60,6 +72,8 @@ function SectionContent({
       return <ExportSection />;
     case "cloud-provider":
       return <CloudProviderSection locked={cloudProviderLocked} />;
+    case "recorder":
+      return <RecorderSettingsSection />;
   }
 }
 

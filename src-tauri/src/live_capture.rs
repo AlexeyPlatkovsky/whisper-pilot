@@ -234,6 +234,24 @@ impl<R> LiveCaptureRuntimeCoordinator<R> {
         Ok((snapshot, runtime))
     }
 
+    /// Stops only the requested live source. The source check and runtime
+    /// removal happen under the coordinator's caller-held lock, so a delayed
+    /// Streaming command cannot tear down a newer Recorder runtime (or the
+    /// inverse).
+    pub fn begin_stop_for(
+        &mut self,
+        source: LiveCaptureSource,
+    ) -> Result<(LiveCaptureSnapshot, Option<R>), LiveCaptureTransitionError> {
+        if let Some(owner) = self.lifecycle.snapshot.source {
+            if owner != source {
+                return Err(LiveCaptureTransitionError(format!(
+                    "cannot stop {source:?}; the active live source is {owner:?}"
+                )));
+            }
+        }
+        self.begin_stop()
+    }
+
     pub fn finish_stop(
         &mut self,
         generation: u64,

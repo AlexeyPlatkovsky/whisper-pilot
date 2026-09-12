@@ -659,6 +659,119 @@ body {
   font-weight: 600;
 }
 
+.recorder-content {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px 28px 32px;
+  overflow: auto;
+}
+
+.recorder-toolbar,
+.recorder-inline-dialog {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.recorder-status {
+  margin-right: auto;
+  padding: 5px 10px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.recorder-status--recording,
+.recorder-status--capturing {
+  color: var(--success);
+}
+
+.recorder-status--starting,
+.recorder-status--stopping,
+.recorder-status--finalizing {
+  color: var(--warning, #b76a00);
+}
+
+.recorder-status--recoverable,
+.recorder-status--delete_failed,
+.recorder-status--error {
+  color: var(--error);
+}
+
+.recorder-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.recorder-transcript textarea {
+  width: 100%;
+  min-height: 74px;
+  box-sizing: border-box;
+  resize: vertical;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--text);
+  padding: 12px;
+  font: inherit;
+  line-height: 1.55;
+}
+
+.recorder-partial {
+  color: var(--text-secondary);
+  padding: 0 12px;
+  line-height: 1.55;
+}
+
+.recorder-audio {
+  width: min(520px, 100%);
+}
+
+.recorder-caption {
+  min-height: 100vh;
+  box-sizing: border-box;
+  border: 2px solid var(--success);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  color: var(--text);
+  padding: 14px 18px;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.recorder-caption__status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+
+.recorder-caption__status span {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.recorder-caption p {
+  margin: 10px 0 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+}
+
+.recorder-caption em {
+  color: var(--text-secondary);
+}
+
 .wp-search {
   display: flex;
   align-items: center;
@@ -2203,6 +2316,13 @@ body {
   color: var(--text);
   font-size: var(--wp-font-size-md);
   line-height: 1.7;
+}
+
+/* Scroll slack keeps the newest live phrase comfortably above the panel's
+   bottom edge while the transcript is following incoming speech. */
+.wp-streaming-autoscroll-tail {
+  flex: 0 0 22%;
+  pointer-events: none;
 }
 
 /* Groups of windows chunked by src/paragraphs.ts's sentence/length

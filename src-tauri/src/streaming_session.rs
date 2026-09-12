@@ -54,12 +54,14 @@ const RECV_POLL: Duration = Duration::from_millis(200);
 const IDLE: u8 = 0;
 const MEETING: u8 = 1;
 const STREAMING: u8 = 2;
+const RECORDER: u8 = 3;
 
 /// Which caller holds (or is asking to hold) the shared Whisper context.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WhisperUser {
     Meeting,
     Streaming,
+    Recorder,
 }
 
 impl WhisperUser {
@@ -67,6 +69,7 @@ impl WhisperUser {
         match self {
             Self::Meeting => MEETING,
             Self::Streaming => STREAMING,
+            Self::Recorder => RECORDER,
         }
     }
 
@@ -74,6 +77,7 @@ impl WhisperUser {
         match v {
             MEETING => Some(Self::Meeting),
             STREAMING => Some(Self::Streaming),
+            RECORDER => Some(Self::Recorder),
             _ => None,
         }
     }
@@ -121,6 +125,18 @@ pub fn try_claim_streaming(state: &AtomicU8) -> Result<(), WhisperUser> {
     ) {
         Ok(_) => Ok(()),
         Err(current) => Err(WhisperUser::from_u8(current).unwrap_or(WhisperUser::Streaming)),
+    }
+}
+
+pub fn try_claim_recorder(state: &AtomicU8) -> Result<(), WhisperUser> {
+    match state.compare_exchange(
+        IDLE,
+        WhisperUser::Recorder.as_u8(),
+        Ordering::AcqRel,
+        Ordering::Acquire,
+    ) {
+        Ok(_) => Ok(()),
+        Err(current) => Err(WhisperUser::from_u8(current).unwrap_or(WhisperUser::Recorder)),
     }
 }
 

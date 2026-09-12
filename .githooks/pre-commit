@@ -21,13 +21,23 @@ if $ai_only && [ -n "$staged_paths" ]; then
   exit 0
 fi
 
-"$root/scripts/bump-version.sh" verify
+version_paths=(
+  package.json
+  package-lock.json
+  src-tauri/Cargo.toml
+  src-tauri/tauri.conf.json
+)
 
-if git -C "$root" diff --cached --quiet -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json; then
-  cat >&2 <<'EOF'
-FATAL: every commit must stage a version update.
-Use `npm run commit:minor -- -m "..."`, `npm run commit:feature -- -m "..."`,
-or `npm run commit:release -- -m "..."`.
-EOF
+version_snapshot="$(mktemp -d "${TMPDIR:-/tmp}/whisper-pilot-version.XXXXXX")"
+trap 'rm -rf "$version_snapshot"' EXIT
+mkdir -p "$version_snapshot/src-tauri"
+for version_path in "${version_paths[@]}"; do
+  git -C "$root" show ":$version_path" >"$version_snapshot/$version_path"
+done
+
+if ! verify_output="$(VERSION_ROOT="$version_snapshot" "$root/scripts/bump-version.sh" verify 2>&1)"; then
+  echo "FATAL: staged version sources disagree." >&2
+  echo "$verify_output" >&2
   exit 1
 fi
+echo "$verify_output"

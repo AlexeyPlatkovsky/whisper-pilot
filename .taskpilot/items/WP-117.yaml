@@ -3,9 +3,9 @@ id: WP-117
 title: Define the Recorder storage and interaction contract
 priority: high
 type: task
-status: backlog
+status: done
 created_at: '2026-09-11T19:37:23Z'
-updated_at: '2026-09-11T19:41:11Z'
+updated_at: '2026-09-12T12:29:42Z'
 parent_id: WP-109
 tags:
 - recorder

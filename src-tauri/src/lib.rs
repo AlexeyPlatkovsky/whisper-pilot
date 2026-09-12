@@ -12,7 +12,12 @@ mod events;
 pub mod live_capture;
 pub mod llm;
 pub mod meetings;
+pub mod microphone_audio;
+pub mod microphone_permission;
 pub mod models;
+pub mod recorder_audio;
+pub mod recorder_shortcut;
+pub mod recorder_store;
 pub mod settings;
 mod state;
 pub mod store;
@@ -37,8 +42,21 @@ pub fn run() {
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    tauri::Builder::default()
-        .manage(AppState::default())
+    let builder = tauri::Builder::default().manage(AppState::default());
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_handler(|app, shortcut, event| {
+                commands::recorder::handle_global_shortcut(app, shortcut, event)
+            })
+            .build(),
+    );
+    builder
+        .setup(|app| {
+            #[cfg(target_os = "macos")]
+            commands::recorder::setup_recorder(app)?;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::dialogs::open_file_dialog,
             commands::meetings::create_meeting,
@@ -60,10 +78,24 @@ pub fn run() {
             commands::streaming::start_streaming_session,
             commands::streaming::stop_streaming_session,
             commands::streaming::get_live_capture_snapshot,
+            commands::recorder::get_microphone_permission_status,
+            commands::recorder::request_microphone_permission,
+            commands::recorder::show_recorder_workspace,
+            commands::recorder::list_recorder_sessions,
+            commands::recorder::open_recorder_session,
+            commands::recorder::rename_recorder_session,
+            commands::recorder::delete_recorder_session,
+            commands::recorder::update_recorder_segment,
+            commands::recorder::recover_recorder_session,
+            commands::recorder::export_recorder_wav,
+            commands::recorder::start_recorder_session,
+            commands::recorder::stop_recorder_session,
             commands::streaming::set_streaming_translation_enabled,
             commands::dialogs::save_text_dialog,
             commands::settings::get_settings,
             commands::settings::set_setting,
+            commands::settings::set_recorder_shortcut,
+            commands::settings::get_recorder_shortcut_status,
             commands::settings::get_cloud_provider_config,
             commands::settings::select_cloud_provider,
             commands::settings::verify_cloud_provider_api_key,

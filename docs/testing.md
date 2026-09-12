@@ -80,6 +80,15 @@ short meaningful prefixes before capture gaps, terminal cloud-gap ordering,
 model-mutation/path-resolution ordering, and atomic cancellation of stale
 translations after either a toggle-off or source revision.
 
+Recorder regressions cover native-rate mono PCM16 CAF headers and sample
+conversion, one-second durability checkpoints, tail-before-audio-before-database
+finalization, interrupted-session reconciliation, owned-audio deletion and WAV
+export, shortcut replacement/conflict/repeat policy, backend lifecycle hydration,
+and the committed-versus-partial transcript UI. The real default-microphone test
+is ignored by default because it requires explicit macOS TCC approval and audible
+input; it must be run with the real-Metal gate before Recorder release evidence is
+complete.
+
 The model-free contracts live in `audio.rs`, `commands/transcription.rs`,
 `diarize/segmentation.rs`, `diarize_process/transport.rs`,
 `streaming_audio.rs`, `streaming_session.rs`, and

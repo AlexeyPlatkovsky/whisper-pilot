@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recorder-caption",
+  "description": "Least-privilege event access for the compact Recorder caption.",
+  "windows": ["recorder-caption"],
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+}

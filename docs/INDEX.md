@@ -49,6 +49,7 @@ contract: `.claude/skills/sdd-index-sync/SKILL.md`.
 | ADR-014 | Streaming coexists with Meeting's batch-accuracy pipeline | accepted |
 | ADR-015 | Live translation reuses the summary LLM and runs concurrently on a single-flight queue | partially superseded by ADR-016 (translation-unit granularity only; engine reuse, single-flight concurrency, target languages, and the persistence-reuse concept stand) |
 | ADR-016 | Live translation moves from paragraph-unit to rolling per-window translation | accepted |
+| ADR-017 | Recorder retains recoverable local audio | accepted |
 <!-- sdd-index-sync:end decisions -->
 
 ## Traceability

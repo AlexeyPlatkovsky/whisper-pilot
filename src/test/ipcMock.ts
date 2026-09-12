@@ -61,6 +61,7 @@ export const mockCreateIpc = () => ({
     error: null,
   })),
   onLiveCaptureState: vi.fn(async () => () => {}),
+  onOpenRecorderWorkspace: vi.fn(async () => () => {}),
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),

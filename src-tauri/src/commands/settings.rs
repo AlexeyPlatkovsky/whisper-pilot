@@ -9,6 +9,9 @@ use crate::models;
 use crate::settings;
 use crate::settings::Settings;
 use crate::state::{app_data_dir, AppState};
+use serde::Serialize;
+#[cfg(target_os = "macos")]
+use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut};
 
 /// Read all settings (theme, ui_language, active model), applying beta
 /// defaults for any key never set.
@@ -41,6 +44,160 @@ pub(crate) async fn set_setting(
     } else {
         settings::set_setting(&dir, &key, &value)
     }
+}
+
+#[tauri::command]
+pub(crate) fn set_recorder_shortcut(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    value: String,
+) -> Result<Settings> {
+    let canonical = crate::recorder_shortcut::RecorderShortcut::parse(&value)
+        .map_err(AppError::InvalidSetting)?;
+    #[cfg(target_os = "macos")]
+    {
+        let replacement = platform_shortcut(canonical.as_str())?;
+        let mut current = state
+            .registered_recorder_shortcut
+            .lock()
+            .map_err(|_| AppError::InvalidSetting("Recorder shortcut lock is poisoned".into()))?;
+        if current.as_ref() == Some(&replacement) {
+            let persisted = settings::set_setting(
+                &app_data_dir(&app)?,
+                "recorder_shortcut",
+                canonical.as_str(),
+            )?;
+            set_shortcut_error(&state, None);
+            return Ok(persisted);
+        }
+        if let Err(error) = app.global_shortcut().register(replacement) {
+            let message = format!("Recorder shortcut conflict: {error}");
+            set_shortcut_error(&state, Some(message.clone()));
+            return Err(AppError::InvalidSetting(message));
+        }
+        if let Some(previous) = current.as_ref() {
+            if previous != &replacement {
+                if let Err(error) = app.global_shortcut().unregister(*previous) {
+                    let replacement_removed = app.global_shortcut().unregister(replacement).is_ok();
+                    let message = if replacement_removed {
+                        format!(
+                            "Recorder shortcut was not changed because the previous shortcut could not be removed: {error}"
+                        )
+                    } else {
+                        *current = None;
+                        format!(
+                            "Recorder shortcut was disabled after shortcut rollback failed: {error}"
+                        )
+                    };
+                    set_shortcut_error(&state, Some(message.clone()));
+                    return Err(AppError::InvalidSetting(message));
+                }
+            }
+        }
+        let persisted = match settings::set_setting(
+            &app_data_dir(&app)?,
+            "recorder_shortcut",
+            canonical.as_str(),
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                let replacement_removed = app
+                    .global_shortcut()
+                    .unregister(replacement)
+                    .map(|()| true)
+                    .unwrap_or(false);
+                let previous = current.as_ref().copied();
+                let previous_restored = previous
+                    .map(|shortcut| app.global_shortcut().register(shortcut).is_ok())
+                    .unwrap_or(true);
+                if replacement_removed && previous_restored {
+                    *current = previous;
+                    set_shortcut_error(&state, Some(error.to_string()));
+                } else {
+                    *current = None;
+                    set_shortcut_error(
+                        &state,
+                        Some(format!(
+                            "Recorder shortcut was disabled after settings rollback failed: {error}"
+                        )),
+                    );
+                }
+                return Err(error);
+            }
+        };
+        *current = Some(replacement);
+        set_shortcut_error(&state, None);
+        Ok(persisted)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        settings::set_setting(
+            &app_data_dir(&app)?,
+            "recorder_shortcut",
+            canonical.as_str(),
+        )
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct RecorderShortcutStatus {
+    configured: String,
+    active: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+}
+
+#[tauri::command]
+pub(crate) fn get_recorder_shortcut_status(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<RecorderShortcutStatus> {
+    let configured = settings::get_settings(&app_data_dir(&app)?).recorder_shortcut;
+    #[cfg(target_os = "macos")]
+    {
+        let active = state
+            .registered_recorder_shortcut
+            .lock()
+            .map_err(|_| AppError::InvalidSetting("Recorder shortcut lock is poisoned".into()))?
+            .is_some();
+        let error = state
+            .recorder_shortcut_error
+            .lock()
+            .map_err(|_| AppError::InvalidSetting("Recorder shortcut lock is poisoned".into()))?
+            .clone();
+        Ok(RecorderShortcutStatus {
+            configured,
+            active,
+            error,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = state;
+        Ok(RecorderShortcutStatus {
+            configured,
+            active: false,
+            error: Some("Global Recorder shortcuts are available only on macOS".into()),
+        })
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn set_shortcut_error(state: &AppState, error: Option<String>) {
+    if let Ok(mut current) = state.recorder_shortcut_error.lock() {
+        *current = error;
+    }
+}
+
+#[cfg(target_os = "macos")]
+pub(crate) fn platform_shortcut(value: &str) -> Result<Shortcut> {
+    value
+        .replace("Control", "Ctrl")
+        .replace("Option", "Alt")
+        .replace("Command", "Super")
+        .parse::<Shortcut>()
+        .map_err(|error| AppError::InvalidSetting(format!("invalid Recorder shortcut: {error}")))
 }
 
 fn ensure_llm_selection_is_downloaded(dir: &std::path::Path, value: &str) -> Result<()> {

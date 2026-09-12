@@ -32,6 +32,12 @@ plain-text transcript you can copy or export as it happens, still entirely
 on-device. It trades a small latency budget for immediacy; it does not replace
 Meeting's batch-accuracy pipeline, which is unchanged.
 
+The **Recorder** workspace captures the user's microphone as a durable
+voice note. It retains both local audio and an editable live transcript, supports
+playback and WAV export, and can be controlled by a global shortcut without
+turning a hidden webview into the capture authority. Its storage contract is
+defined in ADR-017.
+
 ## Scope
 
 ### In scope
@@ -78,6 +84,12 @@ Meeting's batch-accuracy pipeline, which is unchanged.
   turns are retained locally. A
   provider/network failure stops capture with a retryable message and never
   falls back to Local.
+- **Recorder:** microphone-only live capture as a third workspace,
+  with Russian, English, and mixed-language transcription, retained app-owned
+  audio, editable persisted text, playback, WAV export, interrupted-session
+  recovery, and a configurable global Start/Stop shortcut. Recorder, Streaming,
+  and active Meeting transcription share one mutually exclusive transcription
+  resource; Recorder never mixes microphone and system audio.
 
 ### Out of scope
 
@@ -91,7 +103,8 @@ Meeting's batch-accuracy pipeline, which is unchanged.
   labels the user renames. Reassigning or merging speakers is deferred, so a
   misattributed segment cannot yet be corrected.
 - Batch/queued processing of many files at once.
-- In-app audio playback.
+- In-app playback of Meeting source files or Streaming audio. Recorder playback
+  is limited to the audio owned by its saved voice-note sessions.
 - Multi-user collaboration, public distribution, notarization.
 
 ## Non-Goals

@@ -176,3 +176,32 @@ fn stale_finish_cannot_drop_a_newer_generation_runtime() {
     let (_, runtime) = coordinator.begin_stop().expect("stop second capture");
     assert_eq!(runtime.as_deref(), Some("second runtime"));
 }
+
+#[test]
+fn source_qualified_stop_preserves_a_runtime_owned_by_the_other_source() {
+    for (owner, other) in [
+        (LiveCaptureSource::Streaming, LiveCaptureSource::Recorder),
+        (LiveCaptureSource::Recorder, LiveCaptureSource::Streaming),
+    ] {
+        let mut coordinator = LiveCaptureRuntimeCoordinator::<String>::default();
+        let starting = coordinator
+            .begin_start(51, owner)
+            .expect("begin owned capture");
+        let capturing = coordinator
+            .install_runtime(starting.generation, format!("{owner:?} runtime"))
+            .expect("install owned runtime");
+
+        assert!(coordinator.begin_stop_for(other).is_err());
+        assert_eq!(coordinator.snapshot(), capturing);
+
+        let (stopping, runtime) = coordinator
+            .begin_stop_for(owner)
+            .expect("the owning source can stop capture");
+        assert_eq!(stopping.phase, LiveCapturePhase::Stopping);
+        assert_eq!(stopping.source, Some(owner));
+        assert_eq!(
+            runtime.as_deref(),
+            Some(format!("{owner:?} runtime").as_str())
+        );
+    }
+}

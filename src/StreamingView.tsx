@@ -1,4 +1,11 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   acceptStreamingPrettify,
   createStreamingSession,
@@ -71,6 +78,7 @@ import {
 // names and the split grid's target-column header (uppercased). Shared with
 // the paired export renderer so the two cannot drift.
 const TARGET_LANGUAGE_NAMES = STREAMING_TARGET_LANGUAGE_NAMES;
+const AUTOSCROLL_RESUME_THRESHOLD_PX = 48;
 
 // WP-103: rolling context — the up-to-2 immediately preceding windows'
 // available translations, joined in order (skips a failed/unavailable one
@@ -97,11 +105,13 @@ function precedingWindowsContext(
 export function StreamingView({
   onClose,
   onOpenSettings,
+  onSelectRecorder,
   settingsOpen = false,
   meetingTranscriptionActive = false,
 }: {
   onClose: () => void;
   onOpenSettings: () => void;
+  onSelectRecorder?: () => void;
   settingsOpen?: boolean;
   meetingTranscriptionActive?: boolean;
 }) {
@@ -110,6 +120,8 @@ export function StreamingView({
   const [activeId, setActiveId] = useState<number | null>(null);
   const [activeTitle, setActiveTitle] = useState<string>("Streaming Session");
   const [windows, setWindows] = useState<StreamingWindow[]>([]);
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollEnabledRef = useRef(true);
   const [isRunning, setIsRunning] = useState(false);
   const [captureHydrated, setCaptureHydrated] = useState(false);
   const [liveCapturePhase, setLiveCapturePhase] =
@@ -259,6 +271,28 @@ export function StreamingView({
       session.title.toLocaleLowerCase().includes(query),
     );
   }, [sessionSearch, sessions]);
+
+  const handleTranscriptScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const container = event.currentTarget;
+      const distanceFromBottom = Math.max(
+        0,
+        container.scrollHeight - container.clientHeight - container.scrollTop,
+      );
+      autoScrollEnabledRef.current =
+        distanceFromBottom <= AUTOSCROLL_RESUME_THRESHOLD_PX;
+    },
+    [],
+  );
+
+  // Follow both provisional and committed phrases while the reader remains
+  // at the bottom. The tail spacer below leaves the latest phrase 22% above
+  // the panel edge instead of pinning it flush to the bottom.
+  useLayoutEffect(() => {
+    const container = transcriptScrollRef.current;
+    if (!isRunning || !autoScrollEnabledRef.current || !container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [isRunning, partialTranscript, translations, windows]);
 
   // Recomputed from Date.now() each tick, not incremented, so a throttled
   // setInterval can't drift the displayed value. Shared by On Air, Crafting,
@@ -528,6 +562,7 @@ export function StreamingView({
   const startSession = useCallback(
     async (resumeId: number | null, engine: "local" | "cloud") => {
       setError(null);
+      if (resumeId === null) autoScrollEnabledRef.current = true;
       captureElapsedBaselineRef.current =
         resumeId === null
           ? 0
@@ -608,6 +643,7 @@ export function StreamingView({
   // separate Start action is the only path that begins audio capture.
   const handleCreateNew = useCallback(async () => {
     setError(null);
+    autoScrollEnabledRef.current = true;
     setBusy(true);
     try {
       const summary = await createStreamingSession();
@@ -652,6 +688,7 @@ export function StreamingView({
 
   const handleOpen = useCallback(async (id: number) => {
     setError(null);
+    autoScrollEnabledRef.current = true;
     try {
       const session = await openStreamingSession(id);
       setActiveId(id);
@@ -1340,6 +1377,7 @@ export function StreamingView({
               mode="streaming"
               onSelectMeeting={onClose}
               onSelectStreaming={() => {}}
+              onSelectRecorder={onSelectRecorder}
             />
             <div className="wp-search">
               <Icon name="search" size={16} />
@@ -1554,7 +1592,11 @@ export function StreamingView({
               </div>
             )}
 
-            <div className="wp-transcript-content wp-transcript-content--inset">
+            <div
+              ref={transcriptScrollRef}
+              className="wp-transcript-content wp-transcript-content--inset"
+              onScroll={handleTranscriptScroll}
+            >
               {error && (
                 <div className="wp-notice wp-notice--error" role="alert">
                   {error}
@@ -1741,6 +1783,12 @@ export function StreamingView({
                 <p className="wp-streaming-partial" role="status">
                   {partialTranscript.text}
                 </p>
+              )}
+              {isRunning && (
+                <div
+                  className="wp-streaming-autoscroll-tail"
+                  aria-hidden="true"
+                />
               )}
             </div>
           </div>

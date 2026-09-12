@@ -31,6 +31,7 @@ const KEY_STATUS_COLORS: &str = "status_colors";
 const KEY_MFU_PANEL_MEETING: &str = "mfu_panel_meeting";
 const KEY_MFU_PANEL_STREAMING: &str = "mfu_panel_streaming";
 const KEY_CLOUD_PROVIDER: &str = "cloud_provider";
+const KEY_RECORDER_SHORTCUT: &str = "recorder_shortcut";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 const DEFAULT_CLOUD_PROVIDER: &str = "deepgram";
@@ -49,6 +50,10 @@ fn default_true() -> bool {
 
 fn default_cloud_provider() -> String {
     DEFAULT_CLOUD_PROVIDER.to_string()
+}
+
+fn default_recorder_shortcut() -> String {
+    crate::recorder_shortcut::DEFAULT_RECORDER_SHORTCUT.to_string()
 }
 
 /// Strict "true"/"false" only (WP-96 non-goal: no other truthy/falsy spelling).
@@ -95,6 +100,10 @@ pub struct Settings {
     /// macOS Keychain and never belongs in this JSON settings file.
     #[serde(default = "default_cloud_provider")]
     pub cloud_provider: String,
+    /// Canonical user-facing accelerator. Platform registration is owned by
+    /// Rust and retains the previous value if a replacement conflicts.
+    #[serde(default = "default_recorder_shortcut")]
+    pub recorder_shortcut: String,
 }
 
 impl Default for Settings {
@@ -110,6 +119,7 @@ impl Default for Settings {
             mfu_panel_meeting: default_true(),
             mfu_panel_streaming: default_true(),
             cloud_provider: default_cloud_provider(),
+            recorder_shortcut: default_recorder_shortcut(),
         }
     }
 }
@@ -238,6 +248,12 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 )));
             }
             settings.cloud_provider = value.to_string();
+        }
+        KEY_RECORDER_SHORTCUT => {
+            settings.recorder_shortcut = crate::recorder_shortcut::RecorderShortcut::parse(value)
+                .map_err(AppError::InvalidSetting)?
+                .as_str()
+                .to_string();
         }
         other => {
             return Err(AppError::InvalidSetting(format!(

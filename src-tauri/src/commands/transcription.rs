@@ -216,6 +216,9 @@ pub(crate) async fn transcribe_meeting(
         streaming_session::WhisperUser::Streaming => AppError::Transcribe(
             "a Streaming session is active; stop it before transcribing a meeting".into(),
         ),
+        streaming_session::WhisperUser::Recorder => {
+            AppError::Transcribe("Recorder is active; stop it before transcribing a meeting".into())
+        }
         streaming_session::WhisperUser::Meeting => {
             AppError::Transcribe("another meeting transcription is already running".into())
         }

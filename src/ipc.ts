@@ -143,6 +143,7 @@ export interface Settings {
   mfu_panel_meeting?: boolean;
   /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
   mfu_panel_streaming?: boolean;
+  recorder_shortcut?: string;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -151,6 +152,20 @@ export function getSettings(): Promise<Settings> {
 
 export function setSetting(key: string, value: string): Promise<Settings> {
   return invoke<Settings>("set_setting", { key, value });
+}
+
+export function setRecorderShortcut(value: string): Promise<Settings> {
+  return invoke<Settings>("set_recorder_shortcut", { value });
+}
+
+export interface RecorderShortcutStatus {
+  configured: string;
+  active: boolean;
+  error?: string;
+}
+
+export function getRecorderShortcutStatus(): Promise<RecorderShortcutStatus> {
+  return invoke<RecorderShortcutStatus>("get_recorder_shortcut_status");
 }
 
 export type CloudProviderId = "deepgram" | "assemblyai" | "openai";
@@ -391,6 +406,145 @@ export function stopStreamingSession(): Promise<void> {
 /** Current Rust-owned lifecycle for the application's one live capture. */
 export function getLiveCaptureSnapshot(): Promise<LiveCaptureSnapshot> {
   return invoke<LiveCaptureSnapshot>("get_live_capture_snapshot");
+}
+
+export type MicrophonePermissionStatus =
+  "not_determined" | "denied" | "restricted" | "authorized" | "unavailable";
+
+/** Reads macOS authorization state without opening a device or showing TCC. */
+export function getMicrophonePermissionStatus(): Promise<MicrophonePermissionStatus> {
+  return invoke<MicrophonePermissionStatus>("get_microphone_permission_status");
+}
+
+/** May show TCC only when called from an explicit Recorder user action. */
+export function requestMicrophonePermission(): Promise<MicrophonePermissionStatus> {
+  return invoke<MicrophonePermissionStatus>("request_microphone_permission");
+}
+
+export function showRecorderWorkspace(): Promise<void> {
+  return invoke<void>("show_recorder_workspace");
+}
+
+export function onOpenRecorderWorkspace(
+  handler: () => void,
+): Promise<UnlistenFn> {
+  return listen<void>("open_recorder_workspace", handler);
+}
+
+export type RecorderStatus =
+  "recording" | "finalizing" | "completed" | "recoverable" | "delete_failed";
+
+export interface RecorderSegment {
+  id: number;
+  session_id?: number;
+  start_sample: number;
+  end_sample: number;
+  text: string;
+  language: string;
+}
+
+export interface RecorderSession {
+  id: number;
+  title: string;
+  created_at_ms: number;
+  updated_at_ms?: number;
+  duration_ms: number;
+  status: RecorderStatus;
+  sample_rate: number;
+  recovery_reason?: string;
+  audio_path?: string;
+  segments: RecorderSegment[];
+}
+
+export type RecorderSessionSummary = Omit<RecorderSession, "segments"> & {
+  segments?: RecorderSegment[];
+};
+
+export function listRecorderSessions(): Promise<RecorderSessionSummary[]> {
+  return invoke<RecorderSessionSummary[]>("list_recorder_sessions");
+}
+
+export function openRecorderSession(id: number): Promise<RecorderSession> {
+  return invoke<RecorderSession>("open_recorder_session", { id });
+}
+
+export function renameRecorderSession(
+  id: number,
+  title: string,
+): Promise<RecorderSession> {
+  return invoke<RecorderSession>("rename_recorder_session", { id, title });
+}
+
+export function deleteRecorderSession(id: number): Promise<void> {
+  return invoke<void>("delete_recorder_session", { id });
+}
+
+export function startRecorderSession(): Promise<RecorderSession> {
+  return invoke<RecorderSession>("start_recorder_session");
+}
+
+export function stopRecorderSession(): Promise<void> {
+  return invoke<void>("stop_recorder_session");
+}
+
+export function recoverRecorderSession(id: number): Promise<RecorderSession> {
+  return invoke<RecorderSession>("recover_recorder_session", { id });
+}
+
+export function updateRecorderSegment(
+  sessionId: number,
+  segmentId: number,
+  text: string,
+): Promise<RecorderSegment> {
+  return invoke<RecorderSegment>("update_recorder_segment", {
+    sessionId,
+    segmentId,
+    text,
+  });
+}
+
+export function exportRecorderWav(id: number): Promise<string | null> {
+  return invoke<string | null>("export_recorder_wav", { id });
+}
+
+export function onRecorderSessionChanged(
+  handler: (session: RecorderSession) => void,
+): Promise<UnlistenFn> {
+  return listen<RecorderSession>("recorder_session_changed", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onRecorderSegmentCommitted(
+  handler: (segment: RecorderSegment & { session_id: number }) => void,
+): Promise<UnlistenFn> {
+  return listen<RecorderSegment & { session_id: number }>(
+    "recorder_segment_committed",
+    (event) => handler(event.payload),
+  );
+}
+
+export interface RecorderPartial {
+  session_id: number;
+  revision: number;
+  text: string;
+}
+
+export function onRecorderPartial(
+  handler: (partial: RecorderPartial) => void,
+): Promise<UnlistenFn> {
+  return listen<RecorderPartial>("recorder_partial", (event) =>
+    handler(event.payload),
+  );
+}
+
+export function onRecorderError(
+  handler: (error: { session_id?: number; message: string }) => void,
+): Promise<UnlistenFn> {
+  return listen<{ session_id?: number; message: string }>(
+    "recorder_error",
+    (event) => handler(event.payload),
+  );
 }
 
 export function onLiveCaptureState(

@@ -3,27 +3,15 @@ id: WP-118
 title: Add microphone capture and macOS permission handling
 priority: high
 type: task
-status: backlog
+status: done
 created_at: '2026-09-11T19:37:30Z'
-updated_at: '2026-09-11T19:41:16Z'
+updated_at: '2026-09-12T15:43:57Z'
 parent_id: WP-109
 tags:
 - recorder
 - phase-2
 - audio
-description: 'Implement a microphone AudioSource adapter behind the Rust capture coordinator. It requests access only after an explicit Recorder action, reports authorization state, captures the selected/default input device, converts hardware channel layout and rate into the normalized ASR stream, and handles device changes and interruptions. Restore NSMicrophoneUsageDescription with Recorder-specific wording.
-
-
-  Happy path: the user grants permission and microphone samples enter the active Recorder session with monotonic sample indices and observable input level. Primary failure behavior: denied or restricted permission, no input device, unsupported format or device loss stops or rejects capture once and exposes an actionable coordinator error. Edge cases include first-run prompt, prior denial, Bluetooth rate change, unplug during capture, silent input, stereo devices and rapid Stop during startup.
-
-
-  Scenario: Given microphone permission is undetermined, when the user explicitly starts Recorder and grants access, then one capture starts and valid normalized samples reach the coordinator. Given the active device disappears, when capture is running, then the session leaves Capturing without a false green status and preserves already committed data.
-
-
-  Target surfaces: src-tauri/Info.plist, Cargo target dependencies, a microphone capture module, shared AudioSource and coordinator interfaces, events, typed IPC, permission UI state and focused Rust/Vitest/manual tests.
-
-
-  Constraints: macOS-first; no microphone access before an explicit action; native callbacks do not block on ASR; raw audio and transcript never enter logs; one live source at a time; system-audio Streaming behavior remains unchanged.'
+description: 'Implement the microphone AudioSource adapter behind the Rust live-capture coordinator. It requests access only after an explicit Recorder action, reports authorization state, captures the system-default input device, downmixes the hardware layout to a mono master at the device actual sample rate, and handles device interruptions. Provider-specific consumers derive band-limited 16 kHz local-Whisper, 24 kHz OpenAI Realtime, or supported native-rate streams; the capture path never pretends a lower-rate Bluetooth source is 48 kHz. Restore NSMicrophoneUsageDescription with Recorder-specific wording. Happy path: the user grants permission and native-rate mono samples enter the active Recorder session with monotonic sample indices and observable input level. Primary failure behavior: denied or restricted permission, no input device, unsupported format, overload, downstream disconnect, or device loss stops or rejects capture once and exposes an actionable coordinator error. Edge cases include first-run prompt, prior denial, Bluetooth rate change, unplug during capture, silent input, stereo devices, arbitrary callback boundaries, resampler tail flush, and rapid Stop during startup. Target surfaces: src-tauri/Info.plist, Cargo target dependencies, microphone capture and rate-adapter modules, shared AudioSource and coordinator interfaces, events, typed IPC, permission UI state, and focused Rust/Vitest/manual tests. Constraints: macOS-first; no microphone access before an explicit action; native callbacks do not block on ASR or persistence; raw audio and transcript never enter logs; one live source at a time; system-audio Streaming behavior remains unchanged.'
 dod:
 - The source Info.plist contains a Recorder-specific NSMicrophoneUsageDescription and a real bundled app presents the macOS prompt only after explicit Start.
 - Granted permission produces normalized mono samples with monotonic positions for supported built-in, USB and Bluetooth input formats selected by the validation matrix.

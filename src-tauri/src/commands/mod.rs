@@ -5,6 +5,7 @@ pub(crate) mod dialogs;
 pub(crate) mod meetings;
 pub(crate) mod mfu;
 pub(crate) mod models;
+pub(crate) mod recorder;
 pub(crate) mod settings;
 pub(crate) mod streaming;
 pub(crate) mod transcription;
