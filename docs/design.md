@@ -200,8 +200,10 @@ starts another engine.
 
 Committed phrases have stable identity and normal text styling. Their capture
 window spans are persisted but are not currently rendered in the Recorder
-workspace. The one trailing partial is italic and muted, may change in place,
-and is replaced rather than duplicated when its committed phrase arrives.
+workspace. Consecutive live hypotheses promote their shared word prefix to
+normal text; only the remaining replaceable suffix is italic at 80% opacity.
+The partial is replaced rather than duplicated when its committed phrase
+arrives.
 
 Recorder retains app-owned CAF audio independently of transcript edits. The
 bottom audio surface is disabled during capture, reports safe closing during
@@ -430,7 +432,9 @@ Whisper model; diarization degrades without its models).
 - **Recorder partial text** — committed phrases remain stable while one styled
   trailing partial is revised in place.
 - **Recorder finalizing** — Start and shortcut transitions are unavailable while
-  trailing transcription and audio finalization retain resource ownership.
+  trailing transcription, atomic audio finalization, and the full-audio quality
+  pass retain resource ownership. A failed quality pass keeps the live text and
+  finalized audio rather than converting a usable recording into an error.
 - **Recorder completed** — transcript editing, playback, text export, and WAV
   export are available.
 - **Recorder recoverable error** — durable transcript/audio remain visible with

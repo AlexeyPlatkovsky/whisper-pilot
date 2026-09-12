@@ -69,6 +69,14 @@ impl QwenGgufAsrModel {
     }
 
     pub(crate) fn transcribe_window(&self, samples: &[f32]) -> Result<Transcription> {
+        self.transcribe_window_with_context(samples, None)
+    }
+
+    pub(crate) fn transcribe_window_with_context(
+        &self,
+        samples: &[f32],
+        context: Option<&str>,
+    ) -> Result<Transcription> {
         let bitmap = MtmdBitmap::from_audio_data(samples)
             .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR audio input: {error}")))?;
         let template = self
@@ -78,9 +86,18 @@ impl QwenGgufAsrModel {
         let content = format!("{}Transcribe this audio exactly.", mtmd_default_marker());
         let message = LlamaChatMessage::new("user".into(), content)
             .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR prompt: {error}")))?;
+        let mut messages = Vec::with_capacity(2);
+        if let Some(context) = context.filter(|context| !context.trim().is_empty()) {
+            messages.push(
+                LlamaChatMessage::new("system".into(), context.to_string()).map_err(|error| {
+                    AppError::Transcribe(format!("Qwen3-ASR context prompt: {error}"))
+                })?,
+            );
+        }
+        messages.push(message);
         let prompt = self
             .model
-            .apply_chat_template(&template, &[message], true)
+            .apply_chat_template(&template, &messages, true)
             .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR prompt template: {error}")))?;
         let chunks = self
             .mtmd

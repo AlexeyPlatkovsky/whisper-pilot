@@ -140,7 +140,7 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_state(&mut state, samples, None::<fn(i32)>)
+    transcribe_state(&mut state, samples, None::<fn(i32)>, None)
 }
 
 /// [`transcribe`] with Whisper's own 0–100 completion estimate. The callback
@@ -153,7 +153,7 @@ pub fn transcribe_with_progress(
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_state(&mut state, samples, Some(on_progress))
+    transcribe_state(&mut state, samples, Some(on_progress), None)
 }
 
 /// [`transcribe`] with a caller-owned state. Reusing one state across calls
@@ -166,13 +166,25 @@ pub fn transcribe_with_state(
     samples: &[f32],
     on_progress: impl FnMut(i32),
 ) -> Result<Transcription> {
-    transcribe_state(state, samples, Some(on_progress))
+    transcribe_state(state, samples, Some(on_progress), None)
+}
+
+/// Streaming decode with the last confirmed transcript as a vocabulary and
+/// continuity hint. The prompt is never treated as output; only the current
+/// audio window's decoded segments are returned.
+pub fn transcribe_with_state_and_prompt(
+    state: &mut WhisperState,
+    samples: &[f32],
+    prompt: Option<&str>,
+) -> Result<Transcription> {
+    transcribe_state(state, samples, None::<fn(i32)>, prompt)
 }
 
 fn transcribe_state<F: FnMut(i32)>(
     state: &mut WhisperState,
     samples: &[f32],
     mut on_progress: Option<F>,
+    initial_prompt: Option<&str>,
 ) -> Result<Transcription> {
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
         beam_size: 5,
@@ -201,6 +213,9 @@ fn transcribe_state<F: FnMut(i32)>(
     // Offline: let whisper segment naturally, and lean on its fallbacks.
     params.set_temperature_inc(0.2);
     params.set_suppress_blank(true);
+    if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        params.set_initial_prompt(prompt);
+    }
     if let Some(callback) = on_progress.as_mut() {
         install_progress_callback(&mut params, callback);
     }

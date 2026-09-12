@@ -511,6 +511,39 @@ describe("StreamingView", () => {
     expect(document.querySelector(".wp-streaming-partial")).toBeNull();
   });
 
+  it("renders an agreeing partial prefix as stable and only the revised suffix as italic", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Local session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "Так давай попробуем снова",
+      });
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "Так давай попробуем ещё раз",
+      });
+    });
+
+    expect(screen.getByText("Так давай попробуем")).toHaveClass(
+      "wp-streaming-partial-stable",
+    );
+    expect(screen.getByText("ещё раз").closest("em")).not.toBeNull();
+  });
+
   it("follows the latest phrase, pauses after scrolling up, and resumes at the bottom", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({

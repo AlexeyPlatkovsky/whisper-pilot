@@ -10141,7 +10141,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "Qt1J9",
+                  "id": "WwKCD",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$border"
+                },
+                {
+                  "type": "icon",
+                  "id": "TO8BD",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -10151,8 +10161,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "UP5df",
-                  "name": "Export Recorder Session",
+                  "id": "beIxC",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -10161,8 +10171,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "R91ACm",
-                  "name": "Delete Recorder Session",
+                  "id": "AyhT4",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -10213,17 +10223,7 @@
                   "id": "UsIb2",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "System default microphone",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "Tgc4q",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -10232,27 +10232,27 @@
             },
             {
               "type": "frame",
-              "id": "E9hTa",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "K12WR",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "jEzKD",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "eGan2",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "HjfWf",
-                  "name": "Local Storage Text",
+                  "id": "CXIWH",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Audio saved locally · CAF",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -10401,47 +10401,37 @@
                 {
                   "type": "frame",
                   "id": "q6YD0",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "V6xQav",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "iuU45",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "fM9dS",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -10587,7 +10577,7 @@
                       "id": "tlX68",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -10595,7 +10585,7 @@
                     {
                       "type": "frame",
                       "id": "cGDYZ",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -10604,17 +10594,7 @@
                           "id": "Hr0gQ",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "Audio checkpointed < 1s",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "L0cULU",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -10638,43 +10618,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "Y0M7ll",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#E8F5EE",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "dCxjf",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "audio-lines",
-                          "library": "lucide",
-                          "fill": "#376A40"
-                        },
-                        {
-                          "type": "text",
-                          "id": "d3SurE",
-                          "name": "Recorder State Text",
-                          "fill": "#376A40",
-                          "content": "Listening — your audio and transcript stay on this Mac",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
                       "id": "lJm2Y",
                       "name": "Recorder Transcript Flow",
                       "width": "fill_container",
@@ -10692,16 +10635,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "QXkkn",
-                              "name": "Committed Timestamp 00:03",
-                              "fill": "$text-label",
-                              "content": "00:03",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "DuJg0",
@@ -10726,16 +10659,6 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "ABkl3",
-                              "name": "Committed Timestamp 00:09",
-                              "fill": "$text-label",
-                              "content": "00:09",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "m0uqe",
                               "name": "Committed Text 00:09",
                               "fill": "$text-primary",
@@ -10756,16 +10679,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "gST3k",
-                              "name": "Committed Timestamp 00:15",
-                              "fill": "$text-label",
-                              "content": "00:15",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "W82OOt",
@@ -10790,22 +10703,26 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "K5eBx",
-                              "name": "Partial Timestamp",
-                              "fill": "#A84720",
-                              "content": "00:18",
+                              "id": "a3399k",
+                              "name": "Stable Partial Prefix",
+                              "fill": "$text-primary",
+                              "textGrowth": "fixed-width",
+                              "width": 190,
+                              "content": "а потом можно будет",
+                              "lineHeight": 1.45,
                               "fontFamily": "$font-body",
-                              "fontSize": 11,
+                              "fontSize": 16,
                               "fontWeight": "normal"
                             },
                             {
                               "type": "text",
-                              "id": "a3399k",
-                              "name": "Partial Transcript Text",
+                              "id": "aBG3U",
+                              "name": "Replaceable Partial Suffix",
+                              "opacity": 0.8,
                               "fill": "$text-label",
                               "textGrowth": "fixed-width",
                               "width": "fill_container",
-                              "content": "а потом можно будет отполировать это локальной моделью…",
+                              "content": "отполировать это локальной моделью…",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-body",
                               "fontSize": 16,
@@ -11059,7 +10976,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "N4w7s",
+                  "id": "UjG72",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$border"
+                },
+                {
+                  "type": "icon",
+                  "id": "fONNA",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -11069,8 +10996,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "CpchW",
-                  "name": "Export Recorder Session",
+                  "id": "G57rq",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -11079,8 +11006,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "wPUdV",
-                  "name": "Delete Recorder Session",
+                  "id": "c9XoK",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -11131,17 +11058,7 @@
                   "id": "HuPJk",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "System default microphone",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "a6rVqL",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -11150,27 +11067,27 @@
             },
             {
               "type": "frame",
-              "id": "jEfkD",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "x9wLOw",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "a7mLf",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "iaOnA",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "EVK75",
-                  "name": "Local Storage Text",
+                  "id": "GjTjq",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Audio saved locally · CAF",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -11319,47 +11236,37 @@
                 {
                   "type": "frame",
                   "id": "drQEq",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "e7bl56",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "LH7rc",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "fQKTU",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -11505,7 +11412,7 @@
                       "id": "IufLE",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -11513,7 +11420,7 @@
                     {
                       "type": "frame",
                       "id": "B0cDy1",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -11522,17 +11429,7 @@
                           "id": "w6lzh",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "Audio checkpointed < 1s",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "gNTtk",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -11556,43 +11453,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "UZpAC",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#E8F5EE",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "Jq0gA",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "audio-lines",
-                          "library": "lucide",
-                          "fill": "#376A40"
-                        },
-                        {
-                          "type": "text",
-                          "id": "iYXrs",
-                          "name": "Recorder State Text",
-                          "fill": "#376A40",
-                          "content": "Listening — committed phrases remain stable",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
                       "id": "t9ji6S",
                       "name": "Recorder Transcript Flow",
                       "width": "fill_container",
@@ -11610,16 +11470,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "oDFG8",
-                              "name": "Committed Timestamp 00:03",
-                              "fill": "$text-label",
-                              "content": "00:03",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "RPzkG",
@@ -11644,16 +11494,6 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "OkxaT",
-                              "name": "Committed Timestamp 00:09",
-                              "fill": "$text-label",
-                              "content": "00:09",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "UxVAh",
                               "name": "Committed Text 00:09",
                               "fill": "$text-primary",
@@ -11674,16 +11514,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "B1CUS",
-                              "name": "Committed Timestamp 00:15",
-                              "fill": "$text-label",
-                              "content": "00:15",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "KO9Qc",
@@ -11711,27 +11541,16 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "H6m7b",
-                              "name": "Partial Timestamp",
-                              "fill": "#A84720",
-                              "content": "00:18",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "xkASj",
-                              "name": "Partial Transcript Text",
-                              "fill": "$text-label",
+                              "name": "Stable Partial Prefix",
+                              "fill": "$text-primary",
                               "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "а потом можно будет отполировать это локальной моделью…",
+                              "width": 190,
+                              "content": "а потом можно будет",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-body",
                               "fontSize": 16,
-                              "fontWeight": "normal",
-                              "fontStyle": "italic"
+                              "fontWeight": "normal"
                             }
                           ]
                         }
@@ -11980,7 +11799,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "YZdaP",
+                  "id": "YCN7W",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$border"
+                },
+                {
+                  "type": "icon",
+                  "id": "L8AejH",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -11990,8 +11819,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "IVMRC",
-                  "name": "Export Recorder Session",
+                  "id": "O4h4iC",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -12000,8 +11829,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "QJrMb",
-                  "name": "Delete Recorder Session",
+                  "id": "KPh9T",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -12052,17 +11881,7 @@
                   "id": "by2Ik",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "System default microphone",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "MJNPk",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -12071,27 +11890,27 @@
             },
             {
               "type": "frame",
-              "id": "e8tvvM",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "LiYK8",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "GMMlK",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "YHP7P",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "ytVZw",
-                  "name": "Local Storage Text",
+                  "id": "RrzsH",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Audio saved locally · CAF",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -12240,47 +12059,37 @@
                 {
                   "type": "frame",
                   "id": "Z7fhdy",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "p623S",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "i3Itm6",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "D0UtjW",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -12426,7 +12235,7 @@
                       "id": "T6rTek",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -12434,7 +12243,7 @@
                     {
                       "type": "frame",
                       "id": "avPd9",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -12443,17 +12252,7 @@
                           "id": "pIff9",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "No session created",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "WsruQ",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -12475,43 +12274,6 @@
                     32
                   ],
                   "children": [
-                    {
-                      "type": "frame",
-                      "id": "n12A6s",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "$canvas-bg",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "POOss",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "mic",
-                          "library": "lucide",
-                          "fill": "$accent"
-                        },
-                        {
-                          "type": "text",
-                          "id": "U0J4WB",
-                          "name": "Recorder State Text",
-                          "fill": "$text-primary",
-                          "content": "Press Start or use Control + Option + Space to begin",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
                     {
                       "type": "frame",
                       "id": "pxzoz",
@@ -12798,7 +12560,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "E1pHN",
+                  "id": "DjxgZ",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$border"
+                },
+                {
+                  "type": "icon",
+                  "id": "K0HOU",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -12808,8 +12580,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "sopTf",
-                  "name": "Export Recorder Session",
+                  "id": "n5H9H",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -12818,8 +12590,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "NtsPD",
-                  "name": "Delete Recorder Session",
+                  "id": "Zwu1x",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -12870,17 +12642,7 @@
                   "id": "ePvVP",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "Microphone access is off",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "D9Es4F",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -12889,27 +12651,27 @@
             },
             {
               "type": "frame",
-              "id": "K76Rrl",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "fDU62",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "E3xOF",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "v3aGOn",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "Gjn3u",
-                  "name": "Local Storage Text",
+                  "id": "DvlPy",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Audio saved locally · CAF",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -13058,47 +12820,37 @@
                 {
                   "type": "frame",
                   "id": "S1MDz",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "UIr27",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "a9Owh",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "XlcTY",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -13244,7 +12996,7 @@
                       "id": "N2Mw3o",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -13252,7 +13004,7 @@
                     {
                       "type": "frame",
                       "id": "tOnbP",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -13261,17 +13013,7 @@
                           "id": "w8XiN",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "No recording started",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "Q2lUm",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -13293,43 +13035,6 @@
                     32
                   ],
                   "children": [
-                    {
-                      "type": "frame",
-                      "id": "x1Fr66",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#FFF5DD",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "GAxmm",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "shield-alert",
-                          "library": "lucide",
-                          "fill": "#B7791F"
-                        },
-                        {
-                          "type": "text",
-                          "id": "ETtHs",
-                          "name": "Recorder State Text",
-                          "fill": "#7A5312",
-                          "content": "Allow Microphone in System Settings, then press Start again. Failed starts are not saved.",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
                     {
                       "type": "frame",
                       "id": "r8zJr",
@@ -13698,7 +13403,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "YVt9c",
+                  "id": "iHFSq",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$border"
+                },
+                {
+                  "type": "icon",
+                  "id": "xCwR1",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -13708,8 +13423,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "Rze9T",
-                  "name": "Export Recorder Session",
+                  "id": "L5JMS",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -13718,8 +13433,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "D8wtzO",
-                  "name": "Delete Recorder Session",
+                  "id": "BklS3",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -13770,17 +13485,7 @@
                   "id": "D8onc",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "System default microphone",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "RsWJH",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -13789,27 +13494,27 @@
             },
             {
               "type": "frame",
-              "id": "TDjTa",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "TxJhQ",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "bGHzV",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "cMJH4",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "R2zDy",
-                  "name": "Local Storage Text",
+                  "id": "o9mEMb",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Audio saved locally · CAF",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -13958,47 +13663,37 @@
                 {
                   "type": "frame",
                   "id": "QWVyD",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "C4MhIl",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "GSSWH",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "dfcXV",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -14144,7 +13839,7 @@
                       "id": "hjRGs",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -14152,7 +13847,7 @@
                     {
                       "type": "frame",
                       "id": "IRlfO",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -14161,17 +13856,7 @@
                           "id": "q0nNUy",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "Flushing audio + trailing speech",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "VzIdN",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -14195,43 +13880,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "xMXPU",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#FDF6E3",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "EEG2F",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "loader-circle",
-                          "library": "lucide",
-                          "fill": "#B7791F"
-                        },
-                        {
-                          "type": "text",
-                          "id": "AVFgk",
-                          "name": "Recorder State Text",
-                          "fill": "#7A5312",
-                          "content": "Finalizing — keep WhisperPilot open while audio and the last phrase are secured",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
                       "id": "xGhfr",
                       "name": "Recorder Transcript Flow",
                       "width": "fill_container",
@@ -14249,16 +13897,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "QOjsE",
-                              "name": "Committed Timestamp 00:03",
-                              "fill": "$text-label",
-                              "content": "00:03",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "XINpx",
@@ -14283,16 +13921,6 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "DWakT",
-                              "name": "Committed Timestamp 00:09",
-                              "fill": "$text-label",
-                              "content": "00:09",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "y1NG4",
                               "name": "Committed Text 00:09",
                               "fill": "$text-primary",
@@ -14313,16 +13941,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "eZeO2",
-                              "name": "Committed Timestamp 00:15",
-                              "fill": "$text-label",
-                              "content": "00:15",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "xEF6n",
@@ -14347,27 +13965,16 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "aWyZa",
-                              "name": "Partial Timestamp",
-                              "fill": "#A84720",
-                              "content": "00:18",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "n2EfP",
-                              "name": "Partial Transcript Text",
-                              "fill": "#B7791F",
+                              "name": "Stable Partial Prefix",
+                              "fill": "$text-primary",
                               "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "Finishing the last dictated phrase…",
+                              "width": 190,
+                              "content": "а потом можно будет",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-body",
                               "fontSize": 16,
-                              "fontWeight": "normal",
-                              "fontStyle": "italic"
+                              "fontWeight": "normal"
                             }
                           ]
                         }
@@ -14589,7 +14196,7 @@
                   "id": "kOHh8",
                   "name": "Recorder Live Status",
                   "fill": "#376A40",
-                  "content": "Saved",
+                  "content": "Completed",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "600"
@@ -14616,7 +14223,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "kMzbm",
+                  "id": "WJTNi",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$accent"
+                },
+                {
+                  "type": "icon",
+                  "id": "z99iw0",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -14626,8 +14243,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "CpoZT",
-                  "name": "Export Recorder Session",
+                  "id": "NSICG",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -14636,8 +14253,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "PCDlq",
-                  "name": "Delete Recorder Session",
+                  "id": "JwxaK",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -14688,17 +14305,7 @@
                   "id": "zHLI9",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "System default microphone",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "aZr14",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -14707,27 +14314,27 @@
             },
             {
               "type": "frame",
-              "id": "po9cj",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "k23CX0",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "t9XOK",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "lpfkb",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "l5rwR",
-                  "name": "Local Storage Text",
+                  "id": "leMIg",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Quick note.caf · stored locally",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -14876,47 +14483,37 @@
                 {
                   "type": "frame",
                   "id": "X5QeI",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "zGaJ6",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "GbCrr",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "nm4MU",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -15062,7 +14659,7 @@
                       "id": "wZnDK",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -15070,7 +14667,7 @@
                     {
                       "type": "frame",
                       "id": "j4P1rP",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -15079,17 +14676,7 @@
                           "id": "qIUCy",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "Audio finalized atomically",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "gFRcA",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -15113,43 +14700,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "HBqkv",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#E8F5EE",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "d7ZkMs",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "circle-check",
-                          "library": "lucide",
-                          "fill": "#376A40"
-                        },
-                        {
-                          "type": "text",
-                          "id": "OZFHa",
-                          "name": "Recorder State Text",
-                          "fill": "#376A40",
-                          "content": "Recording saved — edit the transcript, play audio, or export a WAV copy",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
                       "id": "OuJvj",
                       "name": "Recorder Transcript Flow",
                       "width": "fill_container",
@@ -15167,16 +14717,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "SL3vj",
-                              "name": "Committed Timestamp 00:03",
-                              "fill": "$text-label",
-                              "content": "00:03",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "SsqiM",
@@ -15201,16 +14741,6 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "Gq3G4",
-                              "name": "Committed Timestamp 00:09",
-                              "fill": "$text-label",
-                              "content": "00:09",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "j9AET",
                               "name": "Committed Text 00:09",
                               "fill": "$text-primary",
@@ -15231,16 +14761,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "M6wSk0",
-                              "name": "Committed Timestamp 00:15",
-                              "fill": "$text-label",
-                              "content": "00:15",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "z5loi",
@@ -15268,27 +14788,16 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "obahu",
-                              "name": "Partial Timestamp",
-                              "fill": "#A84720",
-                              "content": "00:18",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "SgP9J",
-                              "name": "Partial Transcript Text",
-                              "fill": "$text-label",
+                              "name": "Stable Partial Prefix",
+                              "fill": "$text-primary",
                               "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "а потом можно будет отполировать это локальной моделью…",
+                              "width": 190,
+                              "content": "а потом можно будет",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-body",
                               "fontSize": 16,
-                              "fontWeight": "normal",
-                              "fontStyle": "italic"
+                              "fontWeight": "normal"
                             }
                           ]
                         },
@@ -15569,7 +15078,17 @@
                 },
                 {
                   "type": "icon",
-                  "id": "UGLxl",
+                  "id": "iZKCa",
+                  "name": "Prettify Recorder Transcript",
+                  "width": 17,
+                  "height": 17,
+                  "icon": "sparkles",
+                  "library": "lucide",
+                  "fill": "$accent"
+                },
+                {
+                  "type": "icon",
+                  "id": "zetAu",
                   "name": "Copy Recorder Transcript",
                   "width": 17,
                   "height": 17,
@@ -15579,8 +15098,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "dLT5S",
-                  "name": "Export Recorder Session",
+                  "id": "MI0LC",
+                  "name": "Export Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "download",
@@ -15589,8 +15108,8 @@
                 },
                 {
                   "type": "icon",
-                  "id": "dpJC2",
-                  "name": "Delete Recorder Session",
+                  "id": "GGf98",
+                  "name": "Clear Recorder Transcript",
                   "width": 17,
                   "height": 17,
                   "icon": "trash-2",
@@ -15641,17 +15160,7 @@
                   "id": "N0iFPw",
                   "name": "Recorder Input Device",
                   "fill": "$text-secondary",
-                  "content": "Input device lost",
-                  "fontFamily": "$font-body",
-                  "fontSize": 12,
-                  "fontWeight": "normal"
-                },
-                {
-                  "type": "text",
-                  "id": "nFylZ",
-                  "name": "Recorder Model",
-                  "fill": "$text-label",
-                  "content": "Whisper large-v3-turbo · Auto RU/EN",
+                  "content": "Audio Source:  Default microphone",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -15660,27 +15169,27 @@
             },
             {
               "type": "frame",
-              "id": "EyiHo",
-              "name": "Recorder Local Storage Notice",
-              "gap": 7,
+              "id": "S2t9a",
+              "name": "Recorder Audio Metadata",
+              "gap": 8,
               "alignItems": "center",
               "children": [
                 {
                   "type": "icon",
-                  "id": "dslon",
-                  "name": "Local Storage Icon",
-                  "width": 14,
-                  "height": 14,
-                  "icon": "hard-drive",
+                  "id": "Cw9O4",
+                  "name": "Export WAV",
+                  "width": 15,
+                  "height": 15,
+                  "icon": "download",
                   "library": "lucide",
                   "fill": "$text-label"
                 },
                 {
                   "type": "text",
-                  "id": "XLOHx",
-                  "name": "Local Storage Text",
+                  "id": "RflX1",
+                  "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "Interrupted audio preserved locally",
+                  "content": "00:18",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -15829,47 +15338,37 @@
                 {
                   "type": "frame",
                   "id": "p7vUiw",
-                  "name": "New Recording Button",
+                  "name": "Recorder Search",
                   "width": "fill_container",
                   "height": 34,
-                  "fill": "#A84720",
+                  "fill": "$canvas-bg",
                   "cornerRadius": 8,
+                  "stroke": "$border",
+                  "strokeWidth": 1,
                   "gap": 7,
-                  "justifyContent": "center",
                   "alignItems": "center",
                   "children": [
                     {
                       "type": "icon",
                       "id": "gm0iJ",
-                      "name": "New Recording Icon",
+                      "name": "Recorder Search Icon",
                       "width": 15,
                       "height": 15,
-                      "icon": "plus",
+                      "icon": "search",
                       "library": "lucide",
-                      "fill": "#FFFFFF"
+                      "fill": "$text-label"
                     },
                     {
                       "type": "text",
                       "id": "vw8k3",
-                      "name": "New Recording Label",
-                      "fill": "#FFFFFF",
-                      "content": "New recording",
+                      "name": "Recorder Search Placeholder",
+                      "fill": "$text-label",
+                      "content": "Search recordings...",
                       "fontFamily": "$font-body",
                       "fontSize": 12,
-                      "fontWeight": "600"
+                      "fontWeight": "normal"
                     }
                   ]
-                },
-                {
-                  "type": "text",
-                  "id": "bpvWX",
-                  "name": "Recordings Section Label",
-                  "fill": "$text-label",
-                  "content": "RECORDINGS",
-                  "fontFamily": "$font-body",
-                  "fontSize": 10,
-                  "fontWeight": "600",
-                  "letterSpacing": 0.8
                 },
                 {
                   "type": "frame",
@@ -16015,7 +15514,7 @@
                       "id": "vrgg5",
                       "name": "Recorder Transcript Title",
                       "fill": "$text-primary",
-                      "content": "Live transcript",
+                      "content": "Transcript",
                       "fontFamily": "$font-body",
                       "fontSize": 13,
                       "fontWeight": "600"
@@ -16023,7 +15522,7 @@
                     {
                       "type": "frame",
                       "id": "GnEWK",
-                      "name": "Recorder Transcript Metadata",
+                      "name": "Recorder Transcript Actions",
                       "gap": 12,
                       "alignItems": "center",
                       "children": [
@@ -16032,17 +15531,7 @@
                           "id": "ZtNtu",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "Interrupted session · recovery available",
-                          "fontFamily": "$font-body",
-                          "fontSize": 11,
-                          "fontWeight": "normal"
-                        },
-                        {
-                          "type": "text",
-                          "id": "T1UB8",
-                          "name": "Recorder Language State",
-                          "fill": "$text-secondary",
-                          "content": "RU + EN detected",
+                          "content": "3 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -16066,43 +15555,6 @@
                   "children": [
                     {
                       "type": "frame",
-                      "id": "r0SaM",
-                      "name": "Recorder State Banner",
-                      "width": "fill_container",
-                      "height": 42,
-                      "fill": "#FDECEC",
-                      "cornerRadius": 9,
-                      "gap": 9,
-                      "padding": [
-                        0,
-                        14
-                      ],
-                      "alignItems": "center",
-                      "children": [
-                        {
-                          "type": "icon",
-                          "id": "zYXMa",
-                          "name": "Recorder State Icon",
-                          "width": 16,
-                          "height": 16,
-                          "icon": "circle-alert",
-                          "library": "lucide",
-                          "fill": "$error"
-                        },
-                        {
-                          "type": "text",
-                          "id": "DkspB",
-                          "name": "Recorder State Text",
-                          "fill": "$error",
-                          "content": "Capture stopped. Saved audio and transcript are intact — reconnect a mic, then Retry capture.",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        }
-                      ]
-                    },
-                    {
-                      "type": "frame",
                       "id": "n8Q9e",
                       "name": "Recorder Transcript Flow",
                       "width": "fill_container",
@@ -16120,16 +15572,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "Yg6B0",
-                              "name": "Committed Timestamp 00:03",
-                              "fill": "$text-label",
-                              "content": "00:03",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "HYxYg",
@@ -16154,16 +15596,6 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "eU7q9",
-                              "name": "Committed Timestamp 00:09",
-                              "fill": "$text-label",
-                              "content": "00:09",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "DdVsl",
                               "name": "Committed Text 00:09",
                               "fill": "$text-primary",
@@ -16184,16 +15616,6 @@
                           "width": "fill_container",
                           "gap": 14,
                           "children": [
-                            {
-                              "type": "text",
-                              "id": "MKdF7",
-                              "name": "Committed Timestamp 00:15",
-                              "fill": "$text-label",
-                              "content": "00:15",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
                             {
                               "type": "text",
                               "id": "RZvwC",
@@ -16221,27 +15643,16 @@
                           "children": [
                             {
                               "type": "text",
-                              "id": "JYz9R",
-                              "name": "Partial Timestamp",
-                              "fill": "#A84720",
-                              "content": "00:18",
-                              "fontFamily": "$font-body",
-                              "fontSize": 11,
-                              "fontWeight": "normal"
-                            },
-                            {
-                              "type": "text",
                               "id": "VRbGg",
-                              "name": "Partial Transcript Text",
-                              "fill": "$text-label",
+                              "name": "Stable Partial Prefix",
+                              "fill": "$text-primary",
                               "textGrowth": "fixed-width",
-                              "width": "fill_container",
-                              "content": "а потом можно будет отполировать это локальной моделью…",
+                              "width": 190,
+                              "content": "а потом можно будет",
                               "lineHeight": 1.45,
                               "fontFamily": "$font-body",
                               "fontSize": 16,
-                              "fontWeight": "normal",
-                              "fontStyle": "italic"
+                              "fontWeight": "normal"
                             }
                           ]
                         }

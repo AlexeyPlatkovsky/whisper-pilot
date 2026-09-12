@@ -11,6 +11,7 @@ import {
   type RecorderStatus,
 } from "./ipc";
 import { AppLogo } from "./Icon";
+import { stabilizePartial, type StablePartial } from "./partialStability";
 
 const STATUS: Record<RecorderStatus, string> = {
   recording: "Listening",
@@ -24,8 +25,25 @@ export function RecorderCaption() {
   const [status, setStatus] = useState("Listening");
   const [committed, setCommitted] = useState("");
   const [partial, setPartial] = useState("");
+  const [partialDisplay, setPartialDisplay] = useState<StablePartial>({
+    stable: "",
+    unstable: "",
+  });
   const [shortcut, setShortcut] = useState("Control+Option+Space");
   const sessionId = useRef<number | null>(null);
+  const previousPartial = useRef("");
+
+  const clearPartial = () => {
+    previousPartial.current = "";
+    setPartial("");
+    setPartialDisplay({ stable: "", unstable: "" });
+  };
+
+  const showTransientMessage = (message: string) => {
+    previousPartial.current = "";
+    setPartial(message);
+    setPartialDisplay({ stable: "", unstable: message });
+  };
 
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
@@ -39,7 +57,7 @@ export function RecorderCaption() {
         } catch (error) {
           if (!cancelled) {
             setStatus("Shortcut status unavailable");
-            setPartial(String(error));
+            showTransientMessage(String(error));
           }
           return null;
         }
@@ -53,7 +71,7 @@ export function RecorderCaption() {
           ) {
             sessionId.current = session.id;
             setCommitted("");
-            setPartial("");
+            clearPartial();
             void refreshShortcut();
           }
           if (sessionId.current === session.id)
@@ -62,10 +80,14 @@ export function RecorderCaption() {
         await onRecorderSegmentCommitted((segment) => {
           if (cancelled || segment.session_id !== sessionId.current) return;
           setCommitted(segment.text);
-          setPartial("");
+          clearPartial();
         }),
         await onRecorderPartial((next) => {
           if (!cancelled && next.session_id === sessionId.current) {
+            setPartialDisplay(
+              stabilizePartial(previousPartial.current, next.text),
+            );
+            previousPartial.current = next.text;
             setPartial(next.text);
           }
         }),
@@ -78,7 +100,7 @@ export function RecorderCaption() {
             return;
           }
           setStatus("Recorder error");
-          setPartial(error.message);
+          showTransientMessage(error.message);
         }),
       );
       const [snapshot, shortcutStatus] = await Promise.all([
@@ -88,7 +110,7 @@ export function RecorderCaption() {
       if (cancelled) return;
       if (shortcutStatus?.error) {
         setStatus("Shortcut disabled");
-        setPartial(shortcutStatus.error);
+        showTransientMessage(shortcutStatus.error);
       }
       if (snapshot.source === "recorder" && snapshot.session_id !== null) {
         const session = await openRecorderSession(snapshot.session_id);
@@ -96,7 +118,7 @@ export function RecorderCaption() {
         sessionId.current = session.id;
         setStatus(STATUS[session.status]);
         setCommitted(session.segments.at(-1)?.text ?? "");
-        setPartial("");
+        clearPartial();
       }
     })();
     return () => {
@@ -115,7 +137,7 @@ export function RecorderCaption() {
       onClick={() =>
         void showRecorderWorkspace().catch((error) => {
           setStatus("Recorder error");
-          setPartial(String(error));
+          showTransientMessage(String(error));
         })
       }
       onKeyDown={(event) => {
@@ -132,7 +154,8 @@ export function RecorderCaption() {
       </div>
       <p>
         {committed && <span>{committed} </span>}
-        {partial && <em>{partial}</em>}
+        {partialDisplay.stable && <span>{partialDisplay.stable} </span>}
+        {partialDisplay.unstable && <em>{partialDisplay.unstable}</em>}
         {!committed && !partial && <em>Start speaking…</em>}
       </p>
     </main>

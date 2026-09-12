@@ -17,8 +17,8 @@ private-API feature, which is incompatible with Mac App Store distribution.
 
 WhisperPilot also needs a newer text-model lineup without adding a second MLX
 runtime. The candidates have different prompt protocols and resource envelopes,
-so treating every GGUF as interchangeable would leak reasoning tokens or make a
-working legacy installation unusable during migration.
+so treating every GGUF as interchangeable would leak reasoning tokens or make
+model behavior unpredictable during migration.
 
 ## Decision
 
@@ -39,8 +39,9 @@ backend-owned in either presentation.
 
 Text inference stays on the existing Metal `llama.cpp` runtime. Fresh installs
 recommend Qwen3.5 4B Q4_K_M as the Fast profile. Qwen3.8 9B Q6_K and Gemma 4
-12B QAT Q4_0 are explicit Quality choices. Existing selected Qwen models remain
-addressable and are never replaced or downloaded automatically. Each promoted
+12B QAT Q4_0 are explicit Quality choices. Existing model files on disk are
+never overwritten or downloaded automatically; the retired Qwen3 4B Q3_K_L
+profile is no longer selectable. Each promoted
 asset is revision, byte-size, and SHA-256 pinned. Downloads use disk-space
 preflight, retained `.part` files and HTTP Range resume, then SHA verification
 and atomic rename.

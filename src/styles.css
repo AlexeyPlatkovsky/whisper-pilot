@@ -685,6 +685,24 @@ body {
   line-height: 1.55;
 }
 
+.recorder-partial-stable,
+.wp-streaming-partial-stable {
+  color: var(--text);
+  font-style: normal;
+}
+
+.recorder-partial-unstable,
+.wp-streaming-partial-unstable {
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.wp-streaming-partial {
+  margin: 0;
+  line-height: 1.55;
+}
+
 .recorder-audio {
   width: min(520px, 100%);
 }
@@ -1570,7 +1588,7 @@ body {
   margin: 0;
   font-size: var(--wp-font-size-sm);
   font-weight: 600;
-  color: var(--muted);
+  color: var(--accent);
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }

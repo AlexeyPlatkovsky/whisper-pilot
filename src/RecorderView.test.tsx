@@ -348,12 +348,23 @@ describe("Recorder mode", () => {
     act(() => {
       sessionHandler?.({ ...SESSION, status: "recording" });
       partialHandler?.({ session_id: 99, revision: 500, text: "other note" });
-      partialHandler?.({ session_id: 1, revision: 1, text: "first partial" });
-      partialHandler?.({ session_id: 1, revision: 2, text: "new partial" });
+      partialHandler?.({
+        session_id: 1,
+        revision: 1,
+        text: "Так давай попробуем снова",
+      });
+      partialHandler?.({
+        session_id: 1,
+        revision: 2,
+        text: "Так давай попробуем ещё раз",
+      });
       partialHandler?.({ session_id: 1, revision: 1, text: "stale partial" });
     });
     expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
-    expect(screen.getByText("new partial").closest("em")).not.toBeNull();
+    expect(screen.getByText("Так давай попробуем")).toHaveClass(
+      "recorder-partial-stable",
+    );
+    expect(screen.getByText("ещё раз").closest("em")).not.toBeNull();
     expect(screen.queryByText("stale partial")).not.toBeInTheDocument();
     expect(screen.queryByText("other note")).not.toBeInTheDocument();
 
@@ -371,7 +382,7 @@ describe("Recorder mode", () => {
     expect(
       screen.getByDisplayValue("Committed second phrase"),
     ).toBeInTheDocument();
-    expect(screen.queryByText("new partial")).not.toBeInTheDocument();
+    expect(screen.queryByText("ещё раз")).not.toBeInTheDocument();
   });
 
   it("renders authoritative lifecycle states and restores active capture on remount", async () => {

@@ -74,6 +74,7 @@ import {
   resolveStreamingRowStatus,
   resolveStreamingWidgetStatus,
 } from "./streamingStatus";
+import { stabilizePartial } from "./partialStability";
 
 // WP-93: Live Translation's target-language options — the select's display
 // names and the split grid's target-column header (uppercased). Shared with
@@ -137,6 +138,8 @@ export function StreamingView({
   const [partialTranscript, setPartialTranscript] = useState<{
     itemId: string | null;
     text: string;
+    stable: string;
+    unstable: string;
   } | null>(null);
   const [transcriptionEngine, setTranscriptionEngine] = useState<
     "local" | "cloud"
@@ -517,9 +520,15 @@ export function StreamingView({
         }),
         onStreamingPartial((incoming) => {
           if (activeIdRef.current === incoming.session_id) {
-            setPartialTranscript({
-              itemId: incoming.item_id,
-              text: incoming.text,
+            setPartialTranscript((current) => {
+              const previous =
+                current?.itemId === incoming.item_id ? current.text : "";
+              const display = stabilizePartial(previous, incoming.text);
+              return {
+                itemId: incoming.item_id,
+                text: incoming.text,
+                ...display,
+              };
             });
           }
         }),
@@ -1789,7 +1798,16 @@ export function StreamingView({
               )}
               {isRunning && partialTranscript && (
                 <p className="wp-streaming-partial" role="status">
-                  {partialTranscript.text}
+                  {partialTranscript.stable && (
+                    <span className="wp-streaming-partial-stable">
+                      {partialTranscript.stable}{" "}
+                    </span>
+                  )}
+                  {partialTranscript.unstable && (
+                    <em className="wp-streaming-partial-unstable">
+                      {partialTranscript.unstable}
+                    </em>
+                  )}
                 </p>
               )}
               {isRunning && (

@@ -10,22 +10,24 @@ use std::sync::mpsc::{sync_channel, Receiver, RecvTimeoutError, SyncSender};
 use std::time::{Duration, Instant};
 use whisper_rs::{WhisperContext, WhisperState};
 
-/// Target window length. The midpoint of WP-68's approved 5-10s latency
-/// budget — not itself the measured, finalized threshold (that's the
-/// feasibility spike's job), just the windowing granularity.
-const WINDOW_SECONDS: f64 = 7.0;
+/// Hard safety cap for uninterrupted speech. Normal utterances commit sooner
+/// at a natural trailing pause; the cap prevents unbounded model inputs when
+/// a speaker never pauses.
+const WINDOW_SECONDS: f64 = 20.0;
 
 const WINDOW_SAMPLES: usize = (WINDOW_SECONDS * SAMPLE_RATE as f64) as usize;
 
-/// Local live text becomes useful before the seven-second persistence
-/// boundary. Re-decode the unstable suffix once it reaches five seconds and
-/// whenever another second arrives; only a full/final window is committed.
-const PARTIAL_MIN_SAMPLES: usize = SAMPLE_RATE as usize * 5;
-const PARTIAL_STEP_SAMPLES: usize = SAMPLE_RATE as usize;
-const VAD_SEARCH_SAMPLES: usize = SAMPLE_RATE as usize;
+/// Decode a provisional utterance early enough to feel live without keeping
+/// the local model permanently backlogged behind one-second revisions.
+const PARTIAL_MIN_SAMPLES: usize = SAMPLE_RATE as usize * 2;
+const PARTIAL_STEP_SAMPLES: usize = SAMPLE_RATE as usize * 2;
+const NATURAL_COMMIT_MIN_SAMPLES: usize = SAMPLE_RATE as usize * 2;
+const NATURAL_PAUSE_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 5;
+const VAD_SEARCH_SAMPLES: usize = SAMPLE_RATE as usize * 2;
 const VAD_FRAME_SAMPLES: usize = SAMPLE_RATE as usize / 50;
 const VAD_MIN_SILENCE_SAMPLES: usize = SAMPLE_RATE as usize / 10;
 const VAD_SILENCE_RMS: f64 = 0.003;
+const CONTEXT_MAX_CHARS: usize = 240;
 
 /// A half-second is long enough to preserve a spoken trailing word without
 /// decoding callback noise at shutdown.
@@ -177,7 +179,11 @@ pub struct WindowResult {
 /// The seam that lets the decode loop own "one whisper state per session"
 /// (WP-82) while tests substitute a model-free double.
 pub trait SessionDecoder {
-    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription>;
+    fn decode_window(
+        &mut self,
+        samples: &[f32],
+        context: Option<&str>,
+    ) -> crate::error::Result<Transcription>;
 }
 
 /// The production [`SessionDecoder`]: owns the session's single
@@ -198,8 +204,12 @@ impl WhisperSessionDecoder {
 }
 
 impl SessionDecoder for WhisperSessionDecoder {
-    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
-        transcribe::transcribe_with_state(&mut self.state, samples, |_| {})
+    fn decode_window(
+        &mut self,
+        samples: &[f32],
+        context: Option<&str>,
+    ) -> crate::error::Result<Transcription> {
+        transcribe::transcribe_with_state_and_prompt(&mut self.state, samples, context)
     }
 }
 
@@ -220,8 +230,12 @@ impl QwenGgufSessionDecoder {
 
 #[cfg(target_os = "macos")]
 impl SessionDecoder for QwenGgufSessionDecoder {
-    fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
-        self.model.transcribe_window(samples)
+    fn decode_window(
+        &mut self,
+        samples: &[f32],
+        context: Option<&str>,
+    ) -> crate::error::Result<Transcription> {
+        self.model.transcribe_window_with_context(samples, context)
     }
 }
 
@@ -236,10 +250,28 @@ fn take_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
     Some(buffer.drain(..WINDOW_SAMPLES).collect())
 }
 
-/// Prefer a quiet commit boundary in the final second when one exists;
-/// otherwise retain the exact seven-second boundary. This reduces clipped
-/// boundary words without overlap that could duplicate identical phrases.
+/// Commit a spoken utterance as soon as it is followed by a 600 ms pause.
+/// For uninterrupted speech, prefer a short quiet boundary near the hard
+/// cap, otherwise split exactly at the cap.
 fn take_commit_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
+    let scan_end = buffer.len().min(WINDOW_SAMPLES);
+    if scan_end >= NATURAL_COMMIT_MIN_SAMPLES + NATURAL_PAUSE_SAMPLES {
+        let mut quiet_start: Option<usize> = None;
+        for start in (NATURAL_COMMIT_MIN_SAMPLES..scan_end).step_by(VAD_FRAME_SAMPLES) {
+            let end = (start + VAD_FRAME_SAMPLES).min(scan_end);
+            if root_mean_square(&buffer[start..end]) <= VAD_SILENCE_RMS {
+                let run_start = *quiet_start.get_or_insert(start);
+                if end.saturating_sub(run_start) >= NATURAL_PAUSE_SAMPLES
+                    && contains_meaningful_audio(&buffer[..run_start])
+                {
+                    return Some(buffer.drain(..end).collect());
+                }
+            } else {
+                quiet_start = None;
+            }
+        }
+    }
+
     if buffer.len() < WINDOW_SAMPLES {
         return None;
     }
@@ -295,10 +327,11 @@ fn decode_result<D: SessionDecoder>(
     kind: WindowResultKind,
     window_index: u64,
     start_ms: u64,
+    context: Option<&str>,
 ) -> WindowResult {
     let decode_start = Instant::now();
     let outcome = match decoder {
-        Ok(decoder) => decoder.decode_window(samples),
+        Ok(decoder) => decoder.decode_window(samples, context),
         Err(message) => Err(AppError::Transcribe(message.clone())),
     };
     WindowResult {
@@ -349,6 +382,7 @@ pub fn run_windowed_decode_from<D, F>(
     let mut buffer_start_sample = 0_u64;
     let mut expected_input_sample = 0_u64;
     let mut last_partial_len = 0_usize;
+    let mut committed_context = String::new();
     // Kept as the message rather than the AppError (not Clone): a creation
     // failure is rebuilt per window so each fail-open result reads exactly
     // like a per-window decode failure.
@@ -366,6 +400,7 @@ pub fn run_windowed_decode_from<D, F>(
                     &mut window_index,
                     timeline_start_ms,
                     buffer_start_sample,
+                    &mut committed_context,
                 );
                 break;
             }
@@ -387,6 +422,7 @@ pub fn run_windowed_decode_from<D, F>(
                 &mut window_index,
                 timeline_start_ms,
                 buffer_start_sample,
+                &mut committed_context,
             ) || !send_capture_gap(
                 &results_tx,
                 &mut window_index,
@@ -417,16 +453,16 @@ pub fn run_windowed_decode_from<D, F>(
         while let Some(window) = take_commit_window(&mut buffer) {
             let start_ms =
                 timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
-            if results_tx
-                .send(decode_result(
-                    &mut decoder,
-                    &window,
-                    WindowResultKind::Committed,
-                    window_index,
-                    start_ms,
-                ))
-                .is_err()
-            {
+            let result = decode_result(
+                &mut decoder,
+                &window,
+                WindowResultKind::Committed,
+                window_index,
+                start_ms,
+                (!committed_context.is_empty()).then_some(committed_context.as_str()),
+            );
+            update_committed_context(&mut committed_context, &result);
+            if results_tx.send(result).is_err() {
                 return;
             }
             buffer_start_sample = buffer_start_sample.saturating_add(window.len() as u64);
@@ -447,6 +483,7 @@ pub fn run_windowed_decode_from<D, F>(
                     WindowResultKind::Partial,
                     window_index,
                     start_ms,
+                    (!committed_context.is_empty()).then_some(committed_context.as_str()),
                 ))
                 .is_err()
             {
@@ -471,6 +508,7 @@ pub fn run_windowed_decode_from<D, F>(
                 &mut window_index,
                 timeline_start_ms,
                 buffer_start_sample,
+                &mut committed_context,
             ) || !send_capture_gap(
                 &results_tx,
                 &mut window_index,
@@ -498,26 +536,56 @@ fn flush_trailing_buffer<D: SessionDecoder>(
     window_index: &mut u64,
     timeline_start_ms: u64,
     buffer_start_sample: u64,
+    committed_context: &mut String,
 ) -> bool {
     let should_decode = buffer.len() >= FINAL_MIN_SAMPLES && contains_meaningful_audio(buffer);
     if should_decode {
         let start_ms = timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
-        if results_tx
-            .send(decode_result(
-                decoder,
-                buffer,
-                WindowResultKind::Committed,
-                *window_index,
-                start_ms,
-            ))
-            .is_err()
-        {
+        let result = decode_result(
+            decoder,
+            buffer,
+            WindowResultKind::Committed,
+            *window_index,
+            start_ms,
+            (!committed_context.is_empty()).then_some(committed_context.as_str()),
+        );
+        update_committed_context(committed_context, &result);
+        if results_tx.send(result).is_err() {
             return false;
         }
         *window_index = window_index.saturating_add(1);
     }
     buffer.clear();
     true
+}
+
+fn update_committed_context(context: &mut String, result: &WindowResult) {
+    let Ok(transcription) = result.outcome.as_ref() else {
+        return;
+    };
+    let decoded = transcription
+        .segments
+        .iter()
+        .map(|segment| segment.text.trim())
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if decoded.is_empty() {
+        return;
+    }
+    if !context.is_empty() {
+        context.push(' ');
+    }
+    context.push_str(&decoded);
+    let character_count = context.chars().count();
+    if character_count > CONTEXT_MAX_CHARS {
+        *context = context
+            .chars()
+            .skip(character_count - CONTEXT_MAX_CHARS)
+            .collect::<String>()
+            .trim_start()
+            .to_string();
+    }
 }
 
 fn send_capture_gap(
@@ -619,6 +687,20 @@ mod tests {
             WINDOW_SAMPLES,
             "one quiet 20 ms frame is not a speech pause and must not move the boundary"
         );
+    }
+
+    #[test]
+    fn commit_window_ends_a_natural_utterance_before_the_hard_window_limit() {
+        let speech_samples = SAMPLE_RATE as usize * 3;
+        let pause_samples = SAMPLE_RATE as usize * 3 / 5;
+        let mut buffer = vec![0.05_f32; speech_samples];
+        buffer.extend(vec![0.0_f32; pause_samples]);
+
+        let window = take_commit_window(&mut buffer).expect("natural pause commits utterance");
+
+        assert_eq!(window.len(), speech_samples + pause_samples);
+        assert!(buffer.is_empty());
+        assert!(window.len() < WINDOW_SAMPLES);
     }
 
     #[test]
@@ -738,7 +820,11 @@ mod tests {
     }
 
     impl SessionDecoder for FakeDecoder {
-        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+        ) -> crate::error::Result<Transcription> {
             self.decoded.push(samples.len());
             Ok(Transcription {
                 segments: vec![],
@@ -832,8 +918,7 @@ mod tests {
     }
 
     // WP-113 S-1: disconnect is the Stop boundary. A meaningful suffix must
-    // be decoded once even when it never reaches the regular seven-second
-    // window size.
+    // be decoded once even when it never reaches the regular hard cap.
     #[test]
     fn disconnect_flushes_meaningful_trailing_audio_exactly_once() {
         let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
@@ -1015,19 +1100,19 @@ mod tests {
         samples_tx
             .send(captured_chunk(
                 WINDOW_SAMPLES as u64,
-                vec![0.05_f32; SAMPLE_RATE as usize * 5],
+                vec![0.05_f32; PARTIAL_MIN_SAMPLES],
             ))
             .expect("send initial partial");
         samples_tx
             .send(captured_chunk(
-                (WINDOW_SAMPLES + SAMPLE_RATE as usize * 5) as u64,
-                vec![0.05_f32; SAMPLE_RATE as usize],
+                (WINDOW_SAMPLES + PARTIAL_MIN_SAMPLES) as u64,
+                vec![0.05_f32; PARTIAL_STEP_SAMPLES],
             ))
             .expect("send partial revision");
         samples_tx
             .send(captured_chunk(
-                (WINDOW_SAMPLES + SAMPLE_RATE as usize * 6) as u64,
-                vec![0.05_f32; SAMPLE_RATE as usize],
+                (WINDOW_SAMPLES + PARTIAL_MIN_SAMPLES + PARTIAL_STEP_SAMPLES) as u64,
+                vec![0.05_f32; WINDOW_SAMPLES - PARTIAL_MIN_SAMPLES - PARTIAL_STEP_SAMPLES],
             ))
             .expect("complete second window");
         drop(samples_tx);
@@ -1043,19 +1128,78 @@ mod tests {
         let results: Vec<_> = results_rx.try_iter().collect();
         assert_eq!(results.len(), 4, "one commit, two revisions, one commit");
         assert_eq!(results[0].kind, WindowResultKind::Committed);
-        assert_eq!((results[0].start_ms, results[0].end_ms), (0, 7_000));
+        assert_eq!((results[0].start_ms, results[0].end_ms), (0, WINDOW_MS));
         assert_eq!(results[1].kind, WindowResultKind::Partial);
         assert_eq!(results[2].kind, WindowResultKind::Partial);
-        assert_eq!(results[1].start_ms, 7_000);
-        assert_eq!(results[2].start_ms, 7_000);
+        assert_eq!(results[1].start_ms, WINDOW_MS);
+        assert_eq!(results[2].start_ms, WINDOW_MS);
         assert_ne!(result_text(&results[1]), result_text(&results[2]));
         assert_eq!(results[3].kind, WindowResultKind::Committed);
-        assert_eq!((results[3].start_ms, results[3].end_ms), (7_000, 14_000));
+        assert_eq!(
+            (results[3].start_ms, results[3].end_ms),
+            (WINDOW_MS, WINDOW_MS * 2)
+        );
         assert_eq!(
             (results[0].start_ms, results[0].end_ms),
-            (0, 7_000),
+            (0, WINDOW_MS),
             "later partial revisions must not mutate a committed boundary"
         );
+    }
+
+    #[test]
+    fn confirmed_text_is_context_for_the_next_audio_window() {
+        let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(0, vec![0.05_f32; WINDOW_SAMPLES]))
+            .unwrap();
+        samples_tx
+            .send(captured_chunk(
+                WINDOW_SAMPLES as u64,
+                vec![0.05_f32; FINAL_MIN_SAMPLES],
+            ))
+            .unwrap();
+        drop(samples_tx);
+        let (results_tx, _results_rx) = result_channel();
+        let recorded = Arc::clone(&contexts);
+
+        run_windowed_decode(
+            move || Ok(ContextRecordingDecoder { contexts: recorded }),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert_eq!(
+            *contexts.lock().unwrap(),
+            vec![None, Some("confirmed phrase".to_string())]
+        );
+    }
+
+    struct ContextRecordingDecoder {
+        contexts: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
+
+    impl SessionDecoder for ContextRecordingDecoder {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            context: Option<&str>,
+        ) -> crate::error::Result<Transcription> {
+            self.contexts
+                .lock()
+                .unwrap()
+                .push(context.map(str::to_string));
+            Ok(Transcription {
+                segments: vec![crate::transcribe::Segment {
+                    start_ms: 0,
+                    end_ms: samples_to_ms(samples.len()),
+                    text: "confirmed phrase".into(),
+                    speaker_id: None,
+                }],
+                language: "en".into(),
+            })
+        }
     }
 
     struct RecordingDecoder {
@@ -1063,7 +1207,11 @@ mod tests {
     }
 
     impl SessionDecoder for RecordingDecoder {
-        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+        ) -> crate::error::Result<Transcription> {
             self.decoded_lengths
                 .lock()
                 .expect("decoded-length mutex")
@@ -1080,7 +1228,11 @@ mod tests {
     }
 
     impl SessionDecoder for RevisionDecoder {
-        fn decode_window(&mut self, samples: &[f32]) -> crate::error::Result<Transcription> {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+        ) -> crate::error::Result<Transcription> {
             let text = [
                 "first commit",
                 "draft suffix",

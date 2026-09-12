@@ -536,3 +536,51 @@ fn clearing_a_live_recorder_transcript_is_rejected_without_data_loss() {
     assert!(store.clear_transcript(recorder.id).is_err());
     assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
 }
+
+#[test]
+fn quality_pass_replaces_live_segments_atomically_and_clears_stale_polish() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Refine", 10, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 48_000,
+                text: "rough live text".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store
+        .upsert_polished(recorder.id, "stale polished text")
+        .unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+
+    store
+        .replace_transcript(
+            recorder.id,
+            vec![
+                RecorderTranscriptUpdate::Committed {
+                    start_sample: 0,
+                    end_sample: 24_000,
+                    text: "Accurate first phrase".into(),
+                    language: "en".into(),
+                },
+                RecorderTranscriptUpdate::Committed {
+                    start_sample: 24_000,
+                    end_sample: 48_000,
+                    text: "Точная вторая фраза".into(),
+                    language: "ru".into(),
+                },
+            ],
+        )
+        .unwrap();
+
+    let segments = store.list_segments(recorder.id).unwrap();
+    assert_eq!(segments.len(), 2);
+    assert_eq!(segments[0].text, "Accurate first phrase");
+    assert_eq!(segments[1].text, "Точная вторая фраза");
+    assert_eq!(store.get_polished(recorder.id).unwrap(), None);
+}

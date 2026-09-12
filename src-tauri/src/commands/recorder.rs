@@ -22,6 +22,8 @@ use crate::microphone_audio::{
     BandlimitedChunkResampler, MicrophoneCaptureSession, PooledMicrophoneSamples,
 };
 #[cfg(target_os = "macos")]
+use crate::recorder_audio::read_caf_audio;
+#[cfg(target_os = "macos")]
 use crate::state::{LiveCaptureRuntime, RecorderRuntime};
 #[cfg(target_os = "macos")]
 use crate::streaming_session;
@@ -535,6 +537,7 @@ fn drive_recorder_results(
     generation: u64,
     results_rx: Receiver<streaming_session::WindowResult>,
     finalization: RecorderFinalizationChannels,
+    quality_model: RecorderDecoderModel,
 ) {
     let mut terminal_error: Option<String> = None;
     let mut partial_revision = 0_u64;
@@ -606,12 +609,32 @@ fn drive_recorder_results(
     }
 
     let _ = finalization.tail_persisted_tx.send(());
-    if let Err(error) = finalization
+    let finalized_audio = finalization
         .audio_finalized_rx
         .recv()
-        .unwrap_or_else(|_| Err(AppError::Audio("Recorder audio writer disconnected".into())))
-    {
-        terminal_error = Some(format!("Recorder audio could not be finalized: {error}"));
+        .unwrap_or_else(|_| Err(AppError::Audio("Recorder audio writer disconnected".into())));
+    let finalized_path = match finalized_audio {
+        Ok(path) => Some(path),
+        Err(error) => {
+            terminal_error = Some(format!("Recorder audio could not be finalized: {error}"));
+            None
+        }
+    };
+
+    if terminal_error.is_none() {
+        if let Some(path) = finalized_path.as_deref() {
+            if let Err(error) =
+                refine_recorder_transcript(&app_support_dir, &session, &quality_model, path)
+            {
+                // The live transcript and finalized native-rate audio remain
+                // valid. Refinement is best-effort and must not turn a usable
+                // recording into a recovery failure.
+                log::warn!(
+                    "Recorder {} quality pass failed; keeping live transcript: {error}",
+                    session.id
+                );
+            }
+        }
     }
     match (
         RecorderStore::open_runtime(&app_support_dir),
@@ -643,6 +666,68 @@ fn drive_recorder_results(
 }
 
 #[cfg(target_os = "macos")]
+fn refine_recorder_transcript(
+    app_support_dir: &Path,
+    session: &RecorderSession,
+    model: &RecorderDecoderModel,
+    audio_path: &Path,
+) -> Result<()> {
+    let audio = read_caf_audio(audio_path)?;
+    let native_samples = audio
+        .samples
+        .iter()
+        .map(|sample| f32::from(*sample) / 32_768.0)
+        .collect::<Vec<_>>();
+    let mut resampler =
+        BandlimitedChunkResampler::new(audio.metadata.sample_rate, crate::audio::SAMPLE_RATE)
+            .map_err(|error| AppError::Audio(error.to_string()))?;
+    let mut samples = resampler
+        .push_f32(&native_samples)
+        .map_err(|error| AppError::Audio(error.to_string()))?
+        .samples;
+    samples.extend(
+        resampler
+            .finish()
+            .map_err(|error| AppError::Audio(error.to_string()))?
+            .samples,
+    );
+
+    let transcription = match model {
+        RecorderDecoderModel::Whisper(ctx) => crate::transcribe::transcribe(ctx, &samples)?,
+        RecorderDecoderModel::QwenGguf(model) => {
+            crate::commands::transcription::transcribe_qwen_recording(model, &samples, |_| {})?
+        }
+    };
+    if transcription.segments.is_empty() {
+        return Err(AppError::Transcribe(
+            "Recorder quality pass returned no speech".into(),
+        ));
+    }
+
+    let sample_rate = u64::from(session.sample_rate);
+    let frame_count = audio.metadata.frames;
+    let updates = transcription
+        .segments
+        .into_iter()
+        .map(|segment| RecorderTranscriptUpdate::Committed {
+            start_sample: segment
+                .start_ms
+                .saturating_mul(sample_rate)
+                .saturating_div(1_000)
+                .min(frame_count),
+            end_sample: segment
+                .end_ms
+                .saturating_mul(sample_rate)
+                .saturating_div(1_000)
+                .min(frame_count),
+            text: segment.text,
+            language: transcription.language.clone(),
+        })
+        .collect();
+    RecorderStore::open_runtime(app_support_dir)?.replace_transcript(session.id, updates)
+}
+
+#[cfg(target_os = "macos")]
 fn recorder_result_error_is_terminal(kind: streaming_session::WindowResultKind) -> bool {
     kind != streaming_session::WindowResultKind::Partial
 }
@@ -671,6 +756,7 @@ fn spawn_recorder_pipeline(
     let (terminal_failure_tx, terminal_failure_rx) = std::sync::mpsc::channel();
     let (decoder_finished_tx, decoder_finished_rx) = std::sync::mpsc::channel();
     let sample_rate = session.sample_rate;
+    let quality_model = decoder_model.clone();
 
     std::thread::spawn(move || {
         let mut resampler =
@@ -759,12 +845,14 @@ fn spawn_recorder_pipeline(
                 decoder_finished_rx,
                 terminal_failure_rx,
             },
+            quality_model,
         )
     });
     terminal_failure_tx
 }
 
 #[cfg(target_os = "macos")]
+#[derive(Clone)]
 enum RecorderDecoderModel {
     Whisper(std::sync::Arc<whisper_rs::WhisperContext>),
     QwenGguf(std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>),

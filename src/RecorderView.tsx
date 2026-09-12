@@ -38,6 +38,7 @@ import { CopyButton } from "./CopyButton";
 import { StreamingSessionRow } from "./StreamingSessionRow";
 import type { StreamingStatusView } from "./streamingStatus";
 import { formatDuration, formatElapsedClock } from "./format";
+import { stabilizePartial, type StablePartial } from "./partialStability";
 
 function persistedStatus(status: RecorderStatus): StreamingStatusView {
   switch (status) {
@@ -168,6 +169,10 @@ export function RecorderView({
   const [active, setActive] = useState<RecorderSession | null>(null);
   const [snapshot, setSnapshot] = useState<LiveCaptureSnapshot | null>(null);
   const [partial, setPartial] = useState("");
+  const [partialDisplay, setPartialDisplay] = useState<StablePartial>({
+    stable: "",
+    unstable: "",
+  });
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState("");
@@ -190,6 +195,13 @@ export function RecorderView({
   });
   const activeId = useRef<number | null>(null);
   const activeStatus = useRef<RecorderStatus | null>(null);
+  const previousPartial = useRef("");
+
+  const resetPartial = useCallback(() => {
+    previousPartial.current = "";
+    setPartial("");
+    setPartialDisplay({ stable: "", unstable: "" });
+  }, []);
 
   const upsertSession = useCallback((session: RecorderSessionSummary) => {
     setSessions((current) => [
@@ -198,15 +210,18 @@ export function RecorderView({
     ]);
   }, []);
 
-  const displaySession = useCallback((session: RecorderSession) => {
-    if (activeId.current !== session.id || session.status !== "recording") {
-      setPartial("");
-      partialCursor.current = { sessionId: session.id, revision: -1 };
-    }
-    activeId.current = session.id;
-    activeStatus.current = session.status;
-    setActive(session);
-  }, []);
+  const displaySession = useCallback(
+    (session: RecorderSession) => {
+      if (activeId.current !== session.id || session.status !== "recording") {
+        resetPartial();
+        partialCursor.current = { sessionId: session.id, revision: -1 };
+      }
+      activeId.current = session.id;
+      activeStatus.current = session.status;
+      setActive(session);
+    },
+    [resetPartial],
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -253,7 +268,7 @@ export function RecorderView({
             );
             return { ...current, segments: [...withoutSame, segment] };
           });
-          setPartial("");
+          resetPartial();
         }),
         await onRecorderPartial((next) => {
           if (
@@ -271,6 +286,10 @@ export function RecorderView({
             sessionId: next.session_id,
             revision: next.revision,
           };
+          setPartialDisplay(
+            stabilizePartial(previousPartial.current, next.text),
+          );
+          previousPartial.current = next.text;
           setPartial(next.text);
         }),
         await onRecorderError((next) => {
@@ -289,7 +308,7 @@ export function RecorderView({
       cancelled = true;
       unlisteners.forEach((unlisten) => unlisten());
     };
-  }, [displaySession, upsertSession]);
+  }, [displaySession, resetPartial, upsertSession]);
 
   useEffect(() => {
     const sessionId = snapshot?.session_id;
@@ -360,7 +379,7 @@ export function RecorderView({
     activeId.current = null;
     activeStatus.current = null;
     setActive(null);
-    setPartial("");
+    resetPartial();
     setError(null);
   }
 
@@ -426,7 +445,7 @@ export function RecorderView({
         activeId.current = null;
         activeStatus.current = null;
         setActive(null);
-        setPartial("");
+        resetPartial();
       }
       setDeleteTarget(null);
     } catch (reason) {
@@ -865,7 +884,20 @@ export function RecorderView({
                       }
                     />
                   ))}
-                  {partial && <em className="recorder-partial">{partial}</em>}
+                  {partial && (
+                    <p className="recorder-partial" role="status">
+                      {partialDisplay.stable && (
+                        <span className="recorder-partial-stable">
+                          {partialDisplay.stable}{" "}
+                        </span>
+                      )}
+                      {partialDisplay.unstable && (
+                        <em className="recorder-partial-unstable">
+                          {partialDisplay.unstable}
+                        </em>
+                      )}
+                    </p>
+                  )}
                 </>
               )}
               {active?.audio_path && active.status === "completed" && (

@@ -58,20 +58,6 @@ pub struct LlmModelSpec {
 
 pub const LLM_SPECS: &[LlmModelSpec] = &[
     LlmModelSpec {
-        model_id: "qwen3-4b-q3kl",
-        profile: LlmProfile::Legacy,
-        recommended: false,
-        context_tokens: 16_384,
-        temperature: 0.0,
-        top_p: 1.0,
-        top_k: 0,
-        min_memory_gb: 8,
-        thinking_policy: "disabled-and-stripped",
-        chat_template: "embedded",
-        template_family: "qwen",
-        license: "Apache-2.0",
-    },
-    LlmModelSpec {
         model_id: "qwen3.5-4b-q4km",
         profile: LlmProfile::Fast,
         recommended: true,
@@ -210,20 +196,6 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
                 recommended: true,
             },
         ],
-    },
-    ModelCatalogEntry {
-        id: "qwen3-4b-q3kl",
-        task: "llm",
-        label: "Qwen3 4B (Q3_K_L)",
-        assets: &[ModelAsset {
-            url: "https://huggingface.co/lmstudio-community/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q3_K_L.gguf",
-            sha256: "90d5ab273b85a69e5b1cdd03dfcda82c1295fec63b3a00a35228e403b9388d1c",
-            size_bytes: 2_239_785_664,
-            file_name: "Qwen3-4B-Q3_K_L.gguf",
-            variant_id: None,
-            variant_label: None,
-            recommended: false,
-        }],
     },
     ModelCatalogEntry {
         id: "qwen3.5-4b-q4km",

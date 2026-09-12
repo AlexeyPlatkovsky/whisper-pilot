@@ -16,7 +16,8 @@ three modes; Qwen3-ASR 1.7B Q8_0 is an optional local GGUF model for all three.
 - **Local file transcription** — pick any local audio or video file and
   transcribe it end-to-end on-device.
 - **Recorder** — capture the default microphone into recoverable local audio,
-  see stable live phrases, and start or stop from a global shortcut.
+  see stable live phrases, refine the finished transcript from the saved audio,
+  and start or stop from a global shortcut.
 - **Selectable local ASR** — choose Whisper or Qwen3-ASR 1.7B Q8_0 once for
   Meeting, Streaming, and Recorder.
 - **Accurate Russian transcription** — full-file Whisper decoding (Metal

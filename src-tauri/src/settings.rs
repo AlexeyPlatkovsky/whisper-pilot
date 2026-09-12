@@ -416,12 +416,16 @@ mod tests {
     }
 
     #[test]
-    fn removed_qwen_25_selection_is_safely_cleared_when_old_settings_are_read() {
-        let dir = tempfile::tempdir().unwrap();
-        let old = r#"{"theme":"system","ui_language":"en","active_model_diarization":"none","active_model_llm":"qwen2.5-3b-q3km","export_file_type":"plain_text"}"#;
-        std::fs::write(dir.path().join(FILE_NAME), old).unwrap();
+    fn removed_llm_selections_are_safely_cleared_when_old_settings_are_read() {
+        for removed_id in ["qwen2.5-3b-q3km", "qwen3-4b-q3kl"] {
+            let dir = tempfile::tempdir().unwrap();
+            let old = format!(
+                r#"{{"theme":"system","ui_language":"en","active_model_diarization":"none","active_model_llm":"{removed_id}","export_file_type":"plain_text"}}"#
+            );
+            std::fs::write(dir.path().join(FILE_NAME), old).unwrap();
 
-        assert_eq!(get_settings(dir.path()).active_model_llm, None);
+            assert_eq!(get_settings(dir.path()).active_model_llm, None);
+        }
     }
 
     #[test]

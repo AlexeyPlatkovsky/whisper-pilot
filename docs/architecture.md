@@ -394,27 +394,30 @@ decode it.
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
 
 Decodes the continuous sample stream `streaming_audio.rs` produces around
-non-overlapping commit windows capped at ~7s (`WINDOW_SECONDS`, the midpoint
-of WP-68's approved 5-10s latency budget). Before that hard boundary, the
-decoder scans the final second at 20 ms steps for a contiguous quiet pause of
-at least 100 ms and commits at the end of that pause when available, reducing
-word splits without treating an isolated low-energy frame as a boundary or
-duplicating audio.
-Once the unstable suffix reaches five seconds, local decode also emits a
-transient partial and revises it for each additional second; partials are sent
-as `streaming_partial` events and never persisted. A committed window replaces
-that suffix with one committed
+non-overlapping utterances. After at least two seconds of speech, a trailing
+600 ms quiet run commits a natural phrase; uninterrupted speech is capped at
+20 seconds (`WINDOW_SECONDS`) and uses a short quiet boundary near that cap
+when available. This avoids mechanical seven-second word splits while keeping
+memory and latency bounded.
+Once the unstable suffix reaches two seconds, local decode emits a transient
+partial and revises it for each additional two seconds; partials are sent as
+`streaming_partial` events and never persisted. The renderer applies
+consecutive-hypothesis agreement: the common word prefix is normal stable text
+and only the replaceable suffix is italic at 80% opacity. A committed window
+replaces that suffix with one committed
 `streaming_window`. On Stop, a meaningful trailing suffix of at least 500 ms
 is decoded and committed exactly once; silence and sub-threshold callback
 noise are discarded. One session decodes every result through a
 single `WhisperState` (WP-82): `run_windowed_decode` builds one
 `WhisperSessionDecoder` when the loop starts and reuses it via
-`transcribe::transcribe_with_state`, because each state owns a full GPU
+`transcribe::transcribe_with_state_and_prompt`, because each state owns a full GPU
 backend plus its KV/compute buffers — one state per window was one backend
 init/free cycle per window. State reuse across calls is upstream's own
 `whisper_full` pattern (each call clears results, recomputes the mel, and
 clears the self-attention KV cache); Meeting keeps one state per whole-file
-run. Each window gets its own language detection, unlike Meeting's
+run. Up to the last 240 characters of committed text are supplied as context
+to both Whisper and Qwen, improving proper nouns and continuity without
+persisting or duplicating the prompt. Each window gets its own language detection, unlike Meeting's
 once-per-file detection (ADR-012), since a live session has no single fixed
 language the way a finished file does. A word can still split across a
 committed window boundary — an accepted, documented trade-off for
@@ -1053,7 +1056,7 @@ in-process `llama.cpp` backend plus MTMD, with a verified text GGUF and required
 audio projector GGUF. Text LLM and GGUF-ASR caches share the one process-global
 `llama.cpp` backend but own independent models and inference contexts. Meeting
 feeds the GGUF runtime bounded 30-second file windows; Streaming and Recorder
-reuse the live at-most-seven-second decoder contract. Qwen output has no model
+reuse the live natural-utterance decoder with a 20-second hard cap. Qwen output has no model
 timestamps, so the surrounding pipeline assigns stable window spans rather
 than presenting them as word timing.
 Every new Recorder row stores `asr_model_id`, `asr_engine`, and `asr_language`, preserving active
@@ -1067,7 +1070,10 @@ a partial deletion keeps that safe selection until the bundle is complete.
 An observable `finalizing` session state sits between capture and completion.
 It retains live-source ownership while meaningful tail audio is transcribed,
 the `.caf.partial` file is flushed, synced and closed, the file is atomically
-renamed to `.caf`, and the database row becomes completed. The writer checkpoints
+renamed to `.caf`, and the saved native-rate audio is decoded once more with
+the selected model's quality path. That second pass atomically replaces the
+provisional live segments; if it fails, the live transcript remains usable and
+the finalized audio still completes. The database row then becomes completed. The writer checkpoints
 with at most one second of PCM not yet durable. Startup reconciliation preserves
 and exposes mismatched database/filesystem states rather than deleting them. See
 ADR-017 for the format, recovery, export, retention, and deletion contract.

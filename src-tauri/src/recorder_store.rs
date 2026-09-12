@@ -275,6 +275,79 @@ impl RecorderStore {
         Ok(segments)
     }
 
+    /// Replace provisional live-decode rows with the authoritative full-audio
+    /// quality pass. Deletion and insertion share one transaction, so a crash
+    /// or invalid result can never leave a half-replaced transcript.
+    pub fn replace_transcript(
+        &self,
+        session_id: RecorderSessionId,
+        updates: Vec<RecorderTranscriptUpdate>,
+    ) -> Result<()> {
+        let mut committed = Vec::with_capacity(updates.len());
+        for update in updates {
+            let RecorderTranscriptUpdate::Committed {
+                start_sample,
+                end_sample,
+                text,
+                language,
+            } = update
+            else {
+                return Err(AppError::Store(
+                    "Recorder quality pass may contain only committed segments".into(),
+                ));
+            };
+            if end_sample < start_sample {
+                return Err(AppError::Store(
+                    "Recorder replacement segment ends before it starts".into(),
+                ));
+            }
+            committed.push((start_sample, end_sample, text, language));
+        }
+
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(store_error)?;
+        let status = transaction
+            .query_row(
+                "SELECT status FROM recorder_sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                AppError::Store(format!("Recorder session {session_id} was not found"))
+            })?;
+        if status != "finalizing" {
+            return Err(AppError::Store(format!(
+                "Recorder session {session_id} can only be refined while finalizing"
+            )));
+        }
+
+        transaction
+            .execute(
+                "DELETE FROM recorder_polished WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "DELETE FROM recorder_segments WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        for (start_sample, end_sample, text, language) in committed {
+            transaction
+                .execute(
+                    "INSERT INTO recorder_segments
+                        (session_id, start_sample, end_sample, text, language)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![session_id, start_sample, end_sample, text, language],
+                )
+                .map_err(store_error)?;
+        }
+        transaction.commit().map_err(store_error)
+    }
+
     pub fn upsert_polished(&self, session_id: RecorderSessionId, text: &str) -> Result<()> {
         let changed = self
             .connection()?

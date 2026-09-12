@@ -2,7 +2,7 @@ use whisperpilot_lib::llm::strip_internal_reasoning;
 use whisperpilot_lib::models::{llm_spec_by_id, LlmProfile};
 
 #[test]
-fn phase_three_profiles_are_explicit_and_keep_legacy_models_addressable() {
+fn phase_three_profiles_are_explicit_and_removed_legacy_model_is_not_addressable() {
     let fast = llm_spec_by_id("qwen3.5-4b-q4km").expect("Fast model spec");
     assert_eq!(fast.profile, LlmProfile::Fast);
     assert!(fast.recommended);
@@ -14,7 +14,7 @@ fn phase_three_profiles_are_explicit_and_keep_legacy_models_addressable() {
         assert!(!quality.recommended);
     }
 
-    assert!(llm_spec_by_id("qwen3-4b-q3kl").is_some());
+    assert!(llm_spec_by_id("qwen3-4b-q3kl").is_none());
 }
 
 #[test]

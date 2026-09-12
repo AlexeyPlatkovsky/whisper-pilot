@@ -116,7 +116,7 @@ async fn decode_and_transcribe(
 }
 
 #[cfg(target_os = "macos")]
-fn transcribe_qwen_recording(
+pub(crate) fn transcribe_qwen_recording(
     model: &crate::qwen_gguf_asr::QwenGgufAsrModel,
     samples: &[f32],
     mut on_progress: impl FnMut(i32),

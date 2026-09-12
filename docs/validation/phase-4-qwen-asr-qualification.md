@@ -82,8 +82,9 @@ looping/trimming `ru.wav` with ffmpeg and run through the same Qwen harness,
 crashed inside
 `qwen-asr` 0.11.0 (`range start index 30 out of range for slice of length 25`);
 the 1.7B long-input attempt failed the same gate. This failure is retained as a
-hard boundary: Qwen is used only behind Recorder's maximum seven-second window,
-never for whole-file or unbounded input.
+hard boundary for that rejected pure-Rust runtime. The production GGUF/MTMD
+adapter remains bounded: natural live utterances have a 20-second hard cap and
+file-quality decode uses 30-second windows, never an unbounded input.
 
 Qwen native streaming returned the full English sample but truncated the
 Russian tail in both sizes under the tested parameters. Production therefore
@@ -118,9 +119,9 @@ QWEN3_ASR_GGUF_TEST_AUDIO=/path/to/mixed.wav \
 
 ## Acceptance and recommendation
 
-Numerical gates for an optional Recorder engine were: monolingual RU and EN WER
-at most 10% on the recorded corpus, RTF below 0.5, bounded-window final decode
-below the seven-second capture cadence, no empty/crashed iteration in a
+Numerical gates for the original optional Recorder engine were: monolingual RU
+and EN WER at most 10% on the recorded corpus, RTF below 0.5, bounded-window
+final decode below the then-seven-second capture cadence, no empty/crashed iteration in a
 30-minute equivalent stability run, complete
 verified bundle, and peak RSS compatible with the 48 GiB baseline. Mixed mode
 requires faithful preservation of both languages; timestamps and automatic
@@ -128,6 +129,11 @@ language detection are hard requirements only for modes that advertise them.
 Real non-empty first-partial latency remains unverified and is not a satisfied
 acceptance gate; production presents bounded-window results rather than Qwen's
 unqualified native streaming output.
+
+The later natural-utterance live policy (two-second partial cadence, 600 ms
+pause commit, 20-second hard cap) and Recorder's 30-second GGUF quality pass
+still require a repeated real-Metal latency/stability run; unit tests cover the
+window boundaries and fallback behavior but do not replace that hardware gate.
 
 - Retire Qwen3-ASR 0.6B because it does not satisfy the shared all-mode and
   mixed-language product boundary.

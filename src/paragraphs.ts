@@ -1,7 +1,7 @@
-// Windows carry no pause/VAD signal (fixed ~7s slices, not silence-delimited
-// — see streaming_session.rs), so paragraphs are inferred from a
-// sentence-boundary + length heuristic instead, with a window-count cap so an
-// un-punctuated stretch can't grow forever.
+// Local windows prefer silence-delimited utterances while Cloud windows remain
+// fixed turns. Paragraphs are still inferred from a sentence-boundary + length
+// heuristic, with a window-count cap so an un-punctuated stretch cannot grow
+// forever.
 
 const MIN_PARAGRAPH_CHARS = 240;
 // Bounds worst-case latency for unbroken speech with no early sentence break.
