@@ -2,6 +2,25 @@
 set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
+node "$root/scripts/check-ai-instructions.mjs" --staged
+
+staged_paths="$(git -C "$root" diff --cached --name-only --diff-filter=ACMRD)"
+ai_only=true
+while IFS= read -r staged_path; do
+  [ -n "$staged_path" ] || continue
+  case "$staged_path" in
+    AGENTS.md|.agents/*|.codex/*|.claude/*|.manifesto/*|scripts/check-ai-instructions.mjs|.githooks/pre-commit)
+      ;;
+    *)
+      ai_only=false
+      ;;
+  esac
+done <<<"$staged_paths"
+
+if $ai_only && [ -n "$staged_paths" ]; then
+  exit 0
+fi
+
 "$root/scripts/bump-version.sh" verify
 
 if git -C "$root" diff --cached --quiet -- package.json package-lock.json src-tauri/Cargo.toml src-tauri/tauri.conf.json; then

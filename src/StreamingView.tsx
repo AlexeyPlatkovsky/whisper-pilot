@@ -98,10 +98,12 @@ export function StreamingView({
   onClose,
   onOpenSettings,
   settingsOpen = false,
+  meetingTranscriptionActive = false,
 }: {
   onClose: () => void;
   onOpenSettings: () => void;
   settingsOpen?: boolean;
+  meetingTranscriptionActive?: boolean;
 }) {
   const [sessions, setSessions] = useState<StreamingSessionSummary[]>([]);
   const [sessionSearch, setSessionSearch] = useState("");
@@ -140,6 +142,7 @@ export function StreamingView({
 
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
+  const captureElapsedBaselineRef = useRef(0);
   const [craftingId, setCraftingId] = useState<number | null>(null);
   const [mfu, setMfu] = useState<StreamingMfu | null>(null);
   const [craftFailed, setCraftFailed] = useState(false);
@@ -263,8 +266,9 @@ export function StreamingView({
   // other is active).
   useEffect(() => {
     if (!isRunning && !isCraftingActive && !isPrettifyingActive) return;
-    startTimeRef.current = Date.now();
-    setElapsed(0);
+    const baseline = isRunning ? captureElapsedBaselineRef.current : 0;
+    startTimeRef.current = Date.now() - baseline * 1000;
+    setElapsed(baseline);
     const id = setInterval(() => {
       setElapsed(Math.floor((Date.now() - startTimeRef.current!) / 1000));
     }, 1000);
@@ -311,10 +315,10 @@ export function StreamingView({
     let cancelled = false;
     let unlisten: (() => void) | undefined;
     const applySnapshot = (incoming: LiveCaptureSnapshot) => {
-      if (cancelled) return;
+      if (cancelled) return null;
       const current = liveCaptureSnapshotRef.current;
       const next = reconcileLiveCaptureSnapshot(current, incoming);
-      if (next === current) return;
+      if (next === current) return current;
       liveCaptureSnapshotRef.current = next;
       setCaptureHydrated(true);
       setLiveCapturePhase(next.phase);
@@ -324,6 +328,58 @@ export function StreamingView({
       setIsRunning(active);
       if (active && next.session_id !== null) setActiveId(next.session_id);
       if (next.phase === "error" && next.error) setError(next.error);
+      return next;
+    };
+    // The lifecycle survives this view being unmounted when the user switches
+    // to Meeting. Rehydrate only from the initial backend query, not from
+    // ordinary start events, so starting a fresh session does not add a
+    // redundant DB read. Current live windows win on an index collision.
+    const rehydrateActiveSession = async (snapshot: LiveCaptureSnapshot) => {
+      const belongsToStreaming =
+        snapshot.source === "streaming" || snapshot.source === null;
+      if (
+        !belongsToStreaming ||
+        !isLiveCaptureActive(snapshot) ||
+        snapshot.session_id === null
+      ) {
+        return;
+      }
+      const sessionId = snapshot.session_id;
+      try {
+        const session = await openStreamingSession(sessionId);
+        const latest = liveCaptureSnapshotRef.current;
+        const stillActive =
+          latest !== null &&
+          isLiveCaptureActive(latest) &&
+          (latest.source === "streaming" || latest.source === null) &&
+          latest.session_id === sessionId;
+        if (cancelled || !stillActive) return;
+
+        setActiveTitle(session.title);
+        setActiveSessionEngine(session.transcription_engine ?? null);
+        if (session.transcription_engine) {
+          setTranscriptionEngine(session.transcription_engine);
+        }
+        setWindows((current) =>
+          current.reduce(
+            (merged, window) => upsertWindow(merged, window),
+            session.windows,
+          ),
+        );
+        setTranslationEnabled(session.translation_enabled ?? false);
+
+        const lastWindow = session.windows.at(-1);
+        if (lastWindow) {
+          const resumedSeconds = Math.floor(lastWindow.end_ms / 1000);
+          captureElapsedBaselineRef.current = resumedSeconds;
+          if (startTimeRef.current !== null) {
+            startTimeRef.current = Date.now() - resumedSeconds * 1000;
+            setElapsed(resumedSeconds);
+          }
+        }
+      } catch (reason) {
+        if (!cancelled) setError(String(reason));
+      }
     };
     void (async () => {
       try {
@@ -333,7 +389,8 @@ export function StreamingView({
           return;
         }
         unlisten = stopListening;
-        applySnapshot(await getLiveCaptureSnapshot());
+        const snapshot = applySnapshot(await getLiveCaptureSnapshot());
+        if (snapshot) await rehydrateActiveSession(snapshot);
       } catch {
         // Existing command events remain usable; never manufacture state.
       }
@@ -471,6 +528,10 @@ export function StreamingView({
   const startSession = useCallback(
     async (resumeId: number | null, engine: "local" | "cloud") => {
       setError(null);
+      captureElapsedBaselineRef.current =
+        resumeId === null
+          ? 0
+          : Math.floor((windowsRef.current.at(-1)?.end_ms ?? 0) / 1000);
       try {
         const isSameSessionResume =
           resumeId !== null && resumeId === activeIdRef.current;
@@ -507,6 +568,7 @@ export function StreamingView({
   // Reads as "continue what's on screen": resumes the currently open stopped
   // session, otherwise starts fresh — bound to the header's Start icon.
   const handleStart = useCallback(async () => {
+    if (meetingTranscriptionActive) return;
     if (transcriptionEngine === "cloud") {
       const configuration = await refreshCloudConfiguration();
       const selected = configuration?.providers.find(
@@ -536,6 +598,7 @@ export function StreamingView({
     activeId,
     activeSessionEngine,
     isRunning,
+    meetingTranscriptionActive,
     refreshCloudConfiguration,
     startSession,
     transcriptionEngine,
@@ -1202,7 +1265,13 @@ export function StreamingView({
                   : "Start"
               }
               onClick={() => void handleStart()}
-              disabled={!captureHydrated || busy || isRunning || isStartPending}
+              disabled={
+                meetingTranscriptionActive ||
+                !captureHydrated ||
+                busy ||
+                isRunning ||
+                isStartPending
+              }
             />
             <span className="wp-sep" />
             <ActionIcon
@@ -1491,12 +1560,6 @@ export function StreamingView({
                   {error}
                 </div>
               )}
-              {isRunning && partialTranscript && (
-                <p className="wp-streaming-partial" role="status">
-                  {partialTranscript.text}
-                </p>
-              )}
-
               {windows.length === 0 ? (
                 <div className="wp-empty">
                   <p>
@@ -1673,6 +1736,11 @@ export function StreamingView({
                     </p>
                   ))}
                 </div>
+              )}
+              {isRunning && partialTranscript && (
+                <p className="wp-streaming-partial" role="status">
+                  {partialTranscript.text}
+                </p>
               )}
             </div>
           </div>

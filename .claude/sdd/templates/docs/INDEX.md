@@ -2,7 +2,7 @@
 
 <!-- Live map of the authoritative docs tree and decision log. This is a
      lookup aid only: no routing, gates, or behavioral rules. Keep it in sync
-     after every docs or ADR change with the sdd-index-sync skill. Include
+     after every docs or ADR change with the sdd-docs skill. Include
      only documents and decisions that actually exist. -->
 
 <!-- TEMPLATE GUIDANCE — delete every comment block opening with this token as
@@ -16,14 +16,12 @@
      exist (keys: filename, ADR ID) and re-derives the key cell; every other
      cell is curated and is carried across a rebuild byte-identically.
      Anything outside the markers is never touched. Full contract:
-     .claude/skills/sdd-index-sync/SKILL.md §Generated Markers And The
-     Key-Preserving Row Merge.
+     .agents/skills/sdd-docs/SKILL.md.
 
      Do not rename, duplicate, nest, or quote a marker literal anywhere else in
      this file. -->
 
-**Tier:** <Lean | Standard | Full>
-**Docs root:** `docs/`
+**Tier:** <Lean | Standard | Full> **Docs root:** `docs/`
 
 ## Documents
 
@@ -35,21 +33,25 @@
      `db.md` — SQLite data model) are appended by the sync with `TODO` cells for
      you to fill in. -->
 <!-- sdd-index-sync:begin documents -->
-| Document | Owns | Read when |
-| --- | --- | --- |
-| `idea.md` | Problem, users, scope, principles | You need project intent or scope boundaries |
-| `architecture.md` | Technical structure | You need components, data, stack, constraints |
-| `design.md` | Product/UX design | You need flows, screens, states |
-| `testing.md` | Test strategy | You need how quality is verified |
-| `roadmap.md` | Phases and sequencing | You need release plan or priorities |
-| `decisions/` | Architectural decisions | You need the rationale behind a choice |
+
+| Document          | Owns                              | Read when                                     |
+| ----------------- | --------------------------------- | --------------------------------------------- |
+| `idea.md`         | Problem, users, scope, principles | You need project intent or scope boundaries   |
+| `architecture.md` | Technical structure               | You need components, data, stack, constraints |
+| `design.md`       | Product/UX design                 | You need flows, screens, states               |
+| `testing.md`      | Test strategy                     | You need how quality is verified              |
+| `roadmap.md`      | Phases and sequencing             | You need release plan or priorities           |
+| `decisions/`      | Architectural decisions           | You need the rationale behind a choice        |
+
 <!-- sdd-index-sync:end documents -->
 
 ## Decision Log
 
 <!-- sdd-index-sync:begin decisions -->
+
 | ADR | Title | Status |
-| --- | --- | --- |
+| --- | ----- | ------ |
+
 <!-- sdd-index-sync:end decisions -->
 
 <!-- TEMPLATE GUIDANCE — The sync adds one row per present ADR, keyed by ADR ID. -->
@@ -60,7 +62,5 @@
      Keep this note so the index doesn't attempt feature-to-milestone
      traceability of its own. -->
 
-Feature-level tracking — requirements, tasks, scenarios, and their status —
-lives in TaskPilot (project key **WP**), not in `docs/`. This index maps
-documents and decisions only; it does not attempt feature-to-milestone
-traceability.
+Feature-level tracking — requirements, tasks, scenarios, and their status — lives in TaskPilot (project key **WP**), not
+in `docs/`. This index maps documents and decisions only; it does not attempt feature-to-milestone traceability.

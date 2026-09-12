@@ -208,6 +208,7 @@ const ONE_WINDOW = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(ipc.openStreamingSession).mockReset();
   windowHandler = null;
   sourcesHandler = null;
   endedHandler = null;
@@ -330,17 +331,43 @@ describe("StreamingView", () => {
       revision: 12,
       error: null,
     });
+    vi.mocked(ipc.openStreamingSession)
+      .mockResolvedValueOnce(
+        openedSession({
+          id: 41,
+          title: "Active capture",
+          status: "active",
+        }),
+      )
+      .mockResolvedValueOnce(
+        openedSession({
+          id: 41,
+          title: "Active capture",
+          status: "active",
+          windows: ONE_WINDOW,
+        }),
+      );
 
     const first = render(
       <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
     );
     expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(41),
+    );
     first.unmount();
 
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
     expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(
+      await screen.findByText("hello there", { exact: false }),
+    ).toBeInTheDocument();
+    expect(document.querySelector(".wp-status-timer")).toHaveTextContent(
+      "00:07",
+    );
+    expect(ipc.openStreamingSession).toHaveBeenLastCalledWith(41);
 
     await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
     act(() => {
@@ -353,7 +380,7 @@ describe("StreamingView", () => {
         error: null,
       });
     });
-    expect(await screen.findByRole("button", { name: "Start" })).toBeEnabled();
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeEnabled();
     expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
   });
 
@@ -451,6 +478,14 @@ describe("StreamingView", () => {
     expect(document.querySelector(".wp-streaming-partial")).toHaveTextContent(
       "newer words",
     );
+    const committed = document.querySelector(".streaming-window");
+    const partial = document.querySelector(".wp-streaming-partial");
+    expect(committed).not.toBeNull();
+    expect(partial).not.toBeNull();
+    expect(
+      committed!.compareDocumentPosition(partial!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
 
     act(() => {
       windowHandler!({

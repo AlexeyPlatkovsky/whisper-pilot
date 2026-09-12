@@ -1,6 +1,7 @@
 # Desktop Platform Scope
 
-WhisperPilot targets **macOS only** (macOS 13+). It is not a Windows, Linux, iOS, Android, or web product unless the user explicitly changes platform scope.
+WhisperPilot targets **macOS only** (macOS 13+). It is not a Windows, Linux, iOS, Android, or web product unless the
+user explicitly changes platform scope.
 
 ## App Assets
 
@@ -8,13 +9,17 @@ WhisperPilot targets **macOS only** (macOS 13+). It is not a Windows, Linux, iOS
 - Keep only macOS-relevant Tauri outputs:
   - `icon.icns` — macOS app icon
   - Shared PNGs referenced by `src-tauri/tauri.conf.json`
-- Remove any generated `src-tauri/icons/ios/`, `src-tauri/icons/android/`, or Windows `icon.ico` / `StoreLogo.png` directories — WhisperPilot does not target those platforms.
+- Remove any generated `src-tauri/icons/ios/`, `src-tauri/icons/android/`, or Windows `icon.ico` / `StoreLogo.png`
+  directories — WhisperPilot does not target those platforms.
 - Verify every icon path referenced by `src-tauri/tauri.conf.json` exists.
 
 ## Tauri Configuration
 
-- `bundle.targets` should be limited to `["dmg", "app"]` (macOS targets only) — do not include `msi`, `nsis`, `deb`, or `appimage`.
-- Treat `src-tauri/tauri.conf.json` as the authoritative main-window configuration. Follow `.claude/conventions/react-tauri/tauri-windowing.md` for its design constraints and required real-window verification; do not add ScreenCaptureKit or capture-related configuration without an approved product change.
+- `bundle.targets` should be limited to `["dmg", "app"]` (macOS targets only) — do not include `msi`, `nsis`, `deb`, or
+  `appimage`.
+- Treat `src-tauri/tauri.conf.json` as the authoritative main-window configuration. Follow
+  `.claude/conventions/react-tauri/tauri-windowing.md` for its design constraints and required real-window verification;
+  do not add ScreenCaptureKit or capture-related configuration without an approved product change.
 
 ## Design
 

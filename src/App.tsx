@@ -415,7 +415,7 @@ export function App() {
   }
 
   async function handleTranscribe() {
-    if (!activeMeeting?.source_path) return;
+    if (isStreamingActive || !activeMeeting?.source_path) return;
     const id = activeMeeting.id;
     try {
       setTranscribingId(id);
@@ -686,6 +686,7 @@ export function App() {
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
           settingsOpen={isSettingsOpen}
+          meetingTranscriptionActive={transcribingId !== null}
         />
         {isSettingsOpen && (
           <div className="settings-overlay">
@@ -855,6 +856,7 @@ export function App() {
               onClick={handleTranscribe}
               disabled={
                 busy ||
+                isStreamingActive ||
                 !activeMeeting?.source_path ||
                 activeMeeting?.source_missing ||
                 transcriptionModelReady !== true

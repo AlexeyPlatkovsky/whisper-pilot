@@ -157,6 +157,14 @@ export async function chooseAndTranscribe(user: {
 // leftover "once" queue from one test can never leak into the next.
 export function resetAppMocks() {
   vi.clearAllMocks();
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
   vi.mocked(ipc.listTaskModels).mockReset();
   vi.mocked(ipc.openFileDialog).mockResolvedValue("/path/to/meeting.mp3");
   vi.mocked(ipc.createMeeting).mockResolvedValue({ ...EMPTY_MEETING });

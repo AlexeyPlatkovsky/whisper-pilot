@@ -196,6 +196,52 @@ describe("App — transcription without Stop", () => {
   });
 });
 
+describe("App — Meeting and Streaming capture are mutually exclusive", () => {
+  it("keeps Streaming Start disabled while a Meeting transcription is running", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.transcribeMeeting).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    const transcribe = await screen.findByRole("button", {
+      name: "Transcribe",
+    });
+    await waitFor(() => expect(transcribe).toBeEnabled());
+    await user.click(transcribe);
+    await user.click(screen.getByRole("button", { name: "Streaming" }));
+
+    expect(await screen.findByRole("button", { name: "Start" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(ipc.startStreamingSession).not.toHaveBeenCalled();
+  });
+
+  it("keeps Meeting Transcribe disabled while Streaming capture is running", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 41,
+      source: "streaming",
+      generation: 3,
+      revision: 12,
+      error: null,
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitForAddFileEnabled();
+    await user.click(screen.getByRole("button", { name: "Choose file" }));
+    const transcribe = await screen.findByRole("button", {
+      name: "Transcribe",
+    });
+
+    expect(transcribe).toBeDisabled();
+    await user.click(transcribe);
+    expect(ipc.transcribeMeeting).not.toHaveBeenCalled();
+  });
+});
+
 describe("App — a run that ends after the user has moved on", () => {
   // These cover the negative branch of the "is this meeting still on screen?"
   // guard: a run that finishes — or fails — while a *different* meeting is
