@@ -18,7 +18,6 @@ const KEY_UI_LANGUAGE: &str = "ui_language";
 // future task-scoped key (e.g. `active_model.diarization`) would not map
 // cleanly to a single Rust field.
 const KEY_ACTIVE_MODEL_TRANSCRIPTION: &str = "active_model.transcription";
-const KEY_ACTIVE_MODEL_RECORDER: &str = "active_model.recorder";
 const KEY_ACTIVE_MODEL_DIARIZATION: &str = "active_model.diarization";
 const KEY_ACTIVE_MODEL_LLM: &str = "active_model.llm";
 const KEY_EXPORT_FILE_TYPE: &str = "export_file_type";
@@ -34,7 +33,6 @@ const KEY_MFU_PANEL_STREAMING: &str = "mfu_panel_streaming";
 const KEY_CLOUD_PROVIDER: &str = "cloud_provider";
 const KEY_RECORDER_SHORTCUT: &str = "recorder_shortcut";
 const KEY_BUBBLE_ALWAYS_ON_TOP: &str = "bubble_always_on_top";
-const KEY_RECORDER_LANGUAGE: &str = "recorder_language";
 const NONE_DIARIZATION_MODEL: &str = "none";
 const DEFAULT_EXPORT_FILE_TYPE: &str = "plain_text";
 const DEFAULT_CLOUD_PROVIDER: &str = "deepgram";
@@ -59,14 +57,6 @@ fn default_recorder_shortcut() -> String {
     crate::recorder_shortcut::DEFAULT_RECORDER_SHORTCUT.to_string()
 }
 
-fn default_active_model_recorder() -> String {
-    crate::asr::DEFAULT_ASR_MODEL_ID.to_string()
-}
-
-fn default_recorder_language() -> String {
-    crate::asr::AsrLanguage::Auto.code().to_string()
-}
-
 /// Strict "true"/"false" only (WP-96 non-goal: no other truthy/falsy spelling).
 fn parse_bool_setting(key: &str, value: &str) -> Result<bool> {
     match value {
@@ -85,9 +75,6 @@ pub struct Settings {
     pub ui_language: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_model_transcription: Option<String>,
-    /// Recorder has an independent ASR choice from Meeting and Streaming.
-    #[serde(default = "default_active_model_recorder")]
-    pub active_model_recorder: String,
     #[serde(default = "default_active_model_diarization")]
     pub active_model_diarization: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -118,10 +105,6 @@ pub struct Settings {
     /// Rust and retains the previous value if a replacement conflicts.
     #[serde(default = "default_recorder_shortcut")]
     pub recorder_shortcut: String,
-    /// One of auto, ru, or en. The legacy 0.6B adapter requires an explicit
-    /// value; Whisper and the GGUF Qwen3-ASR runtime support automatic mode.
-    #[serde(default = "default_recorder_language")]
-    pub recorder_language: String,
     /// When enabled the 120 px Recorder bubble floats above normal windows
     /// and joins every macOS Space, including fullscreen Spaces.
     #[serde(default)]
@@ -140,7 +123,6 @@ impl Default for Settings {
             theme: "system".to_string(),
             ui_language: "en".to_string(),
             active_model_transcription: None,
-            active_model_recorder: default_active_model_recorder(),
             active_model_diarization: default_active_model_diarization(),
             active_model_llm: None,
             export_file_type: default_export_file_type(),
@@ -149,7 +131,6 @@ impl Default for Settings {
             mfu_panel_streaming: default_true(),
             cloud_provider: default_cloud_provider(),
             recorder_shortcut: default_recorder_shortcut(),
-            recorder_language: default_recorder_language(),
             bubble_always_on_top: false,
             bubble_x: None,
             bubble_y: None,
@@ -181,6 +162,17 @@ pub fn get_settings(app_support_dir: &Path) -> Settings {
             .any(|entry| entry.task == "llm" && entry.id == id)
     }) {
         settings.active_model_llm = None;
+    }
+    if settings
+        .active_model_transcription
+        .as_deref()
+        .is_some_and(|id| {
+            !CATALOG
+                .iter()
+                .any(|entry| entry.task == "transcription" && entry.id == id)
+        })
+    {
+        settings.active_model_transcription = None;
     }
     settings
 }
@@ -219,11 +211,6 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 crate::asr::AsrLanguage::Auto,
             )?;
             settings.active_model_transcription = Some(value.to_string());
-        }
-        KEY_ACTIVE_MODEL_RECORDER => {
-            let language = crate::asr::AsrLanguage::parse(&settings.recorder_language)?;
-            crate::asr::resolve_selection(value, crate::asr::AsrMode::Recorder, language)?;
-            settings.active_model_recorder = value.to_string();
         }
         KEY_ACTIVE_MODEL_DIARIZATION => {
             let is_known_variant = value == NONE_DIARIZATION_MODEL
@@ -303,15 +290,6 @@ pub fn set_setting(app_support_dir: &Path, key: &str, value: &str) -> Result<Set
                 .map_err(AppError::InvalidSetting)?
                 .as_str()
                 .to_string();
-        }
-        KEY_RECORDER_LANGUAGE => {
-            let language = crate::asr::AsrLanguage::parse(value)?;
-            crate::asr::resolve_selection(
-                &settings.active_model_recorder,
-                crate::asr::AsrMode::Recorder,
-                language,
-            )?;
-            settings.recorder_language = language.code().to_string();
         }
         KEY_BUBBLE_ALWAYS_ON_TOP => {
             settings.bubble_always_on_top = parse_bool_setting(KEY_BUBBLE_ALWAYS_ON_TOP, value)?;
@@ -425,46 +403,16 @@ mod tests {
         assert_eq!(settings.theme, "system");
         assert_eq!(settings.ui_language, "en");
         assert_eq!(settings.active_model_transcription, None);
-        assert_eq!(settings.active_model_recorder, "transcription");
-        assert_eq!(settings.recorder_language, "auto");
     }
 
     #[test]
-    fn qwen_recorder_selection_requires_explicit_language_and_persists() {
-        let dir = tempfile::tempdir().unwrap();
-        let error = set_setting(dir.path(), KEY_ACTIVE_MODEL_RECORDER, "qwen3-asr-0.6b")
-            .expect_err("auto language must reject Qwen");
-        assert!(matches!(error, AppError::InvalidSetting(_)));
-
-        set_setting(dir.path(), KEY_RECORDER_LANGUAGE, "ru").unwrap();
-        let settings =
-            set_setting(dir.path(), KEY_ACTIVE_MODEL_RECORDER, "qwen3-asr-0.6b").unwrap();
-        assert_eq!(settings.active_model_recorder, "qwen3-asr-0.6b");
-        assert_eq!(settings.recorder_language, "ru");
-    }
-
-    #[test]
-    fn qwen_recorder_selection_cannot_be_changed_back_to_auto() {
-        let dir = tempfile::tempdir().unwrap();
-        set_setting(dir.path(), KEY_RECORDER_LANGUAGE, "en").unwrap();
-        set_setting(dir.path(), KEY_ACTIVE_MODEL_RECORDER, "qwen3-asr-0.6b").unwrap();
-
-        let error = set_setting(dir.path(), KEY_RECORDER_LANGUAGE, "auto").unwrap_err();
-        assert!(matches!(error, AppError::InvalidSetting(_)));
-        assert_eq!(get_settings(dir.path()).recorder_language, "en");
-    }
-
-    #[test]
-    fn qwen_17_gguf_can_be_selected_for_every_local_asr_mode_with_auto_language() {
+    fn qwen_17_gguf_is_the_single_persisted_asr_selection() {
         let dir = tempfile::tempdir().unwrap();
         let id = crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID;
 
-        set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, id).unwrap();
-        let settings = set_setting(dir.path(), KEY_ACTIVE_MODEL_RECORDER, id).unwrap();
+        let settings = set_setting(dir.path(), KEY_ACTIVE_MODEL_TRANSCRIPTION, id).unwrap();
 
         assert_eq!(settings.active_model_transcription.as_deref(), Some(id));
-        assert_eq!(settings.active_model_recorder, id);
-        assert_eq!(settings.recorder_language, "auto");
     }
 
     #[test]

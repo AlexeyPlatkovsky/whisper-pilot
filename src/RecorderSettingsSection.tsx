@@ -4,7 +4,6 @@ import {
   getSettings,
   setBubbleAlwaysOnTop,
   setRecorderShortcut,
-  setSetting,
 } from "./ipc";
 
 const DEFAULT_SHORTCUT = "Control+Option+Space";
@@ -15,7 +14,6 @@ export function RecorderSettingsSection() {
   const [message, setMessage] = useState<string | null>(null);
   const [active, setActive] = useState(false);
   const [alwaysOnTop, setAlwaysOnTop] = useState(false);
-  const [language, setLanguage] = useState<"auto" | "ru" | "en">("auto");
 
   async function refreshStatus() {
     try {
@@ -34,7 +32,6 @@ export function RecorderSettingsSection() {
       setValue(shortcut);
       setSaved(shortcut);
       setAlwaysOnTop(settings.bubble_always_on_top ?? false);
-      setLanguage(settings.recorder_language ?? "auto");
     });
     void refreshStatus();
   }, []);
@@ -83,32 +80,6 @@ export function RecorderSettingsSection() {
         {active ? "Save shortcut" : "Retry shortcut"}
       </button>
       {message && <p role="status">{message}</p>}
-      <hr className="settings-divider" />
-      <h4>Recorder speech language</h4>
-      <p className="settings-description">
-        Choose automatic detection or pin the Recorder to one language.
-      </p>
-      <label className="settings-field">
-        Language
-        <select
-          aria-label="Recorder speech language"
-          value={language}
-          onChange={(event) => {
-            const previous = language;
-            const next = event.target.value as "auto" | "ru" | "en";
-            setLanguage(next);
-            setMessage(null);
-            void setSetting("recorder_language", next).catch((error) => {
-              setLanguage(previous);
-              setMessage(String(error));
-            });
-          }}
-        >
-          <option value="auto">Auto / mixed</option>
-          <option value="ru">Russian</option>
-          <option value="en">English</option>
-        </select>
-      </label>
       <hr className="settings-divider" />
       <h4>Floating bubble</h4>
       <p className="settings-description">

@@ -41,10 +41,7 @@ pub(crate) async fn set_setting(
         })
         .await
         .map_err(|error| AppError::Llm(error.to_string()))?
-    } else if matches!(
-        key.as_str(),
-        "active_model.transcription" | "active_model.recorder" | "recorder_language"
-    ) {
+    } else if key == "active_model.transcription" {
         let _asr_mutation = state.recorder_asr_mutation.lock().await;
         #[cfg(target_os = "macos")]
         {
@@ -67,18 +64,14 @@ pub(crate) async fn set_setting(
                 )
             {
                 return Err(AppError::InvalidSetting(
-                    "Recorder ASR cannot change while a session is active".into(),
+                    "ASR cannot change while a Recorder session is active".into(),
                 ));
             }
         }
-        if key == "active_model.recorder" || key == "active_model.transcription" {
-            ensure_asr_selection_is_downloaded(&dir, &value)?;
-        }
+        ensure_asr_selection_is_downloaded(&dir, &value)?;
         let updated = settings::set_setting(&dir, &key, &value)?;
         #[cfg(target_os = "macos")]
-        if key == "active_model.recorder" || key == "active_model.transcription" {
-            state.clear_qwen_asr_model().await;
-        }
+        state.clear_qwen_asr_model().await;
         Ok(updated)
     } else {
         settings::set_setting(&dir, &key, &value)
@@ -349,11 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn recorder_asr_selection_requires_the_complete_bundle() {
+    fn shared_asr_selection_requires_the_complete_bundle() {
         let temp = tempfile::tempdir().expect("temp dir");
         let entry = models::CATALOG
             .iter()
-            .find(|entry| entry.id == crate::asr::QWEN3_ASR_06_MODEL_ID)
+            .find(|entry| entry.id == crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID)
             .expect("Qwen ASR catalog entry");
         ensure_asr_selection_is_downloaded(temp.path(), entry.id)
             .expect_err("missing bundle must not become active");

@@ -6,7 +6,6 @@ use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
 pub const DEFAULT_ASR_MODEL_ID: &str = "transcription";
-pub const QWEN3_ASR_06_MODEL_ID: &str = "qwen3-asr-0.6b";
 pub const QWEN3_ASR_17_GGUF_MODEL_ID: &str = "qwen3-asr-1.7b-q8_0";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -19,7 +18,6 @@ pub enum AsrEngine {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AsrRuntime {
     WhisperCpp,
-    QwenAsrRust,
     LlamaCppMtmd,
 }
 
@@ -65,7 +63,7 @@ impl AsrLanguage {
             "ru" => Ok(Self::Russian),
             "en" => Ok(Self::English),
             other => Err(AppError::InvalidSetting(format!(
-                "recorder_language must be auto, ru, or en, got {other}"
+                "ASR language must be auto, ru, or en, got {other}"
             ))),
         }
     }
@@ -75,15 +73,6 @@ impl AsrLanguage {
             Self::Auto => "auto",
             Self::Russian => "ru",
             Self::English => "en",
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(crate) const fn qwen_name(self) -> Option<&'static str> {
-        match self {
-            Self::Auto => None,
-            Self::Russian => Some("Russian"),
-            Self::English => Some("English"),
         }
     }
 }
@@ -112,7 +101,6 @@ pub struct AsrModelSpec {
 }
 
 const ALL_MODES: &[AsrMode] = &[AsrMode::Meeting, AsrMode::Streaming, AsrMode::Recorder];
-const RECORDER_ONLY: &[AsrMode] = &[AsrMode::Recorder];
 
 pub const ASR_SPECS: &[AsrModelSpec] = &[
     AsrModelSpec {
@@ -130,26 +118,6 @@ pub const ASR_SPECS: &[AsrModelSpec] = &[
         min_memory_gb: 8,
         license: "MIT",
         asset_fingerprint: "317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1",
-    },
-    AsrModelSpec {
-        model_id: QWEN3_ASR_06_MODEL_ID,
-        engine: AsrEngine::Qwen3Asr,
-        runtime: AsrRuntime::QwenAsrRust,
-        capabilities: AsrCapabilities {
-            offline: true,
-            streaming: false,
-            timestamps: false,
-            language_detection: false,
-            mixed_language: false,
-        },
-        compatible_modes: RECORDER_ONLY,
-        min_memory_gb: 12,
-        license: "Apache-2.0 (model), MIT (runtime)",
-        asset_fingerprint: concat!(
-            "weights:79d6cbd4c98c7bbffe9db2edac07f56cd6637d0d5944b27f6c2b8353840323ea;",
-            "vocab:ca10d7e9fb3ed18575dd1e277a2579c16d108e32f27439684afa0e10b1440910;",
-            "merges:8831e4f1a044471340f7c0a83d7bd71306a5b867e95fd870f74d0c5308a904d5"
-        ),
     },
     AsrModelSpec {
         model_id: QWEN3_ASR_17_GGUF_MODEL_ID,
@@ -190,11 +158,6 @@ pub fn resolve_selection(
             mode.as_str()
         )));
     }
-    if spec.runtime == AsrRuntime::QwenAsrRust && language == AsrLanguage::Auto {
-        return Err(AppError::InvalidSetting(
-            "Qwen3-ASR requires Recorder language Russian or English; use Whisper for Auto or mixed speech"
-                .into(),
-        ));
-    }
+    let _ = language;
     Ok(spec)
 }

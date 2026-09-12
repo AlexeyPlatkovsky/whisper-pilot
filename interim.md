@@ -274,7 +274,7 @@ struct AsrCapabilities {
 Перед интеграцией нужен короткий macOS spike:
 
 - текущий Whisper large-v3-turbo Q8;
-- Qwen3-ASR 0.6B и 1.7B через свежий llama.cpp GGUF path;
+- Qwen3-ASR 1.7B Q8_0 через существующий llama.cpp MTMD GGUF path;
 - при нестабильном llama.cpp API — опционально MLX-native path;
 - official Transformers только как benchmark reference, не предпочтительный bundled runtime.
 
@@ -287,7 +287,7 @@ struct AsrCapabilities {
 - предсказуемый download size и peak RAM;
 - совместимость segmentation/timestamps с persistence, export и diarization.
 
-Qwen может оказаться качественнее для диктовки, но 0.6B может быть практичнее для live partials. 1.7B можно оставить quality-вариантом для batch/final reconciliation. Решить должны измерения.
+По итогам интеграции 0.6B исключён: он не покрывает единый all-mode контракт и смешанную речь. 1.7B Q8_0 остаётся единственным Qwen-кандидатом рядом с Whisper; сравнительные утверждения о качестве по-прежнему должны подтверждаться измерениями.
 
 ## Предлагаемые этапы
 
@@ -379,4 +379,4 @@ Rust build выдал warning о дублирующемся `@executable_path/..
 
 Делать Recorder внутри WhisperPilot. Функция органично относится к продукту и не требует отдельного приложения. Реализовывать её как новый capture domain за общим Rust coordinator, а не копией `StreamingView`.
 
-Обязательная предпосылка: native session state должен жить дольше любого UI window. После этого третья вкладка, global shortcut и floating bubble становятся обычными клиентами одного сервиса, а не хрупкими special cases. Qwen3-ASR лучше подключать отдельным измеренным engine integration и не связывать с первым релизом Recorder.
+Обязательная предпосылка выполнена: native session state живёт дольше любого UI window. Третья вкладка, global shortcut и floating bubble используют общий capture service. Qwen3-ASR 1.7B подключён отдельным измеряемым engine integration с единым выбором модели для всех режимов.

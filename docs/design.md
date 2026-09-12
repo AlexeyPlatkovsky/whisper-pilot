@@ -182,16 +182,21 @@ Single line reflecting the meeting's current state:
 
 ### Recorder workspace
 
-Recorder reuses the shell and fixed top action vocabulary. **Start** performs
+Recorder uses the same shell, left library, and fixed top action vocabulary as
+Meeting and Streaming. The left column provides mode switching, search, open,
+new recording, rename, and confirmed deletion. The header keeps sidebar, new,
+Settings, title, status, **Start**, **Stop**, Prettify, Copy, Export, and
+transcript-only Clear controls in the same positions as the other workspaces.
+**Start** performs
 permission, model, system-default microphone, and caption-surface preflight
 before a session is created. **Stop** ends capture and enters **Finalizing**;
 copy, export, delete, and playback become available when their durable inputs
-exist. The metadata row names the selected ASR model, selected language mode,
-and native stored-audio sample rate. Whisper is the default. Qwen3-ASR 0.6B is
-a Recorder-only option; Qwen3-ASR 1.7B Q8_0 is also available with automatic
-language detection. Recorder persists capture-window spans but does not
-currently render them. An unsupported or missing selection blocks Start with a
-Settings action; it never silently starts another engine.
+exist. The metadata row shows the default microphone and recording duration.
+Recorder uses the same selected ASR model as Meeting and local Streaming;
+Whisper is the default and Qwen3-ASR 1.7B Q8_0 is the alternative. Recorder
+persists capture-window spans but does not currently render them. An unsupported
+or missing selection blocks Start with a Settings action; it never silently
+starts another engine.
 
 Committed phrases have stable identity and normal text styling. Their capture
 window spans are persisted but are not currently rendered in the Recorder
@@ -205,11 +210,12 @@ interrupted `.caf.partial` remains visible with **Recover** and **Delete**. A
 failed delete remains visible as **Delete failed / Retry**. See ADR-017 for
 ownership and atomic-finalization rules.
 
-**Polish transcript** sends the raw committed text to the selected local LLM
-and presents a review candidate above the still-visible raw segments. **Accept
-polish** stores a derived presentation used by copy/export; **Cancel** discards
-the candidate and **Revert polish** returns to the raw segments.
-Generation and acceptance never rewrite captured audio or raw segment rows.
+**Prettify transcript** sends the raw committed text to the selected local LLM,
+persists the result, and replaces the visible raw text in the same transcript
+panel. **Restore original transcript** returns to the editable raw segments.
+**Clear transcript** requires confirmation, removes both raw and prettified
+text, and retains the session and captured audio. Prettify and restore never
+rewrite captured audio or raw segment rows.
 
 The configurable global shortcut uses **Control + Option + Space** initially and
 toggles Recorder Start/Stop from another application without activating the main
@@ -273,12 +279,10 @@ Opened from the header **gear**; a screen with these sections:
   keeps running, and the model's row keeps reporting percent-complete and then
   _Verifying…_ until it updates to ready). **Delete** asks for confirmation
   before removing the file. Tasks may expose one or more fixed catalog entries;
-  selectable entries use an **Active** radio. Transcription has three rows:
-  Whisper, Qwen3-ASR 0.6B, and Qwen3-ASR 1.7B Q8_0. Each compatible row exposes
-  a compact Meeting/Streaming selector and a Recorder selector. The 0.6B row
-  exposes Recorder only; Whisper and 1.7B expose both. Model rows show the name,
-  download size/status, and actions without language, timestamp, memory, or
-  license guidance copy.
+  selectable entries use an **Active** radio. Transcription has two rows:
+  Whisper and Qwen3-ASR 1.7B Q8_0. Each row exposes one selection used by all
+  three modes. Model rows show the name, download size/status, and actions
+  without language, timestamp, memory, or license guidance copy.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
   OS), and **Status Colors**: one configurable color per current semantic
   Meeting/Streaming status (anchored picker popover, per-row revert to the

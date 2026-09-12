@@ -1,12 +1,11 @@
 # Phase 4 Qwen3-ASR qualification
 
-> **Current runtime note (2026-09-12):** this report qualifies the original
-> pure-Rust experiment. ADR-019 now also adopts the official Qwen3-ASR 1.7B
-> Q8_0 GGUF text/projector pair through `llama.cpp` MTMD for all three modes.
-> Its real-Metal integration smoke gate now passes; a full comparative WER,
-> latency, and sustained-session benchmark remains outstanding. The earlier
-> rejection below is historical evidence for the pure-Rust path, not the
-> current catalog/runtime boundary.
+> **Current runtime note (2026-09-12):** the pure-Rust Qwen3-ASR 0.6B/1.7B
+> experiment documented below is retired and its harness is no longer shipped.
+> ADR-019 adopts only the official Qwen3-ASR 1.7B Q8_0 GGUF text/projector pair
+> through `llama.cpp` MTMD, with one selection for all three modes. Its
+> real-Metal integration smoke gate passes; a full comparative WER, latency,
+> and sustained-session benchmark remains outstanding.
 
 Date: 2026-09-12. Hardware: Apple M5 Pro, 48 GiB unified memory. OS: macOS
 26.6.2. Rust: 1.97.1 aarch64-apple-darwin. All audio remained local.
@@ -19,20 +18,11 @@ Generate the corpus with:
 scripts/generate-asr-benchmark-corpus.sh /tmp/whisper-pilot-asr-corpus
 ```
 
-Run each input through the checked-in per-decoder harness, wrapping with
-`/usr/bin/time -l` for single-process peak RSS. The final optional argument
-repeats a sample for the stability gate (191 Russian iterations equal 30.04
-input minutes). Repeat these commands for `ru.wav ru`, `en.wav en`, and
-`mixed.wav mixed`, and for both Qwen bundle directories:
-
-```bash
-cargo run --release --manifest-path src-tauri/Cargo.toml \
-  --example asr_benchmark -- whisper /path/to/ggml-large-v3-turbo-q8_0.bin \
-  /tmp/whisper-pilot-asr-corpus/ru.wav ru
-cargo run --release --manifest-path src-tauri/Cargo.toml \
-  --example asr_benchmark -- qwen /path/to/Qwen3-ASR-0.6B \
-  /tmp/whisper-pilot-asr-corpus/ru.wav ru 191
-```
+The retired experiment wrapped each decoder with `/usr/bin/time -l` for
+single-process peak RSS and repeated samples for the stability gate (191
+Russian iterations equal 30.04 input minutes). Those decoder harnesses were
+removed with the pure-Rust runtime; the recorded results below are retained as
+historical evidence rather than a currently runnable product gate.
 
 The generator writes `manifest.tsv` with exact references, durations, and
 hashes for every run. For the recorded run the mono 16 kHz WAV manifest was:
@@ -47,8 +37,8 @@ Normalized references are the literal Russian and English sentences in
 `generate-asr-benchmark-corpus.sh`; mixed concatenates its two literal clauses.
 Scoring lowercased and removed punctuation. Raw WER intentionally did not
 normalize spoken numbers to digits, so Whisper's semantically correct number
-formatting appears as substitutions. The script and decode commands are
-checked in, but hypotheses and the ad-hoc WER scorer were not retained. The WER,
+formatting appears as substitutions. The corpus script remains checked in, but
+decoder commands, hypotheses, and the ad-hoc WER scorer were not retained. The WER,
 three-session RSS, native-streaming, and 60-second rows below are therefore
 recorded qualification evidence, not a claim that one checked-in command
 recreates every headline number. The hashes are specific to the recorded macOS
@@ -139,19 +129,10 @@ Real non-empty first-partial latency remains unverified and is not a satisfied
 acceptance gate; production presents bounded-window results rather than Qwen's
 unqualified native streaming output.
 
-- Adopt Qwen3-ASR 0.6B for explicit Russian or English Recorder windows.
-- Reject Qwen3-ASR 0.6B for mixed, Meeting, Streaming, and timestamped modes.
-- The original pure-Rust Qwen3-ASR 1.7B candidate was rejected at this point;
-  the later GGUF/MTMD implementation is an explicit selectable engine for all
-  three modes under ADR-019.
+- Retire Qwen3-ASR 0.6B because it does not satisfy the shared all-mode and
+  mixed-language product boundary.
+- The original pure-Rust Qwen3-ASR 1.7B candidate was rejected; the later
+  GGUF/MTMD implementation is the sole selectable Qwen engine for all three
+  modes under ADR-019.
 - Retain Whisper as installed default and explicit fallback; never substitute
   it silently after a Qwen session starts.
-
-The opt-in real integration gate is:
-
-```bash
-QWEN3_ASR_MODEL_DIR=/path/to/Qwen3-ASR-0.6B \
-QWEN3_ASR_TEST_WAV=/tmp/whisper-pilot-asr-corpus/ru.wav \
-  cargo test --manifest-path src-tauri/Cargo.toml \
-  --test qwen_asr_real -- --ignored --nocapture
-```

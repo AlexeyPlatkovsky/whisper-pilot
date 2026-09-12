@@ -846,7 +846,8 @@ cloud timeline after lost audio.
 ## Settings & Model Management (`settings.rs`, `models/`) — M2 beta, M3 release
 
 Settings live in a small **key–value store** in the app support directory
-(theme, `ui_language`, each task's active model, export file type, the
+(theme, `ui_language`, one shared active ASR model, task-specific diarization
+and text models, export file type, the
 WP-88 `status_colors` JSON mapping of each configurable status to an opaque
 `#RRGGBB` color, the WP-96 `mfu_panel_meeting`/`mfu_panel_streaming`
 booleans — one independent key per screen, each defaulting to `true`, gating
@@ -857,15 +858,14 @@ dark / system, plus release themes) and **i18n** (English default, release
 languages); the OS scheme drives the _System_ theme.
 
 `models/` manages a **fixed, app-defined catalog** of the model(s) each task
-needs (transcription = Whisper plus optional Recorder-only Qwen3-ASR,
+needs (transcription = Whisper plus optional Qwen3-ASR 1.7B GGUF,
 diarization = sherpa-onnx segmentation +
 selectable embedding, MFU = llama/Qwen at M3). **Download** fetches from a
 known URL, streams progress, and marks a model ready only after **SHA
 verification**; **Delete** removes the local file. A task whose required model
 is absent is disabled or degrades (Transcribe needs the Whisper model;
-diarization degrades per F002-R7). `active_model.transcription` remains the
-Whisper identity for Meeting/Streaming, while `active_model.recorder` selects
-between Whisper and Qwen for future Recorder sessions. Diarization has its own
+diarization degrades per F002-R7). `active_model.transcription` selects one
+local ASR for future Meeting, Streaming, and Recorder work. Diarization has its own
 multi-entry selection (WP-52): its catalog
 entry already holds one shared segmentation asset plus multiple
 independently-downloadable embedding variants (CAM++, TitaNet-large), addressed
@@ -1042,19 +1042,15 @@ a recoverable error.
 ASR selection is capability-driven (ADR-019), not inferred from catalog order.
 The static model specification declares engine, runtime, compatible modes,
 streaming, timestamps, language detection, mixed-language support, memory,
-license, and an exact asset fingerprint. `active_model.transcription` controls
-Meeting and local Streaming; Recorder independently persists
-`active_model.recorder` plus `recorder_language`. Older settings default both
-choices to Whisper, with Recorder language `auto`. Qwen3-ASR 0.6B is accepted
-only for Recorder with explicit `ru` or `en`; Qwen3-ASR 1.7B Q8_0 is accepted
-for all three modes with automatic language detection. Unsupported combinations
-and incomplete bundles fail before capture, without implicit fallback.
+license, and an exact asset fingerprint. `active_model.transcription` is the
+single selection for Meeting, local Streaming, and Recorder. Older or unknown
+selections normalize back to Whisper. Qwen3-ASR 1.7B Q8_0 is accepted for all
+three modes with automatic language detection. Unsupported combinations and
+incomplete bundles fail before capture, without implicit fallback.
 
-Whisper retains its existing Metal context. Qwen 0.6B uses pinned pure-Rust
-`qwen-asr` 0.11.0 with Apple Accelerate/vDSP and an official
-safetensors/vocabulary/merges bundle. Qwen 1.7B uses the existing in-process
-`llama.cpp` backend plus MTMD, with a verified text GGUF and required audio
-projector GGUF. Text LLM and GGUF-ASR caches share the one process-global
+Whisper retains its existing Metal context. Qwen 1.7B uses the existing
+in-process `llama.cpp` backend plus MTMD, with a verified text GGUF and required
+audio projector GGUF. Text LLM and GGUF-ASR caches share the one process-global
 `llama.cpp` backend but own independent models and inference contexts. Meeting
 feeds the GGUF runtime bounded 30-second file windows; Streaming and Recorder
 reuse the live at-most-seven-second decoder contract. Qwen output has no model

@@ -100,6 +100,7 @@ pub fn run() {
             commands::recorder::open_recorder_session,
             commands::recorder::rename_recorder_session,
             commands::recorder::delete_recorder_session,
+            commands::recorder::clear_recorder_transcript,
             commands::recorder::update_recorder_segment,
             commands::recorder::recover_recorder_session,
             commands::recorder::export_recorder_wav,

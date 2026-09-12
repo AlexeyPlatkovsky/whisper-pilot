@@ -29,7 +29,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_task_models_reports_transcription_and_both_diarization_variants_not_downloaded_by_default(
+    async fn list_task_models_reports_shared_transcription_and_diarization_models_not_downloaded_by_default(
     ) {
         let dir = tempfile::tempdir().unwrap();
 
@@ -37,7 +37,6 @@ mod tests {
 
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"transcription"));
-        assert!(ids.contains(&"qwen3-asr-0.6b"));
         assert!(ids.contains(&"qwen3-asr-1.7b-q8_0"));
         assert!(ids.contains(&"diarization-campplus"));
         assert!(ids.contains(&"diarization-titanet-large"));
@@ -77,14 +76,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn qwen_catalog_row_exposes_recorder_only_capabilities_and_requires_all_assets() {
+    async fn qwen_catalog_row_exposes_all_mode_capabilities_and_requires_all_assets() {
         let dir = tempfile::tempdir().unwrap();
         let entry = CATALOG
             .iter()
-            .find(|entry| entry.id == "qwen3-asr-0.6b")
+            .find(|entry| entry.id == "qwen3-asr-1.7b-q8_0")
             .unwrap();
         let paths = asset_paths(dir.path(), entry.id).unwrap();
-        for (path, asset) in paths.iter().zip(entry.assets).take(2) {
+        for (path, asset) in paths.iter().zip(entry.assets).take(1) {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             let file = std::fs::File::create(path).unwrap();
             file.set_len(asset.size_bytes).unwrap();
@@ -97,7 +96,11 @@ mod tests {
         assert_eq!(partial.engine, Some(crate::asr::AsrEngine::Qwen3Asr));
         assert_eq!(
             partial.compatible_modes,
-            Some(vec![crate::asr::AsrMode::Recorder])
+            Some(vec![
+                crate::asr::AsrMode::Meeting,
+                crate::asr::AsrMode::Streaming,
+                crate::asr::AsrMode::Recorder,
+            ])
         );
         assert_eq!(partial.supports_timestamps, Some(false));
 

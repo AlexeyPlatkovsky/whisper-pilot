@@ -364,7 +364,7 @@ mod tests {
             url: "https://test.invalid/vocab.json",
             sha256: Box::leak(hash.into_boxed_str()),
             size_bytes: content.len() as u64,
-            file_name: "qwen3-asr-0.6b/vocab.json",
+            file_name: "nested-bundle/vocab.json",
             variant_id: None,
             variant_label: None,
             recommended: false,

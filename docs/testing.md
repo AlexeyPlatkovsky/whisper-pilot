@@ -84,22 +84,22 @@ Recorder regressions cover native-rate mono PCM16 CAF headers and sample
 conversion, one-second durability checkpoints, tail-before-audio-before-database
 finalization, interrupted-session reconciliation, owned-audio deletion and WAV
 export, shortcut replacement/conflict/repeat policy, backend lifecycle hydration,
-and the committed-versus-partial transcript UI. The real default-microphone test
+the shared searchable library/header, in-place persisted Prettify, confirmed
+transcript-only Clear with retained audio, and the committed-versus-partial
+transcript UI. The real default-microphone test
 is ignored by default because it requires explicit macOS TCC approval and audible
 input; it must be run with the real-Metal gate before Recorder release evidence is
 complete.
 
-ASR engine regressions resolve stable IDs rather than catalog order, capability-
-gate modes and language policy before capture, require all files in a model
-bundle, key caches by engine/model/fingerprint, migrate legacy settings and
-Recorder rows deterministically, and persist immutable session engine identity.
-The opt-in real Qwen gates cover both runtimes: the official 0.6B bundle through
-`QwenSessionDecoder`, and the 1.7B text/projector GGUF pair through the
-production MTMD decoder when `QWEN3_ASR_GGUF_MODEL`,
+ASR engine regressions resolve stable IDs rather than catalog order, use one
+selection for every mode, require all files in a model bundle, key caches by
+engine/model/fingerprint, normalize removed selections, and persist immutable
+Recorder session engine identity. The opt-in real Qwen gate covers the 1.7B
+text/projector GGUF pair through the production MTMD decoder when `QWEN3_ASR_GGUF_MODEL`,
 `QWEN3_ASR_GGUF_MMPROJ`, and `QWEN3_ASR_GGUF_TEST_AUDIO` are set. The frozen
-0.6B corpus, runtime revisions, WER, latency, RTF, memory, and earlier per-mode
-decision are recorded in `docs/validation/phase-4-qwen-asr-qualification.md`;
-the GGUF runtime has real-Metal mixed-language smoke evidence, while equivalent
+experimental corpus and retired runtime evidence are recorded in
+`docs/validation/phase-4-qwen-asr-qualification.md`; the GGUF runtime has
+real-Metal mixed-language smoke evidence, while equivalent
 full-corpus WER, latency, and sustained-session evidence remains required
 before comparative claims.
 

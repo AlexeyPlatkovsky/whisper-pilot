@@ -50,6 +50,7 @@ vi.mock("./ipc", () => ({
   openRecorderSession: vi.fn(),
   renameRecorderSession: vi.fn(),
   deleteRecorderSession: vi.fn(),
+  clearRecorderTranscript: vi.fn(),
   startRecorderSession: vi.fn(),
   stopRecorderSession: vi.fn(),
   recoverRecorderSession: vi.fn(),
@@ -172,6 +173,10 @@ beforeEach(() => {
     polished_text: "Polished committed phrase.",
   });
   vi.mocked(ipc.revertRecorderPolish).mockResolvedValue(SESSION);
+  vi.mocked(ipc.clearRecorderTranscript).mockResolvedValue({
+    ...SESSION,
+    segments: [],
+  });
   if (!navigator.clipboard) {
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText: async () => {} },
@@ -226,6 +231,38 @@ describe("Recorder mode", () => {
     );
     await user.click(screen.getByRole("button", { name: "Confirm delete" }));
     expect(ipc.deleteRecorderSession).toHaveBeenCalledWith(1);
+  });
+
+  it("uses the shared header and searchable library layout", async () => {
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([
+      SESSION,
+      SECOND_SESSION,
+    ]);
+    const user = userEvent.setup();
+    renderRecorder();
+
+    expect(
+      await screen.findByRole("button", { name: "Toggle sidebar" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "New recording" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Settings" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeInTheDocument();
+
+    await user.type(
+      screen.getByRole("searchbox", { name: "Search recordings" }),
+      "Second",
+    );
+    expect(
+      screen.getByRole("button", { name: "Open Second note" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open Voice note" }),
+    ).not.toBeInTheDocument();
   });
 
   it("fails closed until the backend snapshot arrives and blocks other owners", async () => {
@@ -387,7 +424,7 @@ describe("Recorder mode", () => {
       });
     });
     expect(screen.getByRole("status")).toHaveTextContent("Error");
-    expect(screen.getByRole("status")).toHaveClass("recorder-status--error");
+    expect(screen.getByRole("status")).toHaveClass("wp-status--error");
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Microphone disconnected",
     );
@@ -459,30 +496,52 @@ describe("Recorder mode", () => {
     );
   });
 
-  it("reviews, accepts and reverts Recorder polishing without replacing raw segments", async () => {
+  it("prettifies in place and can restore the raw transcript", async () => {
     const user = userEvent.setup();
     renderRecorder();
     await user.click(
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    await user.click(
+      screen.getByRole("button", { name: "Prettify transcript" }),
+    );
     expect(ipc.generateRecorderPolish).toHaveBeenCalledWith(1);
-    expect(
-      await screen.findByText("Polished committed phrase."),
-    ).toBeInTheDocument();
-    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "Accept polish" }));
-    expect(ipc.acceptRecorderPolish).toHaveBeenCalledWith(
-      1,
+    await waitFor(() =>
+      expect(ipc.acceptRecorderPolish).toHaveBeenCalledWith(
+        1,
+        "Polished committed phrase.",
+      ),
+    );
+    expect(screen.getByLabelText("Recorder transcript")).toHaveTextContent(
       "Polished committed phrase.",
     );
-    expect(screen.getByText("Polished committed phrase.")).toBeInTheDocument();
+    expect(
+      screen.queryByDisplayValue("Committed phrase"),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Revert polish" }));
+    await user.click(
+      screen.getByRole("button", { name: "Restore original transcript" }),
+    );
     expect(ipc.revertRecorderPolish).toHaveBeenCalledWith(1);
     expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
+  });
+
+  it("clears the transcript only after confirmation", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Clear transcript" }));
+    expect(ipc.clearRecorderTranscript).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    expect(ipc.clearRecorderTranscript).toHaveBeenCalledWith(1);
+    expect(
+      screen.queryByDisplayValue("Committed phrase"),
+    ).not.toBeInTheDocument();
   });
 
   it("discards a polish result when the user switches sessions while it is generated", async () => {
@@ -505,7 +564,9 @@ describe("Recorder mode", () => {
     await user.click(
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
-    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    await user.click(
+      screen.getByRole("button", { name: "Prettify transcript" }),
+    );
     await user.click(screen.getByRole("button", { name: "Open Second note" }));
     await act(async () => resolvePolish("Polish for the first session"));
 
@@ -514,7 +575,7 @@ describe("Recorder mode", () => {
       screen.queryByText("Polish for the first session"),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: "Accept polish" }),
+      screen.queryByText("Polish for the first session"),
     ).not.toBeInTheDocument();
   });
 
@@ -538,7 +599,9 @@ describe("Recorder mode", () => {
     await user.click(
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
-    await user.click(screen.getByRole("button", { name: "Polish transcript" }));
+    await user.click(
+      screen.getByRole("button", { name: "Prettify transcript" }),
+    );
     await user.click(screen.getByRole("button", { name: "Open Second note" }));
     await act(async () =>
       rejectPolish(new Error("obsolete first-session failure")),
@@ -564,7 +627,7 @@ describe("Recorder mode", () => {
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
     expect(
-      screen.getByRole("button", { name: "Delete Voice note" }),
+      screen.getByRole("button", { name: "Delete recording" }),
     ).toBeDisabled();
 
     act(() => sessionHandler?.({ ...SESSION, status: "delete_failed" }));

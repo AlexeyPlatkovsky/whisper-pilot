@@ -132,7 +132,6 @@ export interface Settings {
   theme: string;
   ui_language: string;
   active_model_transcription?: string;
-  active_model_recorder?: string;
   active_model_diarization: string;
   active_model_llm?: string;
   export_file_type: string;
@@ -145,7 +144,6 @@ export interface Settings {
   /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
   mfu_panel_streaming?: boolean;
   recorder_shortcut?: string;
-  recorder_language?: "auto" | "ru" | "en";
   bubble_always_on_top?: boolean;
   bubble_x?: number;
   bubble_y?: number;
@@ -506,6 +504,10 @@ export function renameRecorderSession(
 
 export function deleteRecorderSession(id: number): Promise<void> {
   return invoke<void>("delete_recorder_session", { id });
+}
+
+export function clearRecorderTranscript(id: number): Promise<RecorderSession> {
+  return invoke<RecorderSession>("clear_recorder_transcript", { id });
 }
 
 export function startRecorderSession(): Promise<RecorderSession> {

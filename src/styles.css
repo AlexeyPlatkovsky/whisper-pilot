@@ -659,51 +659,6 @@ body {
   font-weight: 600;
 }
 
-.recorder-content {
-  display: flex;
-  min-width: 0;
-  flex: 1;
-  flex-direction: column;
-  gap: 16px;
-  padding: 22px 28px 32px;
-  overflow: auto;
-}
-
-.recorder-toolbar,
-.recorder-inline-dialog {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.recorder-status {
-  margin-right: auto;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-secondary);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.recorder-status--recording,
-.recorder-status--capturing {
-  color: var(--success);
-}
-
-.recorder-status--starting,
-.recorder-status--stopping,
-.recorder-status--finalizing {
-  color: var(--warning, #b76a00);
-}
-
-.recorder-status--recoverable,
-.recorder-status--delete_failed,
-.recorder-status--error {
-  color: var(--error);
-}
-
 .recorder-transcript {
   display: flex;
   flex-direction: column;
@@ -722,20 +677,6 @@ body {
   padding: 12px;
   font: inherit;
   line-height: 1.55;
-}
-
-.recorder-polish-review,
-.recorder-polished {
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  background: var(--panel);
-  padding: 16px;
-  line-height: 1.6;
-  white-space: pre-wrap;
-}
-
-.recorder-polish-review p {
-  margin: 10px 0 14px;
 }
 
 .recorder-partial {
@@ -2026,21 +1967,6 @@ body {
   height: 16px;
   margin: 0;
   accent-color: var(--wp-speaker-0);
-}
-
-.model-mode-selectors {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--wp-space-sm);
-}
-
-.model-mode-choice {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--muted);
-  font-size: var(--wp-font-size-xs, 0.75rem);
-  white-space: nowrap;
 }
 
 .model-badge {

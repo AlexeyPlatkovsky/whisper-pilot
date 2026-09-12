@@ -484,3 +484,55 @@ fn completed_duration_comes_from_native_audio_frames_even_without_transcript() {
     let completed = store.mark_completed(recorder.id).unwrap();
     assert_eq!(completed.duration_ms, 1_500);
 }
+
+#[test]
+fn clearing_a_recorder_transcript_retains_its_session_and_audio() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Keep audio", 10, 48_000);
+    write_partial(&recorder.audio_path, 48_000, &[0.0; 4_800]);
+    let audio_path = RecorderAudioWriter::partial_path_for(&recorder.audio_path);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 4_800,
+                text: "raw transcript".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store
+        .upsert_polished(recorder.id, "prettified transcript")
+        .unwrap();
+    store.mark_recoverable(recorder.id, "test fixture").unwrap();
+
+    store.clear_transcript(recorder.id).unwrap();
+
+    assert!(store.get_session(recorder.id).unwrap().is_some());
+    assert!(store.list_segments(recorder.id).unwrap().is_empty());
+    assert_eq!(store.get_polished(recorder.id).unwrap(), None);
+    assert!(audio_path.is_file());
+}
+
+#[test]
+fn clearing_a_live_recorder_transcript_is_rejected_without_data_loss() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Live", 10, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 4_800,
+                text: "still recording".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+
+    assert!(store.clear_transcript(recorder.id).is_err());
+    assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
+}

@@ -73,36 +73,10 @@ pub(crate) async fn delete_model(
     }
 
     let settings = settings::get_settings(&dir);
-    let reset_recorder_model = settings.active_model_recorder == id;
     let reset_transcription_model = settings.active_model_transcription.as_deref() == Some(&id);
-    #[cfg(target_os = "macos")]
-    if reset_recorder_model {
-        let snapshot = state
-            .live_capture
-            .lock()
-            .map_err(|_| AppError::InvalidSetting("live capture lock is poisoned".into()))?
-            .snapshot();
-        if snapshot.source == Some(crate::live_capture::LiveCaptureSource::Recorder)
-            && !matches!(
-                snapshot.phase,
-                crate::live_capture::LiveCapturePhase::Idle
-                    | crate::live_capture::LiveCapturePhase::Error
-            )
-        {
-            return Err(AppError::InvalidSetting(
-                "the active Recorder ASR cannot be deleted while recording".into(),
-            ));
-        }
-    }
-    let reset_to_whisper = (reset_recorder_model || reset_transcription_model)
-        && id != crate::asr::DEFAULT_ASR_MODEL_ID;
+    let reset_to_whisper = reset_transcription_model && id != crate::asr::DEFAULT_ASR_MODEL_ID;
     let deletion_result = if reset_to_whisper {
-        delete_selected_asr_under_barrier(
-            &dir,
-            &id,
-            reset_transcription_model,
-            reset_recorder_model,
-        )
+        delete_selected_asr_under_barrier(&dir, &id)
     } else {
         models::delete_model(&dir, &id)
     };
@@ -130,26 +104,12 @@ fn asr_delete_is_blocked(
 /// Keep the safe Whisper selection after any delete failure. A multi-asset
 /// bundle can fail after an earlier asset was already removed, so restoring
 /// Qwen here could persist a selection that can no longer be loaded.
-fn delete_selected_asr_under_barrier(
-    dir: &std::path::Path,
-    id: &str,
-    reset_transcription: bool,
-    reset_recorder: bool,
-) -> Result<()> {
-    if reset_transcription {
-        settings::set_setting(
-            dir,
-            "active_model.transcription",
-            crate::asr::DEFAULT_ASR_MODEL_ID,
-        )?;
-    }
-    if reset_recorder {
-        settings::set_setting(
-            dir,
-            "active_model.recorder",
-            crate::asr::DEFAULT_ASR_MODEL_ID,
-        )?;
-    }
+fn delete_selected_asr_under_barrier(dir: &std::path::Path, id: &str) -> Result<()> {
+    settings::set_setting(
+        dir,
+        "active_model.transcription",
+        crate::asr::DEFAULT_ASR_MODEL_ID,
+    )?;
     models::delete_model(dir, id).map_err(|delete_error| {
         AppError::Io(format!(
             "ASR deletion failed and the affected selection remains Whisper until the complete bundle is downloaded again: {delete_error}"
@@ -232,47 +192,42 @@ mod tests {
     }
 
     #[test]
-    fn partial_recorder_bundle_deletion_keeps_the_safe_whisper_selection() {
+    fn partial_asr_bundle_deletion_keeps_the_safe_whisper_selection() {
         let temp = tempfile::tempdir().expect("temp dir");
-        let id = crate::asr::QWEN3_ASR_06_MODEL_ID;
-        settings::set_setting(temp.path(), "recorder_language", "ru").expect("set language");
-        settings::set_setting(temp.path(), "active_model.recorder", id).expect("select Qwen");
+        let id = crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID;
+        settings::set_setting(temp.path(), "active_model.transcription", id).expect("select Qwen");
         let paths = models::asset_paths(temp.path(), id).expect("Qwen paths");
         std::fs::create_dir_all(paths[0].parent().expect("model parent"))
             .expect("create model dir");
         std::fs::write(&paths[0], b"weights placeholder").expect("write first asset");
         std::fs::create_dir_all(&paths[1]).expect("make second asset deletion fail");
 
-        delete_selected_asr_under_barrier(temp.path(), id, false, true)
+        delete_selected_asr_under_barrier(temp.path(), id)
             .expect_err("second asset directory must fail remove_file");
 
         assert!(!paths[0].exists(), "the first asset was already removed");
         assert_eq!(
-            settings::get_settings(temp.path()).active_model_recorder,
-            crate::asr::DEFAULT_ASR_MODEL_ID
+            settings::get_settings(temp.path())
+                .active_model_transcription
+                .as_deref(),
+            Some(crate::asr::DEFAULT_ASR_MODEL_ID)
         );
     }
 
     #[test]
-    fn deleting_qwen_17_resets_both_mode_selections_to_whisper() {
+    fn deleting_qwen_17_resets_the_shared_selection_to_whisper() {
         let temp = tempfile::tempdir().expect("temp dir");
         let id = crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID;
         settings::set_setting(temp.path(), "active_model.transcription", id)
-            .expect("select Qwen for Meeting and Streaming");
-        settings::set_setting(temp.path(), "active_model.recorder", id)
-            .expect("select Qwen for Recorder");
+            .expect("select Qwen for all modes");
 
-        delete_selected_asr_under_barrier(temp.path(), id, true, true)
+        delete_selected_asr_under_barrier(temp.path(), id)
             .expect("delete absent bundle idempotently");
 
         let current = settings::get_settings(temp.path());
         assert_eq!(
             current.active_model_transcription.as_deref(),
             Some(crate::asr::DEFAULT_ASR_MODEL_ID)
-        );
-        assert_eq!(
-            current.active_model_recorder,
-            crate::asr::DEFAULT_ASR_MODEL_ID
         );
     }
 

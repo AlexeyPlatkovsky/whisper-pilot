@@ -864,9 +864,6 @@ pub(crate) async fn start_streaming_session(
             .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
             .await
             .map(LocalStreamingDecoderModel::QwenGguf),
-        crate::asr::AsrRuntime::QwenAsrRust => Err(AppError::InvalidSetting(
-            "selected Qwen3-ASR model is not compatible with Streaming".into(),
-        )),
     };
     let decoder_model = match decoder_model {
         Ok(model) => model,

@@ -199,6 +199,17 @@ pub(crate) fn delete_recorder_session(app: tauri::AppHandle, id: RecorderSession
 }
 
 #[tauri::command]
+pub(crate) fn clear_recorder_transcript(
+    app: tauri::AppHandle,
+    id: RecorderSessionId,
+) -> Result<RecorderSessionDto> {
+    ensure_recorder_session_is_not_live(&app, id)?;
+    let app_support_dir = app_data_dir(&app)?;
+    RecorderStore::open_runtime(&app_support_dir)?.clear_transcript(id)?;
+    open_dto(&app_support_dir, id)
+}
+
+#[tauri::command]
 pub(crate) fn update_recorder_segment(
     app: tauri::AppHandle,
     session_id: RecorderSessionId,
@@ -724,14 +735,6 @@ fn spawn_recorder_pipeline(
                     results_tx,
                     0,
                 ),
-                RecorderDecoderModel::QwenNative { model, language } => {
-                    streaming_session::run_windowed_decode(
-                        move || streaming_session::QwenSessionDecoder::new(model, language),
-                        asr_rx,
-                        results_tx,
-                        0,
-                    )
-                }
                 RecorderDecoderModel::QwenGguf(model) => streaming_session::run_windowed_decode(
                     move || Ok(streaming_session::QwenGgufSessionDecoder::new(model)),
                     asr_rx,
@@ -764,10 +767,6 @@ fn spawn_recorder_pipeline(
 #[cfg(target_os = "macos")]
 enum RecorderDecoderModel {
     Whisper(std::sync::Arc<whisper_rs::WhisperContext>),
-    QwenNative {
-        model: std::sync::Arc<qwen_asr::context::QwenModel>,
-        language: AsrLanguage,
-    },
     QwenGguf(std::sync::Arc<crate::qwen_gguf_asr::QwenGgufAsrModel>),
 }
 
@@ -779,9 +778,12 @@ pub(crate) async fn start_recorder_impl(
     let app_support_dir = app_data_dir(&app)?;
     let _asr_mutation = state.recorder_asr_mutation.lock().await;
     let recorder_settings = crate::settings::get_settings(&app_support_dir);
-    let language = AsrLanguage::parse(&recorder_settings.recorder_language)?;
+    let language = AsrLanguage::Auto;
     let asr_spec = asr::resolve_selection(
-        &recorder_settings.active_model_recorder,
+        recorder_settings
+            .active_model_transcription
+            .as_deref()
+            .unwrap_or(asr::DEFAULT_ASR_MODEL_ID),
         AsrMode::Recorder,
         language,
     )?;
@@ -802,10 +804,6 @@ pub(crate) async fn start_recorder_impl(
             .model(app_support_dir.clone())
             .await
             .map(RecorderDecoderModel::Whisper),
-        AsrRuntime::QwenAsrRust => state
-            .qwen_asr_model(app_support_dir.clone(), asr_spec)
-            .await
-            .map(|model| RecorderDecoderModel::QwenNative { model, language }),
         AsrRuntime::LlamaCppMtmd => state
             .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
             .await

@@ -9,7 +9,6 @@ vi.mock("./ipc", () => ({
   getRecorderShortcutStatus: vi.fn(),
   setRecorderShortcut: vi.fn(),
   setBubbleAlwaysOnTop: vi.fn(),
-  setSetting: vi.fn(),
 }));
 
 describe("Recorder shortcut settings", () => {
@@ -20,7 +19,6 @@ describe("Recorder shortcut settings", () => {
       active_model_diarization: "",
       export_file_type: "txt",
       recorder_shortcut: "Control+Option+Space",
-      recorder_language: "auto",
     });
     vi.mocked(ipc.getRecorderShortcutStatus).mockResolvedValue({
       configured: "Control+Option+Space",
@@ -33,7 +31,6 @@ describe("Recorder shortcut settings", () => {
       active_model_diarization: "",
       export_file_type: "txt",
       recorder_shortcut: "Control+Option+Space",
-      recorder_language: "auto",
     });
   });
 
@@ -59,25 +56,5 @@ describe("Recorder shortcut settings", () => {
     await waitFor(() =>
       expect(screen.getByText(/Shortcut status: Active/)).toBeInTheDocument(),
     );
-  });
-
-  it("persists an explicit Recorder language for Qwen3-ASR", async () => {
-    vi.mocked(ipc.setSetting).mockResolvedValue({
-      theme: "system",
-      ui_language: "en",
-      active_model_diarization: "none",
-      export_file_type: "plain_text",
-      recorder_language: "ru",
-    });
-    const user = userEvent.setup();
-    render(<RecorderSettingsSection />);
-
-    const language = await screen.findByRole("combobox", {
-      name: "Recorder speech language",
-    });
-    await user.selectOptions(language, "ru");
-
-    expect(ipc.setSetting).toHaveBeenCalledWith("recorder_language", "ru");
-    expect(language).toHaveValue("ru");
   });
 });

@@ -294,9 +294,6 @@ pub(crate) async fn transcribe_meeting(
             .qwen_gguf_asr_model(app_support_dir.clone(), asr_spec)
             .await
             .map(MeetingDecoderModel::QwenGguf),
-        crate::asr::AsrRuntime::QwenAsrRust => Err(AppError::InvalidSetting(
-            "selected Qwen3-ASR model is not compatible with Meeting".into(),
-        )),
         #[cfg(not(target_os = "macos"))]
         crate::asr::AsrRuntime::LlamaCppMtmd => Err(AppError::InvalidSetting(
             "Qwen3-ASR GGUF is currently available on macOS".into(),

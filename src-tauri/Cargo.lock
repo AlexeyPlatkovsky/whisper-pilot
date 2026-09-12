@@ -3346,15 +3346,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "qwen-asr"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6f2d649ea1585c574469353ac89a891d53548c7b9422034f8e1b14743632606f"
-dependencies = [
- "libc",
-]
-
-[[package]]
 name = "r-efi"
 version = "5.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5546,7 +5537,7 @@ dependencies = [
 
 [[package]]
 name = "whisper-pilot"
-version = "1.14.0"
+version = "1.15.0"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
@@ -5569,7 +5560,6 @@ dependencies = [
  "objc2",
  "objc2-av-foundation",
  "ort",
- "qwen-asr",
  "reqwest 0.12.28",
  "rfd",
  "rubato",

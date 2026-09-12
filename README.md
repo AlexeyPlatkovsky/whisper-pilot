@@ -17,14 +17,14 @@ three modes; Qwen3-ASR 1.7B Q8_0 is an optional local GGUF model for all three.
   transcribe it end-to-end on-device.
 - **Recorder** — capture the default microphone into recoverable local audio,
   see stable live phrases, and start or stop from a global shortcut.
-- **Selectable local ASR** — choose Whisper or Qwen3-ASR 1.7B Q8_0 separately
-  for Meeting/Streaming and Recorder; the smaller Qwen3-ASR 0.6B remains a
-  Recorder-only option.
+- **Selectable local ASR** — choose Whisper or Qwen3-ASR 1.7B Q8_0 once for
+  Meeting, Streaming, and Recorder.
 - **Accurate Russian transcription** — full-file Whisper decoding (Metal
   acceleration) tuned for quality over real-time speed. The spoken language is
   detected automatically; there is nothing to configure.
 - **Editable transcripts** — Meeting and Streaming show segment start times;
-  Recorder keeps capture spans in storage while its current editor shows text.
+  Recorder adds the same searchable library and header controls, in-place
+  Prettify, and transcript-only Clear while retaining its local audio.
 - **Save to a text file** — export the current (edited) transcript whenever
   you're done.
 - **Clear error handling** — missing dependencies or models surface as

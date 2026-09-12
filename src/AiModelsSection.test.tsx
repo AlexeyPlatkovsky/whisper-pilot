@@ -31,20 +31,6 @@ const TRANSCRIPTION_DOWNLOADED = {
   downloaded: true,
 };
 
-const QWEN_ASR_DOWNLOADED = {
-  id: "qwen3-asr-0.6b",
-  task: "transcription",
-  label: "Qwen3-ASR 0.6B",
-  downloaded: true,
-  size_bytes: 1_880_540_390,
-  recommended: false,
-  engine: "qwen3_asr" as const,
-  compatible_modes: ["recorder" as const],
-  supports_timestamps: false,
-  supports_language_detection: false,
-  supports_mixed_language: false,
-};
-
 const QWEN_ASR_17_DOWNLOADED = {
   id: "qwen3-asr-1.7b-q8_0",
   task: "transcription",
@@ -355,7 +341,7 @@ describe("AiModelsSection", () => {
 
       expect(
         await screen.findByRole("radio", {
-          name: "Whisper large-v3-turbo (Q8) for Recorder",
+          name: "Whisper large-v3-turbo (Q8)",
         }),
       ).toBeChecked();
     });
@@ -368,62 +354,21 @@ describe("AiModelsSection", () => {
       render(<AiModelsSection />);
 
       const radio = await screen.findByRole("radio", {
-        name: "Whisper large-v3-turbo (Q8) for Recorder",
+        name: "Whisper large-v3-turbo (Q8)",
       });
       expect(radio).not.toBeChecked();
       expect(radio).toBeDisabled();
     });
 
-    it("selects downloaded Qwen 0.6B for Recorder without capability metadata copy", async () => {
+    it("uses one ASR radio for all three modes and does not list Qwen 0.6B", async () => {
       vi.mocked(ipc.listTaskModels).mockResolvedValue([
         TRANSCRIPTION_DOWNLOADED,
-        QWEN_ASR_DOWNLOADED,
-      ]);
-      vi.mocked(ipc.getSettings).mockResolvedValue({
-        theme: "system",
-        ui_language: "en",
-        active_model_diarization: "none",
-        active_model_recorder: "transcription",
-        recorder_language: "ru",
-        export_file_type: "plain_text",
-      });
-      vi.mocked(ipc.setSetting).mockResolvedValue({
-        theme: "system",
-        ui_language: "en",
-        active_model_diarization: "none",
-        active_model_recorder: "qwen3-asr-0.6b",
-        recorder_language: "ru",
-        export_file_type: "plain_text",
-      });
-      const user = userEvent.setup();
-      render(<AiModelsSection />);
-
-      await user.click(
-        await screen.findByRole("radio", {
-          name: "Qwen3-ASR 0.6B for Recorder",
-        }),
-      );
-
-      expect(ipc.setSetting).toHaveBeenCalledWith(
-        "active_model.recorder",
-        "qwen3-asr-0.6b",
-      );
-      expect(
-        screen.queryByText(/Russian|English|license|timestamps|GB RAM/i),
-      ).not.toBeInTheDocument();
-    });
-
-    it("offers Qwen 1.7B independently for Meeting and Streaming and for Recorder", async () => {
-      vi.mocked(ipc.listTaskModels).mockResolvedValue([
-        TRANSCRIPTION_DOWNLOADED,
-        QWEN_ASR_DOWNLOADED,
         QWEN_ASR_17_DOWNLOADED,
       ]);
       vi.mocked(ipc.getSettings).mockResolvedValue({
         theme: "system",
         ui_language: "en",
         active_model_transcription: "transcription",
-        active_model_recorder: "transcription",
         active_model_diarization: "none",
         export_file_type: "plain_text",
       });
@@ -431,7 +376,6 @@ describe("AiModelsSection", () => {
         theme: "system",
         ui_language: "en",
         active_model_transcription: "qwen3-asr-1.7b-q8_0",
-        active_model_recorder: "qwen3-asr-1.7b-q8_0",
         active_model_diarization: "none",
         export_file_type: "plain_text",
       });
@@ -440,12 +384,7 @@ describe("AiModelsSection", () => {
 
       await user.click(
         await screen.findByRole("radio", {
-          name: "Qwen3-ASR 1.7B (Q8_0) for Meeting and Streaming",
-        }),
-      );
-      await user.click(
-        screen.getByRole("radio", {
-          name: "Qwen3-ASR 1.7B (Q8_0) for Recorder",
+          name: "Qwen3-ASR 1.7B (Q8_0)",
         }),
       );
 
@@ -453,12 +392,12 @@ describe("AiModelsSection", () => {
         "active_model.transcription",
         "qwen3-asr-1.7b-q8_0",
       );
-      expect(ipc.setSetting).toHaveBeenCalledWith(
-        "active_model.recorder",
-        "qwen3-asr-1.7b-q8_0",
-      );
+      expect(screen.getAllByRole("radio")).toHaveLength(2);
+      expect(screen.queryByText(/Qwen3-ASR 0\.6B/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^M\/S$/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Recorder$/i)).not.toBeInTheDocument();
       expect(
-        screen.queryByText(/Russian|English|license|timestamps|GB RAM/i),
+        screen.queryByText(/license|timestamps|GB RAM/i),
       ).not.toBeInTheDocument();
     });
   });

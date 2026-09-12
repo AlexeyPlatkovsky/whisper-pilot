@@ -33,15 +33,12 @@ export interface ModelLibrary {
   llmSelectError: string | null;
   transcriptionModel: string;
   transcriptionSelectError: string | null;
-  recorderModel: string;
-  recorderSelectError: string | null;
   setDownloadModalId: (id: string | null) => void;
   setConfirmDeleteId: (id: string | null) => void;
   handleDownload: (id: string) => Promise<void>;
   handleSelectDiarizationModel: (value: string) => Promise<void>;
   handleSelectLlmModel: (value: string) => Promise<void>;
   handleSelectTranscriptionModel: (value: string) => Promise<void>;
-  handleSelectRecorderModel: (value: string) => Promise<void>;
   handleDelete: (id: string) => Promise<void>;
 }
 
@@ -62,10 +59,6 @@ export function useModelLibrary(): ModelLibrary {
   const [transcriptionSelectError, setTranscriptionSelectError] = useState<
     string | null
   >(null);
-  const [recorderModel, setRecorderModel] = useState("transcription");
-  const [recorderSelectError, setRecorderSelectError] = useState<string | null>(
-    null,
-  );
 
   useEffect(() => {
     let cancelled = false;
@@ -93,7 +86,6 @@ export function useModelLibrary(): ModelLibrary {
           setTranscriptionModel(
             s.active_model_transcription ?? "transcription",
           );
-          setRecorderModel(s.active_model_recorder ?? "transcription");
         }
       })
       .catch(() => {
@@ -197,18 +189,6 @@ export function useModelLibrary(): ModelLibrary {
     }
   }
 
-  async function handleSelectRecorderModel(value: string) {
-    const previous = recorderModel;
-    setRecorderSelectError(null);
-    setRecorderModel(value);
-    try {
-      await setSetting("active_model.recorder", value);
-    } catch (e) {
-      setRecorderModel(previous);
-      setRecorderSelectError(String(e));
-    }
-  }
-
   async function handleDelete(id: string) {
     setConfirmDeleteId(null);
     try {
@@ -225,7 +205,6 @@ export function useModelLibrary(): ModelLibrary {
       setTranscriptionModel(
         settings.active_model_transcription ?? "transcription",
       );
-      setRecorderModel(settings.active_model_recorder ?? "transcription");
     } catch (e) {
       setRowState((prev) => ({
         ...prev,
@@ -247,15 +226,12 @@ export function useModelLibrary(): ModelLibrary {
     llmSelectError,
     transcriptionModel,
     transcriptionSelectError,
-    recorderModel,
-    recorderSelectError,
     setDownloadModalId,
     setConfirmDeleteId,
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
     handleSelectTranscriptionModel,
-    handleSelectRecorderModel,
     handleDelete,
   };
 }

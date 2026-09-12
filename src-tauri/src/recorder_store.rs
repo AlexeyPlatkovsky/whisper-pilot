@@ -315,6 +315,43 @@ impl RecorderStore {
         Ok(())
     }
 
+    /// Clear derived text while retaining the recording, its audio, and
+    /// immutable ASR identity. The transaction prevents a half-cleared state
+    /// where polished text survives after its source segments are gone.
+    pub fn clear_transcript(&self, session_id: RecorderSessionId) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(store_error)?;
+        let status = transaction
+            .query_row(
+                "SELECT status FROM recorder_sessions WHERE id = ?1",
+                params![session_id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?
+            .ok_or_else(|| {
+                AppError::Store(format!("Recorder session {session_id} was not found"))
+            })?;
+        if matches!(status.as_str(), "recording" | "finalizing") {
+            return Err(AppError::Store(format!(
+                "Recorder session {session_id} cannot be cleared while capture is active"
+            )));
+        }
+        transaction
+            .execute(
+                "DELETE FROM recorder_polished WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        transaction
+            .execute(
+                "DELETE FROM recorder_segments WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(store_error)?;
+        transaction.commit().map_err(store_error)
+    }
+
     pub fn update_segment_text(
         &self,
         session_id: RecorderSessionId,
