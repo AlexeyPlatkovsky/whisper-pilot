@@ -98,6 +98,8 @@ vi.mock("./ipc", () => ({
   revertStreamingPrettify: revertPrettifyMock,
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -401,6 +403,66 @@ describe("StreamingView", () => {
     expect(await screen.findByText("Standup")).toBeInTheDocument();
   });
 
+  it("keeps live-capture identity on session A when the user opens stopped session B", async () => {
+    const user = userEvent.setup();
+    const duo = { ...SESSION_A, title: "Duo" };
+    const review = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([duo, review]);
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: duo.id,
+      source: "streaming",
+      generation: 1,
+      revision: 1,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      openedSession({
+        id,
+        title: id === duo.id ? duo.title : review.title,
+        status: id === duo.id ? "active" : "stopped",
+      }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("On Air"),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Open Review" }),
+    );
+    await screen.findByRole("heading", { name: "Review" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    expect(
+      within(screen.getByRole("listitem", { name: "Duo" })).getByRole("img"),
+    ).toHaveAccessibleName("On Air");
+    expect(
+      within(screen.getByRole("listitem", { name: "Review" })).getByRole("img"),
+    ).toHaveAccessibleName("Ready");
+  });
+
+  it("does not display a Recorder capture failure in Streaming", async () => {
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+
+    act(() => {
+      liveCaptureHandler!({
+        phase: "error",
+        session_id: 77,
+        source: "recorder",
+        generation: 1,
+        revision: 1,
+        error: "Recorder callback buffer pool was exhausted",
+      });
+    });
+
+    expect(
+      screen.queryByText(/Recorder callback buffer pool was exhausted/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
+  });
+
   it("filters sessions by title only after three characters and shows no matches", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
@@ -638,6 +700,17 @@ describe("StreamingView", () => {
     );
     expect(styles).toMatch(
       /\.wp-transcript-content--inset\s*\{[^}]*padding-left:\s*var\(--wp-space-md\);[^}]*padding-right:\s*var\(--wp-space-md\);/s,
+    );
+  });
+
+  it("keeps shared Meeting and Streaming MFU content vertically scrollable", () => {
+    const styles = readFileSync(
+      resolve(process.cwd(), "src/styles.css"),
+      "utf8",
+    );
+    expect(styles).toMatch(/\.wp-mfu\s*\{[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(
+      /\.wp-mfu-content\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s,
     );
   });
 

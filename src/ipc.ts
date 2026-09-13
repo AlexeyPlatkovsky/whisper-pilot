@@ -324,10 +324,10 @@ export interface StreamingSessionSummary {
   created_at_ms: number;
   updated_at_ms: number;
   status: string;
-  /** Whether Live Translation was left on for this session (WP-101).
-   * Unlike the target language (WP-99), this survives reopening the session
-   * and an app restart. */
+  /** Whether Live Translation was left on for this session (WP-101). */
   translation_enabled: boolean;
+  /** Target language stored with this session's translated windows. */
+  translation_target_language?: StreamingTranslationTargetLanguage;
 }
 
 export interface StreamingWindow {
@@ -360,6 +360,7 @@ export interface StreamingSession {
   prettified_text?: string;
   /** See `StreamingSessionSummary.translation_enabled` (WP-101). */
   translation_enabled: boolean;
+  translation_target_language?: StreamingTranslationTargetLanguage;
   /** Persisted non-secret engine for a stopped session, when known. */
   transcription_engine?: "local" | "cloud";
 }
@@ -473,6 +474,7 @@ export interface RecorderSession {
   updated_at_ms?: number;
   duration_ms: number;
   status: RecorderStatus;
+  is_draft?: boolean;
   sample_rate: number;
   recovery_reason?: string;
   audio_path?: string;
@@ -510,8 +512,14 @@ export function clearRecorderTranscript(id: number): Promise<RecorderSession> {
   return invoke<RecorderSession>("clear_recorder_transcript", { id });
 }
 
-export function startRecorderSession(): Promise<RecorderSession> {
-  return invoke<RecorderSession>("start_recorder_session");
+export function createRecorderDraft(): Promise<RecorderSession> {
+  return invoke<RecorderSession>("create_recorder_draft");
+}
+
+export function startRecorderSession(
+  draftId?: number,
+): Promise<RecorderSession> {
+  return invoke<RecorderSession>("start_recorder_session", { draftId });
 }
 
 export function stopRecorderSession(): Promise<void> {
@@ -729,5 +737,15 @@ export function setStreamingTranslationEnabled(
   return invoke<void>("set_streaming_translation_enabled", {
     sessionId,
     enabled,
+  });
+}
+
+export function setStreamingTranslationTargetLanguage(
+  sessionId: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+): Promise<void> {
+  return invoke<void>("set_streaming_translation_target_language", {
+    sessionId,
+    targetLanguage,
   });
 }

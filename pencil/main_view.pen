@@ -11740,7 +11740,7 @@
               "id": "tDPp7",
               "name": "Recorder Session Title",
               "fill": "$text-primary",
-              "content": "New recording",
+              "content": "Untitled recording",
               "fontFamily": "$font-body",
               "fontSize": 16,
               "fontWeight": "600"
@@ -11910,7 +11910,7 @@
                   "id": "RrzsH",
                   "name": "Recorder Duration",
                   "fill": "$text-secondary",
-                  "content": "00:18",
+                  "content": "—",
                   "fontFamily": "$font-body",
                   "fontSize": 12,
                   "fontWeight": "normal"
@@ -12093,6 +12093,43 @@
                 },
                 {
                   "type": "frame",
+                  "id": "WUlhB",
+                  "name": "Untitled recording Draft Row",
+                  "width": "fill_container",
+                  "height": 58,
+                  "fill": "$canvas-bg",
+                  "cornerRadius": 8,
+                  "layout": "vertical",
+                  "gap": 5,
+                  "padding": [
+                    10,
+                    12
+                  ],
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "AZ0od",
+                      "name": "Untitled recording Draft Title",
+                      "fill": "$text-primary",
+                      "content": "Untitled recording",
+                      "fontFamily": "$font-body",
+                      "fontSize": 13,
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "w7XkAI",
+                      "name": "Untitled recording Draft Metadata",
+                      "fill": "$text-secondary",
+                      "content": "Ready · No audio",
+                      "fontFamily": "$font-body",
+                      "fontSize": 11,
+                      "fontWeight": "normal"
+                    }
+                  ]
+                },
+                {
+                  "type": "frame",
                   "id": "H01t8",
                   "name": "Quick note Recording Row",
                   "width": "fill_container",
@@ -12252,7 +12289,7 @@
                           "id": "pIff9",
                           "name": "Recorder Durability State",
                           "fill": "$text-label",
-                          "content": "3 segments · Editable",
+                          "content": "0 segments · Editable",
                           "fontFamily": "$font-body",
                           "fontSize": 11,
                           "fontWeight": "normal"
@@ -12291,100 +12328,21 @@
                           "name": "Recorder Empty Microphone",
                           "width": 34,
                           "height": 34,
-                          "icon": "mic",
+                          "icon": "messages-square",
                           "library": "lucide",
-                          "fill": "#A84720"
+                          "fill": "$text-label"
                         },
                         {
                           "type": "text",
                           "id": "i5JeS",
                           "name": "Recorder Empty Title",
                           "fill": "$text-primary",
-                          "content": "Ready for a new voice note",
+                          "content": "The transcript will appear here while you dictate.",
                           "fontFamily": "$font-body",
-                          "fontSize": 18,
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "text",
-                          "id": "E5Ddl",
-                          "name": "Recorder Empty Detail",
-                          "fill": "$text-secondary",
-                          "content": "Audio and an editable transcript will be stored locally.",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
+                          "fontSize": 16,
                           "fontWeight": "normal"
                         }
                       ]
-                    }
-                  ]
-                },
-                {
-                  "type": "frame",
-                  "id": "WLj8n",
-                  "name": "Recorder Audio Footer",
-                  "width": "fill_container",
-                  "height": 72,
-                  "fill": "$canvas-bg",
-                  "stroke": "$border",
-                  "strokeWidth": {
-                    "top": 1
-                  },
-                  "gap": 14,
-                  "padding": [
-                    0,
-                    22
-                  ],
-                  "alignItems": "center",
-                  "children": [
-                    {
-                      "type": "icon",
-                      "id": "Pyc3m",
-                      "name": "Recorder Playback Icon",
-                      "width": 24,
-                      "height": 24,
-                      "icon": "circle-play",
-                      "library": "lucide",
-                      "fill": "$text-label"
-                    },
-                    {
-                      "type": "frame",
-                      "id": "tj2ug",
-                      "name": "Recorder Audio Information",
-                      "width": "fill_container",
-                      "layout": "vertical",
-                      "gap": 6,
-                      "children": [
-                        {
-                          "type": "text",
-                          "id": "BNuID",
-                          "name": "Recorder Audio Label",
-                          "fill": "$text-secondary",
-                          "content": "No audio yet",
-                          "fontFamily": "$font-body",
-                          "fontSize": 12,
-                          "fontWeight": "600"
-                        },
-                        {
-                          "type": "rectangle",
-                          "cornerRadius": 2,
-                          "id": "JLKtT",
-                          "name": "Recorder Audio Track",
-                          "fill": "$border",
-                          "width": "fill_container",
-                          "height": 4
-                        }
-                      ]
-                    },
-                    {
-                      "type": "text",
-                      "id": "E8I3R",
-                      "name": "Recorder Audio Duration",
-                      "fill": "$text-label",
-                      "content": "—",
-                      "fontFamily": "$font-body",
-                      "fontSize": 12,
-                      "fontWeight": "normal"
                     }
                   ]
                 }

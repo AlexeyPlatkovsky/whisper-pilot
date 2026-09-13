@@ -4,8 +4,10 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ModeToggle } from "./ModeToggle";
 import { RecorderView } from "./RecorderView";
@@ -29,6 +31,7 @@ interface RecorderSession {
   created_at_ms: number;
   duration_ms: number;
   status: RecorderStatus;
+  is_draft?: boolean;
   sample_rate: number;
   segments: RecorderSegment[];
   recovery_reason?: string;
@@ -44,8 +47,17 @@ let partialHandler: Handler<{
   revision: number;
   text: string;
 }> | null = null;
+let recorderErrorHandler: Handler<{
+  session_id?: number;
+  message: string;
+}> | null = null;
+
+const { createRecorderDraftMock } = vi.hoisted(() => ({
+  createRecorderDraftMock: vi.fn(),
+}));
 
 vi.mock("./ipc", () => ({
+  createRecorderDraft: createRecorderDraftMock,
   listRecorderSessions: vi.fn(async () => []),
   openRecorderSession: vi.fn(),
   renameRecorderSession: vi.fn(),
@@ -96,7 +108,12 @@ vi.mock("./ipc", () => ({
       partialHandler = null;
     };
   }),
-  onRecorderError: vi.fn(async () => () => {}),
+  onRecorderError: vi.fn(async (handler: Handler<unknown>) => {
+    recorderErrorHandler = handler as typeof recorderErrorHandler;
+    return () => {
+      recorderErrorHandler = null;
+    };
+  }),
 }));
 
 const FIRST_SEGMENT: RecorderSegment = {
@@ -124,6 +141,15 @@ const SECOND_SESSION: RecorderSession = {
   segments: [{ ...FIRST_SEGMENT, id: 202, text: "Second phrase" }],
 };
 
+const DRAFT_SESSION: RecorderSession = {
+  ...SESSION,
+  id: 3,
+  title: "Recording draft",
+  duration_ms: 0,
+  segments: [],
+  is_draft: true,
+};
+
 function renderRecorder(meetingTranscriptionActive = false) {
   return render(
     <RecorderView
@@ -141,6 +167,7 @@ beforeEach(() => {
   sessionHandler = null;
   committedHandler = null;
   partialHandler = null;
+  recorderErrorHandler = null;
   vi.mocked(ipc.listRecorderSessions).mockResolvedValue([SESSION]);
   vi.mocked(ipc.openRecorderSession).mockResolvedValue(SESSION);
   vi.mocked(ipc.renameRecorderSession).mockImplementation(
@@ -162,6 +189,7 @@ beforeEach(() => {
     ...SESSION,
     status: "recording",
   });
+  createRecorderDraftMock.mockResolvedValue(DRAFT_SESSION);
   vi.mocked(ipc.updateRecorderSegment).mockImplementation(
     async (_sessionId, _segmentId, text) => ({ ...FIRST_SEGMENT, text }),
   );
@@ -186,6 +214,97 @@ beforeEach(() => {
 });
 
 describe("Recorder mode", () => {
+  it("creates and selects a durable recording draft as soon as plus is clicked", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "New recording" }),
+    );
+
+    expect(createRecorderDraftMock).toHaveBeenCalledOnce();
+    expect(
+      screen.getByRole("button", { name: "Open Recording draft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Recording draft" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Rename recording" }),
+    ).toBeEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Start" }));
+    expect(ipc.startRecorderSession).toHaveBeenCalledWith(3);
+  });
+
+  it("guards Recorder Start synchronously while permission preflight is pending", async () => {
+    let resolvePermission!: (value: ipc.MicrophonePermissionStatus) => void;
+    vi.mocked(ipc.getMicrophonePermissionStatus).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePermission = resolve;
+        }),
+    );
+    renderRecorder();
+    const start = await screen.findByRole("button", { name: "Start" });
+    await waitFor(() => expect(start).toBeEnabled());
+
+    act(() => {
+      start.click();
+      start.click();
+    });
+
+    expect(ipc.getMicrophonePermissionStatus).toHaveBeenCalledOnce();
+    expect(start).toBeDisabled();
+    await act(async () => resolvePermission("authorized"));
+    await waitFor(() =>
+      expect(ipc.startRecorderSession).toHaveBeenCalledOnce(),
+    );
+  });
+
+  it("keeps Recorder Start pending when the workspace unmounts during preflight", async () => {
+    let resolvePermission!: (value: ipc.MicrophonePermissionStatus) => void;
+    vi.mocked(ipc.getMicrophonePermissionStatus).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolvePermission = resolve;
+        }),
+    );
+    function Harness() {
+      const [recorderVisible, setRecorderVisible] = useState(true);
+      const [startPending, setStartPending] = useState(false);
+      return recorderVisible ? (
+        <RecorderView
+          onSelectMeeting={() => setRecorderVisible(false)}
+          onSelectStreaming={() => {}}
+          onOpenSettings={() => {}}
+          meetingTranscriptionActive={false}
+          recorderStartPending={startPending}
+          onRecorderStartPendingChange={setStartPending}
+        />
+      ) : (
+        <button type="button" onClick={() => setRecorderVisible(true)}>
+          Return to Recorder
+        </button>
+      );
+    }
+    const user = userEvent.setup();
+    render(<Harness />);
+    const start = await screen.findByRole("button", { name: "Start" });
+    await waitFor(() => expect(start).toBeEnabled());
+    await user.click(start);
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Return to Recorder" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    await act(async () => resolvePermission("authorized"));
+    await waitFor(() =>
+      expect(ipc.startRecorderSession).toHaveBeenCalledOnce(),
+    );
+  });
+
   it("is the third ModeToggle destination", async () => {
     const selectRecorder = vi.fn();
     const user = userEvent.setup();
@@ -216,8 +335,10 @@ describe("Recorder mode", () => {
     );
     expect(ipc.openRecorderSession).toHaveBeenCalledWith(1);
     expect(
-      await screen.findByDisplayValue("Committed phrase"),
-    ).toBeInTheDocument();
+      await screen.findByRole("textbox", {
+        name: "Transcript segment 101",
+      }),
+    ).toHaveTextContent("Committed phrase");
 
     await user.click(screen.getByRole("button", { name: "Rename Voice note" }));
     const title = screen.getByRole("textbox", { name: "Recorder title" });
@@ -360,9 +481,11 @@ describe("Recorder mode", () => {
       });
       partialHandler?.({ session_id: 1, revision: 1, text: "stale partial" });
     });
-    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Committed phrase");
     expect(screen.getByText("Так давай попробуем")).toHaveClass(
-      "recorder-partial-stable",
+      "wp-streaming-partial-stable",
     );
     expect(screen.getByText("ещё раз").closest("em")).not.toBeNull();
     expect(screen.queryByText("stale partial")).not.toBeInTheDocument();
@@ -378,11 +501,130 @@ describe("Recorder mode", () => {
         language: "ru",
       });
     });
-    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
     expect(
-      screen.getByDisplayValue("Committed second phrase"),
-    ).toBeInTheDocument();
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Committed phrase");
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 102" }),
+    ).toHaveTextContent("Committed second phrase");
     expect(screen.queryByText("ещё раз")).not.toBeInTheDocument();
+  });
+
+  it("renders committed phrases as one Streaming-style transcript flow", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    const transcript = screen.getByLabelText("Recorder transcript");
+    expect(transcript.querySelector("textarea")).toBeNull();
+    expect(
+      transcript.querySelector(".streaming-transcript-text"),
+    ).not.toBeNull();
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Committed phrase");
+  });
+
+  it("follows live Recorder text, pauses after scrolling up, and resumes at the bottom", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await waitFor(() => expect(committedHandler).not.toBeNull());
+
+    const transcript = screen.getByLabelText(
+      "Recorder transcript",
+    ) as HTMLDivElement;
+    let scrollHeight = 1_000;
+    let scrollTop = 0;
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+
+    act(() => {
+      sessionHandler?.({ ...SESSION, status: "recording" });
+      liveHandler?.({
+        phase: "capturing",
+        session_id: 1,
+        source: "recorder",
+        generation: 1,
+        revision: 2,
+        error: null,
+      });
+      committedHandler?.({
+        session_id: 1,
+        id: 102,
+        start_sample: 24_000,
+        end_sample: 48_000,
+        text: "Newest phrase",
+        language: "en",
+      });
+    });
+    expect(scrollTop).toBe(1_000);
+    expect(
+      document.querySelector(".wp-streaming-autoscroll-tail"),
+    ).not.toBeNull();
+
+    scrollTop = 100;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_100;
+    act(() => {
+      partialHandler?.({
+        session_id: 1,
+        revision: 1,
+        text: "do not follow me yet",
+      });
+    });
+    expect(scrollTop).toBe(100);
+
+    scrollTop = 700;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_200;
+    act(() => {
+      partialHandler?.({
+        session_id: 1,
+        revision: 2,
+        text: "following again",
+      });
+    });
+    expect(scrollTop).toBe(1_200);
+
+    act(() => {
+      liveHandler?.({
+        phase: "stopping",
+        session_id: 1,
+        source: "recorder",
+        generation: 1,
+        revision: 3,
+        error: null,
+      });
+    });
+    scrollHeight = 1_300;
+    act(() => {
+      committedHandler?.({
+        session_id: 1,
+        id: 103,
+        start_sample: 48_000,
+        end_sample: 72_000,
+        text: "Final phrase",
+        language: "en",
+      });
+    });
+    expect(scrollTop).toBe(1_300);
+    expect(
+      document.querySelector(".wp-streaming-autoscroll-tail"),
+    ).not.toBeNull();
   });
 
   it("renders authoritative lifecycle states and restores active capture on remount", async () => {
@@ -461,8 +703,10 @@ describe("Recorder mode", () => {
       expect(ipc.openRecorderSession).toHaveBeenCalledWith(1),
     );
     expect(
-      await screen.findByDisplayValue("Restored committed phrase"),
-    ).toBeInTheDocument();
+      await screen.findByRole("textbox", {
+        name: "Transcript segment 101",
+      }),
+    ).toHaveTextContent("Restored committed phrase");
     act(() => {
       partialHandler?.({
         session_id: 1,
@@ -475,7 +719,62 @@ describe("Recorder mode", () => {
     expect(ipc.stopRecorderSession).toHaveBeenCalledOnce();
   });
 
+  it("scopes a Recorder callback failure to its failed session when another recording is opened", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([
+      SESSION,
+      SECOND_SESSION,
+    ]);
+    vi.mocked(ipc.openRecorderSession).mockImplementation(async (id) =>
+      id === SECOND_SESSION.id ? SECOND_SESSION : SESSION,
+    );
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await waitFor(() => expect(recorderErrorHandler).not.toBeNull());
+
+    act(() => {
+      liveHandler!({
+        phase: "error",
+        session_id: SESSION.id,
+        source: "recorder",
+        generation: 1,
+        revision: 1,
+        error: "Recorder callback buffer pool was exhausted",
+      });
+      recorderErrorHandler!({
+        session_id: SESSION.id,
+        message: "Recorder callback buffer pool was exhausted",
+      });
+    });
+    expect(screen.getByRole("status")).toHaveTextContent("Error");
+
+    await user.click(screen.getByRole("button", { name: "Open Second note" }));
+    await screen.findByRole("textbox", { name: "Transcript segment 202" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Completed");
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      within(screen.getByRole("listitem", { name: "Voice note" })).getByRole(
+        "img",
+      ),
+    ).toHaveAccessibleName("Error");
+    expect(
+      within(screen.getByRole("listitem", { name: "Second note" })).getByRole(
+        "img",
+      ),
+    ).toHaveAccessibleName("Completed");
+  });
+
   it("edits, copies and exports the reopened recording", async () => {
+    let resolveUpdate!: (segment: RecorderSegment) => void;
+    vi.mocked(ipc.updateRecorderSegment).mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveUpdate = resolve;
+        }),
+    );
     const writeText = vi
       .spyOn(navigator.clipboard, "writeText")
       .mockResolvedValue();
@@ -485,24 +784,131 @@ describe("Recorder mode", () => {
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
 
-    const segment = await screen.findByDisplayValue("Committed phrase");
-    fireEvent.change(segment, { target: { value: "Edited phrase" } });
+    const segment = await screen.findByRole("textbox", {
+      name: "Transcript segment 101",
+    });
+    fireEvent.focus(segment);
+    segment.textContent = "Edited phrase";
+    fireEvent.input(segment);
+    expect(
+      screen.getByRole("button", { name: "Prettify transcript" }),
+    ).toBeDisabled();
     fireEvent.blur(segment);
-    await waitFor(() =>
-      expect(ipc.updateRecorderSegment).toHaveBeenCalledWith(
-        1,
-        101,
-        "Edited phrase",
-      ),
-    );
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+    expect(ipc.updateRecorderSegment).toHaveBeenCalledWith(
+      1,
+      101,
+      "Edited phrase",
+    );
     expect(writeText).toHaveBeenCalledWith("Edited phrase");
     await user.click(screen.getByRole("button", { name: "Export WAV" }));
     expect(ipc.exportRecorderWav).toHaveBeenCalledWith(1);
     await user.click(screen.getByRole("button", { name: "Export transcript" }));
     expect(ipc.saveTextDialog).toHaveBeenCalledWith(
       "Edited phrase",
+      "Voice note.txt",
+    );
+    await act(async () =>
+      resolveUpdate({ ...FIRST_SEGMENT, text: "Edited phrase" }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Prettify transcript" }),
+      ).toBeEnabled(),
+    );
+  });
+
+  it("restores persisted segment text when an inline edit cannot be saved", async () => {
+    vi.mocked(ipc.updateRecorderSegment).mockRejectedValueOnce(
+      new Error("save failed"),
+    );
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    const segment = await screen.findByRole("textbox", {
+      name: "Transcript segment 101",
+    });
+    segment.textContent = "Unsaved phrase";
+    fireEvent.input(segment);
+    fireEvent.blur(segment);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("save failed");
+    expect(segment).toHaveTextContent("Committed phrase");
+  });
+
+  it("serializes repeated saves of one segment so the newest edit wins", async () => {
+    const resolvers: Array<(segment: RecorderSegment) => void> = [];
+    vi.mocked(ipc.updateRecorderSegment).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    let segment = await screen.findByRole("textbox", {
+      name: "Transcript segment 101",
+    });
+    segment.textContent = "First edit";
+    fireEvent.input(segment);
+    fireEvent.blur(segment);
+    segment = screen.getByRole("textbox", { name: "Transcript segment 101" });
+    segment.textContent = "Newest edit";
+    fireEvent.input(segment);
+    fireEvent.blur(segment);
+
+    await waitFor(() =>
+      expect(ipc.updateRecorderSegment).toHaveBeenCalledTimes(1),
+    );
+    await act(async () =>
+      resolvers[0]({ ...FIRST_SEGMENT, text: "First edit" }),
+    );
+    await waitFor(() =>
+      expect(ipc.updateRecorderSegment).toHaveBeenCalledTimes(2),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Newest edit");
+    await act(async () =>
+      resolvers[1]({ ...FIRST_SEGMENT, text: "Newest edit" }),
+    );
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Newest edit");
+  });
+
+  it("copies and exports the same paragraph flow that Recorder displays", async () => {
+    const writeText = vi
+      .spyOn(navigator.clipboard, "writeText")
+      .mockResolvedValue();
+    vi.mocked(ipc.openRecorderSession).mockResolvedValueOnce({
+      ...SESSION,
+      segments: [
+        FIRST_SEGMENT,
+        { ...FIRST_SEGMENT, id: 102, text: "Second phrase" },
+      ],
+    });
+    const user = userEvent.setup();
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    const flow = screen.getByLabelText("Recorder transcript");
+    expect(flow).toHaveTextContent("Committed phrase Second phrase");
+    await user.click(screen.getByRole("button", { name: "Copy transcript" }));
+    expect(writeText).toHaveBeenCalledWith("Committed phrase Second phrase");
+    await user.click(screen.getByRole("button", { name: "Export transcript" }));
+    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
+      "Committed phrase Second phrase",
       "Voice note.txt",
     );
   });
@@ -528,14 +934,16 @@ describe("Recorder mode", () => {
       "Polished committed phrase.",
     );
     expect(
-      screen.queryByDisplayValue("Committed phrase"),
+      screen.queryByRole("textbox", { name: "Transcript segment 101" }),
     ).not.toBeInTheDocument();
 
     await user.click(
       screen.getByRole("button", { name: "Restore original transcript" }),
     );
     expect(ipc.revertRecorderPolish).toHaveBeenCalledWith(1);
-    expect(screen.getByDisplayValue("Committed phrase")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 101" }),
+    ).toHaveTextContent("Committed phrase");
   });
 
   it("clears the transcript only after confirmation", async () => {
@@ -551,7 +959,7 @@ describe("Recorder mode", () => {
 
     expect(ipc.clearRecorderTranscript).toHaveBeenCalledWith(1);
     expect(
-      screen.queryByDisplayValue("Committed phrase"),
+      screen.queryByRole("textbox", { name: "Transcript segment 101" }),
     ).not.toBeInTheDocument();
   });
 
@@ -581,7 +989,9 @@ describe("Recorder mode", () => {
     await user.click(screen.getByRole("button", { name: "Open Second note" }));
     await act(async () => resolvePolish("Polish for the first session"));
 
-    expect(screen.getByDisplayValue("Second phrase")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 202" }),
+    ).toHaveTextContent("Second phrase");
     expect(
       screen.queryByText("Polish for the first session"),
     ).not.toBeInTheDocument();
@@ -618,7 +1028,9 @@ describe("Recorder mode", () => {
       rejectPolish(new Error("obsolete first-session failure")),
     );
 
-    expect(screen.getByDisplayValue("Second phrase")).toBeInTheDocument();
+    expect(
+      screen.getByRole("textbox", { name: "Transcript segment 202" }),
+    ).toHaveTextContent("Second phrase");
     expect(
       screen.queryByText(/obsolete first-session failure/i),
     ).not.toBeInTheDocument();

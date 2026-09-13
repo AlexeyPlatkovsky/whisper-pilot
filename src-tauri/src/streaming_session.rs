@@ -27,12 +27,18 @@ const VAD_SEARCH_SAMPLES: usize = SAMPLE_RATE as usize * 2;
 const VAD_FRAME_SAMPLES: usize = SAMPLE_RATE as usize / 50;
 const VAD_MIN_SILENCE_SAMPLES: usize = SAMPLE_RATE as usize / 10;
 const VAD_SILENCE_RMS: f64 = 0.003;
+const VAD_MAX_SILENCE_RMS: f64 = 0.012;
+const VAD_SPEECH_REFERENCE_SAMPLES: usize = SAMPLE_RATE as usize;
+const VAD_SPEECH_TO_SILENCE_RATIO: f64 = 0.25;
+const HARD_BOUNDARY_OVERLAP_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 4;
 const CONTEXT_MAX_CHARS: usize = 240;
 
 /// A half-second is long enough to preserve a spoken trailing word without
 /// decoding callback noise at shutdown.
 const FINAL_MIN_SAMPLES: usize = SAMPLE_RATE as usize / 2;
 const MEANINGFUL_AUDIO_RMS: f64 = 0.001;
+const VAD_STEADY_NOISE_MAX_RMS: f64 = 0.012;
+const VAD_STEADY_NOISE_MAX_RELATIVE_RANGE: f64 = 0.08;
 
 /// At most this many decoded partial/committed results may wait for
 /// persistence and renderer emission. A full queue backpressures the decoder;
@@ -166,6 +172,8 @@ pub enum WindowResultKind {
     Gap,
 }
 
+pub type SessionDecodeProfile = transcribe::DecodeProfile;
+
 pub struct WindowResult {
     pub kind: WindowResultKind,
     pub window_index: u64,
@@ -183,7 +191,14 @@ pub trait SessionDecoder {
         &mut self,
         samples: &[f32],
         context: Option<&str>,
+        profile: SessionDecodeProfile,
     ) -> crate::error::Result<Transcription>;
+
+    /// Whether segment timestamps are precise enough to prove that a segment
+    /// belongs wholly to prepended boundary-overlap audio.
+    fn has_reliable_segment_timestamps(&self) -> bool {
+        false
+    }
 }
 
 /// The production [`SessionDecoder`]: owns the session's single
@@ -208,8 +223,18 @@ impl SessionDecoder for WhisperSessionDecoder {
         &mut self,
         samples: &[f32],
         context: Option<&str>,
+        profile: SessionDecodeProfile,
     ) -> crate::error::Result<Transcription> {
-        transcribe::transcribe_with_state_and_prompt(&mut self.state, samples, context)
+        transcribe::transcribe_with_state_and_prompt_profile(
+            &mut self.state,
+            samples,
+            context,
+            profile,
+        )
+    }
+
+    fn has_reliable_segment_timestamps(&self) -> bool {
+        true
     }
 }
 
@@ -234,6 +259,7 @@ impl SessionDecoder for QwenGgufSessionDecoder {
         &mut self,
         samples: &[f32],
         context: Option<&str>,
+        _profile: SessionDecodeProfile,
     ) -> crate::error::Result<Transcription> {
         self.model.transcribe_window_with_context(samples, context)
     }
@@ -257,12 +283,17 @@ fn take_commit_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
     let scan_end = buffer.len().min(WINDOW_SAMPLES);
     if scan_end >= NATURAL_COMMIT_MIN_SAMPLES + NATURAL_PAUSE_SAMPLES {
         let mut quiet_start: Option<usize> = None;
+        let mut quiet_threshold = VAD_SILENCE_RMS;
         for start in (NATURAL_COMMIT_MIN_SAMPLES..scan_end).step_by(VAD_FRAME_SAMPLES) {
             let end = (start + VAD_FRAME_SAMPLES).min(scan_end);
-            if root_mean_square(&buffer[start..end]) <= VAD_SILENCE_RMS {
+            let frame_rms = root_mean_square(&buffer[start..end]);
+            if quiet_start.is_none() {
+                quiet_threshold = silence_threshold_before(buffer, start);
+            }
+            if frame_rms <= quiet_threshold {
                 let run_start = *quiet_start.get_or_insert(start);
                 if end.saturating_sub(run_start) >= NATURAL_PAUSE_SAMPLES
-                    && contains_meaningful_audio(&buffer[..run_start])
+                    && contains_likely_speech(&buffer[..run_start])
                 {
                     return Some(buffer.drain(..end).collect());
                 }
@@ -276,20 +307,30 @@ fn take_commit_window(buffer: &mut Vec<f32>) -> Option<Vec<f32>> {
         return None;
     }
     let search_start = WINDOW_SAMPLES.saturating_sub(VAD_SEARCH_SAMPLES);
-    let mut quietest: Option<(usize, f64)> = None;
+    let mut quietest: Option<(usize, f64, f64)> = None;
     for start in
         (search_start..=WINDOW_SAMPLES - VAD_MIN_SILENCE_SAMPLES).step_by(VAD_FRAME_SAMPLES)
     {
         let end = start + VAD_MIN_SILENCE_SAMPLES;
         let rms = root_mean_square(&buffer[start..end]);
-        if quietest.map_or(true, |(_, current)| rms < current) {
-            quietest = Some((end, rms));
+        if quietest.map_or(true, |(_, current, _)| rms < current) {
+            quietest = Some((end, rms, silence_threshold_before(buffer, start)));
         }
     }
     let boundary = quietest
-        .filter(|(_, rms)| *rms <= VAD_SILENCE_RMS)
-        .map_or(WINDOW_SAMPLES, |(end, _)| end);
+        .filter(|(_, rms, threshold)| *rms <= *threshold)
+        .map_or(WINDOW_SAMPLES, |(end, _, _)| end);
     Some(buffer.drain(..boundary).collect())
+}
+
+/// Derive a pause threshold from the second immediately before a candidate
+/// boundary. This remains stable after a long utterance, unlike a percentile
+/// over the whole growing window, while steady room noise cannot bootstrap
+/// itself into being classified as speech followed by silence.
+fn silence_threshold_before(samples: &[f32], boundary: usize) -> f64 {
+    let reference_start = boundary.saturating_sub(VAD_SPEECH_REFERENCE_SAMPLES);
+    let reference_rms = root_mean_square(&samples[reference_start..boundary]);
+    (reference_rms * VAD_SPEECH_TO_SILENCE_RATIO).clamp(VAD_SILENCE_RMS, VAD_MAX_SILENCE_RMS)
 }
 
 /// Milliseconds into the session that window `window_index` starts, given
@@ -302,8 +343,27 @@ fn samples_to_ms(samples: usize) -> u64 {
     samples as u64 * 1_000 / SAMPLE_RATE as u64
 }
 
-fn contains_meaningful_audio(samples: &[f32]) -> bool {
-    root_mean_square(samples) >= MEANINGFUL_AUDIO_RMS
+/// Conservative energy-only gate for deciding whether ASR should run at all.
+/// It rejects only silence/below-threshold input and confidently stationary
+/// low-level room or fan noise. Any varying low-gain signal fails safe toward
+/// decode because silently deleting quiet speech is worse than a possible
+/// noise-window hallucination.
+fn contains_likely_speech(samples: &[f32]) -> bool {
+    let mut minimum = f64::MAX;
+    let mut maximum = 0.0_f64;
+    for frame in samples.chunks(VAD_FRAME_SAMPLES) {
+        if frame.is_empty() {
+            continue;
+        }
+        let rms = root_mean_square(frame);
+        minimum = minimum.min(rms);
+        maximum = maximum.max(rms);
+    }
+    if maximum < MEANINGFUL_AUDIO_RMS {
+        return false;
+    }
+    let relative_range = (maximum - minimum) / maximum;
+    maximum > VAD_STEADY_NOISE_MAX_RMS || relative_range > VAD_STEADY_NOISE_MAX_RELATIVE_RANGE
 }
 
 fn root_mean_square(samples: &[f32]) -> f64 {
@@ -324,21 +384,38 @@ fn root_mean_square(samples: &[f32]) -> f64 {
 fn decode_result<D: SessionDecoder>(
     decoder: &mut std::result::Result<D, String>,
     samples: &[f32],
+    logical_sample_count: usize,
     kind: WindowResultKind,
     window_index: u64,
     start_ms: u64,
     context: Option<&str>,
+    leading_overlap_samples: usize,
 ) -> WindowResult {
     let decode_start = Instant::now();
-    let outcome = match decoder {
-        Ok(decoder) => decoder.decode_window(samples, context),
+    let profile = match kind {
+        WindowResultKind::Partial => SessionDecodeProfile::FastPartial,
+        WindowResultKind::Committed | WindowResultKind::Gap => SessionDecodeProfile::Quality,
+    };
+    let timestamps_reliable = decoder
+        .as_ref()
+        .is_ok_and(SessionDecoder::has_reliable_segment_timestamps);
+    let mut outcome = match decoder {
+        Ok(decoder) => decoder.decode_window(samples, context, profile),
         Err(message) => Err(AppError::Transcribe(message.clone())),
     };
+    if leading_overlap_samples > 0 && timestamps_reliable {
+        if let Ok(transcription) = outcome.as_mut() {
+            transcribe::remove_timestamped_audio_overlap(
+                transcription,
+                samples_to_ms(leading_overlap_samples),
+            );
+        }
+    }
     WindowResult {
         kind,
         window_index,
         start_ms,
-        end_ms: start_ms + samples_to_ms(samples.len()),
+        end_ms: start_ms + samples_to_ms(logical_sample_count),
         decode_ms: decode_start.elapsed().as_millis() as u64,
         outcome,
     }
@@ -383,6 +460,7 @@ pub fn run_windowed_decode_from<D, F>(
     let mut expected_input_sample = 0_u64;
     let mut last_partial_len = 0_usize;
     let mut committed_context = String::new();
+    let mut boundary_overlap = Vec::<f32>::new();
     // Kept as the message rather than the AppError (not Clone): a creation
     // failure is rebuilt per window so each fail-open result reads exactly
     // like a per-window decode failure.
@@ -401,6 +479,7 @@ pub fn run_windowed_decode_from<D, F>(
                     timeline_start_ms,
                     buffer_start_sample,
                     &mut committed_context,
+                    &mut boundary_overlap,
                 );
                 break;
             }
@@ -409,7 +488,7 @@ pub fn run_windowed_decode_from<D, F>(
         if chunk.start_sample > expected_input_sample {
             let gap_start_sample = if !buffer.is_empty()
                 && buffer.len() < FINAL_MIN_SAMPLES
-                && contains_meaningful_audio(&buffer)
+                && contains_likely_speech(&buffer)
             {
                 buffer_start_sample
             } else {
@@ -423,6 +502,7 @@ pub fn run_windowed_decode_from<D, F>(
                 timeline_start_ms,
                 buffer_start_sample,
                 &mut committed_context,
+                &mut boundary_overlap,
             ) || !send_capture_gap(
                 &results_tx,
                 &mut window_index,
@@ -434,6 +514,7 @@ pub fn run_windowed_decode_from<D, F>(
             }
             buffer_start_sample = chunk.start_sample;
             last_partial_len = 0;
+            boundary_overlap.clear();
         }
 
         let overlap = expected_input_sample.saturating_sub(chunk.start_sample) as usize;
@@ -450,40 +531,59 @@ pub fn run_windowed_decode_from<D, F>(
             .saturating_add(chunk.samples.len() as u64);
         expected_input_sample = expected_input_sample.max(delivered_end);
 
+        // Keep the rolling buffer bounded without invoking ASR on a full
+        // hard-cap span that never established speech. Advancing the sample
+        // clock preserves the position of any later real utterance.
+        while buffer.len() >= WINDOW_SAMPLES && !contains_likely_speech(&buffer[..WINDOW_SAMPLES]) {
+            buffer.drain(..WINDOW_SAMPLES);
+            buffer_start_sample = buffer_start_sample.saturating_add(WINDOW_SAMPLES as u64);
+            boundary_overlap.clear();
+            last_partial_len = 0;
+        }
+
         while let Some(window) = take_commit_window(&mut buffer) {
             let start_ms =
                 timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
+            let leading_overlap_samples = boundary_overlap.len();
+            let decode_samples = with_boundary_overlap(&boundary_overlap, &window);
             let result = decode_result(
                 &mut decoder,
-                &window,
+                decode_samples.as_ref(),
+                window.len(),
                 WindowResultKind::Committed,
                 window_index,
                 start_ms,
                 (!committed_context.is_empty()).then_some(committed_context.as_str()),
+                leading_overlap_samples,
             );
             update_committed_context(&mut committed_context, &result);
             if results_tx.send(result).is_err() {
                 return;
             }
             buffer_start_sample = buffer_start_sample.saturating_add(window.len() as u64);
+            update_boundary_overlap(&mut boundary_overlap, &window);
             window_index += 1;
             last_partial_len = 0;
         }
 
         if buffer.len() >= PARTIAL_MIN_SAMPLES
             && buffer.len().saturating_sub(last_partial_len) >= PARTIAL_STEP_SAMPLES
-            && contains_meaningful_audio(&buffer)
+            && contains_likely_speech(&buffer)
         {
             let start_ms =
                 timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
+            let leading_overlap_samples = boundary_overlap.len();
+            let decode_samples = with_boundary_overlap(&boundary_overlap, &buffer);
             if results_tx
                 .send(decode_result(
                     &mut decoder,
-                    &buffer,
+                    decode_samples.as_ref(),
+                    buffer.len(),
                     WindowResultKind::Partial,
                     window_index,
                     start_ms,
                     (!committed_context.is_empty()).then_some(committed_context.as_str()),
+                    leading_overlap_samples,
                 ))
                 .is_err()
             {
@@ -495,7 +595,7 @@ pub fn run_windowed_decode_from<D, F>(
         if chunk.captured_end_sample > expected_input_sample {
             let gap_start_sample = if !buffer.is_empty()
                 && buffer.len() < FINAL_MIN_SAMPLES
-                && contains_meaningful_audio(&buffer)
+                && contains_likely_speech(&buffer)
             {
                 buffer_start_sample
             } else {
@@ -509,6 +609,7 @@ pub fn run_windowed_decode_from<D, F>(
                 timeline_start_ms,
                 buffer_start_sample,
                 &mut committed_context,
+                &mut boundary_overlap,
             ) || !send_capture_gap(
                 &results_tx,
                 &mut window_index,
@@ -521,8 +622,28 @@ pub fn run_windowed_decode_from<D, F>(
             expected_input_sample = chunk.captured_end_sample;
             buffer_start_sample = expected_input_sample;
             last_partial_len = 0;
+            boundary_overlap.clear();
         }
     }
+}
+
+fn with_boundary_overlap<'a>(overlap: &[f32], samples: &'a [f32]) -> std::borrow::Cow<'a, [f32]> {
+    if overlap.is_empty() {
+        return std::borrow::Cow::Borrowed(samples);
+    }
+    let mut joined = Vec::with_capacity(overlap.len() + samples.len());
+    joined.extend_from_slice(overlap);
+    joined.extend_from_slice(samples);
+    std::borrow::Cow::Owned(joined)
+}
+
+fn update_boundary_overlap(overlap: &mut Vec<f32>, committed: &[f32]) {
+    overlap.clear();
+    if committed.len() < WINDOW_SAMPLES {
+        return;
+    }
+    let keep = HARD_BOUNDARY_OVERLAP_SAMPLES.min(committed.len());
+    overlap.extend_from_slice(&committed[committed.len() - keep..]);
 }
 
 fn sample_position_to_ms(sample: u64) -> u64 {
@@ -537,17 +658,22 @@ fn flush_trailing_buffer<D: SessionDecoder>(
     timeline_start_ms: u64,
     buffer_start_sample: u64,
     committed_context: &mut String,
+    boundary_overlap: &mut Vec<f32>,
 ) -> bool {
-    let should_decode = buffer.len() >= FINAL_MIN_SAMPLES && contains_meaningful_audio(buffer);
+    let should_decode = buffer.len() >= FINAL_MIN_SAMPLES && contains_likely_speech(buffer);
     if should_decode {
         let start_ms = timeline_start_ms.saturating_add(sample_position_to_ms(buffer_start_sample));
+        let leading_overlap_samples = boundary_overlap.len();
+        let decode_samples = with_boundary_overlap(boundary_overlap, buffer);
         let result = decode_result(
             decoder,
-            buffer,
+            decode_samples.as_ref(),
+            buffer.len(),
             WindowResultKind::Committed,
             *window_index,
             start_ms,
             (!committed_context.is_empty()).then_some(committed_context.as_str()),
+            leading_overlap_samples,
         );
         update_committed_context(committed_context, &result);
         if results_tx.send(result).is_err() {
@@ -556,6 +682,7 @@ fn flush_trailing_buffer<D: SessionDecoder>(
         *window_index = window_index.saturating_add(1);
     }
     buffer.clear();
+    boundary_overlap.clear();
     true
 }
 
@@ -704,6 +831,41 @@ mod tests {
     }
 
     #[test]
+    fn commit_window_adapts_to_a_steady_background_noise_floor() {
+        let speech_samples = SAMPLE_RATE as usize * 3;
+        let pause_samples = NATURAL_PAUSE_SAMPLES;
+        let mut buffer = vec![0.04_f32; speech_samples];
+        buffer.extend(vec![0.006_f32; pause_samples]);
+
+        let window = take_commit_window(&mut buffer).expect("background-relative pause commits");
+
+        assert_eq!(window.len(), speech_samples + pause_samples);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn commit_window_adapts_after_a_long_utterance() {
+        let speech_samples = SAMPLE_RATE as usize * 12;
+        let pause_samples = NATURAL_PAUSE_SAMPLES;
+        let mut buffer = vec![0.04_f32; speech_samples];
+        buffer.extend(vec![0.006_f32; pause_samples]);
+
+        let window = take_commit_window(&mut buffer)
+            .expect("a noisy pause must still commit after a long utterance");
+
+        assert_eq!(window.len(), speech_samples + pause_samples);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
+    fn steady_background_noise_without_speech_is_not_a_natural_commit() {
+        let mut buffer = vec![0.006_f32; SAMPLE_RATE as usize * 4];
+
+        assert!(take_commit_window(&mut buffer).is_none());
+        assert_eq!(buffer.len(), SAMPLE_RATE as usize * 4);
+    }
+
+    #[test]
     fn window_start_ms_is_zero_for_the_first_window() {
         assert_eq!(window_start_ms(0), 0);
     }
@@ -824,6 +986,7 @@ mod tests {
             &mut self,
             samples: &[f32],
             _context: Option<&str>,
+            _profile: SessionDecodeProfile,
         ) -> crate::error::Result<Transcription> {
             self.decoded.push(samples.len());
             Ok(Transcription {
@@ -838,7 +1001,7 @@ mod tests {
         std::sync::mpsc::Receiver<CapturedAudioChunk>,
     ) {
         let (tx, rx) = std::sync::mpsc::channel();
-        tx.send(captured_chunk(0, vec![0.0_f32; WINDOW_SAMPLES * 2]))
+        tx.send(captured_chunk(0, vec![0.05_f32; WINDOW_SAMPLES * 2]))
             .expect("send two windows of samples");
         (tx, rx)
     }
@@ -1003,6 +1166,76 @@ mod tests {
     }
 
     #[test]
+    fn steady_room_noise_never_emits_a_partial_or_hard_commit() {
+        let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(
+                0,
+                vec![0.006_f32; WINDOW_SAMPLES + SAMPLE_RATE as usize],
+            ))
+            .expect("send steady room noise past the hard boundary");
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+
+        let decoded = Arc::clone(&decoded_lengths);
+        run_windowed_decode(
+            move || {
+                Ok(RecordingDecoder {
+                    decoded_lengths: decoded,
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert!(results_rx.try_iter().next().is_none());
+        assert!(
+            decoded_lengths.lock().unwrap().is_empty(),
+            "steady background noise must not invoke the ASR model"
+        );
+    }
+
+    #[test]
+    fn varying_low_gain_speech_reaches_the_decoder() {
+        let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        let samples = (0..WINDOW_SAMPLES)
+            .map(|index| {
+                if (index / VAD_FRAME_SAMPLES) % 2 == 0 {
+                    0.003_f32
+                } else {
+                    0.006_f32
+                }
+            })
+            .collect();
+        samples_tx
+            .send(captured_chunk(0, samples))
+            .expect("send low-gain speech-like signal");
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+
+        let decoded = Arc::clone(&decoded_lengths);
+        run_windowed_decode(
+            move || {
+                Ok(RecordingDecoder {
+                    decoded_lengths: decoded,
+                })
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert!(results_rx.try_iter().next().is_some());
+        assert!(
+            !decoded_lengths.lock().unwrap().is_empty(),
+            "ambiguous low-gain audio must fail safe toward ASR, not silent deletion"
+        );
+    }
+
+    #[test]
     fn capture_gaps_are_explicit_and_keep_the_original_sample_timeline() {
         let decoded_lengths = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (samples_tx, samples_rx) = std::sync::mpsc::channel();
@@ -1147,6 +1380,39 @@ mod tests {
     }
 
     #[test]
+    fn live_partials_use_fast_decode_and_commits_use_quality_decode() {
+        let profiles = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(0, vec![0.05_f32; PARTIAL_MIN_SAMPLES]))
+            .unwrap();
+        samples_tx
+            .send(captured_chunk(
+                PARTIAL_MIN_SAMPLES as u64,
+                vec![0.05_f32; WINDOW_SAMPLES - PARTIAL_MIN_SAMPLES],
+            ))
+            .unwrap();
+        drop(samples_tx);
+        let (results_tx, _results_rx) = result_channel();
+        let recorded = Arc::clone(&profiles);
+
+        run_windowed_decode(
+            move || Ok(ProfileRecordingDecoder { profiles: recorded }),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        assert_eq!(
+            *profiles.lock().unwrap(),
+            vec![
+                SessionDecodeProfile::FastPartial,
+                SessionDecodeProfile::Quality
+            ]
+        );
+    }
+
+    #[test]
     fn confirmed_text_is_context_for_the_next_audio_window() {
         let contexts = Arc::new(std::sync::Mutex::new(Vec::new()));
         let (samples_tx, samples_rx) = std::sync::mpsc::channel();
@@ -1176,8 +1442,142 @@ mod tests {
         );
     }
 
+    // WP-113 balanced decoding: the audio overlap at a forced boundary can
+    // make the model repeat the confirmed suffix at the start of the next
+    // committed result. Reconciliation removes only that boundary copy; the
+    // already-published prefix remains byte-for-byte stable.
+    #[test]
+    fn committed_boundary_overlap_is_removed_without_rewriting_confirmed_prefix() {
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        samples_tx
+            .send(captured_chunk(0, vec![0.05_f32; WINDOW_SAMPLES * 2]))
+            .unwrap();
+        let (results_tx, results_rx) = result_channel();
+        drop(samples_tx);
+
+        run_windowed_decode(
+            || Ok(TimestampedOverlapDecoder { decode_index: 0 }),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(result_text(&results[0]), "сегодня обсуждаем план релиза");
+        assert_eq!(
+            result_text(&results[1]),
+            "на завтра",
+            "the repeated suffix/prefix comes from boundary overlap and must not be published twice"
+        );
+    }
+
+    #[test]
+    fn hard_boundary_second_decode_includes_audio_from_previous_window() {
+        let decoded = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let (samples_tx, samples_rx) = std::sync::mpsc::channel();
+        let samples = (0..WINDOW_SAMPLES * 2)
+            .map(|index| 0.02_f32 + index as f32 / (WINDOW_SAMPLES * 4) as f32)
+            .collect::<Vec<_>>();
+        let first_non_overlap_sample = samples[WINDOW_SAMPLES];
+        samples_tx.send(captured_chunk(0, samples)).unwrap();
+        drop(samples_tx);
+        let (results_tx, results_rx) = result_channel();
+        let recorded = Arc::clone(&decoded);
+
+        run_windowed_decode(
+            move || Ok(BoundaryRecordingDecoder { decoded: recorded }),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        let decoded = decoded.lock().unwrap();
+        assert_eq!(results.len(), 2, "overlap must not create a third window");
+        assert_eq!(decoded.len(), 2);
+        assert!(
+            decoded[1].0 > WINDOW_SAMPLES,
+            "the second decode must include a short tail from the first logical window"
+        );
+        assert!(
+            decoded[1].1 < first_non_overlap_sample,
+            "the second decode must start before the non-overlapping hard boundary"
+        );
+    }
+
+    // A full next utterance that happens to repeat the preceding phrase is
+    // real speech, not a partial suffix/prefix overlap. Do not erase it.
+    #[test]
+    fn genuine_adjacent_repeated_phrase_is_not_removed_as_boundary_overlap() {
+        let (samples_tx, samples_rx) = two_windows_channel();
+        let (results_tx, results_rx) = result_channel();
+        drop(samples_tx);
+
+        run_windowed_decode(
+            || Ok(SequenceDecoder::new(["давайте начнем", "давайте начнем"])),
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(result_text(&results[0]), "давайте начнем");
+        assert_eq!(result_text(&results[1]), "давайте начнем");
+    }
+
+    #[test]
+    fn genuine_repeated_prefix_with_a_continuation_is_not_removed() {
+        let (samples_tx, samples_rx) = two_windows_channel();
+        let (results_tx, results_rx) = result_channel();
+        drop(samples_tx);
+
+        run_windowed_decode(
+            || {
+                Ok(SequenceDecoder::new([
+                    "сегодня обсуждаем план релиза",
+                    "план релиза переносим на завтра",
+                ]))
+            },
+            samples_rx,
+            results_tx,
+            0,
+        );
+
+        let results: Vec<_> = results_rx.try_iter().collect();
+        assert_eq!(result_text(&results[0]), "сегодня обсуждаем план релиза");
+        assert_eq!(
+            result_text(&results[1]),
+            "план релиза переносим на завтра",
+            "text alone cannot prove that a repeated phrase came from overlap audio"
+        );
+    }
+
     struct ContextRecordingDecoder {
         contexts: Arc<std::sync::Mutex<Vec<Option<String>>>>,
+    }
+
+    struct ProfileRecordingDecoder {
+        profiles: Arc<std::sync::Mutex<Vec<SessionDecodeProfile>>>,
+    }
+
+    impl SessionDecoder for ProfileRecordingDecoder {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+            profile: SessionDecodeProfile,
+        ) -> crate::error::Result<Transcription> {
+            self.profiles.lock().unwrap().push(profile);
+            Ok(Transcription {
+                segments: vec![crate::transcribe::Segment {
+                    start_ms: 0,
+                    end_ms: samples_to_ms(samples.len()),
+                    text: "decoded".into(),
+                    speaker_id: None,
+                }],
+                language: "en".into(),
+            })
+        }
     }
 
     impl SessionDecoder for ContextRecordingDecoder {
@@ -1185,6 +1585,7 @@ mod tests {
             &mut self,
             samples: &[f32],
             context: Option<&str>,
+            _profile: SessionDecodeProfile,
         ) -> crate::error::Result<Transcription> {
             self.contexts
                 .lock()
@@ -1206,11 +1607,111 @@ mod tests {
         decoded_lengths: Arc<std::sync::Mutex<Vec<usize>>>,
     }
 
+    struct SequenceDecoder {
+        texts: std::collections::VecDeque<String>,
+    }
+
+    struct TimestampedOverlapDecoder {
+        decode_index: usize,
+    }
+
+    struct BoundaryRecordingDecoder {
+        decoded: Arc<std::sync::Mutex<Vec<(usize, f32)>>>,
+    }
+
+    impl SessionDecoder for BoundaryRecordingDecoder {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+            _profile: SessionDecodeProfile,
+        ) -> crate::error::Result<Transcription> {
+            self.decoded
+                .lock()
+                .unwrap()
+                .push((samples.len(), samples[0]));
+            Ok(Transcription {
+                segments: vec![],
+                language: "en".to_string(),
+            })
+        }
+    }
+
+    impl SequenceDecoder {
+        fn new<const N: usize>(texts: [&str; N]) -> Self {
+            Self {
+                texts: texts.into_iter().map(str::to_string).collect(),
+            }
+        }
+    }
+
+    impl SessionDecoder for SequenceDecoder {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+            _profile: SessionDecodeProfile,
+        ) -> crate::error::Result<Transcription> {
+            Ok(Transcription {
+                segments: vec![crate::transcribe::Segment {
+                    start_ms: 0,
+                    end_ms: samples_to_ms(samples.len()),
+                    text: self.texts.pop_front().expect("one result per window"),
+                    speaker_id: None,
+                }],
+                language: "ru".to_string(),
+            })
+        }
+    }
+
+    impl SessionDecoder for TimestampedOverlapDecoder {
+        fn decode_window(
+            &mut self,
+            samples: &[f32],
+            _context: Option<&str>,
+            _profile: SessionDecodeProfile,
+        ) -> crate::error::Result<Transcription> {
+            let segments = if self.decode_index == 0 {
+                vec![crate::transcribe::Segment {
+                    start_ms: 0,
+                    end_ms: samples_to_ms(samples.len()),
+                    text: "сегодня обсуждаем план релиза".to_string(),
+                    speaker_id: None,
+                }]
+            } else {
+                vec![
+                    crate::transcribe::Segment {
+                        start_ms: 0,
+                        end_ms: 700,
+                        text: "план релиза".to_string(),
+                        speaker_id: None,
+                    },
+                    crate::transcribe::Segment {
+                        start_ms: 700,
+                        end_ms: samples_to_ms(samples.len()),
+                        text: "на завтра".to_string(),
+                        speaker_id: None,
+                    },
+                ]
+            };
+            self.decode_index += 1;
+            Ok(Transcription {
+                segments,
+                language: "ru".to_string(),
+            })
+        }
+
+        fn has_reliable_segment_timestamps(&self) -> bool {
+            true
+        }
+    }
+
     impl SessionDecoder for RecordingDecoder {
         fn decode_window(
             &mut self,
             samples: &[f32],
             _context: Option<&str>,
+            _profile: SessionDecodeProfile,
         ) -> crate::error::Result<Transcription> {
             self.decoded_lengths
                 .lock()
@@ -1232,6 +1733,7 @@ mod tests {
             &mut self,
             samples: &[f32],
             _context: Option<&str>,
+            _profile: SessionDecodeProfile,
         ) -> crate::error::Result<Transcription> {
             let text = [
                 "first commit",

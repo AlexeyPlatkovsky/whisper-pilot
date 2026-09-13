@@ -660,38 +660,25 @@ body {
 }
 
 .recorder-transcript {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  gap: 2px;
 }
 
-.recorder-transcript textarea {
-  width: 100%;
-  min-height: 74px;
-  box-sizing: border-box;
-  resize: vertical;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
+.recorder-segment-text {
+  border-radius: 3px;
   color: var(--text);
-  padding: 12px;
-  font: inherit;
-  line-height: 1.55;
+  outline: none;
 }
 
-.recorder-partial {
-  color: var(--text-secondary);
-  padding: 0 12px;
-  line-height: 1.55;
+.recorder-segment-text:focus {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
 }
 
-.recorder-partial-stable,
 .wp-streaming-partial-stable {
   color: var(--text);
   font-style: normal;
 }
 
-.recorder-partial-unstable,
 .wp-streaming-partial-unstable {
   color: var(--text-secondary);
   font-style: italic;
@@ -1531,6 +1518,7 @@ body {
   background: var(--bg);
   border-left: 1px solid var(--border);
   min-height: 0;
+  overflow: hidden;
 }
 
 .wp-mfu-placeholder {
@@ -1571,7 +1559,9 @@ body {
 
 .wp-mfu-content {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   display: flex;
   flex-direction: column;
   gap: var(--wp-space-md);

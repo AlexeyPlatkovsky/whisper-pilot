@@ -35,6 +35,8 @@ vi.mock("./ipc", () => ({
   revertStreamingPrettify: vi.fn(),
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
@@ -114,7 +116,16 @@ const ONE_WINDOW = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(ipc.openStreamingSession).mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -167,6 +178,35 @@ describe("StreamingView — MFU panel toggle", () => {
       "mfu_panel_streaming",
       "true",
     );
+  });
+
+  it("keeps the view-only MFU visibility switch enabled during capture", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 1,
+      source: "streaming",
+      generation: 1,
+      revision: 1,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ status: "active" }),
+    );
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const toggle = await screen.findByRole("switch", { name: /mfu/i });
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(1),
+    );
+    expect(toggle).toBeEnabled();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(document.querySelector("aside.wp-mfu")).not.toBeInTheDocument();
+    expect(ipc.setSetting).toHaveBeenCalledWith("mfu_panel_streaming", "false");
   });
 
   it("restores a hidden panel on launch when the persisted setting is off", async () => {

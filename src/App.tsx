@@ -71,6 +71,7 @@ export function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStreamingOpen, setIsStreamingOpen] = useState(false);
   const [isRecorderOpen, setIsRecorderOpen] = useState(false);
+  const [recorderStartPending, setRecorderStartPending] = useState(false);
   const [liveCaptureSnapshot, setLiveCaptureSnapshot] =
     useState<LiveCaptureSnapshot | null>(null);
   // Unknown must fail closed: until the backend snapshot arrives, Settings
@@ -713,6 +714,8 @@ export function App() {
           }}
           onOpenSettings={() => setIsSettingsOpen(true)}
           meetingTranscriptionActive={transcribingId !== null}
+          recorderStartPending={recorderStartPending}
+          onRecorderStartPendingChange={setRecorderStartPending}
         />
         {isSettingsOpen && (
           <div className="settings-overlay">
@@ -1222,7 +1225,7 @@ export function App() {
           {mfuPanelVisible && (
             <aside className="wp-mfu">
               {mfu ? (
-                <div className="wp-mfu-mfu">
+                <div className="wp-mfu-content wp-mfu-mfu">
                   {(
                     [
                       ["summary", "Summary"],

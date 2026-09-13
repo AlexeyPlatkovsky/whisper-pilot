@@ -65,6 +65,7 @@ pub struct RecorderSession {
     pub sample_rate: u32,
     pub duration_ms: i64,
     pub status: RecorderStatus,
+    pub is_draft: bool,
     pub audio_path: PathBuf,
     pub recovery_reason: Option<String>,
     pub asr_model_id: String,
@@ -128,6 +129,18 @@ impl RecorderStore {
     }
 
     pub fn create_session(&self, session: NewRecorderSession) -> Result<RecorderSession> {
+        self.insert_session(session, false)
+    }
+
+    pub fn create_draft(&self, session: NewRecorderSession) -> Result<RecorderSession> {
+        self.insert_session(session, true)
+    }
+
+    fn insert_session(
+        &self,
+        session: NewRecorderSession,
+        is_draft: bool,
+    ) -> Result<RecorderSession> {
         if session.sample_rate == 0 {
             return Err(AppError::Store(
                 "Recorder sample rate must be greater than zero".into(),
@@ -138,15 +151,17 @@ impl RecorderStore {
         transaction
             .execute(
                 "INSERT INTO recorder_sessions
-                    (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, asr_model_id, asr_engine, asr_language)
-                 VALUES (?1, ?2, ?2, ?3, 0, 'recording', '', ?4, ?5, ?6)",
+                    (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, asr_model_id, asr_engine, asr_language, is_draft)
+                 VALUES (?1, ?2, ?2, ?3, 0, ?4, '', ?5, ?6, ?7, ?8)",
                 params![
                     session.title,
                     session.created_at_ms,
                     session.sample_rate,
+                    if is_draft { "completed" } else { "recording" },
                     session.asr_model_id,
                     session.asr_engine,
-                    session.asr_language
+                    session.asr_language,
+                    is_draft,
                 ],
             )
             .map_err(store_error)?;
@@ -162,6 +177,59 @@ impl RecorderStore {
         drop(connection);
         self.get_session(id)?
             .ok_or_else(|| AppError::Store("new Recorder session was not found".into()))
+    }
+
+    pub fn activate_draft(
+        &self,
+        id: RecorderSessionId,
+        sample_rate: u32,
+    ) -> Result<RecorderSession> {
+        if sample_rate == 0 {
+            return Err(AppError::Store(
+                "Recorder sample rate must be greater than zero".into(),
+            ));
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE recorder_sessions
+                 SET status = 'recording', is_draft = 0, sample_rate = ?1,
+                     duration_ms = 0, recovery_reason = NULL
+                 WHERE id = ?2 AND is_draft = 1",
+                params![sample_rate, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "Recorder draft", id)?;
+        self.get_session(id)?
+            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))
+    }
+
+    pub fn restore_draft_after_failed_start(&self, id: RecorderSessionId) -> Result<()> {
+        let session = self
+            .get_session(id)?
+            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE recorder_sessions
+                 SET status = 'completed', is_draft = 1, duration_ms = 0,
+                     recovery_reason = NULL
+                 WHERE id = ?1 AND status = 'recording'",
+                params![id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "Recorder session", id)?;
+
+        // Restore the durable lifecycle first. Even if filesystem cleanup is
+        // blocked, the row must never remain a phantom live capture that can
+        // neither be retried as a draft nor reconciled at launch.
+        let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
+        for path in [&session.audio_path, &partial] {
+            if path.is_file() {
+                std::fs::remove_file(path)?;
+            }
+        }
+        Ok(())
     }
 
     pub fn get_session(&self, id: RecorderSessionId) -> Result<Option<RecorderSession>> {
@@ -608,6 +676,9 @@ impl RecorderStore {
     fn reconcile_interrupted_sessions(&self) -> Result<()> {
         let sessions = self.list_sessions()?;
         for session in sessions {
+            if session.is_draft {
+                continue;
+            }
             let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
             let final_exists = session.audio_path.is_file();
             let partial_exists = partial.is_file();
@@ -644,9 +715,9 @@ impl RecorderStore {
 }
 
 const SESSION_SELECT_BASE: &str =
-    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language FROM recorder_sessions";
+    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language, is_draft FROM recorder_sessions";
 const SESSION_SELECT_BY_ID: &str =
-    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language FROM recorder_sessions WHERE id = ?1";
+    "SELECT id, title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, recovery_reason, asr_model_id, asr_engine, asr_language, is_draft FROM recorder_sessions WHERE id = ?1";
 
 fn session_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSession> {
     let status: String = row.get(6)?;
@@ -658,6 +729,7 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSession> {
         sample_rate: row.get(4)?,
         duration_ms: row.get(5)?,
         status: RecorderStatus::parse(&status)?,
+        is_draft: row.get(12)?,
         audio_path: PathBuf::from(row.get::<_, String>(7)?),
         recovery_reason: row.get(8)?,
         asr_model_id: row.get(9)?,
@@ -702,7 +774,8 @@ CREATE TABLE IF NOT EXISTS recorder_sessions (
     recovery_reason TEXT,
     asr_model_id   TEXT NOT NULL DEFAULT 'transcription',
     asr_engine     TEXT NOT NULL DEFAULT 'whisper',
-    asr_language   TEXT NOT NULL DEFAULT 'auto'
+    asr_language   TEXT NOT NULL DEFAULT 'auto',
+    is_draft       INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1))
 );
 CREATE TABLE IF NOT EXISTS recorder_segments (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -750,6 +823,14 @@ fn migrate_recorder_schema(connection: &Connection) -> Result<()> {
         connection
             .execute(
                 "ALTER TABLE recorder_sessions ADD COLUMN asr_language TEXT NOT NULL DEFAULT 'auto'",
+                [],
+            )
+            .map_err(store_error)?;
+    }
+    if !columns.iter().any(|column| column == "is_draft") {
+        connection
+            .execute(
+                "ALTER TABLE recorder_sessions ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1))",
                 [],
             )
             .map_err(store_error)?;

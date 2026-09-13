@@ -26,9 +26,11 @@ use crate::recorder_audio::read_caf_audio;
 #[cfg(target_os = "macos")]
 use crate::state::{LiveCaptureRuntime, RecorderRuntime};
 #[cfg(target_os = "macos")]
+use crate::streaming_audio::CapturedAudioChunk;
+#[cfg(target_os = "macos")]
 use crate::streaming_session;
 #[cfg(target_os = "macos")]
-use std::sync::mpsc::{sync_channel, Receiver};
+use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 #[cfg(target_os = "macos")]
 use tauri::{Emitter, Manager};
 #[cfg(target_os = "macos")]
@@ -47,6 +49,7 @@ pub(crate) struct RecorderSessionDto {
     updated_at_ms: i64,
     duration_ms: i64,
     status: crate::recorder_store::RecorderStatus,
+    is_draft: bool,
     sample_rate: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery_reason: Option<String>,
@@ -67,6 +70,7 @@ pub(crate) struct RecorderSessionSummaryDto {
     updated_at_ms: i64,
     duration_ms: i64,
     status: crate::recorder_store::RecorderStatus,
+    is_draft: bool,
     sample_rate: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     recovery_reason: Option<String>,
@@ -85,6 +89,7 @@ impl From<RecorderSession> for RecorderSessionSummaryDto {
             updated_at_ms: session.updated_at_ms,
             duration_ms: session.duration_ms,
             status: session.status,
+            is_draft: session.is_draft,
             sample_rate: session.sample_rate,
             recovery_reason: session.recovery_reason,
             audio_path: session.audio_path.to_string_lossy().into_owned(),
@@ -105,6 +110,7 @@ fn session_dto(store: &RecorderStore, session: RecorderSession) -> Result<Record
         updated_at_ms: session.updated_at_ms,
         duration_ms: session.duration_ms,
         status: session.status,
+        is_draft: session.is_draft,
         sample_rate: session.sample_rate,
         recovery_reason: session.recovery_reason,
         audio_path: session.audio_path.to_string_lossy().into_owned(),
@@ -177,6 +183,32 @@ pub(crate) fn open_recorder_session(
     id: RecorderSessionId,
 ) -> Result<RecorderSessionDto> {
     open_dto(&app_data_dir(&app)?, id)
+}
+
+#[tauri::command]
+pub(crate) fn create_recorder_draft(app: tauri::AppHandle) -> Result<RecorderSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let settings = crate::settings::get_settings(&app_support_dir);
+    let language = AsrLanguage::Auto;
+    let asr_spec = asr::resolve_selection(
+        settings
+            .active_model_transcription
+            .as_deref()
+            .unwrap_or(asr::DEFAULT_ASR_MODEL_ID),
+        AsrMode::Recorder,
+        language,
+    )?;
+    let now = now_ms()?;
+    let session =
+        RecorderStore::open_runtime(&app_support_dir)?.create_draft(NewRecorderSession {
+            title: "Untitled recording".into(),
+            created_at_ms: now,
+            sample_rate: 48_000,
+            asr_model_id: asr_spec.model_id.to_string(),
+            asr_engine: asr_spec.engine.as_str().to_string(),
+            asr_language: language.code().to_string(),
+        })?;
+    open_dto(&app_support_dir, session.id)
 }
 
 #[tauri::command]
@@ -431,7 +463,8 @@ pub(crate) fn handle_global_shortcut(
     match action {
         crate::recorder_shortcut::RecorderShortcutAction::StartRecorder => {
             tauri::async_runtime::spawn(async move {
-                if let Err(error) = start_recorder_impl(app.clone(), &app.state::<AppState>()).await
+                if let Err(error) =
+                    start_recorder_impl(app.clone(), &app.state::<AppState>(), None).await
                 {
                     emit_error(&app, None, error.to_string());
                 }
@@ -729,7 +762,25 @@ fn refine_recorder_transcript(
 
 #[cfg(target_os = "macos")]
 fn recorder_result_error_is_terminal(kind: streaming_session::WindowResultKind) -> bool {
-    kind != streaming_session::WindowResultKind::Partial
+    kind == streaming_session::WindowResultKind::Committed
+}
+
+/// The native-rate audio writer is the Recorder's durability boundary. Live
+/// ASR is a preview and must never backpressure that writer: when the decoder
+/// falls behind, drop only the derived 16 kHz chunk and let the final quality
+/// pass rebuild the complete transcript from the saved 48 kHz master.
+#[cfg(target_os = "macos")]
+fn try_forward_recorder_asr(
+    tx: &SyncSender<CapturedAudioChunk>,
+    chunk: CapturedAudioChunk,
+) -> Result<bool> {
+    match tx.try_send(chunk) {
+        Ok(()) => Ok(true),
+        Err(TrySendError::Full(_)) => Ok(false),
+        Err(TrySendError::Disconnected(_)) => {
+            Err(AppError::Capture("Recorder decoder disconnected".into()))
+        }
+    }
 }
 
 #[cfg(target_os = "macos")]
@@ -768,6 +819,7 @@ fn spawn_recorder_pipeline(
                 }
             };
         let mut pipeline_error = None;
+        let mut dropped_asr_chunks = 0_u64;
         for samples in samples_rx {
             if let Err(error) = writer.append_f32(samples.samples()) {
                 pipeline_error = Some(error);
@@ -775,10 +827,22 @@ fn spawn_recorder_pipeline(
             }
             match resampler.push_f32(samples.samples()) {
                 Ok(chunk) => {
-                    if !chunk.samples.is_empty() && asr_tx.send(chunk).is_err() {
-                        pipeline_error =
-                            Some(AppError::Capture("Recorder decoder disconnected".into()));
-                        break;
+                    if !chunk.samples.is_empty() {
+                        match try_forward_recorder_asr(&asr_tx, chunk) {
+                            Ok(true) => {}
+                            Ok(false) => {
+                                dropped_asr_chunks = dropped_asr_chunks.saturating_add(1);
+                                if dropped_asr_chunks == 1 {
+                                    log::warn!(
+                                        "Recorder live ASR queue is full; preserving audio and deferring transcript repair to the quality pass"
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                pipeline_error = Some(error);
+                                break;
+                            }
+                        }
                     }
                 }
                 Err(error) => {
@@ -790,9 +854,12 @@ fn spawn_recorder_pipeline(
         if pipeline_error.is_none() {
             match resampler.finish() {
                 Ok(chunk) if !chunk.samples.is_empty() => {
-                    if asr_tx.send(chunk).is_err() {
-                        pipeline_error =
-                            Some(AppError::Capture("Recorder decoder disconnected".into()));
+                    match try_forward_recorder_asr(&asr_tx, chunk) {
+                        Ok(true) => {}
+                        Ok(false) => {
+                            dropped_asr_chunks = dropped_asr_chunks.saturating_add(1);
+                        }
+                        Err(error) => pipeline_error = Some(error),
                     }
                 }
                 Ok(_) => {}
@@ -800,6 +867,11 @@ fn spawn_recorder_pipeline(
             }
         }
         drop(asr_tx);
+        if dropped_asr_chunks > 0 {
+            log::warn!(
+                "Recorder deferred {dropped_asr_chunks} realtime ASR chunks to the final quality pass"
+            );
+        }
         let finalized = match pipeline_error {
             Some(error) => Err(error),
             None => match tail_persisted_rx.recv() {
@@ -862,15 +934,26 @@ enum RecorderDecoderModel {
 pub(crate) async fn start_recorder_impl(
     app: tauri::AppHandle,
     state: &AppState,
+    draft_id: Option<RecorderSessionId>,
 ) -> Result<RecorderSessionDto> {
     let app_support_dir = app_data_dir(&app)?;
     let _asr_mutation = state.recorder_asr_mutation.lock().await;
+    let store = RecorderStore::open_runtime(&app_support_dir)?;
+    let draft = draft_id
+        .map(|id| {
+            store
+                .get_session(id)?
+                .filter(|session| session.is_draft)
+                .ok_or_else(|| AppError::Store(format!("Recorder draft {id} was not found")))
+        })
+        .transpose()?;
     let recorder_settings = crate::settings::get_settings(&app_support_dir);
     let language = AsrLanguage::Auto;
     let asr_spec = asr::resolve_selection(
-        recorder_settings
-            .active_model_transcription
-            .as_deref()
+        draft
+            .as_ref()
+            .map(|session| session.asr_model_id.as_str())
+            .or(recorder_settings.active_model_transcription.as_deref())
             .unwrap_or(asr::DEFAULT_ASR_MODEL_ID),
         AsrMode::Recorder,
         language,
@@ -911,31 +994,41 @@ pub(crate) async fn start_recorder_impl(
             return Err(error);
         }
     };
-    let store = match RecorderStore::open_runtime(&app_support_dir) {
-        Ok(store) => store,
-        Err(error) => {
-            streaming_session::release_whisper_busy(&state.whisper_busy);
-            return Err(error);
-        }
+    let session = match draft {
+        Some(draft) => store.activate_draft(draft.id, info.sample_rate),
+        None => store.create_session(NewRecorderSession {
+            title: format!("Recording {now}"),
+            created_at_ms: now,
+            sample_rate: info.sample_rate,
+            asr_model_id: asr_spec.model_id.to_string(),
+            asr_engine: asr_spec.engine.as_str().to_string(),
+            asr_language: language.code().to_string(),
+        }),
     };
-    let session = match store.create_session(NewRecorderSession {
-        title: format!("Recording {now}"),
-        created_at_ms: now,
-        sample_rate: info.sample_rate,
-        asr_model_id: asr_spec.model_id.to_string(),
-        asr_engine: asr_spec.engine.as_str().to_string(),
-        asr_language: language.code().to_string(),
-    }) {
+    let session = match session {
         Ok(session) => session,
         Err(error) => {
             streaming_session::release_whisper_busy(&state.whisper_busy);
             return Err(error);
         }
     };
+    let rollback_failed_start = |store: &RecorderStore, id, error: AppError| {
+        let rollback = if draft_id.is_some() {
+            store.restore_draft_after_failed_start(id)
+        } else {
+            store.discard_failed_start(id)
+        };
+        match rollback {
+            Ok(()) => error,
+            Err(rollback) => AppError::Capture(format!(
+                "{error}; Recorder startup rollback also failed: {rollback}"
+            )),
+        }
+    };
     let writer = match RecorderAudioWriter::create(&session.audio_path, session.sample_rate) {
         Ok(writer) => writer,
         Err(error) => {
-            let _ = store.discard_failed_start(session.id);
+            let error = rollback_failed_start(&store, session.id, error);
             streaming_session::release_whisper_busy(&state.whisper_busy);
             return Err(error);
         }
@@ -944,7 +1037,7 @@ pub(crate) async fn start_recorder_impl(
         Ok(value) => value,
         Err(error) => {
             drop(writer);
-            let _ = store.discard_failed_start(session.id);
+            let error = rollback_failed_start(&store, session.id, error);
             streaming_session::release_whisper_busy(&state.whisper_busy);
             return Err(error);
         }
@@ -954,7 +1047,7 @@ pub(crate) async fn start_recorder_impl(
         Ok(started) => started,
         Err(error) => {
             drop(writer);
-            let _ = store.discard_failed_start(session.id);
+            let error = rollback_failed_start(&store, session.id, error);
             streaming_session::release_whisper_busy(&state.whisper_busy);
             fail_recorder_capture(&app, generation, &error.to_string());
             return Err(error);
@@ -963,11 +1056,11 @@ pub(crate) async fn start_recorder_impl(
     if started.info.sample_rate != session.sample_rate {
         drop(started);
         drop(writer);
-        let _ = store.discard_failed_start(session.id);
-        streaming_session::release_whisper_busy(&state.whisper_busy);
         let error = AppError::Capture(
             "default microphone format changed during Recorder startup; retry".into(),
         );
+        let error = rollback_failed_start(&store, session.id, error);
+        streaming_session::release_whisper_busy(&state.whisper_busy);
         fail_recorder_capture(&app, generation, &error.to_string());
         return Err(error);
     }
@@ -979,11 +1072,13 @@ pub(crate) async fn start_recorder_impl(
         Ok(mut coordinator) => coordinator.install_runtime(generation, runtime),
         Err(_) => {
             drop(writer);
-            let _ = store.discard_failed_start(session.id);
+            let error = rollback_failed_start(
+                &store,
+                session.id,
+                AppError::Capture("live capture coordinator lock is poisoned".into()),
+            );
             streaming_session::release_whisper_busy(&state.whisper_busy);
-            return Err(AppError::Capture(
-                "live capture coordinator lock is poisoned".into(),
-            ));
+            return Err(error);
         }
     };
     let snapshot = match installation {
@@ -991,9 +1086,13 @@ pub(crate) async fn start_recorder_impl(
         Err(runtime) => {
             drop(runtime);
             drop(writer);
-            let _ = store.discard_failed_start(session.id);
+            let error = rollback_failed_start(
+                &store,
+                session.id,
+                AppError::Capture("Recorder start was cancelled".into()),
+            );
             streaming_session::release_whisper_busy(&state.whisper_busy);
-            return Err(AppError::Capture("Recorder start was cancelled".into()));
+            return Err(error);
         }
     };
     let _ = app.emit("live_capture_state", snapshot);
@@ -1057,8 +1156,9 @@ pub(crate) async fn stop_recorder_impl(app: tauri::AppHandle, state: &AppState) 
 pub(crate) async fn start_recorder_session(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
+    draft_id: Option<RecorderSessionId>,
 ) -> Result<RecorderSessionDto> {
-    start_recorder_impl(app, &state).await
+    start_recorder_impl(app, &state, draft_id).await
 }
 
 #[cfg(target_os = "macos")]
@@ -1074,6 +1174,7 @@ pub(crate) async fn stop_recorder_session(
 #[tauri::command]
 pub(crate) async fn start_recorder_session(
     _state: State<'_, AppState>,
+    _draft_id: Option<RecorderSessionId>,
 ) -> Result<RecorderSessionDto> {
     Err(AppError::Capture(
         "Recorder microphone capture is only available on macOS".into(),
@@ -1090,18 +1191,71 @@ pub(crate) async fn stop_recorder_session(_state: State<'_, AppState>) -> Result
 
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
-    use super::{decoder_exit_failure, recorder_result_error_is_terminal};
+    use super::{
+        decoder_exit_failure, recorder_result_error_is_terminal, try_forward_recorder_asr,
+        RecorderSessionSummaryDto,
+    };
+    use crate::recorder_store::RecorderStatus;
+    use crate::streaming_audio::CapturedAudioChunk;
     use crate::streaming_session::WindowResultKind;
+    use std::sync::mpsc::sync_channel;
 
     #[test]
-    fn committed_and_gap_decode_errors_make_recorder_recoverable() {
+    fn recorder_summary_serializes_draft_state_for_the_renderer() {
+        let summary = RecorderSessionSummaryDto {
+            id: 7,
+            title: "Draft".into(),
+            created_at_ms: 10,
+            updated_at_ms: 10,
+            duration_ms: 0,
+            status: RecorderStatus::Completed,
+            is_draft: true,
+            sample_rate: 48_000,
+            recovery_reason: None,
+            audio_path: "/tmp/7.caf".into(),
+            asr_model_id: "transcription".into(),
+            asr_engine: "whisper".into(),
+            asr_language: "auto".into(),
+        };
+
+        let json = serde_json::to_value(summary).unwrap();
+
+        assert_eq!(json["is_draft"], true);
+        assert_eq!(json["status"], "completed");
+    }
+
+    #[test]
+    fn only_committed_decode_errors_make_recorder_recoverable() {
         assert!(recorder_result_error_is_terminal(
             WindowResultKind::Committed
         ));
-        assert!(recorder_result_error_is_terminal(WindowResultKind::Gap));
+        assert!(!recorder_result_error_is_terminal(WindowResultKind::Gap));
         assert!(!recorder_result_error_is_terminal(
             WindowResultKind::Partial
         ));
+    }
+
+    #[test]
+    fn full_realtime_asr_queue_never_blocks_or_fails_audio_persistence() {
+        let (tx, _rx) = sync_channel(1);
+        tx.send(CapturedAudioChunk {
+            start_sample: 0,
+            captured_end_sample: 1,
+            samples: vec![0.1],
+        })
+        .unwrap();
+
+        let forwarded = try_forward_recorder_asr(
+            &tx,
+            CapturedAudioChunk {
+                start_sample: 1,
+                captured_end_sample: 2,
+                samples: vec![0.2],
+            },
+        )
+        .expect("a full live-ASR queue is a recoverable preview drop");
+
+        assert!(!forwarded, "the overloaded realtime chunk is dropped");
     }
 
     #[test]

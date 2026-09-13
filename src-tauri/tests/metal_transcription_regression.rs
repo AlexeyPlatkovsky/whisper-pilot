@@ -153,4 +153,16 @@ fn meeting_transcription_uses_metal_and_produces_speech_segments() {
         !PROGRESS_AFTER_DROP.load(Ordering::SeqCst),
         "Whisper invoked the progress callback after its captured state was dropped"
     );
+
+    let partial = whisperpilot_lib::transcribe::transcribe_with_state_and_prompt_profile(
+        &mut streaming_state,
+        &samples,
+        None,
+        whisperpilot_lib::transcribe::DecodeProfile::FastPartial,
+    )
+    .expect("Streaming partial must complete through the real Metal greedy path");
+    assert!(
+        !partial.segments.is_empty(),
+        "the real Metal greedy partial path returned no speech"
+    );
 }

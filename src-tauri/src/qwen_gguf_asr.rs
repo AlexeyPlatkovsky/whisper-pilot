@@ -68,10 +68,6 @@ impl QwenGgufAsrModel {
         })
     }
 
-    pub(crate) fn transcribe_window(&self, samples: &[f32]) -> Result<Transcription> {
-        self.transcribe_window_with_context(samples, None)
-    }
-
     pub(crate) fn transcribe_window_with_context(
         &self,
         samples: &[f32],
@@ -89,9 +85,9 @@ impl QwenGgufAsrModel {
         let mut messages = Vec::with_capacity(2);
         if let Some(context) = context.filter(|context| !context.trim().is_empty()) {
             messages.push(
-                LlamaChatMessage::new("system".into(), context.to_string()).map_err(|error| {
-                    AppError::Transcribe(format!("Qwen3-ASR context prompt: {error}"))
-                })?,
+                LlamaChatMessage::new("system".into(), context_instruction(context)).map_err(
+                    |error| AppError::Transcribe(format!("Qwen3-ASR context prompt: {error}")),
+                )?,
             );
         }
         messages.push(message);
@@ -156,6 +152,15 @@ impl QwenGgufAsrModel {
     }
 }
 
+fn context_instruction(context: &str) -> String {
+    format!(
+        "Previous confirmed transcript, provided only to preserve vocabulary and continuity:\n\
+         <previous_transcript>\n{}\n</previous_transcript>\n\
+         Do not repeat or rewrite the previous transcript. Output only speech from the current audio.",
+        context.trim()
+    )
+}
+
 fn available_threads() -> i32 {
     std::thread::available_parallelism()
         .map(|threads| threads.get() as i32)
@@ -198,7 +203,16 @@ fn normalize_language_code(language: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{protocol_output_to_transcription, QwenGgufAsrModel};
+    use super::{context_instruction, protocol_output_to_transcription, QwenGgufAsrModel};
+
+    #[test]
+    fn previous_transcript_is_labeled_as_context_that_must_not_be_repeated() {
+        let prompt = context_instruction("предыдущая подтвержденная фраза");
+
+        assert!(prompt.contains("Previous confirmed transcript"));
+        assert!(prompt.contains("Do not repeat"));
+        assert!(prompt.contains("предыдущая подтвержденная фраза"));
+    }
 
     #[test]
     fn strips_qwen_asr_protocol_metadata_from_visible_transcript() {
@@ -235,7 +249,10 @@ mod tests {
         let samples = crate::audio::load_samples(std::path::Path::new(&audio_path))
             .expect("decode real ASR fixture");
         let transcription = model
-            .transcribe_window(&samples)
+            .transcribe_window_with_context(
+                &samples,
+                Some("Whisper Pilot previously confirmed a separate sentence."),
+            )
             .expect("transcribe real ASR fixture");
         let text = transcription
             .segments
@@ -243,7 +260,6 @@ mod tests {
             .map(|segment| segment.text.as_str())
             .collect::<Vec<_>>()
             .join(" ");
-        eprintln!("Qwen3-ASR real transcript: {text}");
         assert!(
             !text.trim().is_empty(),
             "real Qwen3-ASR GGUF decode must emit text"
@@ -257,7 +273,20 @@ mod tests {
             {
                 assert!(
                     normalized.contains(&term.to_lowercase()),
-                    "real Qwen3-ASR transcript must contain expected term {term:?}; got {text:?}"
+                    "real Qwen3-ASR transcript must contain expected term {term:?}"
+                );
+            }
+        }
+        if let Ok(forbidden) = std::env::var("QWEN3_ASR_GGUF_FORBIDDEN_TERMS") {
+            let normalized = text.to_lowercase();
+            for term in forbidden
+                .split(',')
+                .map(str::trim)
+                .filter(|term| !term.is_empty())
+            {
+                assert!(
+                    !normalized.contains(&term.to_lowercase()),
+                    "real Qwen3-ASR transcript repeated forbidden context term {term:?}"
                 );
             }
         }

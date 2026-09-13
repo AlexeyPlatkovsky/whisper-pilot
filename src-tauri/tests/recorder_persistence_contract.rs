@@ -1,5 +1,7 @@
 use rusqlite::Connection;
 use std::fs;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use tempfile::TempDir;
 use whisperpilot_lib::recorder_audio::{
@@ -35,6 +37,83 @@ fn write_partial(final_path: &Path, sample_rate: u32, samples: &[f32]) {
     let mut writer = RecorderAudioWriter::create(final_path, sample_rate).unwrap();
     writer.append_f32(samples).unwrap();
     writer.sync_checkpoint().unwrap();
+}
+
+#[test]
+fn recorder_draft_is_durable_without_audio_and_activates_in_place() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let draft = store
+        .create_draft(NewRecorderSession {
+            title: "Draft".into(),
+            created_at_ms: 10,
+            sample_rate: 48_000,
+            asr_model_id: "transcription".into(),
+            asr_engine: "whisper".into(),
+            asr_language: "auto".into(),
+        })
+        .unwrap();
+
+    assert!(draft.is_draft);
+    assert!(!draft.audio_path.exists());
+    store
+        .rename_session(draft.id, "Renamed before recording")
+        .unwrap();
+    drop(store);
+
+    let reopened = RecorderStore::open(temp.path()).unwrap();
+    let persisted = reopened.get_session(draft.id).unwrap().unwrap();
+    assert!(persisted.is_draft);
+    assert_eq!(persisted.status, RecorderStatus::Completed);
+    assert_eq!(persisted.title, "Renamed before recording");
+    assert!(persisted.recovery_reason.is_none());
+
+    let active = reopened.activate_draft(draft.id, 24_000).unwrap();
+    assert!(!active.is_draft);
+    assert_eq!(active.status, RecorderStatus::Recording);
+    assert_eq!(active.sample_rate, 24_000);
+
+    write_partial(&active.audio_path, 24_000, &[0.1; 2_400]);
+    reopened
+        .restore_draft_after_failed_start(active.id)
+        .unwrap();
+    let restored = reopened.get_session(active.id).unwrap().unwrap();
+    assert!(restored.is_draft);
+    assert_eq!(restored.status, RecorderStatus::Completed);
+    assert!(!restored.audio_path.exists());
+    assert!(!RecorderAudioWriter::partial_path_for(&restored.audio_path).exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn failed_draft_cleanup_still_restores_the_non_live_draft_state() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let draft = store
+        .create_draft(NewRecorderSession {
+            title: "Draft".into(),
+            created_at_ms: 10,
+            sample_rate: 48_000,
+            asr_model_id: "transcription".into(),
+            asr_engine: "whisper".into(),
+            asr_language: "auto".into(),
+        })
+        .unwrap();
+    let active = store.activate_draft(draft.id, 24_000).unwrap();
+    write_partial(&active.audio_path, 24_000, &[0.1; 2_400]);
+
+    let recordings_dir = active.audio_path.parent().unwrap();
+    let original_permissions = fs::metadata(recordings_dir).unwrap().permissions();
+    let mut read_only_permissions = original_permissions.clone();
+    read_only_permissions.set_mode(original_permissions.mode() & !0o222);
+    fs::set_permissions(recordings_dir, read_only_permissions).unwrap();
+    let cleanup = store.restore_draft_after_failed_start(active.id);
+    fs::set_permissions(recordings_dir, original_permissions).unwrap();
+
+    assert!(cleanup.is_err());
+    let restored = store.get_session(active.id).unwrap().unwrap();
+    assert!(restored.is_draft);
+    assert_eq!(restored.status, RecorderStatus::Completed);
 }
 
 fn table_names(app_support_dir: &Path) -> Vec<String> {
@@ -186,6 +265,7 @@ fn legacy_recorder_rows_migrate_to_deterministic_whisper_identity() {
     assert_eq!(session.asr_model_id, "transcription");
     assert_eq!(session.asr_engine, "whisper");
     assert_eq!(session.asr_language, "auto");
+    assert!(!session.is_draft);
 }
 
 #[test]

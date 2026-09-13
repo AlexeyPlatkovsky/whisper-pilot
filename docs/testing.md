@@ -76,9 +76,14 @@ RSS:
 
 Streaming regressions additionally cover backend-owned lifecycle hydration,
 Stop during asynchronous `starting`, 100 ms contiguous-pause VAD boundaries,
-short meaningful prefixes before capture gaps, terminal cloud-gap ordering,
-model-mutation/path-resolution ordering, and atomic cancellation of stale
-translations after either a toggle-off or source revision.
+background-relative pause thresholds, hard-boundary audio overlap and
+timestamp-proven Whisper reconciliation (including intentional repeated
+phrases and Qwen's conservative no-deduplication path), fast
+partial versus quality commit profiles, 20-second steady-noise suppression,
+short meaningful prefixes before
+capture gaps, terminal cloud-gap ordering, model-mutation/path-resolution
+ordering, first-window Live Translation during active capture, and atomic
+cancellation of stale translations after either a toggle-off or source revision.
 
 Recorder regressions cover native-rate mono PCM16 CAF headers and sample
 conversion, one-second durability checkpoints, tail-before-audio-before-database
@@ -86,7 +91,12 @@ finalization, interrupted-session reconciliation, owned-audio deletion and WAV
 export, shortcut replacement/conflict/repeat policy, backend lifecycle hydration,
 the shared searchable library/header, in-place persisted Prettify, confirmed
 transcript-only Clear with retained audio, and the committed-versus-partial
-transcript UI. The real default-microphone test
+transcript UI. They also prove that a full realtime-ASR queue never blocks the
+native-rate writer, and that Recorder errors stay attached to their originating
+session and do not leak into Streaming. Streaming UI regressions cover
+session-owned On Air state, per-session translation targets, an active MFU
+visibility toggle, Original-column partials, and shared MFU overflow scrolling.
+The real default-microphone test
 is ignored by default because it requires explicit macOS TCC approval and audible
 input; it must be run with the real-Metal gate before Recorder release evidence is
 complete.
@@ -102,6 +112,11 @@ experimental corpus and retired runtime evidence are recorded in
 real-Metal mixed-language smoke evidence, while equivalent
 full-corpus WER, latency, and sustained-session evidence remains required
 before comparative claims.
+The synthetic corpus can be regenerated with
+`scripts/generate-asr-benchmark-corpus.sh`; `scripts/score-asr-corpus.mjs`
+computes Unicode-aware WER/CER from separate hypothesis files and emits metrics
+without echoing transcript content. Its normalization and distance contracts
+run with `node --test scripts/score-asr-corpus.test.mjs`.
 
 Floating-bubble regressions cover the five-point click/drag boundary, visible
 work-area clamping, removed-monitor fallback, non-color status presentation and

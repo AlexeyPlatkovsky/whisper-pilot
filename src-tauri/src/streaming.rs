@@ -16,6 +16,7 @@ pub struct StreamingSessionSummaryDto {
     pub updated_at_ms: i64,
     pub status: String,
     pub translation_enabled: bool,
+    pub translation_target_language: String,
 }
 
 /// Immutable engine provenance for one Streaming session. The UI supplies a
@@ -134,6 +135,7 @@ pub struct StreamingSessionDto {
     pub mfu: Option<StreamingMfuDto>,
     pub prettified_text: Option<String>,
     pub translation_enabled: bool,
+    pub translation_target_language: String,
     /// The persisted, non-secret transcription engine. This lets the UI avoid
     /// presenting a stopped Cloud session as a Local resume target.
     pub transcription_engine: Option<String>,
@@ -150,6 +152,7 @@ pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSe
             updated_at_ms: s.updated_at_ms,
             status: s.status,
             translation_enabled: s.translation_enabled,
+            translation_target_language: s.translation_target_language,
         })
         .collect();
     Ok(summaries)
@@ -201,6 +204,7 @@ pub fn open_streaming_session(
         mfu,
         prettified_text,
         translation_enabled: session.translation_enabled,
+        translation_target_language: session.translation_target_language,
         transcription_engine,
     })
 }
@@ -304,6 +308,7 @@ pub fn resume_streaming_session(
             updated_at_ms: now_ms,
             status: streaming_store::status::ACTIVE.to_string(),
             translation_enabled: session.translation_enabled,
+            translation_target_language: session.translation_target_language,
         },
         resume,
     ))
@@ -345,6 +350,14 @@ pub fn set_streaming_translation_enabled(
     enabled: bool,
 ) -> Result<()> {
     StreamingStore::open(app_support_dir)?.set_translation_enabled(id, enabled)
+}
+
+pub fn set_streaming_translation_target_language(
+    app_support_dir: &Path,
+    id: StreamingSessionId,
+    target_language: &str,
+) -> Result<()> {
+    StreamingStore::open(app_support_dir)?.set_translation_target_language(id, target_language)
 }
 
 /// Validates a translation request's cheap, model-independent prerequisites
@@ -945,6 +958,7 @@ mod tests {
             }),
             prettified_text: Some("Cleaned transcript.".to_string()),
             translation_enabled: false,
+            translation_target_language: "ru".to_string(),
             transcription_engine: Some("cloud".to_string()),
         };
 
@@ -1484,6 +1498,7 @@ mod tests {
             mfu: None,
             prettified_text: None,
             translation_enabled: true,
+            translation_target_language: "en".to_string(),
             transcription_engine: Some("local".to_string()),
         };
 

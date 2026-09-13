@@ -278,6 +278,7 @@ pub(crate) fn create_streaming_session(
         updated_at_ms: session.updated_at_ms,
         status: session.status,
         translation_enabled: session.translation_enabled,
+        translation_target_language: session.translation_target_language,
     })
 }
 
@@ -293,6 +294,19 @@ pub(crate) fn set_streaming_translation_enabled(
     enabled: bool,
 ) -> Result<()> {
     streaming::set_streaming_translation_enabled(&app_data_dir(&app)?, session_id, enabled)
+}
+
+#[tauri::command]
+pub(crate) fn set_streaming_translation_target_language(
+    app: tauri::AppHandle,
+    session_id: streaming_store::StreamingSessionId,
+    target_language: String,
+) -> Result<()> {
+    streaming::set_streaming_translation_target_language(
+        &app_data_dir(&app)?,
+        session_id,
+        &target_language,
+    )
 }
 
 /// Runs on its own blocking thread for a session's whole lifetime: persists

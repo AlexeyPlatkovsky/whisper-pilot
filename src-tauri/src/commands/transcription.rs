@@ -121,24 +121,78 @@ pub(crate) fn transcribe_qwen_recording(
     samples: &[f32],
     mut on_progress: impl FnMut(i32),
 ) -> Result<transcribe::Transcription> {
-    const WINDOW_SAMPLES: usize = crate::audio::SAMPLE_RATE as usize * 30;
-    let total_windows = samples.len().div_ceil(WINDOW_SAMPLES).max(1);
+    let windows = qwen_window_plan(samples.len());
+    let total_windows = windows.len().max(1);
     let mut segments = Vec::new();
     let mut language = "auto".to_string();
-    for (index, window) in samples.chunks(WINDOW_SAMPLES).enumerate() {
-        let decoded = model.transcribe_window(window)?;
+    let mut confirmed_context = String::new();
+    for (index, &(decode_start, decode_end, logical_start, logical_end)) in
+        windows.iter().enumerate()
+    {
+        let decoded = model.transcribe_window_with_context(
+            &samples[decode_start..decode_end],
+            (!confirmed_context.is_empty()).then_some(confirmed_context.as_str()),
+        )?;
         if language == "auto" && decoded.language != "auto" {
             language = decoded.language;
         }
-        let offset_ms = index as u64 * 30_000;
+        let offset_ms = logical_start as u64 * 1_000 / crate::audio::SAMPLE_RATE as u64;
+        let logical_end_ms = logical_end as u64 * 1_000 / crate::audio::SAMPLE_RATE as u64;
+        let decoded_text = decoded
+            .segments
+            .iter()
+            .map(|segment| segment.text.trim())
+            .filter(|text| !text.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ");
         segments.extend(decoded.segments.into_iter().map(|mut segment| {
-            segment.start_ms += offset_ms;
-            segment.end_ms += offset_ms;
+            segment.start_ms = offset_ms;
+            segment.end_ms = logical_end_ms.max(offset_ms);
             segment
         }));
+        append_confirmed_context(&mut confirmed_context, &decoded_text);
         on_progress((((index + 1) * 100 / total_windows) as i32).min(100));
     }
     Ok(transcribe::Transcription { segments, language })
+}
+
+#[cfg(target_os = "macos")]
+fn qwen_window_plan(sample_count: usize) -> Vec<(usize, usize, usize, usize)> {
+    const WINDOW_SAMPLES: usize = crate::audio::SAMPLE_RATE as usize * 30;
+    const OVERLAP_SAMPLES: usize = crate::audio::SAMPLE_RATE as usize;
+    let mut windows = Vec::new();
+    let mut logical_start = 0;
+    while logical_start < sample_count {
+        let decode_start = logical_start.saturating_sub(OVERLAP_SAMPLES);
+        let new_sample_capacity = WINDOW_SAMPLES - logical_start.saturating_sub(decode_start);
+        let logical_end = logical_start
+            .saturating_add(new_sample_capacity)
+            .min(sample_count);
+        windows.push((decode_start, logical_end, logical_start, logical_end));
+        logical_start = logical_end;
+    }
+    windows
+}
+
+#[cfg(target_os = "macos")]
+fn append_confirmed_context(context: &mut String, decoded: &str) {
+    const MAX_CONTEXT_CHARS: usize = 240;
+    if decoded.is_empty() {
+        return;
+    }
+    if !context.is_empty() {
+        context.push(' ');
+    }
+    context.push_str(decoded);
+    let count = context.chars().count();
+    if count > MAX_CONTEXT_CHARS {
+        *context = context
+            .chars()
+            .skip(count - MAX_CONTEXT_CHARS)
+            .collect::<String>()
+            .trim_start()
+            .to_string();
+    }
 }
 
 /// Reject empty Meeting decodes before persistence or diarization. This
@@ -406,6 +460,33 @@ pub(crate) async fn diarize_meeting(
 mod tests {
     use super::*;
     use std::sync::Arc;
+
+    #[test]
+    fn qwen_file_windows_overlap_without_moving_the_logical_timeline() {
+        let sample_rate = crate::audio::SAMPLE_RATE as usize;
+        let windows = qwen_window_plan(sample_rate * 61);
+
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0], (0, sample_rate * 30, 0, sample_rate * 30));
+        assert_eq!(
+            windows[1],
+            (
+                sample_rate * 29,
+                sample_rate * 59,
+                sample_rate * 30,
+                sample_rate * 59
+            )
+        );
+        assert_eq!(
+            windows[2],
+            (
+                sample_rate * 58,
+                sample_rate * 61,
+                sample_rate * 59,
+                sample_rate * 61
+            )
+        );
+    }
 
     // EP: "none" is the sole class that skips diarization; every other
     // string (however it got there) names a variant to run.

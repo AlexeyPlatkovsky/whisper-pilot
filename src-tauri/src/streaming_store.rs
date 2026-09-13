@@ -26,12 +26,16 @@ pub struct StreamingSessionRecord {
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
     pub status: String,
-    /// WP-101: whether Live Translation was left on for this session — unlike
-    /// the target language (WP-99, never persisted), this survives reopening
-    /// the session and an app restart. Defaults to `false` for both a
+    /// WP-101: whether Live Translation was left on for this session. This and
+    /// the target language survive reopening and an app restart. Defaults to
+    /// `false` for both a
     /// brand-new session and one that predates this column (see the
     /// `translation_enabled` migration below).
     pub translation_enabled: bool,
+    /// The target column selected for Live Translation. It belongs to the
+    /// session so reopening one cannot silently reinterpret persisted rows
+    /// using another session's (or the UI default) language.
+    pub translation_target_language: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -42,6 +46,7 @@ pub struct StreamingSessionSummary {
     pub updated_at_ms: i64,
     pub status: String,
     pub translation_enabled: bool,
+    pub translation_target_language: String,
 }
 
 /// The engine selected immediately before a session's first capture. This is
@@ -143,6 +148,7 @@ impl StreamingStore {
             .map_err(store_error)?;
         migrate_legacy_streaming_notes(&connection)?;
         migrate_translation_enabled_column(&connection)?;
+        migrate_translation_target_language_column(&connection)?;
         migrate_translation_window_index_column(&connection)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
         Ok(Self {
@@ -189,6 +195,26 @@ impl StreamingStore {
             .execute(
                 "UPDATE streaming_sessions SET translation_enabled = ?1 WHERE id = ?2",
                 params![enabled, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "streaming session", id)
+    }
+
+    pub fn set_translation_target_language(
+        &self,
+        id: StreamingSessionId,
+        target_language: &str,
+    ) -> Result<()> {
+        if !matches!(target_language, "en" | "ru") {
+            return Err(AppError::Store(format!(
+                "unsupported Streaming translation target language: {target_language}"
+            )));
+        }
+        let changed = self
+            .connection()?
+            .execute(
+                "UPDATE streaming_sessions SET translation_target_language = ?1 WHERE id = ?2",
+                params![target_language, id],
             )
             .map_err(store_error)?;
         require_changed(changed, "streaming session", id)
@@ -278,7 +304,8 @@ impl StreamingStore {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
-                "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
+                "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled,
+                        translation_target_language
                  FROM streaming_sessions ORDER BY updated_at_ms DESC, id DESC",
             )
             .map_err(store_error)?;
@@ -669,6 +696,85 @@ fn migrate_translation_enabled_column(connection: &Connection) -> Result<()> {
     Ok(())
 }
 
+fn migrate_translation_target_language_column(connection: &Connection) -> Result<()> {
+    let has_table = connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_sessions')",
+            [],
+            |row| row.get::<_, bool>(0),
+        )
+        .map_err(store_error)?;
+    if !has_table {
+        return Ok(());
+    }
+    let has_column = {
+        let mut statement = connection
+            .prepare("PRAGMA table_info(streaming_sessions)")
+            .map_err(store_error)?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .map_err(store_error)?
+            .collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(store_error)?;
+        columns
+            .iter()
+            .any(|name| name == "translation_target_language")
+    };
+    if !has_column {
+        connection
+            .execute_batch(
+                "ALTER TABLE streaming_sessions
+                 ADD COLUMN translation_target_language TEXT NOT NULL DEFAULT 'ru'
+                 CHECK(translation_target_language IN ('en', 'ru'));",
+            )
+            .map_err(store_error)?;
+
+        let has_translations_table = connection
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'streaming_translations')",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .map_err(store_error)?;
+        if has_translations_table {
+            let translation_columns = {
+                let mut statement = connection
+                    .prepare("PRAGMA table_info(streaming_translations)")
+                    .map_err(store_error)?;
+                let columns = statement
+                    .query_map([], |row| row.get::<_, String>(1))
+                    .map_err(store_error)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(store_error)?;
+                columns
+            };
+            let can_restore_target = ["session_id", "target_language", "updated_at_ms"]
+                .iter()
+                .all(|required| translation_columns.iter().any(|column| column == required));
+            if can_restore_target {
+                connection
+                    .execute_batch(
+                        "UPDATE streaming_sessions
+                         SET translation_target_language = COALESCE(
+                             (
+                                 SELECT translations.target_language
+                                 FROM streaming_translations AS translations
+                                 WHERE translations.session_id = streaming_sessions.id
+                                   AND translations.target_language IN ('en', 'ru')
+                                 ORDER BY translations.updated_at_ms DESC,
+                                          translations.target_language ASC
+                                 LIMIT 1
+                             ),
+                             'ru'
+                         );",
+                    )
+                    .map_err(store_error)?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Renames `streaming_translations.paragraph_key` to `window_index` (WP-103),
 /// preserving every row's data. Checked first via `PRAGMA table_info` since
 /// `RENAME COLUMN` errors if `paragraph_key` doesn't exist — a no-op on an
@@ -711,7 +817,8 @@ fn session_by_id(
 ) -> Result<Option<StreamingSessionRecord>> {
     connection
         .query_row(
-            "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled
+            "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled,
+                    translation_target_language
              FROM streaming_sessions WHERE id = ?1",
             params![id],
             session_from_row,
@@ -728,6 +835,7 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionRecord> {
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
         translation_enabled: row.get(5)?,
+        translation_target_language: row.get(6)?,
     })
 }
 
@@ -739,6 +847,7 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
         updated_at_ms: row.get(3)?,
         status: row.get(4)?,
         translation_enabled: row.get(5)?,
+        translation_target_language: row.get(6)?,
     })
 }
 
@@ -783,7 +892,9 @@ CREATE TABLE IF NOT EXISTS streaming_sessions (
     created_at_ms INTEGER NOT NULL,
     updated_at_ms INTEGER NOT NULL,
     status TEXT NOT NULL,
-    translation_enabled INTEGER NOT NULL DEFAULT 0
+    translation_enabled INTEGER NOT NULL DEFAULT 0,
+    translation_target_language TEXT NOT NULL DEFAULT 'ru'
+        CHECK(translation_target_language IN ('en', 'ru'))
 );
 
 CREATE TABLE IF NOT EXISTS streaming_segments (
@@ -882,6 +993,7 @@ mod tests {
                 updated_at_ms: 100,
                 status: status::STOPPED.to_string(),
                 translation_enabled: false,
+                translation_target_language: "ru".to_string(),
             }]
         );
     }
@@ -1837,6 +1949,7 @@ mod tests {
             !session.translation_enabled,
             "a pre-existing session must default to translation_enabled = false"
         );
+        assert_eq!(session.translation_target_language, "ru");
 
         // The column is now writable, not just readable with a default.
         store
@@ -1938,5 +2051,90 @@ mod tests {
 
         assert!(store.get_session(a).unwrap().unwrap().translation_enabled);
         assert!(!store.get_session(b).unwrap().unwrap().translation_enabled);
+    }
+
+    #[test]
+    fn translation_target_language_is_scoped_to_and_persisted_with_its_session() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let a;
+        let b;
+        {
+            let store = StreamingStore::open(temp.path()).expect("open database");
+            a = store.create_session(draft("A", 100)).unwrap().id;
+            b = store.create_session(draft("B", 200)).unwrap().id;
+            store
+                .set_translation_target_language(a, "en")
+                .expect("persist English target");
+        }
+
+        let reopened = StreamingStore::open(temp.path()).expect("reopen database");
+        assert_eq!(
+            reopened
+                .get_session(a)
+                .unwrap()
+                .unwrap()
+                .translation_target_language,
+            "en"
+        );
+        assert_eq!(
+            reopened
+                .get_session(b)
+                .unwrap()
+                .unwrap()
+                .translation_target_language,
+            "ru"
+        );
+    }
+
+    #[test]
+    fn target_language_migration_uses_the_latest_existing_translation() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let db_path = crate::store::shared_database_path(temp.path());
+        std::fs::create_dir_all(temp.path()).expect("create app-support dir");
+        let connection = Connection::open(&db_path).expect("open legacy database");
+        connection
+            .execute_batch(
+                r#"
+                CREATE TABLE streaming_sessions (
+                    id INTEGER PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    created_at_ms INTEGER NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    status TEXT NOT NULL,
+                    translation_enabled INTEGER NOT NULL DEFAULT 0
+                );
+                CREATE TABLE streaming_translations (
+                    session_id INTEGER NOT NULL,
+                    window_index INTEGER NOT NULL,
+                    target_language TEXT NOT NULL,
+                    source_text TEXT NOT NULL,
+                    translated_text TEXT NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY (session_id, window_index, target_language)
+                );
+                INSERT INTO streaming_sessions
+                    (id, title, created_at_ms, updated_at_ms, status, translation_enabled)
+                    VALUES (1, 'Duo', 100, 200, 'stopped', 1);
+                INSERT INTO streaming_translations
+                    (session_id, window_index, target_language, source_text, translated_text, updated_at_ms)
+                    VALUES (1, 0, 'ru', 'Hello', 'Привет', 200);
+                INSERT INTO streaming_translations
+                    (session_id, window_index, target_language, source_text, translated_text, updated_at_ms)
+                    VALUES (1, 0, 'en', 'Привет', 'Hello', 300);
+                "#,
+            )
+            .expect("seed session with an English translation");
+        drop(connection);
+
+        let store = StreamingStore::open(temp.path()).expect("migrate database");
+
+        assert_eq!(
+            store
+                .get_session(1)
+                .unwrap()
+                .unwrap()
+                .translation_target_language,
+            "en"
+        );
     }
 }

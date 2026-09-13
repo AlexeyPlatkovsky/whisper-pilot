@@ -178,7 +178,9 @@ describe("App — MFU panel toggle", () => {
     });
 
     // The completed result is not left behind a hidden panel.
-    expect(await screen.findByDisplayValue("Summary text")).toBeInTheDocument();
+    const summary = await screen.findByDisplayValue("Summary text");
+    expect(summary).toBeInTheDocument();
+    expect(summary.closest(".wp-mfu-content")).not.toBeNull();
     expect(document.querySelector("aside.wp-mfu")).toBeInTheDocument();
   });
 

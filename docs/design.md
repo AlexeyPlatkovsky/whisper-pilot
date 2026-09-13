@@ -71,8 +71,9 @@ in every workspace until that owner releases it.
 
 Recorder replaces the list beneath the control with saved voice-note sessions
 and a **New recording** action. Each row shows title, date or live state, and
-duration when known. Selecting another mode does not discard the active Recorder
-session or its visible transcript.
+duration when known. **New recording** immediately adds and selects an audio-free
+draft that can be renamed or deleted before Start. Selecting another mode does
+not discard the active Recorder session or its visible transcript.
 
 ### Header controls (fixed, position never changes)
 
@@ -142,23 +143,26 @@ Single line reflecting the meeting's current state:
   provider before capture; connection failure is shown as a retryable error and
   never starts Local capture as a fallback. The
   middle slot uses a **languages icon**, a switch (`role="switch"`, WP-93),
-  and a target-language dropdown (English / Русский, defaulting to Russian on
-  every launch — the choice is not persisted); the words “Live Translation”
-  are not rendered. The dropdown locks while the switch is on; to change the
+  and a target-language dropdown (English / Русский, Russian for a new
+  session); the choice is stored per session and restored on reopen; the words
+  “Live Translation” are not rendered. The dropdown locks while the switch is on; to change the
   target, switch off, pick, then switch back on. The switch is disabled with a
   stated reason when no LLM model is ready, when a prettified transcript is
   showing, or while a Prettify review is pending — and the reverse also holds:
   **Prettify** is disabled with a stated reason while Live Translation is on.
-  While live capture is active, the whole transcript header is visually muted
-  and every action element, including engine, language, and MFU controls, is
-  unavailable. Meeting's header has none of these Streaming-only controls.
+  While live capture is active, capture-affecting transcript-header controls
+  are unavailable. The MFU visibility switch remains enabled because it changes
+  only layout, not capture. Meeting's header has none of these Streaming-only
+  controls.
 - **Live Translation on** replaces Streaming's transcript flow with a
   two-column paired-row view inside the same scroll region: a header row
   names the source side ("Original · auto-detected") and the target
   language, then one row per paragraph — left cell the original text, right
   cell its translation — each carrying its own timestamp/language tag so a
   pair never drifts out of alignment. Translation itself runs per window,
-  not per paragraph (WP-103), so the right cell is built by joining each of
+  not per paragraph (WP-103); the first committed window starts immediately
+  while capture remains active, without waiting for Stop or another window.
+  The right cell is built by joining each of
   the paragraph's windows through its own state: real translated text once a
   window is done, the original mirrored in a muted style for a window
   already entirely in the target language (no model call happens), a
@@ -168,15 +172,17 @@ Single line reflecting the meeting's current state:
   live indicator only on the unfinished tail, rather than the whole cell
   staying blank until every window in it resolves. The retry control stays
   one per row (paragraph), re-running every failed window within it rather
-  than one control per window. Switching the toggle off restores the
-  single-column view unchanged. Below the app's minimum supported window
+  than one control per window. A provisional trailing phrase renders inside
+  the left Original column; it never spans or centers beneath both columns.
+  Switching the toggle off restores the single-column view unchanged. Below
+  the app's minimum supported window
   width, the compact icon controls and one-row header stay available without a
   segment-count caption, so it does not overflow with the MFU panel open.
 - At the **right end** of that same actions cluster, a labelled **MFU**
   switch (`role="switch"`, WP-96) shows or hides the MFU section. Defaults
   **on**; the choice persists independently per screen (Meeting, Streaming)
-  and survives restart. It never gates Craft MFU, but is unavailable with the
-  rest of the Streaming header during live capture. Running **Create
+  and survives restart. It never gates Craft MFU and remains available during
+  live capture. Running **Create
   MFU**/**Craft** while the panel is hidden reveals it automatically. Present
   identically on the Meeting and Streaming transcript headers while idle.
 
@@ -187,9 +193,12 @@ Meeting and Streaming. The left column provides mode switching, search, open,
 new recording, rename, and confirmed deletion. The header keeps sidebar, new,
 Settings, title, status, **Start**, **Stop**, Prettify, Copy, Export, and
 transcript-only Clear controls in the same positions as the other workspaces.
-**Start** performs
-permission, model, system-default microphone, and caption-surface preflight
-before a session is created. **Stop** ends capture and enters **Finalizing**;
+**Start** performs permission, model, system-default microphone, and caption-surface
+preflight, then activates the selected draft in place. A failed start leaves the
+draft available without an audio artifact. Shortcut Start creates a session only
+after the same preflight succeeds. Start remains pending across workspace
+navigation, so returning to Recorder cannot enqueue a duplicate preflight.
+**Stop** ends capture and enters **Finalizing**;
 copy, export, delete, and playback become available when their durable inputs
 exist. The metadata row shows the default microphone and recording duration.
 Recorder uses the same selected ASR model as Meeting and local Streaming;
@@ -198,12 +207,18 @@ persists capture-window spans but does not currently render them. An unsupported
 or missing selection blocks Start with a Settings action; it never silently
 starts another engine.
 
-Committed phrases have stable identity and normal text styling. Their capture
-window spans are persisted but are not currently rendered in the Recorder
-workspace. Consecutive live hypotheses promote their shared word prefix to
-normal text; only the remaining replaceable suffix is italic at 80% opacity.
-The partial is replaced rather than duplicated when its committed phrase
-arrives.
+Committed phrases have stable identity but render as one editable,
+Streaming-style text flow, grouped into paragraphs rather than separate boxes.
+Their capture-window spans are persisted and available as hover metadata.
+Inline edits update the visible, copied, and exported paragraph flow immediately;
+per-segment saves are ordered so the newest edit wins, and backend-derived
+Prettify and Clear actions wait until the edit is durably saved.
+Consecutive live hypotheses promote their shared word prefix to normal text;
+only the remaining replaceable suffix is italic at 80% opacity. The partial is
+replaced rather than duplicated when its committed phrase arrives. While the
+reader remains at the bottom, live Recorder text follows the same autoscroll
+behavior and bottom breathing room as Streaming; scrolling upward pauses it and
+returning to the bottom resumes it.
 
 Recorder retains app-owned CAF audio independently of transcript edits. The
 bottom audio surface is disabled during capture, reports safe closing during
@@ -262,6 +277,8 @@ would retain the interaction in an opaque 120 px panel.
   **edit**, **copy**, **clear**.
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
+- When the MFU content is taller than its panel, it scrolls vertically in both
+  Meeting and Streaming instead of clipping lower sections.
 - **Hidden:** the header **MFU** switch (see Center — transcript, WP-96) can
   hide this section entirely regardless of empty/populated state, freeing its
   space for the transcript panel. Shown by default; the choice persists per
@@ -364,11 +381,13 @@ Whisper model; diarization degrades without its models).
 
 ### Record a voice note
 
-1. Open **Recorder** or invoke its global shortcut while no live source owns the
-   transcription resource.
-2. On first explicit Start, macOS requests microphone access. Denial creates no
-   history row and the UI links to the relevant System Settings pane.
-3. After preflight, one session begins on the current system-default microphone.
+1. Open **Recorder** and press **New recording** to create/select a draft, or
+   invoke its global shortcut while no live source owns the transcription resource.
+2. The draft appears in the library immediately and can be renamed or deleted.
+   On first explicit Start, macOS requests microphone access. Denial preserves
+   the draft without creating audio and the UI links to System Settings.
+3. After preflight, the draft becomes the active session on the current
+   system-default microphone. Shortcut Start creates a session at this point.
    Committed phrases accumulate while one replaceable partial shows trailing
    Russian, English, or mixed speech. Audio checkpoints limit unflushed capture
    to one second.
@@ -423,14 +442,19 @@ Whisper model; diarization degrades without its models).
 - **Model downloading** — a model shows download progress; on SHA-verified
   completion it becomes ready and its task is enabled; Delete returns it to
   not-downloaded.
-- **Recorder ready** — no session or audio exists; Start and the configured
-  shortcut are available when the shared transcription resource is idle.
-- **Recorder permission required** — no session was created; the recovery action
-  opens macOS System Settings and Start retries preflight.
+- **Recorder ready** — either no session is selected or an audio-free draft is
+  selected; Start and the configured shortcut are available when the shared
+  transcription resource is idle.
+- **Recorder permission required** — an explicit draft remains audio-free, while
+  shortcut Start creates no session; the recovery action opens macOS System
+  Settings and Start retries preflight.
 - **Recorder recording** — microphone capture owns the live resource; status and
   duration are explicit and Stop is available.
 - **Recorder partial text** — committed phrases remain stable while one styled
   trailing partial is revised in place.
+- **Recorder realtime overload** — saved native-rate audio remains continuous;
+  realtime preview text may skip an overloaded interval and the final quality
+  pass repairs it from the master instead of stopping capture.
 - **Recorder finalizing** — Start and shortcut transitions are unavailable while
   trailing transcription, atomic audio finalization, and the full-audio quality
   pass retain resource ownership. A failed quality pass keeps the live text and

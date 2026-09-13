@@ -1,9 +1,17 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   acceptRecorderPolish,
   clearRecorderTranscript,
   collapseToBubble,
+  createRecorderDraft,
   deleteRecorderSession,
   exportRecorderWav,
   generateRecorderPolish,
@@ -39,8 +47,24 @@ import { StreamingSessionRow } from "./StreamingSessionRow";
 import type { StreamingStatusView } from "./streamingStatus";
 import { formatDuration, formatElapsedClock } from "./format";
 import { stabilizePartial, type StablePartial } from "./partialStability";
+import { groupWindowsIntoParagraphs } from "./paragraphs";
 
-function persistedStatus(status: RecorderStatus): StreamingStatusView {
+const AUTOSCROLL_RESUME_THRESHOLD_PX = 48;
+
+function persistedStatus(
+  status: RecorderStatus,
+  isDraft = false,
+): StreamingStatusView {
+  if (isDraft) {
+    return {
+      tone: "finished",
+      label: "Ready",
+      icon: "check",
+      spinning: false,
+      showTimer: false,
+      statusKey: "ready",
+    };
+  }
   switch (status) {
     case "recording":
       return {
@@ -90,21 +114,9 @@ function persistedStatus(status: RecorderStatus): StreamingStatusView {
   }
 }
 
-function recorderStatus(
-  active: RecorderSession | null,
+function recorderCaptureStatus(
   snapshot: LiveCaptureSnapshot | null,
-  polishing: boolean,
-): StreamingStatusView {
-  if (polishing) {
-    return {
-      tone: "crafting",
-      label: "Prettifying…",
-      icon: "refresh-cw",
-      spinning: true,
-      showTimer: false,
-      statusKey: "prettifying",
-    };
-  }
+): StreamingStatusView | null {
   if (snapshot?.source === "recorder") {
     if (snapshot.phase === "starting") {
       return {
@@ -140,6 +152,31 @@ function recorderStatus(
       };
     }
   }
+  return null;
+}
+
+function recorderStatus(
+  active: RecorderSession | null,
+  snapshot: LiveCaptureSnapshot | null,
+  polishing: boolean,
+): StreamingStatusView {
+  if (polishing) {
+    return {
+      tone: "crafting",
+      label: "Prettifying…",
+      icon: "refresh-cw",
+      spinning: true,
+      showTimer: false,
+      statusKey: "prettifying",
+    };
+  }
+  if (active?.is_draft) {
+    return persistedStatus(active.status, true);
+  }
+  if (active !== null && snapshot?.session_id === active.id) {
+    const captureStatus = recorderCaptureStatus(snapshot);
+    if (captureStatus) return captureStatus;
+  }
   return active
     ? persistedStatus(active.status)
     : {
@@ -157,6 +194,8 @@ interface RecorderViewProps {
   onSelectStreaming: () => void;
   onOpenSettings: () => void;
   meetingTranscriptionActive: boolean;
+  recorderStartPending?: boolean;
+  onRecorderStartPendingChange?: (pending: boolean) => void;
 }
 
 export function RecorderView({
@@ -164,6 +203,8 @@ export function RecorderView({
   onSelectStreaming,
   onOpenSettings,
   meetingTranscriptionActive,
+  recorderStartPending = false,
+  onRecorderStartPendingChange = () => {},
 }: RecorderViewProps) {
   const [sessions, setSessions] = useState<RecorderSessionSummary[]>([]);
   const [active, setActive] = useState<RecorderSession | null>(null);
@@ -188,6 +229,9 @@ export function RecorderView({
   } | null>(null);
   const [clearPending, setClearPending] = useState(false);
   const [polishBusy, setPolishBusy] = useState(false);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [startPending, setStartPending] = useState(false);
+  const [segmentEdits, setSegmentEdits] = useState<Record<number, string>>({});
   const [elapsed, setElapsed] = useState(0);
   const partialCursor = useRef<{ sessionId: number | null; revision: number }>({
     sessionId: null,
@@ -196,6 +240,11 @@ export function RecorderView({
   const activeId = useRef<number | null>(null);
   const activeStatus = useRef<RecorderStatus | null>(null);
   const previousPartial = useRef("");
+  const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollEnabledRef = useRef(true);
+  const startPendingRef = useRef(false);
+  const segmentEditVersions = useRef<Map<number, number>>(new Map());
+  const segmentSaveChains = useRef<Map<number, Promise<void>>>(new Map());
 
   const resetPartial = useCallback(() => {
     previousPartial.current = "";
@@ -212,6 +261,10 @@ export function RecorderView({
 
   const displaySession = useCallback(
     (session: RecorderSession) => {
+      if (activeId.current !== session.id) {
+        autoScrollEnabledRef.current = true;
+        setSegmentEdits({});
+      }
       if (activeId.current !== session.id || session.status !== "recording") {
         resetPartial();
         partialCursor.current = { sessionId: session.id, revision: -1 };
@@ -293,7 +346,13 @@ export function RecorderView({
           setPartial(next.text);
         }),
         await onRecorderError((next) => {
-          if (!cancelled) setError(next.message);
+          if (
+            !cancelled &&
+            (next.session_id === undefined ||
+              next.session_id === activeId.current)
+          ) {
+            setError(next.message);
+          }
         }),
       );
       const initial = await getLiveCaptureSnapshot();
@@ -349,8 +408,27 @@ export function RecorderView({
     snapshot === null ||
     meetingTranscriptionActive ||
     (snapshot.phase !== "idle" && snapshot.phase !== "error");
-  const canStart = !captureBusy;
+  const canStart = !captureBusy && !startPending && !recorderStartPending;
   const canStop = ownsCapture && snapshot?.phase === "capturing";
+
+  const handleTranscriptScroll = useCallback(
+    (event: React.UIEvent<HTMLDivElement>) => {
+      const container = event.currentTarget;
+      const distanceFromBottom = Math.max(
+        0,
+        container.scrollHeight - container.clientHeight - container.scrollTop,
+      );
+      autoScrollEnabledRef.current =
+        distanceFromBottom <= AUTOSCROLL_RESUME_THRESHOLD_PX;
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    const container = transcriptScrollRef.current;
+    if (!ownsCapture || !autoScrollEnabledRef.current || !container) return;
+    container.scrollTop = container.scrollHeight;
+  }, [active?.segments, ownsCapture, partial]);
 
   useEffect(() => {
     if (!canStop) {
@@ -374,16 +452,27 @@ export function RecorderView({
     }
   }
 
-  function newRecording() {
-    if (ownsCapture) return;
-    activeId.current = null;
-    activeStatus.current = null;
-    setActive(null);
-    resetPartial();
+  async function newRecording() {
+    if (ownsCapture || creatingDraft) return;
     setError(null);
+    setCreatingDraft(true);
+    try {
+      const draft = await createRecorderDraft();
+      autoScrollEnabledRef.current = true;
+      displaySession(draft);
+      upsertSession(draft);
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setCreatingDraft(false);
+    }
   }
 
   async function start() {
+    if (startPendingRef.current) return;
+    startPendingRef.current = true;
+    setStartPending(true);
+    onRecorderStartPendingChange(true);
     setError(null);
     try {
       let permission = await getMicrophonePermissionStatus();
@@ -394,11 +483,17 @@ export function RecorderView({
         setError(`Microphone permission is ${permission.replace("_", " ")}.`);
         return;
       }
-      const session = await startRecorderSession();
+      const session = await startRecorderSession(
+        active?.is_draft ? active.id : undefined,
+      );
       displaySession(session);
       upsertSession(session);
     } catch (reason) {
       setError(String(reason));
+    } finally {
+      startPendingRef.current = false;
+      setStartPending(false);
+      onRecorderStartPendingChange(false);
     }
   }
 
@@ -465,10 +560,22 @@ export function RecorderView({
 
   async function commitEdit(segment: RecorderSegment, text: string) {
     if (!active) return;
+    const sessionId = active.id;
+    const revision = segmentEditVersions.current.get(segment.id) ?? 0;
+    const previous =
+      segmentSaveChains.current.get(segment.id) ?? Promise.resolve();
+    const request = previous
+      .catch(() => {})
+      .then(() => updateRecorderSegment(sessionId, segment.id, text));
+    const tail = request.then(
+      () => {},
+      () => {},
+    );
+    segmentSaveChains.current.set(segment.id, tail);
     try {
-      const updated = await updateRecorderSegment(active.id, segment.id, text);
+      const updated = await request;
       setActive((current) =>
-        current && current.id === active.id
+        current && current.id === sessionId
           ? {
               ...current,
               segments: current.segments.map((item) =>
@@ -477,24 +584,69 @@ export function RecorderView({
             }
           : current,
       );
+      if (segmentEditVersions.current.get(segment.id) === revision) {
+        setSegmentEdits((current) => {
+          const next = { ...current };
+          delete next[segment.id];
+          return next;
+        });
+      }
     } catch (reason) {
-      setError(String(reason));
+      if (
+        activeId.current === sessionId &&
+        segmentEditVersions.current.get(segment.id) === revision
+      ) {
+        setSegmentEdits((current) => {
+          const next = { ...current };
+          delete next[segment.id];
+          return next;
+        });
+        setError(String(reason));
+      }
+    } finally {
+      if (segmentSaveChains.current.get(segment.id) === tail) {
+        segmentSaveChains.current.delete(segment.id);
+      }
     }
   }
 
+  const transcriptParagraphs = useMemo(
+    () =>
+      groupWindowsIntoParagraphs(
+        (active?.segments ?? []).map((segment) => ({
+          ...segment,
+          text: segmentEdits[segment.id] ?? segment.text,
+          outcome_ok: true,
+        })),
+      ),
+    [active?.segments, segmentEdits],
+  );
   const rawTranscript = useMemo(
-    () => active?.segments.map((segment) => segment.text).join("\n") ?? "",
-    [active],
+    () =>
+      transcriptParagraphs
+        .map((paragraph) =>
+          paragraph
+            .map((segment) => segment.text.trim())
+            .filter(Boolean)
+            .join(" "),
+        )
+        .filter(Boolean)
+        .join("\n\n"),
+    [transcriptParagraphs],
   );
   const transcript = active?.polished_text ?? rawTranscript;
+  const hasPendingSegmentEdits = Object.keys(segmentEdits).length > 0;
   const destructiveDisabled =
     active?.status === "recording" ||
     active?.status === "finalizing" ||
     (ownsCapture && active?.id === snapshot?.session_id);
   const widget = recorderStatus(active, snapshot, polishBusy);
+  const snapshotWidget = recorderCaptureStatus(snapshot);
   const effectiveError =
     error ??
-    (snapshot?.source === "recorder" && snapshot.phase === "error"
+    (snapshot?.source === "recorder" &&
+    snapshot.phase === "error" &&
+    snapshot.session_id === active?.id
       ? snapshot.error
       : null) ??
     active?.recovery_reason ??
@@ -550,6 +702,7 @@ export function RecorderView({
       if (activeId.current !== sessionId) return;
       const updated = await acceptRecorderPolish(sessionId, candidate);
       if (activeId.current === sessionId) {
+        setSegmentEdits({});
         displaySession(updated);
         upsertSession(updated);
       }
@@ -584,7 +737,10 @@ export function RecorderView({
     setError(null);
     try {
       const cleared = await clearRecorderTranscript(sessionId);
-      if (activeId.current === sessionId) displaySession(cleared);
+      if (activeId.current === sessionId) {
+        setSegmentEdits({});
+        displaySession(cleared);
+      }
       upsertSession(cleared);
       setClearPending(false);
     } catch (reason) {
@@ -627,8 +783,8 @@ export function RecorderView({
                 className="wp-icon-btn"
                 aria-label="New recording"
                 title="New recording"
-                onClick={newRecording}
-                disabled={ownsCapture}
+                onClick={() => void newRecording()}
+                disabled={ownsCapture || creatingDraft}
               >
                 <Icon name="plus" size={18} />
               </button>
@@ -716,6 +872,7 @@ export function RecorderView({
               disabled={
                 !active ||
                 polishBusy ||
+                hasPendingSegmentEdits ||
                 destructiveDisabled ||
                 !rawTranscript.trim()
               }
@@ -740,7 +897,12 @@ export function RecorderView({
               icon="trash-2"
               label="Clear transcript"
               onClick={() => setClearPending(true)}
-              disabled={!active || destructiveDisabled || !transcript.trim()}
+              disabled={
+                !active ||
+                hasPendingSegmentEdits ||
+                destructiveDisabled ||
+                !transcript.trim()
+              }
             />
           </div>
         </div>
@@ -762,7 +924,7 @@ export function RecorderView({
               aria-label="Export WAV"
               title="Export WAV"
               onClick={() => void exportWav()}
-              disabled={active.status !== "completed"}
+              disabled={active.status !== "completed" || active.is_draft}
             >
               <Icon name="download" size={16} />
             </button>
@@ -807,9 +969,13 @@ export function RecorderView({
                     when={new Date(session.created_at_ms).toLocaleDateString()}
                     dur={formatDuration(session.duration_ms)}
                     status={
-                      session.id === active?.id
-                        ? widget
-                        : persistedStatus(session.status)
+                      snapshot?.source === "recorder" &&
+                      session.id === snapshot.session_id &&
+                      snapshotWidget !== null
+                        ? snapshotWidget
+                        : session.id === active?.id
+                          ? widget
+                          : persistedStatus(session.status, session.is_draft)
                     }
                     selected={session.id === active?.id}
                     onSelect={() => void openSession(session.id)}
@@ -850,8 +1016,10 @@ export function RecorderView({
             </div>
             <div className="wp-separator" />
             <div
+              ref={transcriptScrollRef}
               className="wp-transcript-content wp-transcript-content--inset recorder-transcript"
               aria-label="Recorder transcript"
+              onScroll={handleTranscriptScroll}
             >
               {effectiveError && (
                 <p className="wp-error" role="alert">
@@ -874,25 +1042,56 @@ export function RecorderView({
                 </div>
               ) : (
                 <>
-                  {active.segments.map((segment) => (
-                    <textarea
-                      key={segment.id}
-                      defaultValue={segment.text}
-                      aria-label={`Transcript segment ${segment.id}`}
-                      onBlur={(event) =>
-                        void commitEdit(segment, event.currentTarget.value)
-                      }
-                    />
-                  ))}
+                  <div className="streaming-transcript-text">
+                    {transcriptParagraphs.map((paragraph) => (
+                      <p key={paragraph[0].id} className="streaming-paragraph">
+                        {paragraph.map((segment) => (
+                          <span key={segment.id}>
+                            <span
+                              className="streaming-window recorder-segment-text"
+                              role="textbox"
+                              aria-label={`Transcript segment ${segment.id}`}
+                              contentEditable
+                              suppressContentEditableWarning
+                              spellCheck
+                              title={`${Math.floor(segment.start_sample / active.sample_rate)}–${Math.ceil(segment.end_sample / active.sample_rate)}s (${segment.language})`}
+                              onBlur={(event) =>
+                                void commitEdit(
+                                  segment,
+                                  event.currentTarget.textContent ?? "",
+                                )
+                              }
+                              onInput={(event) => {
+                                const text =
+                                  event.currentTarget.textContent ?? "";
+                                segmentEditVersions.current.set(
+                                  segment.id,
+                                  (segmentEditVersions.current.get(
+                                    segment.id,
+                                  ) ?? 0) + 1,
+                                );
+                                setSegmentEdits((current) => ({
+                                  ...current,
+                                  [segment.id]: text,
+                                }));
+                              }}
+                            >
+                              {segment.text}
+                            </span>{" "}
+                          </span>
+                        ))}
+                      </p>
+                    ))}
+                  </div>
                   {partial && (
-                    <p className="recorder-partial" role="status">
+                    <p className="wp-streaming-partial" role="status">
                       {partialDisplay.stable && (
-                        <span className="recorder-partial-stable">
+                        <span className="wp-streaming-partial-stable">
                           {partialDisplay.stable}{" "}
                         </span>
                       )}
                       {partialDisplay.unstable && (
-                        <em className="recorder-partial-unstable">
+                        <em className="wp-streaming-partial-unstable">
                           {partialDisplay.unstable}
                         </em>
                       )}
@@ -900,16 +1099,24 @@ export function RecorderView({
                   )}
                 </>
               )}
-              {active?.audio_path && active.status === "completed" && (
-                <audio
-                  className="recorder-audio"
-                  controls
-                  preload="metadata"
-                  src={convertFileSrc(active.audio_path)}
-                >
-                  Saved Recorder audio
-                </audio>
+              {ownsCapture && (
+                <div
+                  className="wp-streaming-autoscroll-tail"
+                  aria-hidden="true"
+                />
               )}
+              {active?.audio_path &&
+                active.status === "completed" &&
+                !active.is_draft && (
+                  <audio
+                    className="recorder-audio"
+                    controls
+                    preload="metadata"
+                    src={convertFileSrc(active.audio_path)}
+                  >
+                    Saved Recorder audio
+                  </audio>
+                )}
               {active?.status === "recoverable" && (
                 <button type="button" onClick={() => void recover()}>
                   Recover

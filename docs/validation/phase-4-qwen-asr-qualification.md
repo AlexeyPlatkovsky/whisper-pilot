@@ -25,7 +25,16 @@ removed with the pure-Rust runtime; the recorded results below are retained as
 historical evidence rather than a currently runnable product gate.
 
 The generator writes `manifest.tsv` with exact references, durations, and
-hashes for every run. For the recorded run the mono 16 kHz WAV manifest was:
+hashes for every run. Put decoder output in `ru.txt`, `en.txt`, and `mixed.txt`
+inside one hypothesis directory, then score it without printing transcript
+content:
+
+```bash
+node scripts/score-asr-corpus.mjs \
+  /tmp/whisper-pilot-asr-corpus/manifest.tsv /path/to/hypotheses
+```
+
+For the recorded run the mono 16 kHz WAV manifest was:
 
 | file | duration | SHA-256 |
 | --- | ---: | --- |
@@ -37,12 +46,12 @@ Normalized references are the literal Russian and English sentences in
 `generate-asr-benchmark-corpus.sh`; mixed concatenates its two literal clauses.
 Scoring lowercased and removed punctuation. Raw WER intentionally did not
 normalize spoken numbers to digits, so Whisper's semantically correct number
-formatting appears as substitutions. The corpus script remains checked in, but
-decoder commands, hypotheses, and the ad-hoc WER scorer were not retained. The WER,
-three-session RSS, native-streaming, and 60-second rows below are therefore
-recorded qualification evidence, not a claim that one checked-in command
-recreates every headline number. The hashes are specific to the recorded macOS
-voices; a future OS voice update requires a new manifest.
+formatting appears as substitutions. The corpus generator and deterministic
+WER/CER scorer are checked in; historical decoder commands and hypotheses were
+not retained. The WER, three-session RSS, native-streaming, and 60-second rows
+below are therefore recorded qualification evidence, not a claim that one
+checked-in command recreates every headline number. The hashes are specific to
+the recorded macOS voices; a future OS voice update requires a new manifest.
 
 - Whisper: `whisper-rs` 0.16.0, large-v3-turbo Q8, SHA-256
   `317eb69c11673c9de1e1f0d459b253999804ec71ac4c23c17ecf5fbe24e259a1`.

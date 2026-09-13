@@ -393,15 +393,24 @@ decode it.
 
 ## Streaming Decode/Session Pipeline (WP-68/WP-71, `streaming_session.rs`)
 
-Decodes the continuous sample stream `streaming_audio.rs` produces around
-non-overlapping utterances. After at least two seconds of speech, a trailing
-600 ms quiet run commits a natural phrase; uninterrupted speech is capped at
-20 seconds (`WINDOW_SECONDS`) and uses a short quiet boundary near that cap
-when available. This avoids mechanical seven-second word splits while keeping
-memory and latency bounded.
+Decodes the continuous sample stream `streaming_audio.rs` produces into
+non-overlapping logical utterances. After at least two seconds of speech, a
+trailing 600 ms quiet run commits a natural phrase; the energy threshold adapts
+to the preceding second of speech, so a noisy pause remains detectable after
+both short and long utterances without classifying steady room noise as speech.
+Uninterrupted speech is capped at 20 seconds (`WINDOW_SECONDS`) and uses
+a short quiet boundary near that cap when available. This avoids mechanical
+seven-second word splits while keeping memory and latency bounded.
+A conservative energy/stationarity gate prevents confidently steady low-level
+noise from triggering partials, Stop-tail decode, or a forced hard-cap commit;
+a noise-only hard-cap span is discarded while its sample-clock time is retained.
+Varying low-gain audio fails safe toward ASR so quiet speech is not deleted.
 Once the unstable suffix reaches two seconds, local decode emits a transient
-partial and revises it for each additional two seconds; partials are sent as
-`streaming_partial` events and never persisted. The renderer applies
+partial and revises it for each additional two seconds. Replaceable partials
+use deterministic greedy decoding; committed, stop-tail, Recorder-final and
+whole-file Whisper passes retain beam-5 decoding with guarded temperature
+fallbacks. Partials are sent as `streaming_partial` events and never persisted.
+The renderer applies
 consecutive-hypothesis agreement: the common word prefix is normal stable text
 and only the replaceable suffix is italic at 80% opacity. A committed window
 replaces that suffix with one committed
@@ -410,18 +419,24 @@ is decoded and committed exactly once; silence and sub-threshold callback
 noise are discarded. One session decodes every result through a
 single `WhisperState` (WP-82): `run_windowed_decode` builds one
 `WhisperSessionDecoder` when the loop starts and reuses it via
-`transcribe::transcribe_with_state_and_prompt`, because each state owns a full GPU
+`transcribe::transcribe_with_state_and_prompt_profile`, because each state owns a full GPU
 backend plus its KV/compute buffers — one state per window was one backend
 init/free cycle per window. State reuse across calls is upstream's own
 `whisper_full` pattern (each call clears results, recomputes the mel, and
 clears the self-attention KV cache); Meeting keeps one state per whole-file
 run. Up to the last 240 characters of committed text are supplied as context
 to both Whisper and Qwen, improving proper nouns and continuity without
-persisting or duplicating the prompt. Each window gets its own language detection, unlike Meeting's
+persisting or duplicating the prompt. Qwen receives that text inside an
+explicit reference-only instruction that forbids repeating or rewriting it.
+Each window gets its own language detection, unlike Meeting's
 once-per-file detection (ADR-012), since a live session has no single fixed
-language the way a finished file does. A word can still split across a
-committed window boundary — an accepted, documented trade-off for
-non-overlapping persistence windows, not a silent one.
+language the way a finished file does. After a forced hard boundary, the next
+decode prepends 750 ms of the previous audio while its persisted logical span
+still begins at the non-overlapping sample boundary. Whisper removes only full
+segments whose model timestamps prove they fall wholly inside those 750 ms; a
+boundary-crossing segment is preserved. Qwen exposes no reliable model
+timestamps, so ambiguous repeated text is always preserved and its explicit
+context instruction remains the only duplicate-avoidance hint.
 
 **Fail-open per window** (mirroring diarization, ADR-013): a window whose
 decode errors is skipped — logged, no text emitted for that span — rather
@@ -755,10 +770,8 @@ drives the on-screen row layout.
 paragraph-batch behavior — see ADR-016):** translation is triggered per
 window, not per paragraph, and is entirely decoupled from paragraph
 boundaries/`paragraphs.ts`'s closure heuristic (`isParagraphClosed` was
-deleted as dead code once nothing gated on it). Nothing translates until the
-session has at least 2 windows; at that threshold, window 0 (no context) and
-window 1 (context = window 0's translation) both enqueue in the same
-reconcile pass and fire back to back through the single-flight queue. Every
+deleted as dead code once nothing gated on it). Window 0 starts translating as
+soon as it is committed, without waiting for Stop or a second window. Every
 window after that translates alone, as soon as it arrives, with `context` set
 to the concatenation, in order, of the up-to-2 immediately preceding windows'
 available (`"done"`/`"mirrored"`) translations — a failed or not-yet-resolved
@@ -787,14 +800,17 @@ switching or deleting the session, cancels pending work and discards any
 in-flight result a subsequent change has superseded, exactly as before
 WP-103.
 
-The switch's own on/off state is persisted (WP-101): `streaming_sessions`
-gains a `translation_enabled` column, written best-effort via
+The switch's own on/off state and target language are persisted per session:
+`streaming_sessions` owns `translation_enabled` and
+`translation_target_language` (`"en"`/`"ru"`). They are written best-effort via
 `set_streaming_translation_enabled` on every toggle (mirroring WP-96's
 MFU-panel-toggle pattern — the switch keeps showing what the user chose even
-if the write fails, with no retry), and read back into both
-`StreamingSessionSummaryDto` and `StreamingSessionDto`. Opening a session
-restores its persisted value, so the state survives closing and reopening a
-session and an app restart. Pressing Start/Resume on the session that is
+if the write fails, with no retry) and
+`set_streaming_translation_target_language` on target changes, then read back
+into both `StreamingSessionSummaryDto` and `StreamingSessionDto`. Opening a session
+restores both values, so stored English translations cannot be reopened under
+the Russian UI default. The state survives closing and reopening a session and
+an app restart. Pressing Start/Resume on the session that is
 *already* open is not a session-identity change, so it leaves the switch,
 its translations, and its in-flight queue untouched — only starting a
 genuinely different session (a brand-new one, or resuming a different past
@@ -965,6 +981,7 @@ span.
 | `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
 | `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
 | `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
+| `set_streaming_translation_target_language(id, target_language)`       | Persist the session-scoped `"en"`/`"ru"` target used to reopen the correct translation column                                                                                              | WP-115    |
 | `start_streaming_session(engine?)`                                     | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before system-audio capture, persists final turns, and returns once capture starts (macOS only) | WP-106    |
 | `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
 | `get_live_capture_snapshot()`                                          | Read the backend-owned live-capture phase, source, session, generation, revision, and error for renderer hydration                                                                           | WP-112    |
@@ -976,8 +993,9 @@ span.
 | `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
 | `get_microphone_permission_status()` / `request_microphone_permission()` | Read TCC state without prompting, or explicitly request microphone access                                                                                                                    | WP-109    |
 | `list_recorder_sessions()` / `open_recorder_session(id)`               | Read Recorder history summaries or a complete session with persisted ASR provenance and segments                                                                                            | WP-109    |
+| `create_recorder_draft()`                                               | Persist and return an audio-free Recorder draft immediately so it can be selected, renamed, or deleted before capture                                                                         | WP-109    |
 | `rename_recorder_session(id, title)` / `delete_recorder_session(id)`    | Manage inactive Recorder history and its app-owned audio                                                                                                                                      | WP-109    |
-| `start_recorder_session()` / `stop_recorder_session()`                 | Run preflight and begin default-microphone capture, or enter durable finalization                                                                                                             | WP-109    |
+| `start_recorder_session(draft_id?)` / `stop_recorder_session()`        | Run preflight, activate the selected draft in place (or create a shortcut-started session), begin default-microphone capture, or enter durable finalization                                    | WP-109    |
 | `recover_recorder_session(id)` / `export_recorder_wav(id)`             | Reconcile recoverable local audio or export the finalized native-rate CAF as WAV                                                                                                              | WP-109    |
 | `update_recorder_segment(session_id, segment_id, text)`                 | Persist an edit without rewriting raw audio or ASR provenance                                                                                                                                 | WP-109    |
 | `set_recorder_shortcut(value)` / `get_recorder_shortcut_status()`      | Atomically replace the global toggle chord or report its registration state                                                                                                                   | WP-109    |
@@ -1020,10 +1038,15 @@ transcription, Streaming capture, Recorder capture, or Recorder finalization
 can own native transcription resources. Renderer mount state and the visibility
 of the main or caption window are never lifecycle authorities.
 
-Start has a preflight boundary before durable creation: macOS microphone
-authorization, the selected ASR model bundle, the system-default input device, and
-the shortcut caption surface when required must be ready before a Recorder row
-or audio file exists. A typed AVFoundation adapter exposes `not_determined`,
+The explicit **New recording** action creates a durable metadata-only draft
+immediately. It has no audio artifact and survives launch reconciliation, so it
+can be selected, renamed, or deleted before capture. Start runs macOS microphone
+authorization, the draft's selected ASR model bundle, and system-default input
+device preflight before activating that same row in place. A failed start
+restores the non-live draft state before cleaning temporary audio, so even a
+filesystem cleanup failure cannot leave a phantom active session.
+Shortcut Start has no preselected draft and retains the stricter boundary: no
+row or audio exists until preflight succeeds. A typed AVFoundation adapter exposes `not_determined`,
 `denied`, `restricted`, `authorized`, and `unavailable` over IPC. Its status
 query never opens a device or prompts; only the explicit Recorder request
 command may display TCC, and capture fails closed unless the resulting status is
@@ -1034,8 +1057,12 @@ the device's actual rate without waiting for ASR. Callback storage comes from a
 bounded, preallocated recycle pool; downstream receives only a read-only slice,
 and releasing a chunk returns a capacity-checked buffer to the pool. Exhaustion
 stops delivery as an explicit overload instead of allocating on CoreAudio's
-real-time thread. The CAF writer encodes that master as signed-16 PCM
-at the same declared rate. Independent, band-limited adapters derive the 16 kHz
+real-time thread. The native-rate CAF writer is the durability boundary and
+never waits for realtime ASR: its derived 16 kHz feed uses non-blocking
+drop-newest delivery when the decoder falls behind. Such preview gaps do not
+make the recording recoverable because the post-stop quality pass rebuilds the
+complete transcript from the preserved master. The CAF writer encodes that
+master as signed-16 PCM at the same declared rate. Independent, band-limited adapters derive the 16 kHz
 local-ASR stream, the 24 kHz OpenAI Realtime stream, or a provider-supported
 native-rate stream. Recorder never mixes microphone and system audio. A change
 to the system default does not migrate an active stream; CPAL interruptions and
@@ -1055,8 +1082,12 @@ Whisper retains its existing Metal context. Qwen 1.7B uses the existing
 in-process `llama.cpp` backend plus MTMD, with a verified text GGUF and required
 audio projector GGUF. Text LLM and GGUF-ASR caches share the one process-global
 `llama.cpp` backend but own independent models and inference contexts. Meeting
-feeds the GGUF runtime bounded 30-second file windows; Streaming and Recorder
-reuse the live natural-utterance decoder with a 20-second hard cap. Qwen output has no model
+feeds the GGUF runtime bounded 30-second decode windows. Every window after
+the first advances the logical timeline by 29 seconds and includes one second
+of preceding audio plus up to 240 characters of confirmed transcript context.
+Because Qwen has no model timestamps, the pipeline preserves ambiguous repeated
+phrases instead of risking deletion. Streaming and Recorder reuse the live
+natural-utterance decoder with a 20-second hard cap. Qwen output has no model
 timestamps, so the surrounding pipeline assigns stable window spans rather
 than presenting them as word timing.
 Every new Recorder row stores `asr_model_id`, `asr_engine`, and `asr_language`, preserving active

@@ -75,8 +75,11 @@ export const mockCreateIpc = () => ({
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
   generateRecorderPolish: vi.fn(),
+  createRecorderDraft: vi.fn(),
   acceptRecorderPolish: vi.fn(),
   revertRecorderPolish: vi.fn(),
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
 });
