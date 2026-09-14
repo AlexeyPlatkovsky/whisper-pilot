@@ -20,6 +20,7 @@ jobs:
         check:
           - typecheck
           - lint
+          - lint-ui
           - lint-comments
           - format-check
           - frontend-test-coverage
@@ -99,6 +100,9 @@ jobs:
             lint)
               npm run lint
               ;;
+            lint-ui)
+              npm run lint:ui
+              ;;
             lint-comments)
               npm run lint:comments
               ;;
@@ -132,6 +136,7 @@ jobs:
             const checkNames = [
               'typecheck',
               'lint',
+              'lint-ui',
               'lint-comments',
               'format-check',
               'frontend-test-coverage',

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StatusColorsSection } from "./StatusColorsSection";
 import * as ipc from "./ipc";
@@ -203,6 +203,17 @@ describe("StatusColorsSection — picker popover", () => {
     expect(
       screen.getByRole("button", { name: "Revert On Air to default color" }),
     ).toBeInTheDocument();
+  });
+
+  it("keeps the visual color input and hex field synchronized", async () => {
+    render(<StatusColorsSection statusColorsRaw={undefined} />);
+    const { dialog } = await openPicker("Ready");
+
+    fireEvent.change(within(dialog).getByLabelText("Visual color picker"), {
+      target: { value: "#abcdef" },
+    });
+
+    expect(within(dialog).getByLabelText("Hex color")).toHaveValue("#ABCDEF");
   });
 
   it("warns about low contrast inside the popover but still saves", async () => {

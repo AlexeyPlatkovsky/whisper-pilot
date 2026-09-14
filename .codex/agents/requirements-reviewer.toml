@@ -1,6 +1,7 @@
 name = "requirements-reviewer"
 description = "Independently check a draft requirement for completeness and implementability."
 sandbox_mode = "read-only"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 developer_instructions = """
 Responsibility: review one draft specification before approval or persistence.

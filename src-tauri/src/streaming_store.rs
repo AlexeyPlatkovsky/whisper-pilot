@@ -44,6 +44,8 @@ pub struct StreamingSessionSummary {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    /// Captured timeline length, independent of wall-clock update times.
+    pub duration_ms: i64,
     pub status: String,
     pub translation_enabled: bool,
     pub translation_target_language: String,
@@ -300,12 +302,55 @@ impl StreamingStore {
         require_changed(changed, "streaming session", id)
     }
 
+    /// Atomically clears all content derived from captured audio while keeping
+    /// the stopped session, its engine configuration, and UI preferences.
+    pub fn clear_session_content(&self, id: StreamingSessionId) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(store_error)?;
+        let status = transaction
+            .query_row(
+                "SELECT status FROM streaming_sessions WHERE id = ?1",
+                params![id],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .map_err(store_error)?
+            .ok_or_else(|| AppError::Store(format!("streaming session {id} was not found")))?;
+        if status != status::STOPPED {
+            return Err(AppError::Capture(
+                "cannot clear a Streaming session while capture is active".to_string(),
+            ));
+        }
+        for table in [
+            "streaming_translations",
+            "streaming_prettified",
+            "streaming_mfu",
+            "streaming_segments",
+        ] {
+            transaction
+                .execute(
+                    &format!("DELETE FROM {table} WHERE session_id = ?1"),
+                    params![id],
+                )
+                .map_err(store_error)?;
+        }
+        transaction
+            .execute(
+                "UPDATE streaming_sessions SET updated_at_ms = created_at_ms WHERE id = ?1",
+                params![id],
+            )
+            .map_err(store_error)?;
+        transaction.commit().map_err(store_error)
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<StreamingSessionSummary>> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
                 "SELECT id, title, created_at_ms, updated_at_ms, status, translation_enabled,
-                        translation_target_language
+                        translation_target_language,
+                        COALESCE((SELECT MAX(end_ms) FROM streaming_segments
+                                  WHERE session_id = streaming_sessions.id), 0)
                  FROM streaming_sessions ORDER BY updated_at_ms DESC, id DESC",
             )
             .map_err(store_error)?;
@@ -413,11 +458,16 @@ impl StreamingStore {
     }
 
     pub fn upsert_mfu(&self, mfu: &StreamingMfu) -> Result<()> {
-        self.connection()?
+        let changed = self
+            .connection()?
             .execute(
                 "INSERT INTO streaming_mfu
                     (session_id, summary, decisions, action_items, open_questions, participants)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 SELECT ?1, ?2, ?3, ?4, ?5, ?6
+                 WHERE EXISTS (
+                     SELECT 1 FROM streaming_segments
+                     WHERE session_id = ?1 AND outcome_ok = 1 AND TRIM(text) <> ''
+                 )
                  ON CONFLICT(session_id) DO UPDATE SET
                     summary = excluded.summary,
                     decisions = excluded.decisions,
@@ -434,6 +484,12 @@ impl StreamingStore {
                 ],
             )
             .map_err(store_error)?;
+        if changed == 0 {
+            return Err(AppError::Store(format!(
+                "streaming session {} has no transcript for MFU",
+                mfu.session_id
+            )));
+        }
         Ok(())
     }
 
@@ -460,14 +516,24 @@ impl StreamingStore {
     }
 
     pub fn upsert_prettified(&self, session_id: StreamingSessionId, text: &str) -> Result<()> {
-        self.connection()?
+        let changed = self
+            .connection()?
             .execute(
                 "INSERT INTO streaming_prettified (session_id, text)
-                 VALUES (?1, ?2)
+                 SELECT ?1, ?2
+                 WHERE EXISTS (
+                     SELECT 1 FROM streaming_segments
+                     WHERE session_id = ?1 AND outcome_ok = 1 AND TRIM(text) <> ''
+                 )
                  ON CONFLICT(session_id) DO UPDATE SET text = excluded.text",
                 params![session_id, text],
             )
             .map_err(store_error)?;
+        if changed == 0 {
+            return Err(AppError::Store(format!(
+                "streaming session {session_id} has no transcript to prettify"
+            )));
+        }
         Ok(())
     }
 
@@ -845,6 +911,7 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<StreamingSessionSummary> 
         title: row.get(1)?,
         created_at_ms: row.get(2)?,
         updated_at_ms: row.get(3)?,
+        duration_ms: row.get(7)?,
         status: row.get(4)?,
         translation_enabled: row.get(5)?,
         translation_target_language: row.get(6)?,
@@ -967,6 +1034,12 @@ mod tests {
         }
     }
 
+    fn seed_transcript(store: &StreamingStore, session_id: StreamingSessionId) {
+        store
+            .append_window(session_id, &window(0, 0, 1_000), 1_100)
+            .expect("seed transcript");
+    }
+
     #[test]
     fn given_empty_directory_when_creating_session_then_it_persists_and_lists() {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
@@ -991,6 +1064,7 @@ mod tests {
                 title: "Standup".to_string(),
                 created_at_ms: 100,
                 updated_at_ms: 100,
+                duration_ms: 0,
                 status: status::STOPPED.to_string(),
                 translation_enabled: false,
                 translation_target_language: "ru".to_string(),
@@ -1400,6 +1474,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
 
         store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
@@ -1414,6 +1489,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store.upsert_mfu(&mfu(session_id)).expect("first upsert");
 
         let mut second = mfu(session_id);
@@ -1438,6 +1514,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
         store.delete_session(session_id).expect("delete session");
@@ -1450,6 +1527,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store.upsert_mfu(&mfu(session_id)).expect("upsert mfu");
 
         store.delete_mfu(session_id).expect("delete mfu");
@@ -1478,6 +1556,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
 
         store
             .upsert_prettified(session_id, "Cleaned transcript text.")
@@ -1494,6 +1573,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store
             .upsert_prettified(session_id, "First version.")
             .expect("first upsert");
@@ -1521,6 +1601,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store
             .upsert_prettified(session_id, "Cleaned text.")
             .expect("upsert prettified");
@@ -1538,6 +1619,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary app-support directory");
         let store = StreamingStore::open(temp.path()).expect("open database");
         let session_id = store.create_session(draft("Standup", 100)).unwrap().id;
+        seed_transcript(&store, session_id);
         store
             .upsert_prettified(session_id, "Cleaned text.")
             .expect("upsert prettified");

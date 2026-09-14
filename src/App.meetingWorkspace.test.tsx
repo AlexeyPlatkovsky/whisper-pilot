@@ -1,6 +1,13 @@
 import { mockCreateIpc } from "./test/ipcMock";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within, act } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  within,
+  act,
+  fireEvent,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
@@ -626,6 +633,9 @@ describe("App — persisted meeting controls", () => {
     const dialog = screen.getByRole("alertdialog", {
       name: `Delete ${ACTIVE_MEETING.title}`,
     });
+    expect(within(dialog).getByRole("button", { name: "Delete" })).toHaveClass(
+      "modal-button--danger",
+    );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(ipc.deleteMeeting).not.toHaveBeenCalled();
 
@@ -643,6 +653,215 @@ describe("App — persisted meeting controls", () => {
     expect(
       screen.queryByRole("button", { name: /Quarterly planning/ }),
     ).not.toBeInTheDocument();
+  });
+
+  it("clears the active meeting transcript and MFU but keeps its source", async () => {
+    const withMfu = {
+      ...ACTIVE_MEETING,
+      source_path: "/fixtures/planning.mp3",
+      source_name: "planning.mp3",
+      mfu: {
+        meeting_id: ACTIVE_MEETING.id,
+        summary: "Summary to clear",
+        decisions: "",
+        action_items: "",
+        open_questions: "",
+        participants: "",
+      },
+    };
+    arrangeActiveMeeting();
+    vi.mocked(ipc.openMeeting).mockResolvedValue(withMfu);
+    vi.mocked(ipc.clearMeeting).mockResolvedValue({
+      ...withMfu,
+      status: "ready",
+      duration_ms: undefined,
+      language: "und",
+      segments: [],
+      mfu: undefined,
+    });
+    const user = userEvent.setup();
+    render(<App />);
+    expect(
+      await screen.findByDisplayValue("Saved transcript"),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    expect(ipc.clearMeeting).not.toHaveBeenCalled();
+    const dialog = screen.getByRole("alertdialog", { name: "Clear meeting" });
+    await user.click(
+      within(dialog).getByRole("button", { name: "Clear meeting" }),
+    );
+
+    expect(ipc.clearMeeting).toHaveBeenCalledWith(ACTIVE_MEETING.id);
+    expect(
+      screen.queryByDisplayValue("Saved transcript"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Summary to clear")).not.toBeInTheDocument();
+    expect(screen.getByText("planning.mp3")).toBeInTheDocument();
+  });
+
+  it("reports a clear failure and closes the confirmation", async () => {
+    arrangeActiveMeeting();
+    vi.mocked(ipc.clearMeeting).mockRejectedValue(
+      new Error("meeting clear failed"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
+
+    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    await user.click(
+      within(
+        screen.getByRole("alertdialog", { name: "Clear meeting" }),
+      ).getByRole("button", { name: "Clear meeting" }),
+    );
+
+    expect(await screen.findByText(/meeting clear failed/)).toBeInTheDocument();
+    expect(
+      screen.queryByRole("alertdialog", { name: "Clear meeting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("cancels clearing without changing the active meeting", async () => {
+    arrangeActiveMeeting();
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByDisplayValue("Saved transcript");
+
+    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    await user.click(
+      within(
+        screen.getByRole("alertdialog", { name: "Clear meeting" }),
+      ).getByRole("button", { name: "Cancel" }),
+    );
+
+    expect(ipc.clearMeeting).not.toHaveBeenCalled();
+    expect(screen.getByDisplayValue("Saved transcript")).toBeInTheDocument();
+  });
+
+  it("settles a pending transcript autosave before Clear runs", async () => {
+    arrangeActiveMeeting();
+    vi.mocked(ipc.updateSegment).mockResolvedValue(ACTIVE_MEETING);
+    vi.mocked(ipc.clearMeeting).mockResolvedValue({
+      ...ACTIVE_MEETING,
+      status: "ready",
+      segments: [],
+    });
+    render(<App />);
+    const textarea = await screen.findByDisplayValue("Saved transcript");
+
+    fireEvent.change(textarea, { target: { value: "Unsaved edit" } });
+    fireEvent.click(screen.getByRole("button", { name: "Clear meeting" }));
+    fireEvent.click(
+      within(
+        screen.getByRole("alertdialog", { name: "Clear meeting" }),
+      ).getByRole("button", { name: "Clear meeting" }),
+    );
+
+    await waitFor(() =>
+      expect(ipc.clearMeeting).toHaveBeenCalledWith(ACTIVE_MEETING.id),
+    );
+    expect(ipc.updateSegment).toHaveBeenCalledWith(
+      ACTIVE_MEETING.id,
+      0,
+      "Unsaved edit",
+    );
+    expect(
+      vi.mocked(ipc.updateSegment).mock.invocationCallOrder[0],
+    ).toBeLessThan(vi.mocked(ipc.clearMeeting).mock.invocationCallOrder[0]);
+  });
+
+  it("keeps debounced edits scoped to their meeting when another meeting is cleared", async () => {
+    const olderMeeting = {
+      ...ACTIVE_MEETING,
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+      segments: [{ ...ACTIVE_MEETING.segments[0], text: "Older transcript" }],
+    };
+    arrangeActiveMeeting();
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === olderMeeting.id ? olderMeeting : ACTIVE_MEETING,
+    );
+    vi.mocked(ipc.updateSegment).mockResolvedValue(ACTIVE_MEETING);
+    vi.mocked(ipc.clearMeeting).mockResolvedValue({
+      ...olderMeeting,
+      status: "ready",
+      segments: [],
+    });
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<App />);
+      const current = await screen.findByDisplayValue("Saved transcript");
+      fireEvent.change(current, { target: { value: "Edit for meeting A" } });
+
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open Older meeting" }),
+      );
+      await screen.findByDisplayValue("Older transcript");
+      fireEvent.click(screen.getByRole("button", { name: "Clear meeting" }));
+      fireEvent.click(
+        within(
+          screen.getByRole("alertdialog", { name: "Clear meeting" }),
+        ).getByRole("button", { name: "Clear meeting" }),
+      );
+
+      await waitFor(() => expect(ipc.clearMeeting).toHaveBeenCalledWith(1));
+      expect(ipc.updateSegment).not.toHaveBeenCalledWith(
+        1,
+        0,
+        "Edit for meeting A",
+      );
+
+      await vi.advanceTimersByTimeAsync(500);
+      expect(ipc.updateSegment).toHaveBeenCalledWith(
+        ACTIVE_MEETING.id,
+        0,
+        "Edit for meeting A",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not show an old meeting's autosave failure on the meeting opened next", async () => {
+    const olderMeeting = {
+      ...ACTIVE_MEETING,
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+      segments: [{ ...ACTIVE_MEETING.segments[0], text: "Older transcript" }],
+    };
+    arrangeActiveMeeting();
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === olderMeeting.id ? olderMeeting : ACTIVE_MEETING,
+    );
+    vi.mocked(ipc.updateSegment).mockRejectedValue(
+      new Error("meeting A autosave failed"),
+    );
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      render(<App />);
+      fireEvent.change(await screen.findByDisplayValue("Saved transcript"), {
+        target: { value: "Edit for meeting A" },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Open Older meeting" }),
+      );
+      await screen.findByDisplayValue("Older transcript");
+
+      await vi.advanceTimersByTimeAsync(500);
+      await act(async () => {});
+
+      expect(ipc.updateSegment).toHaveBeenCalledWith(
+        ACTIVE_MEETING.id,
+        0,
+        "Edit for meeting A",
+      );
+      expect(screen.queryByText(/meeting A autosave failed/)).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("seeds a fresh meeting after the last one is deleted", async () => {

@@ -9,7 +9,7 @@ import {
 import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   acceptRecorderPolish,
-  clearRecorderTranscript,
+  clearRecorderRecording,
   collapseToBubble,
   createRecorderDraft,
   deleteRecorderSession,
@@ -43,6 +43,7 @@ import { ModeToggle } from "./ModeToggle";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { StreamingSessionRow } from "./StreamingSessionRow";
 import type { StreamingStatusView } from "./streamingStatus";
 import { formatDuration, formatElapsedClock } from "./format";
@@ -408,7 +409,12 @@ export function RecorderView({
     snapshot === null ||
     meetingTranscriptionActive ||
     (snapshot.phase !== "idle" && snapshot.phase !== "error");
-  const canStart = !captureBusy && !startPending && !recorderStartPending;
+  const selectedSessionCanStart = !active || active.status === "completed";
+  const canStart =
+    selectedSessionCanStart &&
+    !captureBusy &&
+    !startPending &&
+    !recorderStartPending;
   const canStop = ownsCapture && snapshot?.phase === "capturing";
 
   const handleTranscriptScroll = useCallback(
@@ -469,7 +475,7 @@ export function RecorderView({
   }
 
   async function start() {
-    if (startPendingRef.current) return;
+    if (startPendingRef.current || !selectedSessionCanStart) return;
     startPendingRef.current = true;
     setStartPending(true);
     onRecorderStartPendingChange(true);
@@ -483,9 +489,9 @@ export function RecorderView({
         setError(`Microphone permission is ${permission.replace("_", " ")}.`);
         return;
       }
-      const session = await startRecorderSession(
-        active?.is_draft ? active.id : undefined,
-      );
+      // Starting from an open library row continues that recording in place;
+      // only an empty workspace creates a new session.
+      const session = await startRecorderSession(active?.id);
       displaySession(session);
       upsertSession(session);
     } catch (reason) {
@@ -530,6 +536,14 @@ export function RecorderView({
     }
   }
 
+  function openDelete(target: { id: number; title: string }) {
+    setDeleteTarget(target);
+  }
+
+  function closeDelete() {
+    setDeleteTarget(null);
+  }
+
   async function deleteSession(target: { id: number; title: string }) {
     const id = target.id;
     setError(null);
@@ -545,7 +559,7 @@ export function RecorderView({
       setDeleteTarget(null);
     } catch (reason) {
       setError(String(reason));
-      setDeleteTarget(null);
+      closeDelete();
       if (activeId.current === id) {
         try {
           const refreshed = await openRecorderSession(id);
@@ -731,12 +745,12 @@ export function RecorderView({
     }
   }
 
-  async function clearTranscript() {
+  async function clearRecording() {
     if (!active) return;
     const sessionId = active.id;
     setError(null);
     try {
-      const cleared = await clearRecorderTranscript(sessionId);
+      const cleared = await clearRecorderRecording(sessionId);
       if (activeId.current === sessionId) {
         setSegmentEdits({});
         displaySession(cleared);
@@ -817,8 +831,7 @@ export function RecorderView({
               className="wp-icon-btn wp-icon-btn--ghost"
               aria-label="Delete recording"
               onClick={() =>
-                active &&
-                setDeleteTarget({ id: active.id, title: active.title })
+                active && openDelete({ id: active.id, title: active.title })
               }
               disabled={!active || destructiveDisabled}
             >
@@ -895,13 +908,14 @@ export function RecorderView({
             <span className="wp-sep" />
             <ActionIcon
               icon="trash-2"
-              label="Clear transcript"
+              label="Clear recording"
               onClick={() => setClearPending(true)}
               disabled={
                 !active ||
+                polishBusy ||
                 hasPendingSegmentEdits ||
                 destructiveDisabled ||
-                !transcript.trim()
+                active.is_draft === true
               }
             />
           </div>
@@ -981,7 +995,7 @@ export function RecorderView({
                     onSelect={() => void openSession(session.id)}
                     onRename={() => openRename(session.id, session.title)}
                     onDelete={() =>
-                      setDeleteTarget({ id: session.id, title: session.title })
+                      openDelete({ id: session.id, title: session.title })
                     }
                   />
                 ))}
@@ -1168,76 +1182,46 @@ export function RecorderView({
             />
             {renameError && <p role="alert">{renameError}</p>}
             <div className="confirm-actions">
-              <button type="button" onClick={() => setRenameTarget(null)}>
+              <button
+                type="button"
+                className="modal-button"
+                onClick={() => setRenameTarget(null)}
+              >
                 Cancel
               </button>
-              <button type="submit">Save rename</button>
+              <button
+                type="submit"
+                className="modal-button modal-button--primary"
+              >
+                Save rename
+              </button>
             </div>
           </form>
         </div>
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label={`Delete ${deleteTarget.title}`}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setDeleteTarget(null);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Delete {deleteTarget.title}?</span>
-            </div>
-            <p className="confirm-warning">
-              This permanently removes the recording, its transcript, and its
-              app-owned audio.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setDeleteTarget(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => void deleteSession(deleteTarget)}
-              >
-                Confirm delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label={`Delete ${deleteTarget.title}`}
+          title={`Delete ${deleteTarget.title}?`}
+          description="This permanently removes the recording, its transcript, and its app-owned audio."
+          confirmLabel="Confirm delete"
+          destructive
+          onCancel={closeDelete}
+          onConfirm={() => void deleteSession(deleteTarget)}
+        />
       )}
 
       {clearPending && active && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Clear transcript"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setClearPending(false);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Clear transcript?</span>
-            </div>
-            <p className="confirm-warning">
-              Raw and prettified text will be removed. The saved audio stays
-              available.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setClearPending(false)}>
-                Cancel
-              </button>
-              <button type="button" onClick={() => void clearTranscript()}>
-                Clear
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label="Clear recording"
+          title="Clear recording?"
+          description="Audio and all transcript text will be permanently removed. The empty recording will stay in the list."
+          confirmLabel="Clear recording"
+          destructive
+          onCancel={() => setClearPending(false)}
+          onConfirm={() => void clearRecording()}
+        />
       )}
     </div>
   );

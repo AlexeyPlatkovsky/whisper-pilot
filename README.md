@@ -25,7 +25,7 @@ three modes; Qwen3-ASR 1.7B Q8_0 is an optional local GGUF model for all three.
   detected automatically; there is nothing to configure.
 - **Editable transcripts** — Meeting and Streaming show segment start times;
   Recorder adds the same searchable library and header controls, in-place
-  Prettify, and transcript-only Clear while retaining its local audio.
+  Prettify, and confirmed clearing of a recording's audio and transcript.
 - **Save to a text file** — export the current (edited) transcript whenever
   you're done.
 - **Clear error handling** — missing dependencies or models surface as

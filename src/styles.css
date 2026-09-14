@@ -690,6 +690,11 @@ body {
   line-height: 1.55;
 }
 
+.wp-streaming-partial--translation {
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
 .recorder-audio {
   width: min(520px, 100%);
 }
@@ -2268,12 +2273,6 @@ body {
   color: #fff;
 }
 
-.settings-content button.danger {
-  background: var(--error);
-  border-color: var(--error);
-  color: #fff;
-}
-
 /* ==========================================================================
    Settings modals (download progress, delete confirmation) — a fixed scrim
    blocks interaction with the whole settings screen until dismissed.
@@ -2364,10 +2363,61 @@ body {
   line-height: 1.5;
 }
 
+.confirm-modal > label {
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+}
+
+.confirm-modal > input[type="text"] {
+  width: 100%;
+  padding: 8px var(--wp-space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.confirm-modal > input[type="text"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
 .confirm-actions {
   display: flex;
   justify-content: flex-end;
   gap: var(--wp-space-sm);
+}
+
+.modal-button {
+  padding: 8px var(--wp-space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.modal-button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.modal-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.modal-button--primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--wp-panel);
+}
+
+.modal-button--danger {
+  background: var(--error);
+  border-color: var(--error);
+  color: var(--wp-panel);
 }
 
 /* ==========================================================================

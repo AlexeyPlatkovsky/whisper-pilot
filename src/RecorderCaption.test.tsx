@@ -1,4 +1,10 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { RecorderCaption } from "./RecorderCaption";
@@ -7,7 +13,8 @@ import * as ipc from "./ipc";
 type Handler<T> = (payload: T) => void;
 interface SessionEvent {
   id: number;
-  status: "recording";
+  status:
+    "recording" | "finalizing" | "completed" | "recoverable" | "delete_failed";
 }
 interface SegmentEvent {
   session_id: number;
@@ -22,6 +29,8 @@ interface PartialEvent {
 let sessionHandler: Handler<SessionEvent> | null = null;
 let committedHandler: Handler<SegmentEvent> | null = null;
 let partialHandler: Handler<PartialEvent> | null = null;
+let errorHandler: Handler<{ session_id?: number; message: string }> | null =
+  null;
 
 vi.mock("./ipc", () => ({
   getLiveCaptureSnapshot: vi.fn(async () => ({
@@ -54,7 +63,10 @@ vi.mock("./ipc", () => ({
     partialHandler = handler;
     return () => {};
   }),
-  onRecorderError: vi.fn(async () => () => {}),
+  onRecorderError: vi.fn(async (handler) => {
+    errorHandler = handler;
+    return () => {};
+  }),
 }));
 
 describe("Recorder compact caption", () => {
@@ -62,6 +74,8 @@ describe("Recorder compact caption", () => {
     sessionHandler = null;
     committedHandler = null;
     partialHandler = null;
+    errorHandler = null;
+    vi.clearAllMocks();
   });
 
   it("hydrates the active note, shows the registered chord, and clears stale text for a new note", async () => {
@@ -111,5 +125,66 @@ describe("Recorder compact caption", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Shortcut status IPC failed/)).toBeInTheDocument();
     expect(screen.getByText("Control Option Space")).toBeInTheDocument();
+  });
+
+  it("tracks only the active recording and reports only its errors", async () => {
+    render(<RecorderCaption />);
+    expect(await screen.findByText("Hydrated phrase")).toBeInTheDocument();
+    await waitFor(() => expect(errorHandler).not.toBeNull());
+
+    act(() => {
+      sessionHandler?.({ id: 2, status: "recording" });
+      committedHandler?.({ session_id: 1, text: "Wrong session" });
+      errorHandler?.({ session_id: 1, message: "Wrong error" });
+      sessionHandler?.({ id: 2, status: "finalizing" });
+    });
+    expect(screen.getByText("Finalizing")).toBeInTheDocument();
+    expect(screen.queryByText("Wrong session")).not.toBeInTheDocument();
+    expect(screen.queryByText("Wrong error")).not.toBeInTheDocument();
+
+    act(() => {
+      errorHandler?.({ session_id: 2, message: "Current error" });
+    });
+    expect(screen.getByText("Recorder error")).toBeInTheDocument();
+    expect(screen.getByText("Current error")).toBeInTheDocument();
+  });
+
+  it("shows disabled shortcut detail and opens the workspace from Return", async () => {
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValueOnce({
+      phase: "idle",
+      session_id: null,
+      source: null,
+      generation: 1,
+      revision: 1,
+      error: null,
+    });
+    vi.mocked(ipc.getRecorderShortcutStatus).mockResolvedValue({
+      configured: "Command+Shift+R",
+      active: false,
+      error: "Registration conflict",
+    });
+    render(<RecorderCaption />);
+
+    expect(await screen.findByText("Shortcut disabled")).toBeInTheDocument();
+    expect(screen.getByText("Registration conflict")).toBeInTheDocument();
+    const caption = screen.getByRole("button", {
+      name: "Open Recorder workspace",
+    });
+    fireEvent.keyDown(caption, { key: "Enter" });
+    expect(ipc.showRecorderWorkspace).toHaveBeenCalledOnce();
+  });
+
+  it("surfaces workspace-open failure", async () => {
+    vi.mocked(ipc.showRecorderWorkspace).mockRejectedValueOnce(
+      new Error("Window unavailable"),
+    );
+    const user = userEvent.setup();
+    render(<RecorderCaption />);
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Recorder workspace" }),
+    );
+    expect(await screen.findByText("Recorder error")).toBeInTheDocument();
+    expect(screen.getByText("Error: Window unavailable")).toBeInTheDocument();
   });
 });

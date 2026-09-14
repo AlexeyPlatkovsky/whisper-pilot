@@ -1,6 +1,7 @@
 import { Icon } from "./Icon";
 import { formatClock } from "./format";
 import { useModelLibrary } from "./useModelLibrary";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const NONE_DIARIZATION_MODEL = "none";
 
@@ -282,34 +283,15 @@ export function AiModelsSection() {
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label={`Delete ${deleteTarget.label}`}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Delete {deleteTarget.label}?</span>
-            </div>
-            <p className="confirm-warning">
-              This removes the downloaded model from disk. You can download it
-              again later.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setConfirmDeleteId(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => handleDelete(deleteTarget.id)}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label={`Delete ${deleteTarget.label}`}
+          title={`Delete ${deleteTarget.label}?`}
+          description="This removes the downloaded model from disk. You can download it again later."
+          confirmLabel="Delete"
+          destructive
+          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={() => handleDelete(deleteTarget.id)}
+        />
       )}
     </div>
   );

@@ -62,14 +62,19 @@ Entities (indicative):
 | ---------- | --------------------------------------------------------------------------------- |
 | `meetings` | id, title, source_path, source_name, created_at_ms, duration_ms, language, status |
 | `segments` | meeting_id + ordinal (composite key), start_ms, end_ms, text, speaker_id (M2)     |
-| `MFU`    | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
+| `MFU`      | meeting_id, summary, decisions, action_items, open_questions, participants (M3)   |
 
 The store replaces/reads segments in ordinal order, upserts a single MFU
 record per meeting, and cascades meeting deletion to dependent rows. Segment
 text and MFU edits are **auto-saved** (WP-17): the front end debounces each
 edit (500ms idle) and calls `update_segment`/`update_mfu`, which persist to
-the DB immediately; there is no explicit save state or button. Export is a
-separate, explicit write to an external file.
+the DB immediately; pending writes retain both their meeting id and immutable
+payload, so switching or clearing another meeting cannot cancel or misroute
+them. Clear drains only the target meeting's pending writes before deleting its
+derived content. A failed background write is surfaced only while its owning
+meeting is still open, never as the status of a different meeting. There is no
+explicit save state or button. Export is a separate, explicit write to an
+external file.
 
 Stored `segments` rows start as whisper's original fine-grained spans —
 `to_dto` (`meetings/dto.rs`, WP-48) coalesces consecutive same-speaker rows into
@@ -371,15 +376,15 @@ The macOS-only **system-audio loopback** uses the `screencapturekit` crate.
 Its `SCStreamOutputTrait::did_output_sample_buffer` callback reinterprets the
 requested mono `AudioBufferList` bytes as little-endian f32 and forwards them
 unchanged. `screencapturekit`'s mandatory `apple-metal`
-  dependency links `libswift_Concurrency.dylib`, an OS-provided Swift
-  runtime library that exists only in the dyld shared cache (no standalone
-  file, unlike the sherpa-onnx/onnxruntime dylibs WP-60 bundles) — `build.rs`
-  adds a fixed `-Wl,-rpath,/usr/lib/swift` link arg so the binary resolves it
-  without bundling, and `tests/packaging.rs`'s WP-60 regression test carries
-  an explicit `OS_PROVIDED_DYLIBS` exemption (plus its own rpath assertion)
-  for this dylib rather than treating it as one to bundle. Building this also
-  requires the full Xcode.app (not just Command Line Tools), for the Swift
-  compatibility libraries `apple-metal` needs at link time.
+dependency links `libswift_Concurrency.dylib`, an OS-provided Swift
+runtime library that exists only in the dyld shared cache (no standalone
+file, unlike the sherpa-onnx/onnxruntime dylibs WP-60 bundles) — `build.rs`
+adds a fixed `-Wl,-rpath,/usr/lib/swift` link arg so the binary resolves it
+without bundling, and `tests/packaging.rs`'s WP-60 regression test carries
+an explicit `OS_PROVIDED_DYLIBS` exemption (plus its own rpath assertion)
+for this dylib rather than treating it as one to bundle. Building this also
+requires the full Xcode.app (not just Command Line Tools), for the Swift
+compatibility libraries `apple-metal` needs at link time.
 
 Because system audio is the sole source, inability to start ScreenCaptureKit
 is a hard capture error rather than a microphone fallback. The pure capture
@@ -410,10 +415,10 @@ partial and revises it for each additional two seconds. Replaceable partials
 use deterministic greedy decoding; committed, stop-tail, Recorder-final and
 whole-file Whisper passes retain beam-5 decoding with guarded temperature
 fallbacks. Partials are sent as `streaming_partial` events and never persisted.
-The renderer applies
-consecutive-hypothesis agreement: the common word prefix is normal stable text
-and only the replaceable suffix is italic at 80% opacity. A committed window
-replaces that suffix with one committed
+The Streaming renderer treats the complete replaceable hypothesis as unstable
+and renders it italic at 80% opacity. No prefix becomes visually final before
+the backend commits the acoustic window. A committed window replaces the
+hypothesis with one normal-weight committed
 `streaming_window`. On Stop, a meaningful trailing suffix of at least 500 ms
 is decoded and committed exactly once; silence and sub-threshold callback
 noise are discarded. One session decodes every result through a
@@ -427,7 +432,15 @@ clears the self-attention KV cache); Meeting keeps one state per whole-file
 run. Up to the last 240 characters of committed text are supplied as context
 to both Whisper and Qwen, improving proper nouns and continuity without
 persisting or duplicating the prompt. Qwen receives that text inside an
-explicit reference-only instruction that forbids repeating or rewriting it.
+unmodified, always-present system-context message (empty for the first window),
+while its user message contains only the audio marker. This follows Qwen3-ASR's
+upstream prompt contract and avoids injecting general-purpose English
+instructions into the ASR decode.
+Whisper prepends a short Russian/English punctuation exemplar to that rolling
+context. Punctuation is decoded by Whisper rather than rewritten afterward;
+the seed prevents an early unpunctuated greedy hypothesis from becoming the
+style prompt for every later window without changing Meeting, Recorder, or
+Qwen.
 Each window gets its own language detection, unlike Meeting's
 once-per-file detection (ADR-012), since a live session has no single fixed
 language the way a finished file does. After a forced hard boundary, the next
@@ -495,6 +508,10 @@ committed by the time the next one starts decoding. Each append also
 advances `streaming_sessions.updated_at_ms` in the same transaction, so a
 session that stalls (capture keeps running but decode stops producing
 windows) is distinguishable from one making progress.
+Sidebar duration is not inferred from `updated_at_ms - created_at_ms`:
+`list_sessions` derives it from the maximum persisted `end_ms`. This keeps a
+cleared session at zero and a resumed session aligned to its new audio timeline
+regardless of wall-clock age.
 
 **A failed window is stored, not dropped.** `NewStreamingWindow.outcome_ok`
 records whether that window's decode succeeded (per `streaming_session.rs`'s
@@ -514,7 +531,7 @@ Streaming tab consumes.
 `(session_id, window_index, target_language)` with `ON DELETE CASCADE` on
 `session_id`, created in the same `CREATE TABLE IF NOT EXISTS` schema batch as
 `streaming_prettified`. `window_index` was originally the `window_index` of a
-*paragraph's* first window (one row per paragraph); ADR-016/WP-103 renamed
+_paragraph's_ first window (one row per paragraph); ADR-016/WP-103 renamed
 the column via a checked `ALTER TABLE … RENAME COLUMN` migration when the
 translation unit moved to a single window (one row per window — see Live
 Translation below). `StreamingStore::upsert_translation` follows
@@ -527,6 +544,11 @@ that window's text changed (e.g. a fail-open retry) and the stored
 translation no longer matches — re-translation, not display, is then the
 caller's job. See Live Translation below for the local-LLM call and command
 that populate this table.
+
+`StreamingStore::clear_session_content` rejects an active session and deletes
+segments, translations, MFU, and accepted Prettify output in one transaction.
+The session row, title, engine provenance, and translation preferences remain,
+so the cleared history item can be resumed without stale derived content.
 
 ## Streaming Runtime & UI (WP-68/WP-73, `start_streaming_session` /
 
@@ -620,17 +642,20 @@ window renders as `[unavailable]`, not blank space, so a decode failure reads
 differently from genuine silence — same distinction `outcome_ok` preserves
 in storage.
 
-Rename and delete (both the header title's icons and each sidebar row's) go
-through in-app `.modal-overlay`/`.modal-panel` dialogs, matching `App.tsx`'s
-Meeting rename/delete pattern exactly — not `window.prompt`/`window.confirm`,
-which Tauri's WKWebView does not reliably wire up (they silently no-op rather
-than showing anything).
+Rename uses the in-app `.modal-overlay`/`.modal-panel` form. Delete, Clear, and
+simple confirmation boundaries share `src/ConfirmDialog.tsx`; it owns focus,
+Escape cancellation, the modal action vocabulary, and the destructive error-
+color variant. The UI never relies on `window.prompt`/`window.confirm`, which
+Tauri's WKWebView does not reliably wire up (they silently no-op rather than
+showing anything).
 
 The raw live transcript groups windows into `<p>` paragraphs via `src/
 paragraphs.ts`'s `groupWindowsIntoParagraphs` — a client-side sentence-
-boundary + length heuristic (new paragraph once the accumulated text is both
-long enough and ends a sentence, or once too many windows have piled up
-without ever hitting a sentence end), since windows carry no pause/VAD signal
+boundary + length heuristic. A paragraph preferentially closes at terminal
+punctuation after either the soft character target or four acoustic windows.
+If ASR emits no terminal punctuation at all, a twelve-window hard ceiling keeps
+the render tree and visible block bounded; this is the only path allowed to cut
+without a semantic boundary. Windows carry no pause/VAD signal
 of their own to split on (they're fixed-size slices of continuous audio, not
 silence-delimited — see Streaming Decode/Session Pipeline above). Each
 window keeps its own span (fail-open styling, per-window tooltip) inside its
@@ -710,28 +735,28 @@ branching on the target language) and its own candidate validation
 (`validate_translation_candidate`) — rejecting an empty or whitespace-only
 result, a result disproportionately shorter or longer than the source, and a
 result still predominantly in the source script when the target script
-differs. `ensure_translation_fits_context_budget` rejects (rather than
+differs. Exact token retention applies to digit-bearing and underscore
+identifiers plus ASCII acronyms and code-like hyphenated tokens. A natural
+cross-script hyphenated term may be translated or transliterated (for example
+`Навье-Стокса` to `Navier-Stokes`) instead of being falsely rejected as a
+missing identifier. `ensure_translation_fits_context_budget` rejects (rather than
 truncates) text whose estimated token count would overflow `CTX_SIZE`,
 using a script-aware chars-per-token estimate — Cyrillic tokenizes denser
 than Latin under Qwen/ChatML-style tokenizers, so the same character count
 budgets fewer tokens for Cyrillic text.
 
-Translation additionally retains its non-blocking request guard:
-`AppState::translation_busy` (an `AtomicBool`,
-deliberately independent of `whisper_busy` so translation never blocks or is
-blocked by the streaming decode loop) and `llm::TranslationUsageGuard`, a
-non-blocking single-flight RAII guard mirroring `streaming_session::
-WhisperUsageGuard`'s claim/release idiom. Contention returns
-`AppError::TranslationBusy`, a distinct, UI-retryable error, rather than
-queuing or blocking. This guard single-flights translation requests against
-each other; the shared `LlmRuntime` scheduler coordinates all three job kinds.
+Committed translations and provisional previews enter the shared bounded LLM
+scheduler instead of racing through a separate busy flag. Committed translation
+has priority over queued preview, MFU, and Prettify work. One active llama.cpp
+context remains non-preemptive, but queued committed work overtakes stale
+provisional work; capacity overload stays explicit and retryable.
 
 The `translate_streaming_window(session_id, window_index, target_language,
 text, context)` command (`commands/mfu.rs`, renamed from
 `translate_streaming_paragraph` by ADR-016/WP-103) validates the request
 cheaply first (`streaming::ensure_translation_request_is_valid`: supported
-target language, session exists, non-empty source text) before acquiring the
-single-flight guard, then runs `streaming::translate_and_store_if_current` on
+target language, session exists, non-empty source text), then runs
+`streaming::translate_and_store_if_current` on
 a `spawn_blocking` task. The scheduler-admitted job resolves the active model
 path. After inference, one conditional SQLite `INSERT … SELECT` atomically
 verifies both the enabled session toggle and the exact current source window
@@ -745,6 +770,12 @@ into `llm::translate_paragraph`'s `prior_context` parameter; omitted or
 WP-100. `src/ipc.ts` exposes this as a typed `translateStreamingWindow`
 wrapper with a `StreamingTranslationTargetLanguage` type and the matching
 optional `context` parameter.
+
+If a contextual result fails candidate validation, the backend retries that
+window once without prior context. This recovers small-model context echo or
+under-translation without weakening the persisted-result validator. The
+`preview_streaming_translation` command uses the same prompt and validator at
+lower scheduler priority but performs no database write.
 
 Its read counterpart, `list_streaming_translations(session_id,
 target_language)` (`commands/streaming.rs` → `streaming::
@@ -763,7 +794,7 @@ the transcript content renders as a two-column paired-row grid instead of
 `groupWindowsIntoParagraphs`'s usual single-column flow. See `docs/design.md`
 ("Center — transcript") for the full layout, row states, and header-control
 rules. `groupWindowsIntoParagraphs` still drives this display grouping
-exactly as before — WP-103 only changed what drives *translation*, not what
+exactly as before — WP-103 only changed what drives _translation_, not what
 drives the on-screen row layout.
 
 **WP-103 (rolling per-window translation, superseding WP-100's
@@ -794,11 +825,19 @@ done/mirrored window, a placeholder for one still in flight or failed) and
 joining them, so a paragraph with an unfinished trailing window shows real
 text for its finished windows and a placeholder only for the tail, instead of
 staying blank until the whole paragraph resolves. The retry affordance stays
-paragraph-scoped — one button per paragraph, re-enqueuing every *failed*
+paragraph-scoped — one button per paragraph, re-enqueuing every _failed_
 window within it, not every window. Switching the toggle off mid-queue, or
 switching or deleting the session, cancels pending work and discards any
 in-flight result a subsequent change has superseded, exactly as before
 WP-103.
+
+During live capture the latest unstable ASR phrase is also translated as an
+italic, non-persisted preview in the target column. Partial revisions are
+coalesced to one active request plus the newest pending text; an arriving
+committed window replaces the preview, and a late preview result is ignored.
+Every queued item carries its session, target language, and cancellation
+generation, so completion of an older inference cannot dequeue new-session
+work with a stale target captured by a React render.
 
 The switch's own on/off state and target language are persisted per session:
 `streaming_sessions` owns `translation_enabled` and
@@ -811,7 +850,7 @@ into both `StreamingSessionSummaryDto` and `StreamingSessionDto`. Opening a sess
 restores both values, so stored English translations cannot be reopened under
 the Russian UI default. The state survives closing and reopening a session and
 an app restart. Pressing Start/Resume on the session that is
-*already* open is not a session-identity change, so it leaves the switch,
+_already_ open is not a session-identity change, so it leaves the switch,
 its translations, and its in-flight queue untouched — only starting a
 genuinely different session (a brand-new one, or resuming a different past
 session) resets their result data. A language choice made before a new capture
@@ -956,50 +995,51 @@ span.
 
 ## IPC Contract
 
-| Command                                                                | Purpose                                                                                                                                                                                       | Milestone |
-| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
-| `open_file_dialog`                                                     | Pick a source audio/video file                                                                                                                                                                | M1        |
-| `create_meeting()`                                                     | Create an empty meeting; returns its id                                                                                                                                                       | M2        |
-| `attach_file(meeting, path)`                                           | Attach the source file to a meeting                                                                                                                                                           | M2        |
-| `transcribe_meeting(id)`                                               | Transcribe the attached file into the meeting, emit `transcription_progress`, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes.                                           | M2        |
-| `list_meetings()`                                                      | Meetings list (summaries)                                                                                                                                                                     | M2        |
-| `open_meeting(id)`                                                     | Full meeting (segments, MFU, meta)                                                                                                                                                          | M2        |
-| `rename_meeting(id, title)` / `delete_meeting(id)`                     | Library management                                                                                                                                                                            | M2        |
-| `update_segment(meeting, seg, text)` / `update_mfu(meeting, MFU)`  | Auto-saved edits                                                                                                                                                                              | M2/M3     |
-| `export_meeting(id, format, target)`                                   | Write Markdown / plain text                                                                                                                                                                   | M2        |
-| `list_models()`                                                        | Available (downloaded) Whisper models for the switcher                                                                                                                                        | M2        |
-| `diarize_meeting(id)`                                                  | Produce + merge speaker turns                                                                                                                                                                 | M2        |
-| `get_settings()` / `set_setting(key, value)`                           | Read/update settings (theme, ui_language, active model)                                                                                                                                       | M2        |
-| `list_task_models()`                                                   | Per-task model catalog with download state                                                                                                                                                    | M2        |
-| `download_model(id)` / `delete_model(id)`                              | Fetch (SHA-verified, progress) / remove a model                                                                                                                                               | M2        |
-| `get_cloud_provider_config()` / `select_cloud_provider(provider)`      | Read the fixed provider/model catalog and persist only the selected non-secret provider id                                                                                                   | WP-106    |
-| `verify_cloud_provider_api_key(provider, api_key)`                     | Check provider authentication/model access without saving or returning the key, and without captured audio                                                                                   | WP-106    |
-| `save_cloud_provider_api_key(provider, api_key)` / `remove_cloud_provider_api_key(provider)` | Verify then add/replace, or delete, exactly one provider Keychain credential; responses contain status metadata only, never the key | WP-106 |
-| `check_update()` / `apply_update()`                                    | App update                                                                                                                                                                                    | M3        |
-| `generate_mfu(id)`                                                   | Generate structured MFU MFU (Create MFU)                                                                                                                                                    | M3        |
-| `list_streaming_sessions()`                                            | Streaming sessions list (summaries)                                                                                                                                                           | WP-68     |
-| `open_streaming_session(id)`                                           | Full session (all decoded windows)                                                                                                                                                            | WP-68     |
-| `rename_streaming_session(id, title)` / `delete_streaming_session(id)` | Library management, mirroring Meeting's                                                                                                                                                       | WP-68     |
-| `set_streaming_translation_enabled(id, enabled)`                       | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                          | WP-101    |
-| `set_streaming_translation_target_language(id, target_language)`       | Persist the session-scoped `"en"`/`"ru"` target used to reopen the correct translation column                                                                                              | WP-115    |
-| `start_streaming_session(engine?)`                                     | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before system-audio capture, persists final turns, and returns once capture starts (macOS only) | WP-106    |
-| `stop_streaming_session()`                                             | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                            | WP-68     |
-| `get_live_capture_snapshot()`                                          | Read the backend-owned live-capture phase, source, session, generation, revision, and error for renderer hydration                                                                           | WP-112    |
-| `generate_streaming_mfu(id)`                                           | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                      | WP-77     |
-| `generate_streaming_prettify(id)`                                      | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                              | WP-75     |
-| `accept_streaming_prettify(id, text)`                                  | Persist an accepted prettify candidate                                                                                                                                                        | WP-75     |
-| `revert_streaming_prettify(id)`                                        | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                   | WP-75     |
-| `translate_streaming_window(session_id, window_index, target_language, text, context?)` | Translate one Streaming window into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, window_index, target_language)`; called by the Live Translation queue (WP-93/WP-103). Optional `context` is the up-to-2 immediately preceding windows' own translations, concatenated, passed as reference-only prompt context | WP-92, WP-100, WP-103 |
-| `list_streaming_translations(session_id, target_language)`             | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                              | WP-93     |
-| `get_microphone_permission_status()` / `request_microphone_permission()` | Read TCC state without prompting, or explicitly request microphone access                                                                                                                    | WP-109    |
-| `list_recorder_sessions()` / `open_recorder_session(id)`               | Read Recorder history summaries or a complete session with persisted ASR provenance and segments                                                                                            | WP-109    |
-| `create_recorder_draft()`                                               | Persist and return an audio-free Recorder draft immediately so it can be selected, renamed, or deleted before capture                                                                         | WP-109    |
-| `rename_recorder_session(id, title)` / `delete_recorder_session(id)`    | Manage inactive Recorder history and its app-owned audio                                                                                                                                      | WP-109    |
-| `start_recorder_session(draft_id?)` / `stop_recorder_session()`        | Run preflight, activate the selected draft in place (or create a shortcut-started session), begin default-microphone capture, or enter durable finalization                                    | WP-109    |
-| `recover_recorder_session(id)` / `export_recorder_wav(id)`             | Reconcile recoverable local audio or export the finalized native-rate CAF as WAV                                                                                                              | WP-109    |
-| `update_recorder_segment(session_id, segment_id, text)`                 | Persist an edit without rewriting raw audio or ASR provenance                                                                                                                                 | WP-109    |
-| `set_recorder_shortcut(value)` / `get_recorder_shortcut_status()`      | Atomically replace the global toggle chord or report its registration state                                                                                                                   | WP-109    |
-| `generate_recorder_polish(id)` / `accept_recorder_polish(id, text)` / `revert_recorder_polish(id)` | Generate, accept, or discard a derived local-LLM presentation while preserving raw segments and audio | WP-109 |
+| Command                                                                                            | Purpose                                                                                                                                                                                                                                                                                                                                            | Milestone             |
+| -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| `open_file_dialog`                                                                                 | Pick a source audio/video file                                                                                                                                                                                                                                                                                                                     | M1                    |
+| `create_meeting()`                                                                                 | Create an empty meeting; returns its id                                                                                                                                                                                                                                                                                                            | M2                    |
+| `attach_file(meeting, path)`                                                                       | Attach the source file to a meeting                                                                                                                                                                                                                                                                                                                | M2                    |
+| `transcribe_meeting(id)`                                                                           | Transcribe the attached file into the meeting, emit `transcription_progress`, then diarize it; no language argument — it is always detected (ADR-012). The invoke resolves when the run finishes.                                                                                                                                                  | M2                    |
+| `list_meetings()`                                                                                  | Meetings list (summaries)                                                                                                                                                                                                                                                                                                                          | M2                    |
+| `open_meeting(id)`                                                                                 | Full meeting (segments, MFU, meta)                                                                                                                                                                                                                                                                                                                 | M2                    |
+| `rename_meeting(id, title)` / `delete_meeting(id)`                                                 | Library management                                                                                                                                                                                                                                                                                                                                 | M2                    |
+| `update_segment(meeting, seg, text)` / `update_mfu(meeting, MFU)`                                  | Auto-saved edits                                                                                                                                                                                                                                                                                                                                   | M2/M3                 |
+| `export_meeting(id, format, target)`                                                               | Write Markdown / plain text                                                                                                                                                                                                                                                                                                                        | M2                    |
+| `list_models()`                                                                                    | Available (downloaded) Whisper models for the switcher                                                                                                                                                                                                                                                                                             | M2                    |
+| `diarize_meeting(id)`                                                                              | Produce + merge speaker turns                                                                                                                                                                                                                                                                                                                      | M2                    |
+| `get_settings()` / `set_setting(key, value)`                                                       | Read/update settings (theme, ui_language, active model)                                                                                                                                                                                                                                                                                            | M2                    |
+| `list_task_models()`                                                                               | Per-task model catalog with download state                                                                                                                                                                                                                                                                                                         | M2                    |
+| `download_model(id)` / `delete_model(id)`                                                          | Fetch (SHA-verified, progress) / remove a model                                                                                                                                                                                                                                                                                                    | M2                    |
+| `get_cloud_provider_config()` / `select_cloud_provider(provider)`                                  | Read the fixed provider/model catalog and persist only the selected non-secret provider id                                                                                                                                                                                                                                                         | WP-106                |
+| `verify_cloud_provider_api_key(provider, api_key)`                                                 | Check provider authentication/model access without saving or returning the key, and without captured audio                                                                                                                                                                                                                                         | WP-106                |
+| `save_cloud_provider_api_key(provider, api_key)` / `remove_cloud_provider_api_key(provider)`       | Verify then add/replace, or delete, exactly one provider Keychain credential; responses contain status metadata only, never the key                                                                                                                                                                                                                | WP-106                |
+| `check_update()` / `apply_update()`                                                                | App update                                                                                                                                                                                                                                                                                                                                         | M3                    |
+| `generate_mfu(id)`                                                                                 | Generate structured MFU MFU (Create MFU)                                                                                                                                                                                                                                                                                                           | M3                    |
+| `list_streaming_sessions()`                                                                        | Streaming sessions list (summaries)                                                                                                                                                                                                                                                                                                                | WP-68                 |
+| `open_streaming_session(id)`                                                                       | Full session (all decoded windows)                                                                                                                                                                                                                                                                                                                 | WP-68                 |
+| `rename_streaming_session(id, title)` / `delete_streaming_session(id)`                             | Library management, mirroring Meeting's                                                                                                                                                                                                                                                                                                            | WP-68                 |
+| `set_streaming_translation_enabled(id, enabled)`                                                   | Persist the Live Translation switch's on/off state for a session, best-effort (WP-96 toggle pattern)                                                                                                                                                                                                                                               | WP-101                |
+| `set_streaming_translation_target_language(id, target_language)`                                   | Persist the session-scoped `"en"`/`"ru"` target used to reopen the correct translation column                                                                                                                                                                                                                                                      | WP-115                |
+| `start_streaming_session(engine?)`                                                                 | Starts Local Whisper or the selected Cloud WebSocket provider; Cloud authenticates/connects before system-audio capture, persists final turns, and returns once capture starts (macOS only)                                                                                                                                                        | WP-106                |
+| `stop_streaming_session()`                                                                         | Drop the held capture, cascading to end decode/persist and release the shared context (macOS only)                                                                                                                                                                                                                                                 | WP-68                 |
+| `get_live_capture_snapshot()`                                                                      | Read the backend-owned live-capture phase, source, session, generation, revision, and error for renderer hydration                                                                                                                                                                                                                                 | WP-112                |
+| `generate_streaming_mfu(id)`                                                                       | Generate structured MFU for a Streaming session's transcript and persist it (Craft MFU)                                                                                                                                                                                                                                                            | WP-77                 |
+| `generate_streaming_prettify(id)`                                                                  | Generate a cleaned-transcript candidate for review; not persisted until accepted                                                                                                                                                                                                                                                                   | WP-75                 |
+| `accept_streaming_prettify(id, text)`                                                              | Persist an accepted prettify candidate                                                                                                                                                                                                                                                                                                             | WP-75                 |
+| `revert_streaming_prettify(id)`                                                                    | Delete the accepted prettification, restoring the raw per-window transcript                                                                                                                                                                                                                                                                        | WP-75                 |
+| `translate_streaming_window(session_id, window_index, target_language, text, context?)`            | Translate one Streaming window into `"en"`/`"ru"` via the active summary LLM and persist it, keyed by `(session_id, window_index, target_language)`; called by the Live Translation queue (WP-93/WP-103). Optional `context` is the up-to-2 immediately preceding windows' own translations, concatenated, passed as reference-only prompt context | WP-92, WP-100, WP-103 |
+| `list_streaming_translations(session_id, target_language)`                                         | Read every persisted translation for a session and target language, so the Live Translation queue (WP-93) reuses stored results instead of re-running the model                                                                                                                                                                                    | WP-93                 |
+| `get_microphone_permission_status()` / `request_microphone_permission()`                           | Read TCC state without prompting, or explicitly request microphone access                                                                                                                                                                                                                                                                          | WP-109                |
+| `list_recorder_sessions()` / `open_recorder_session(id)`                                           | Read Recorder history summaries or a complete session with persisted ASR provenance and segments                                                                                                                                                                                                                                                   | WP-109                |
+| `create_recorder_draft()`                                                                          | Persist and return an audio-free Recorder draft immediately so it can be selected, renamed, or deleted before capture                                                                                                                                                                                                                              | WP-109                |
+| `rename_recorder_session(id, title)` / `delete_recorder_session(id)`                               | Manage inactive Recorder history and its app-owned audio                                                                                                                                                                                                                                                                                           | WP-109                |
+| `clear_recorder_recording(id)`                                                                     | Delete inactive Recorder audio, raw segments, and polish while retaining the named row as an empty draft; fail without clearing text when audio cleanup fails                                                                                                                                                                                      | WP-109                |
+| `start_recorder_session(draft_id?)` / `stop_recorder_session()`                                    | Run preflight, activate the selected draft in place (or create a shortcut-started session), begin default-microphone capture, or enter durable finalization                                                                                                                                                                                        | WP-109                |
+| `recover_recorder_session(id)` / `export_recorder_wav(id)`                                         | Reconcile recoverable local audio or export the finalized native-rate CAF as WAV                                                                                                                                                                                                                                                                   | WP-109                |
+| `update_recorder_segment(session_id, segment_id, text)`                                            | Persist an edit without rewriting raw audio or ASR provenance                                                                                                                                                                                                                                                                                      | WP-109                |
+| `set_recorder_shortcut(value)` / `get_recorder_shortcut_status()`                                  | Atomically replace the global toggle chord or report its registration state                                                                                                                                                                                                                                                                        | WP-109                |
+| `generate_recorder_polish(id)` / `accept_recorder_polish(id, text)` / `revert_recorder_polish(id)` | Generate, accept, or discard a derived local-LLM presentation while preserving raw segments and audio                                                                                                                                                                                                                                              | WP-109                |
 
 Events: `transcription_progress { id, percent }` reports Whisper's 0–100
 Meeting decode estimate. `transcription_phase { id, phase: "diarizing" }` marks the transition
@@ -1045,6 +1085,21 @@ authorization, the draft's selected ASR model bundle, and system-default input
 device preflight before activating that same row in place. A failed start
 restores the non-live draft state before cleaning temporary audio, so even a
 filesystem cleanup failure cannot leave a phantom active session.
+Starting a completed row continues it in place. The writer copies its valid
+final CAF into a new `.partial`, appends at the same native sample rate, and
+atomically replaces the final CAF only after Stop. Existing segments remain
+visible while recording; new window timestamps start at the prior audio
+duration, and the final quality pass retranscribes the combined master. A
+potentially large CAF copy runs on the blocking worker pool rather than a Tauri
+async command executor, so continuing a long note does not stall unrelated IPC.
+A different current microphone sample rate is rejected before capture instead
+of producing a malformed concatenation. Failed startup removes only the new
+partial and restores the completed row and any accepted polish.
+After interruption, the normal Recover action validates and promotes the
+combined partial over the still-safe old final; invalid partial data leaves the
+old final untouched. If failed-start cleanup itself cannot remove the partial,
+the row remains Recoverable rather than claiming the exactly-one-file Completed
+state.
 Shortcut Start has no preselected draft and retains the stricter boundary: no
 row or audio exists until preflight succeeds. A typed AVFoundation adapter exposes `not_determined`,
 `denied`, `restricted`, `authorized`, and `unavailable` over IPC. Its status
@@ -1121,6 +1176,13 @@ Streaming Prettify. Generation returns a review candidate only. Acceptance
 upserts `recorder_polished`, leaving timestamped `recorder_segments` unchanged;
 revert deletes the derived row and immediately restores raw display/copy/export.
 Session deletion cascades to the derived row.
+Clearing an inactive recording atomically renames final and partial CAF
+artifacts into same-volume `.clearing` quarantine files under an immediate
+SQLite transaction. A rename or database failure restores every moved file;
+commit resets the retained row to an empty draft before quarantine deletion.
+Launch reconciliation restores pre-commit quarantine for a non-draft row and
+removes post-commit quarantine for a draft. Active capture is rejected, and
+failed filesystem cleanup does not clear the database content.
 
 ## Floating Bubble Window (ADR-018)
 
@@ -1189,23 +1251,23 @@ application logs.
 
 ## Ownership
 
-| Concern                                                   | Owner                                                                                               |
-| --------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Tauri command layer (per-domain) + registration in `run()`| `src-tauri/src/commands/` + `src-tauri/src/lib.rs`                                                   |
-| App state, model cache, running-run slots                  | `src-tauri/src/state.rs`                                                                            |
-| ASR identity, capabilities, compatibility, bundle fingerprint | `src-tauri/src/asr.rs`                                                                           |
-| IPC event payloads                                        | `src-tauri/src/events.rs`                                                                           |
-| Audio normalize + decode                                  | `src-tauri/src/audio.rs`                                                                            |
-| Whisper transcription + Streaming progress                | `src-tauri/src/transcribe.rs`                                                                       |
-| SQLite meeting library                                    | `src-tauri/src/store.rs`                                                                            |
-| Meeting persistence facade / DTOs                         | `src-tauri/src/meetings/` (`mod.rs` facade, `dto.rs` DTOs + coalesce)                               |
-| Error type                                                | `src-tauri/src/error.rs`                                                                            |
-| Model catalog + download                                  | `src-tauri/src/models/` (`catalog.rs` catalog + state, `download.rs` fetch/verify)                  |
-| Speaker diarization                                       | `src-tauri/src/diarize/` (`clustering.rs`, `segmentation.rs`, `speakers.rs`, `pipeline.rs`)         |
-| Diarization process isolation                             | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                      |
-| Two-pane shell: meetings list, meeting workspace, editors | `src/`                                                                                              |
-| Streaming capture / decode / persistence / IPC facade     | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs` |
-| Recorder capture / audio / persistence / IPC facade       | `src-tauri/src/microphone_audio.rs` / `recorder_audio.rs` / `recorder_store.rs` / `commands/recorder.rs` |
-| Cloud provider catalog, Keychain credentials, and command facade | `src-tauri/src/cloud_provider.rs` / `src-tauri/src/commands/settings.rs` |
-| Streaming tab                                             | `src/StreamingView.tsx`                                                                             |
-| Recorder tab and settings                                 | `src/RecorderView.tsx` / `src/RecorderSettingsSection.tsx` / `src/AiModelsSection.tsx`              |
+| Concern                                                          | Owner                                                                                                    |
+| ---------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Tauri command layer (per-domain) + registration in `run()`       | `src-tauri/src/commands/` + `src-tauri/src/lib.rs`                                                       |
+| App state, model cache, running-run slots                        | `src-tauri/src/state.rs`                                                                                 |
+| ASR identity, capabilities, compatibility, bundle fingerprint    | `src-tauri/src/asr.rs`                                                                                   |
+| IPC event payloads                                               | `src-tauri/src/events.rs`                                                                                |
+| Audio normalize + decode                                         | `src-tauri/src/audio.rs`                                                                                 |
+| Whisper transcription + Streaming progress                       | `src-tauri/src/transcribe.rs`                                                                            |
+| SQLite meeting library                                           | `src-tauri/src/store.rs`                                                                                 |
+| Meeting persistence facade / DTOs                                | `src-tauri/src/meetings/` (`mod.rs` facade, `dto.rs` DTOs + coalesce)                                    |
+| Error type                                                       | `src-tauri/src/error.rs`                                                                                 |
+| Model catalog + download                                         | `src-tauri/src/models/` (`catalog.rs` catalog + state, `download.rs` fetch/verify)                       |
+| Speaker diarization                                              | `src-tauri/src/diarize/` (`clustering.rs`, `segmentation.rs`, `speakers.rs`, `pipeline.rs`)              |
+| Diarization process isolation                                    | `src-tauri/src/diarize_process/` (`transport.rs`, `worker.rs`, `supervise.rs`)                           |
+| Two-pane shell: meetings list, meeting workspace, editors        | `src/`                                                                                                   |
+| Streaming capture / decode / persistence / IPC facade            | `src-tauri/src/streaming_audio.rs` / `streaming_session.rs` / `streaming_store.rs` / `streaming.rs`      |
+| Recorder capture / audio / persistence / IPC facade              | `src-tauri/src/microphone_audio.rs` / `recorder_audio.rs` / `recorder_store.rs` / `commands/recorder.rs` |
+| Cloud provider catalog, Keychain credentials, and command facade | `src-tauri/src/cloud_provider.rs` / `src-tauri/src/commands/settings.rs`                                 |
+| Streaming tab                                                    | `src/StreamingView.tsx`                                                                                  |
+| Recorder tab and settings                                        | `src/RecorderView.tsx` / `src/RecorderSettingsSection.tsx` / `src/AiModelsSection.tsx`                   |

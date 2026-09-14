@@ -201,6 +201,19 @@ describe("App — file handling", () => {
 });
 
 describe("App — sidebar", () => {
+  it("collapses the Meeting workspace to the floating bubble", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+
+    await user.click(
+      screen.getByRole("button", { name: "Collapse to floating bubble" }),
+    );
+
+    expect(ipc.collapseToBubble).toHaveBeenCalledOnce();
+  });
+
   it("toggles the sidebar when the toggle button is clicked", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     const user = userEvent.setup();
@@ -272,6 +285,47 @@ describe("App — Streaming mode toggle", () => {
 
     await user.click(screen.getByRole("button", { name: "Meeting" }));
 
+    expect(
+      await screen.findByRole("button", { name: "Choose file" }),
+    ).toBeInTheDocument();
+  });
+
+  it("moves between Recorder, Streaming, and Meeting while settings stay scoped to the active workspace", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    render(<App />);
+    await waitForAddFileEnabled();
+
+    await user.click(screen.getByRole("button", { name: "Recorder" }));
+    expect(
+      await screen.findByRole("heading", { name: "New recording" }),
+    ).toBeInTheDocument();
+
+    const recorderSettings = screen.getByRole("button", { name: "Settings" });
+    await waitFor(() => expect(recorderSettings).toBeEnabled());
+    await user.click(recorderSettings);
+    expect(
+      await screen.findByRole("dialog", { name: "Settings" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close settings" }));
+
+    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    expect(
+      await screen.findByRole("heading", { name: "Streaming Session" }),
+    ).toBeInTheDocument();
+    const streamingSettings = screen.getByRole("button", { name: "Settings" });
+    await waitFor(() => expect(streamingSettings).toBeEnabled());
+    await user.click(streamingSettings);
+    expect(
+      await screen.findByRole("dialog", { name: "Settings" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Close settings" }));
+
+    await user.click(screen.getByRole("button", { name: "Recorder" }));
+    expect(
+      await screen.findByRole("heading", { name: "New recording" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
     expect(
       await screen.findByRole("button", { name: "Choose file" }),
     ).toBeInTheDocument();

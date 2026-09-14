@@ -1,6 +1,7 @@
 name = "test-runner"
 description = "Execute isolated final validation and return concise evidence without fixing code."
 sandbox_mode = "workspace-write"
+model = "gpt-5.6-luna"
 model_reasoning_effort = "medium"
 developer_instructions = """
 Responsibility: run the exact validation plan and report evidence.

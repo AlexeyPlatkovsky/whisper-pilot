@@ -238,9 +238,9 @@ pub(crate) fn revert_recorder_polish(
 
 /// Translates one Streaming window into `target_language` ("en" or "ru")
 /// using the active local LLM and persists the result. Single-flight: a
-/// second concurrent translation request is rejected with a distinct,
-/// UI-retryable `AppError::TranslationBusy` rather than queuing or blocking
-/// the streaming decode loop (WP-92). `context` (WP-100) is the immediately
+/// concurrent translation requests are serialized by the bounded LLM
+/// scheduler rather than rejected while another inference is active.
+/// `context` (WP-100) is the immediately
 /// preceding window(s)' own translation, if any — threaded through
 /// unchanged to `llm::translate_paragraph` as ephemeral prompt context.
 #[tauri::command]
@@ -260,9 +260,6 @@ pub(crate) async fn translate_streaming_window(
         &target_language,
         &text,
     )?;
-
-    let _guard = llm::TranslationUsageGuard::acquire(&state.translation_busy)
-        .map_err(|()| AppError::TranslationBusy)?;
 
     let now = crate::state::now_ms()?;
     let app_support_dir_clone = app_support_dir.clone();
@@ -292,6 +289,42 @@ pub(crate) async fn translate_streaming_window(
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))?
+}
+
+/// Translate the latest unstable Streaming hypothesis for italic preview.
+/// The result is intentionally ephemeral: only committed-window translations
+/// pass through StreamingStore and survive reopening the session.
+#[tauri::command]
+pub(crate) async fn preview_streaming_translation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    target_language: String,
+    text: String,
+    context: Option<String>,
+) -> Result<String> {
+    if !llm::is_supported_target_language(&target_language) {
+        return Err(AppError::Llm(format!(
+            "unsupported translation target language: {target_language}"
+        )));
+    }
+    if text.trim().is_empty() {
+        return Err(AppError::Llm(
+            "cannot translate an empty Streaming preview".into(),
+        ));
+    }
+    let app_support_dir = app_data_dir(&app)?;
+    let llm_runtime = Arc::clone(&state.llm_runtime);
+    tokio::task::spawn_blocking(move || {
+        llm::preview_translation_with_model_resolver(
+            &llm_runtime,
+            &text,
+            &target_language,
+            context.as_deref(),
+            || resolve_llm_model_path(&app_support_dir),
+        )
+    })
+    .await
+    .map_err(|error| AppError::Llm(error.to_string()))?
 }
 
 #[cfg(test)]

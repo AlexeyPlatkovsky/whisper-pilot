@@ -154,6 +154,30 @@ impl Store {
         require_changed(changed, "meeting", id)
     }
 
+    /// Atomically removes transcript-derived data while retaining the meeting
+    /// row and its attached source, ready for a later re-transcription.
+    pub fn clear_meeting_content(&self, id: MeetingId, language: &str) -> Result<()> {
+        let mut connection = self.connection()?;
+        let transaction = connection.transaction().map_err(store_error)?;
+        let changed = transaction
+            .execute(
+                "UPDATE meetings
+                 SET duration_ms = NULL, language = ?1,
+                     status = CASE WHEN source_path IS NULL THEN 'no_files' ELSE 'ready' END
+                 WHERE id = ?2",
+                params![language, id],
+            )
+            .map_err(store_error)?;
+        require_changed(changed, "meeting", id)?;
+        transaction
+            .execute("DELETE FROM segments WHERE meeting_id = ?1", params![id])
+            .map_err(store_error)?;
+        transaction
+            .execute("DELETE FROM mfu WHERE meeting_id = ?1", params![id])
+            .map_err(store_error)?;
+        transaction.commit().map_err(store_error)
+    }
+
     pub fn list_meetings(&self) -> Result<Vec<MeetingSummary>> {
         let connection = self.connection()?;
         let mut statement = connection

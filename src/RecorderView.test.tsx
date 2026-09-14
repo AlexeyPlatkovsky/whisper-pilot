@@ -62,7 +62,7 @@ vi.mock("./ipc", () => ({
   openRecorderSession: vi.fn(),
   renameRecorderSession: vi.fn(),
   deleteRecorderSession: vi.fn(),
-  clearRecorderTranscript: vi.fn(),
+  clearRecorderRecording: vi.fn(),
   startRecorderSession: vi.fn(),
   stopRecorderSession: vi.fn(),
   recoverRecorderSession: vi.fn(),
@@ -201,8 +201,10 @@ beforeEach(() => {
     polished_text: "Polished committed phrase.",
   });
   vi.mocked(ipc.revertRecorderPolish).mockResolvedValue(SESSION);
-  vi.mocked(ipc.clearRecorderTranscript).mockResolvedValue({
+  vi.mocked(ipc.clearRecorderRecording).mockResolvedValue({
     ...SESSION,
+    duration_ms: 0,
+    is_draft: true,
     segments: [],
   });
   if (!navigator.clipboard) {
@@ -214,6 +216,18 @@ beforeEach(() => {
 });
 
 describe("Recorder mode", () => {
+  it("surfaces a Recorder library load failure", async () => {
+    vi.mocked(ipc.listRecorderSessions).mockRejectedValueOnce(
+      new Error("Recorder library unavailable"),
+    );
+
+    renderRecorder();
+
+    expect(
+      await screen.findByText("Error: Recorder library unavailable"),
+    ).toBeInTheDocument();
+  });
+
   it("creates and selects a durable recording draft as soon as plus is clicked", async () => {
     const user = userEvent.setup();
     renderRecorder();
@@ -235,6 +249,33 @@ describe("Recorder mode", () => {
 
     await user.click(screen.getByRole("button", { name: "Start" }));
     expect(ipc.startRecorderSession).toHaveBeenCalledWith(3);
+  });
+
+  it("continues the open completed recording instead of starting a new session", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Start" }));
+
+    expect(ipc.startRecorderSession).toHaveBeenCalledWith(SESSION.id);
+  });
+
+  it("does not offer continuation for a recording that still needs recovery", async () => {
+    const recoverable = { ...SESSION, status: "recoverable" as const };
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([recoverable]);
+    vi.mocked(ipc.openRecorderSession).mockResolvedValue(recoverable);
+    const user = userEvent.setup();
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Recover" })).toBeEnabled();
   });
 
   it("guards Recorder Start synchronously while permission preflight is pending", async () => {
@@ -352,6 +393,69 @@ describe("Recorder mode", () => {
     );
     await user.click(screen.getByRole("button", { name: "Confirm delete" }));
     expect(ipc.deleteRecorderSession).toHaveBeenCalledWith(1);
+  });
+
+  it.each([
+    ["Space", " "],
+    ["Return", "{Enter}"],
+  ])(
+    "autofocuses Confirm delete and accepts the alertdialog with %s",
+    async (_keyName, key) => {
+      const user = userEvent.setup();
+      renderRecorder();
+
+      await user.click(
+        await screen.findByRole("button", { name: "Open Voice note" }),
+      );
+      await user.click(
+        screen.getByRole("button", { name: "Delete Voice note" }),
+      );
+
+      const confirm = screen.getByRole("button", { name: "Confirm delete" });
+      expect(confirm).toHaveFocus();
+      expect(confirm).toHaveClass("modal-button--danger");
+      await user.keyboard(key);
+
+      expect(ipc.deleteRecorderSession).toHaveBeenCalledWith(SESSION.id);
+    },
+  );
+
+  it("cancels the focused delete alertdialog with Escape", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    const opener = screen.getByRole("button", { name: "Delete Voice note" });
+    await user.click(opener);
+
+    expect(
+      screen.getByRole("button", { name: "Confirm delete" }),
+    ).toHaveFocus();
+    await user.keyboard("{Escape}");
+
+    expect(ipc.deleteRecorderSession).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(opener).toHaveFocus();
+  });
+
+  it("traps Tab focus inside the delete alertdialog", async () => {
+    const user = userEvent.setup();
+    renderRecorder();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Delete Voice note" }));
+
+    const confirm = screen.getByRole("button", { name: "Confirm delete" });
+    const cancel = screen.getByRole("button", { name: "Cancel" });
+    expect(confirm).toHaveFocus();
+    await user.tab();
+    expect(cancel).toHaveFocus();
+    await user.tab({ shift: true });
+    expect(confirm).toHaveFocus();
   });
 
   it("uses the shared header and searchable library layout", async () => {
@@ -946,21 +1050,72 @@ describe("Recorder mode", () => {
     ).toHaveTextContent("Committed phrase");
   });
 
-  it("clears the transcript only after confirmation", async () => {
+  it("clears the recording audio and transcript only after confirmation", async () => {
     const user = userEvent.setup();
     renderRecorder();
     await user.click(
       await screen.findByRole("button", { name: "Open Voice note" }),
     );
 
-    await user.click(screen.getByRole("button", { name: "Clear transcript" }));
-    expect(ipc.clearRecorderTranscript).not.toHaveBeenCalled();
-    await user.click(screen.getByRole("button", { name: "Clear" }));
+    await user.click(screen.getByRole("button", { name: "Clear recording" }));
+    expect(ipc.clearRecorderRecording).not.toHaveBeenCalled();
+    expect(
+      screen.getByText(/audio and all transcript text/i),
+    ).toBeInTheDocument();
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Clear recording",
+    });
+    const confirm = within(dialog).getByRole("button", {
+      name: "Clear recording",
+    });
+    expect(confirm).toHaveClass("modal-button--danger");
+    await user.click(confirm);
 
-    expect(ipc.clearRecorderTranscript).toHaveBeenCalledWith(1);
+    expect(ipc.clearRecorderRecording).toHaveBeenCalledWith(1);
     expect(
       screen.queryByRole("textbox", { name: "Transcript segment 101" }),
     ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Clear recording" }),
+    ).toBeDisabled();
+  });
+
+  it("can clear a saved recording even when ASR produced no transcript", async () => {
+    const user = userEvent.setup();
+    const audioOnly = { ...SESSION, segments: [], is_draft: false };
+    vi.mocked(ipc.listRecorderSessions).mockResolvedValue([audioOnly]);
+    vi.mocked(ipc.openRecorderSession).mockResolvedValue(audioOnly);
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Clear recording" }),
+    ).toBeEnabled();
+  });
+
+  it("blocks Clear while Recorder Prettify can still persist a result", async () => {
+    const user = userEvent.setup();
+    let resolvePolish!: (text: string) => void;
+    vi.mocked(ipc.generateRecorderPolish).mockReturnValue(
+      new Promise((resolve) => {
+        resolvePolish = resolve;
+      }),
+    );
+    renderRecorder();
+    await user.click(
+      await screen.findByRole("button", { name: "Open Voice note" }),
+    );
+
+    await user.click(
+      screen.getByRole("button", { name: "Prettify transcript" }),
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Clear recording" }),
+    ).toBeDisabled();
+    await act(async () => resolvePolish("Polished committed phrase."));
   });
 
   it("discards a polish result when the user switches sessions while it is generated", async () => {

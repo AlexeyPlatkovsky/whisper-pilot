@@ -66,10 +66,21 @@ task-local investigation record (measurements, tuning runs) may live in a TaskPi
   the comment — route product-facing documentation through `.agents/skills/documentation-maintenance/SKILL.md` and any
   TaskPilot comment through `.agents/skills/taskpilot-work/SKILL.md`.
 
+## 6. Shared UI primitives and tokens
+
+Before adding a dialog, action style, color, radius, spacing, or typography value, grep for the existing primitive or
+token. Confirmation dialogs use `src/ConfirmDialog.tsx`; do not duplicate alert-dialog markup in a feature view.
+Destructive confirmation actions use that component's destructive variant. New UI styling consumes the design tokens
+from `src/tokens.css` through semantic variables in `src/styles.css`; do not add a one-off token when an existing
+semantic role already describes the value.
+
+Run `npm run lint:ui` after changing confirmation dialogs or their shared styles. The check rejects direct
+`role="alertdialog"` ownership outside the shared component.
+
 ---
 
 §1–§3 are advisory during implementation (run them yourself) and **enforced in review**: `code-reviewer` loads this file
 and flags a stranded-state leak, a broken invariant after a refactor/constant change, a missing adversarial test, or an
 invariant-violating return. The `code-reviewer` agent owns each severity (do not restate severities here, so the two
-never drift). §4 is **advisory only** — apply judgment; it is not a standalone gated finding. §5 is **enforced in
+never drift). §4 is **advisory only** — apply judgment; it is not a standalone gated finding. §5–§6 are **enforced in
 review** like §1–§3.

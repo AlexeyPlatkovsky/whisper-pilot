@@ -15,6 +15,12 @@ use whisperpilot_lib::streaming_store::{NewStreamingSession, StreamingStore};
 
 const DATABASE_FILE_NAME: &str = "whisperpilot.sqlite3";
 
+fn clear_quarantine_path(path: &Path) -> std::path::PathBuf {
+    let mut quarantine = path.as_os_str().to_os_string();
+    quarantine.push(".clearing");
+    quarantine.into()
+}
+
 fn create_recorder(
     store: &RecorderStore,
     title: &str,
@@ -362,6 +368,110 @@ fn native_rate_pcm16_caf_checkpoints_finalizes_and_exports_wav() {
 }
 
 #[test]
+fn continued_audio_drives_duration_and_quality_reads_from_the_combined_timeline() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Continued note", 10, 48_000);
+    let mut initial = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+    initial.append_f32(&[0.25; 48_000]).unwrap();
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 48_000,
+                text: "Existing phrase".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+    initial.finalize().unwrap();
+    store.mark_completed(recorder.id).unwrap();
+    store
+        .upsert_polished(recorder.id, "Existing polished phrase")
+        .unwrap();
+
+    let active = store.resume_session(recorder.id).unwrap();
+    assert_eq!(active.status, RecorderStatus::Recording);
+    assert_eq!(active.duration_ms, 1_000);
+    assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
+    assert_eq!(
+        store.get_polished(recorder.id).unwrap().as_deref(),
+        Some("Existing polished phrase")
+    );
+    let mut resumed = RecorderAudioWriter::resume(&recorder.audio_path, 48_000).unwrap();
+    resumed.append_f32(&[-0.25; 24_000]).unwrap();
+    resumed.finalize().unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+    let completed = store.mark_completed(recorder.id).unwrap();
+
+    let quality_input = read_caf_audio(&recorder.audio_path).unwrap();
+    assert_eq!(quality_input.metadata.frames, 72_000);
+    assert_eq!(&quality_input.samples[..48_000], &[8_192; 48_000]);
+    assert_eq!(&quality_input.samples[48_000..], &[-8_192; 24_000]);
+    assert_eq!(completed.duration_ms, 1_500);
+}
+
+#[test]
+fn interrupted_continuation_recovers_the_combined_partial_over_the_old_final() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Interrupted continuation", 10, 48_000);
+    let mut initial = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+    initial.append_f32(&[0.25; 48_000]).unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+    initial.finalize().unwrap();
+    store.mark_completed(recorder.id).unwrap();
+
+    store.resume_session(recorder.id).unwrap();
+    let mut resumed = RecorderAudioWriter::resume(&recorder.audio_path, 48_000).unwrap();
+    resumed.append_f32(&[-0.25; 24_000]).unwrap();
+    resumed.sync_checkpoint().unwrap();
+    drop(resumed);
+    drop(store);
+
+    let reopened = RecorderStore::open(temp.path()).unwrap();
+    let recoverable = reopened.get_session(recorder.id).unwrap().unwrap();
+    assert_eq!(recoverable.status, RecorderStatus::Recoverable);
+    let recovered = reopened.recover_session(recorder.id).unwrap();
+    assert_eq!(recovered.status, RecorderStatus::Completed);
+    assert_eq!(recovered.duration_ms, 1_500);
+    let combined = read_caf_audio(&recorder.audio_path).unwrap();
+    assert_eq!(combined.metadata.frames, 72_000);
+    assert_eq!(&combined.samples[..48_000], &[8_192; 48_000]);
+    assert_eq!(&combined.samples[48_000..], &[-8_192; 24_000]);
+}
+
+#[test]
+fn failed_resume_cleanup_keeps_the_row_recoverable_and_the_old_final_safe() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Failed continuation", 10, 48_000);
+    let mut initial = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+    initial.append_f32(&[0.25; 4_800]).unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+    initial.finalize().unwrap();
+    store.mark_completed(recorder.id).unwrap();
+    let original = fs::read(&recorder.audio_path).unwrap();
+
+    store.resume_session(recorder.id).unwrap();
+    let partial = RecorderAudioWriter::partial_path_for(&recorder.audio_path);
+    fs::create_dir(&partial).unwrap();
+    assert!(store
+        .restore_completed_after_failed_resume(recorder.id)
+        .is_err());
+
+    let recoverable = store.get_session(recorder.id).unwrap().unwrap();
+    assert_eq!(recoverable.status, RecorderStatus::Recoverable);
+    assert!(recoverable
+        .recovery_reason
+        .as_deref()
+        .is_some_and(|reason| reason.contains("cleanup failed")));
+    assert_eq!(fs::read(&recorder.audio_path).unwrap(), original);
+}
+
+#[test]
 fn database_completion_is_rejected_until_audio_is_closed_and_renamed() {
     let temp = TempDir::new().unwrap();
     let store = RecorderStore::open(temp.path()).unwrap();
@@ -566,7 +676,7 @@ fn completed_duration_comes_from_native_audio_frames_even_without_transcript() {
 }
 
 #[test]
-fn clearing_a_recorder_transcript_retains_its_session_and_audio() {
+fn clearing_a_recorder_removes_audio_and_text_but_retains_an_empty_draft() {
     let temp = TempDir::new().unwrap();
     let store = RecorderStore::open(temp.path()).unwrap();
     let recorder = create_recorder(&store, "Keep audio", 10, 48_000);
@@ -588,16 +698,43 @@ fn clearing_a_recorder_transcript_retains_its_session_and_audio() {
         .unwrap();
     store.mark_recoverable(recorder.id, "test fixture").unwrap();
 
-    store.clear_transcript(recorder.id).unwrap();
+    store.clear_recording(recorder.id).unwrap();
 
-    assert!(store.get_session(recorder.id).unwrap().is_some());
+    let cleared = store.get_session(recorder.id).unwrap().unwrap();
+    assert!(cleared.is_draft);
+    assert_eq!(cleared.status, RecorderStatus::Completed);
+    assert_eq!(cleared.duration_ms, 0);
+    assert_eq!(cleared.recovery_reason, None);
     assert!(store.list_segments(recorder.id).unwrap().is_empty());
     assert_eq!(store.get_polished(recorder.id).unwrap(), None);
-    assert!(audio_path.is_file());
+    assert!(!audio_path.exists());
 }
 
 #[test]
-fn clearing_a_live_recorder_transcript_is_rejected_without_data_loss() {
+fn a_late_polish_accept_cannot_restore_content_after_clear() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Clear race", 10, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 48_000,
+                text: "original".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store.mark_recoverable(recorder.id, "test fixture").unwrap();
+    store.clear_recording(recorder.id).unwrap();
+
+    assert!(store.upsert_polished(recorder.id, "late polish").is_err());
+    assert_eq!(store.get_polished(recorder.id).unwrap(), None);
+}
+
+#[test]
+fn clearing_a_live_recorder_is_rejected_without_data_loss() {
     let temp = TempDir::new().unwrap();
     let store = RecorderStore::open(temp.path()).unwrap();
     let recorder = create_recorder(&store, "Live", 10, 48_000);
@@ -613,8 +750,155 @@ fn clearing_a_live_recorder_transcript_is_rejected_without_data_loss() {
         )
         .unwrap();
 
-    assert!(store.clear_transcript(recorder.id).is_err());
+    assert!(store.clear_recording(recorder.id).is_err());
     assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
+}
+
+#[test]
+fn failed_audio_cleanup_keeps_the_recorder_text_and_non_draft_state() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Blocked clear", 10, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 4_800,
+                text: "must survive".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store
+        .upsert_polished(recorder.id, "must survive too")
+        .unwrap();
+    store.mark_recoverable(recorder.id, "test fixture").unwrap();
+    fs::create_dir_all(&recorder.audio_path).unwrap();
+
+    assert!(store.clear_recording(recorder.id).is_err());
+
+    let unchanged = store.get_session(recorder.id).unwrap().unwrap();
+    assert!(!unchanged.is_draft);
+    assert_eq!(unchanged.status, RecorderStatus::Recoverable);
+    assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
+    assert_eq!(
+        store.get_polished(recorder.id).unwrap().as_deref(),
+        Some("must survive too")
+    );
+}
+
+#[test]
+fn failed_clear_database_commit_restores_quarantined_audio_and_text() {
+    let temp = TempDir::new().unwrap();
+    let store = RecorderStore::open(temp.path()).unwrap();
+    let recorder = create_recorder(&store, "Rollback clear", 10, 48_000);
+    store
+        .apply_transcript_update(
+            recorder.id,
+            RecorderTranscriptUpdate::Committed {
+                start_sample: 0,
+                end_sample: 4_800,
+                text: "must survive rollback".into(),
+                language: "en".into(),
+            },
+        )
+        .unwrap();
+    store.mark_finalizing(recorder.id).unwrap();
+    let mut writer = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+    writer.append_f32(&[0.1; 4_800]).unwrap();
+    writer.finalize().unwrap();
+    store.mark_completed(recorder.id).unwrap();
+    let connection = Connection::open(temp.path().join(DATABASE_FILE_NAME)).unwrap();
+    connection
+        .execute_batch(
+            "CREATE TRIGGER fail_recorder_clear
+             BEFORE UPDATE OF is_draft ON recorder_sessions
+             BEGIN
+                 SELECT RAISE(ABORT, 'injected clear failure');
+             END;",
+        )
+        .unwrap();
+    drop(connection);
+
+    assert!(store.clear_recording(recorder.id).is_err());
+
+    let unchanged = store.get_session(recorder.id).unwrap().unwrap();
+    assert!(!unchanged.is_draft);
+    assert_eq!(unchanged.status, RecorderStatus::Completed);
+    assert_eq!(store.list_segments(recorder.id).unwrap().len(), 1);
+    assert!(recorder.audio_path.is_file());
+}
+
+#[test]
+fn launch_reconciliation_restores_a_precommit_clear_quarantine() {
+    let temp = TempDir::new().unwrap();
+    let recorder = {
+        let store = RecorderStore::open(temp.path()).unwrap();
+        let recorder = create_recorder(&store, "Interrupted clear", 10, 48_000);
+        store
+            .apply_transcript_update(
+                recorder.id,
+                RecorderTranscriptUpdate::Committed {
+                    start_sample: 0,
+                    end_sample: 4_800,
+                    text: "must survive restart".into(),
+                    language: "en".into(),
+                },
+            )
+            .unwrap();
+        store.mark_finalizing(recorder.id).unwrap();
+        let mut writer = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+        writer.append_f32(&[0.1; 4_800]).unwrap();
+        writer.finalize().unwrap();
+        store.mark_completed(recorder.id).unwrap();
+        recorder
+    };
+    let quarantine = clear_quarantine_path(&recorder.audio_path);
+    fs::rename(&recorder.audio_path, &quarantine).unwrap();
+
+    let reopened = RecorderStore::open(temp.path()).unwrap();
+
+    assert!(recorder.audio_path.is_file());
+    assert!(!quarantine.exists());
+    assert_eq!(
+        reopened.get_session(recorder.id).unwrap().unwrap().status,
+        RecorderStatus::Completed
+    );
+    assert_eq!(reopened.list_segments(recorder.id).unwrap().len(), 1);
+}
+
+#[test]
+fn launch_reconciliation_removes_a_postcommit_clear_quarantine() {
+    let temp = TempDir::new().unwrap();
+    let recorder = {
+        let store = RecorderStore::open(temp.path()).unwrap();
+        let recorder = create_recorder(&store, "Committed clear", 10, 48_000);
+        store.mark_finalizing(recorder.id).unwrap();
+        let mut writer = RecorderAudioWriter::create(&recorder.audio_path, 48_000).unwrap();
+        writer.append_f32(&[0.1; 4_800]).unwrap();
+        writer.finalize().unwrap();
+        store.mark_completed(recorder.id).unwrap();
+        recorder
+    };
+    let quarantine = clear_quarantine_path(&recorder.audio_path);
+    fs::rename(&recorder.audio_path, &quarantine).unwrap();
+    let connection = Connection::open(temp.path().join(DATABASE_FILE_NAME)).unwrap();
+    connection
+        .execute(
+            "UPDATE recorder_sessions
+             SET status = 'completed', is_draft = 1, duration_ms = 0
+             WHERE id = ?1",
+            [recorder.id],
+        )
+        .unwrap();
+    drop(connection);
+
+    let reopened = RecorderStore::open(temp.path()).unwrap();
+
+    assert!(!quarantine.exists());
+    assert!(!recorder.audio_path.exists());
+    assert!(reopened.get_session(recorder.id).unwrap().unwrap().is_draft);
 }
 
 #[test]

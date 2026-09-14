@@ -75,6 +75,7 @@ vi.mock("./ipc", () => ({
   openStreamingSession: vi.fn(),
   renameStreamingSession: vi.fn(),
   deleteStreamingSession: vi.fn(),
+  clearStreamingSession: vi.fn(),
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
@@ -232,6 +233,9 @@ beforeEach(() => {
     revision: 0,
     error: null,
   });
+  vi.mocked(ipc.getCloudProviderConfig)
+    .mockReset()
+    .mockResolvedValue(cloudProviderConfiguration("deepgram"));
   const startMock = vi.mocked(ipc.startStreamingSession);
   startMock.mockResolvedValue = ((summary: StreamingSessionSummary) =>
     startMock.mockImplementation(async () => {
@@ -515,6 +519,56 @@ describe("StreamingView", () => {
     expect(screen.getByText("Listening…")).toBeInTheDocument();
   });
 
+  it("replaces the centered listening placeholder with the first live partial", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "First partial session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "The first provisional phrase",
+      });
+    });
+
+    expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+    expect(document.querySelector(".wp-streaming-partial")).toHaveTextContent(
+      "The first provisional phrase",
+    );
+  });
+
+  it("keeps the listening placeholder when a live partial contains no text", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Empty partial session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+    act(() => {
+      partialHandler!({ session_id: 2, item_id: null, text: "   " });
+    });
+
+    expect(screen.getByText("Listening…")).toBeInTheDocument();
+    expect(document.querySelector(".wp-streaming-partial")).toBeNull();
+  });
+
   it("keeps a newer Cloud partial visible and clears it only when its own final turn arrives", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({
@@ -573,7 +627,7 @@ describe("StreamingView", () => {
     expect(document.querySelector(".wp-streaming-partial")).toBeNull();
   });
 
-  it("renders an agreeing partial prefix as stable and only the revised suffix as italic", async () => {
+  it("keeps a revised partial entirely italic until it is committed", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({
       id: 2,
@@ -600,10 +654,9 @@ describe("StreamingView", () => {
       });
     });
 
-    expect(screen.getByText("Так давай попробуем")).toHaveClass(
-      "wp-streaming-partial-stable",
-    );
-    expect(screen.getByText("ещё раз").closest("em")).not.toBeNull();
+    const partial = screen.getByText("Так давай попробуем ещё раз");
+    expect(partial.tagName).toBe("EM");
+    expect(document.querySelector(".wp-streaming-partial-stable")).toBeNull();
   });
 
   it("follows the latest phrase, pauses after scrolling up, and resumes at the bottom", async () => {
@@ -1227,12 +1280,107 @@ describe("StreamingView", () => {
       const dialog = screen.getByRole("alertdialog", {
         name: "Delete Standup",
       });
+      expect(
+        within(dialog).getByRole("button", { name: "Delete" }),
+      ).toHaveClass("modal-button--danger");
       await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
       expect(ipc.deleteStreamingSession).toHaveBeenCalledWith(1);
       expect(
         screen.queryByRole("alertdialog", { name: "Delete Standup" }),
       ).not.toBeInTheDocument();
+    });
+
+    it("clears transcript, MFU, prettify, and translations only after confirmation", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({
+          windows: ONE_WINDOW,
+          mfu: {
+            summary: "Summary to clear",
+            decisions: "",
+            action_items: "",
+            open_questions: "",
+            participants: "",
+          },
+          prettified_text: "Polished text to clear",
+          translation_enabled: true,
+        }),
+      );
+      vi.mocked(ipc.clearStreamingSession).mockResolvedValue(
+        openedSession({ windows: [], translation_enabled: true }),
+      );
+      vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+        "Translated text to clear",
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        screen.getByRole("button", { name: "Clear streaming session" }),
+      );
+      expect(ipc.clearStreamingSession).not.toHaveBeenCalled();
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Clear streaming session",
+      });
+      expect(
+        within(dialog).getByRole("button", { name: "Clear session" }),
+      ).toHaveClass("modal-button--danger");
+      await user.click(
+        within(dialog).getByRole("button", { name: "Clear session" }),
+      );
+
+      expect(ipc.clearStreamingSession).toHaveBeenCalledWith(SESSION_A.id);
+      expect(screen.queryByText("hello there")).not.toBeInTheDocument();
+      expect(screen.queryByText("Summary to clear")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Start a session, or open one from the list."),
+      ).toBeInTheDocument();
+    });
+
+    it("blocks Clear while Craft MFU can still persist derived content", async () => {
+      const craft = deferred<StreamingSession>();
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(craft.promise);
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(screen.getByRole("button", { name: "Craft MFU" }));
+
+      expect(
+        screen.getByRole("button", { name: "Clear streaming session" }),
+      ).toBeDisabled();
+      await act(async () =>
+        craft.resolve(openedSession({ windows: ONE_WINDOW, mfu: MFU })),
+      );
+    });
+
+    it("blocks Clear while Prettify can still return derived content", async () => {
+      const prettify = deferred<string>();
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
+        prettify.promise,
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        screen.getByRole("button", { name: "Prettify transcript" }),
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Clear streaming session" }),
+      ).toBeDisabled();
+      await act(async () => prettify.resolve("Prettified candidate"));
     });
 
     it("Cancel on the delete dialog makes no IPC call", async () => {

@@ -233,13 +233,13 @@ pub(crate) fn delete_recorder_session(app: tauri::AppHandle, id: RecorderSession
 }
 
 #[tauri::command]
-pub(crate) fn clear_recorder_transcript(
+pub(crate) fn clear_recorder_recording(
     app: tauri::AppHandle,
     id: RecorderSessionId,
 ) -> Result<RecorderSessionDto> {
     ensure_recorder_session_is_not_live(&app, id)?;
     let app_support_dir = app_data_dir(&app)?;
-    RecorderStore::open_runtime(&app_support_dir)?.clear_transcript(id)?;
+    RecorderStore::open_runtime(&app_support_dir)?.clear_recording(id)?;
     open_dto(&app_support_dir, id)
 }
 
@@ -800,6 +800,7 @@ fn spawn_recorder_pipeline(
     samples_rx: Receiver<PooledMicrophoneSamples>,
     mut writer: RecorderAudioWriter,
 ) -> std::sync::mpsc::Sender<String> {
+    let timeline_start_ms = writer.duration_ms();
     let (asr_tx, asr_rx) = sync_channel(AUDIO_QUEUE_CAPACITY);
     let (results_tx, results_rx) = streaming_session::result_channel();
     let (tail_persisted_tx, tail_persisted_rx) = std::sync::mpsc::channel();
@@ -887,18 +888,22 @@ fn spawn_recorder_pipeline(
     std::thread::spawn(move || {
         let outcome =
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| match decoder_model {
-                RecorderDecoderModel::Whisper(ctx) => streaming_session::run_windowed_decode(
+                RecorderDecoderModel::Whisper(ctx) => streaming_session::run_windowed_decode_from(
                     move || streaming_session::WhisperSessionDecoder::new(&ctx),
                     asr_rx,
                     results_tx,
                     0,
+                    timeline_start_ms,
                 ),
-                RecorderDecoderModel::QwenGguf(model) => streaming_session::run_windowed_decode(
-                    move || Ok(streaming_session::QwenGgufSessionDecoder::new(model)),
-                    asr_rx,
-                    results_tx,
-                    0,
-                ),
+                RecorderDecoderModel::QwenGguf(model) => {
+                    streaming_session::run_windowed_decode_from(
+                        move || Ok(streaming_session::QwenGgufSessionDecoder::new(model)),
+                        asr_rx,
+                        results_tx,
+                        0,
+                        timeline_start_ms,
+                    )
+                }
             }));
         let failure = decoder_exit_failure(&outcome);
         let _ = decoder_finished_tx.send(failure);
@@ -939,18 +944,26 @@ pub(crate) async fn start_recorder_impl(
     let app_support_dir = app_data_dir(&app)?;
     let _asr_mutation = state.recorder_asr_mutation.lock().await;
     let store = RecorderStore::open_runtime(&app_support_dir)?;
-    let draft = draft_id
+    let requested = draft_id
         .map(|id| {
             store
                 .get_session(id)?
-                .filter(|session| session.is_draft)
-                .ok_or_else(|| AppError::Store(format!("Recorder draft {id} was not found")))
+                .filter(|session| {
+                    session.is_draft
+                        || session.status == crate::recorder_store::RecorderStatus::Completed
+                })
+                .ok_or_else(|| {
+                    AppError::Store(format!(
+                        "Recorder session {id} is not ready to start or continue"
+                    ))
+                })
         })
         .transpose()?;
+    let continuing = requested.as_ref().is_some_and(|session| !session.is_draft);
     let recorder_settings = crate::settings::get_settings(&app_support_dir);
     let language = AsrLanguage::Auto;
     let asr_spec = asr::resolve_selection(
-        draft
+        requested
             .as_ref()
             .map(|session| session.asr_model_id.as_str())
             .or(recorder_settings.active_model_transcription.as_deref())
@@ -959,6 +972,20 @@ pub(crate) async fn start_recorder_impl(
         language,
     )?;
     let info = MicrophoneCaptureSession::probe_default_input()?;
+    if let Some(existing) = requested.as_ref().filter(|_| continuing) {
+        if info.sample_rate != existing.sample_rate {
+            return Err(AppError::Capture(format!(
+                "the selected microphone uses {} Hz, but this recording uses {} Hz; select the original input device or create a new recording",
+                info.sample_rate, existing.sample_rate
+            )));
+        }
+    }
+    let prior_polished = requested
+        .as_ref()
+        .filter(|_| continuing)
+        .map(|session| store.get_polished(session.id))
+        .transpose()?
+        .flatten();
     if let Err(holder) = streaming_session::try_claim_recorder(&state.whisper_busy) {
         return Err(AppError::Capture(match holder {
             streaming_session::WhisperUser::Meeting => {
@@ -994,8 +1021,9 @@ pub(crate) async fn start_recorder_impl(
             return Err(error);
         }
     };
-    let session = match draft {
-        Some(draft) => store.activate_draft(draft.id, info.sample_rate),
+    let session = match requested {
+        Some(session) if session.is_draft => store.activate_draft(session.id, info.sample_rate),
+        Some(session) => store.resume_session(session.id),
         None => store.create_session(NewRecorderSession {
             title: format!("Recording {now}"),
             created_at_ms: now,
@@ -1013,11 +1041,21 @@ pub(crate) async fn start_recorder_impl(
         }
     };
     let rollback_failed_start = |store: &RecorderStore, id, error: AppError| {
-        let rollback = if draft_id.is_some() {
+        let rollback = if continuing {
+            store.restore_completed_after_failed_resume(id)
+        } else if draft_id.is_some() {
             store.restore_draft_after_failed_start(id)
         } else {
             store.discard_failed_start(id)
         };
+        let rollback = rollback.and_then(|()| {
+            if continuing {
+                if let Some(text) = prior_polished.as_deref() {
+                    store.upsert_polished(id, text)?;
+                }
+            }
+            Ok(())
+        });
         match rollback {
             Ok(()) => error,
             Err(rollback) => AppError::Capture(format!(
@@ -1025,7 +1063,19 @@ pub(crate) async fn start_recorder_impl(
             )),
         }
     };
-    let writer = match RecorderAudioWriter::create(&session.audio_path, session.sample_rate) {
+    let writer_path = session.audio_path.clone();
+    let writer_rate = session.sample_rate;
+    let writer_result = tokio::task::spawn_blocking(move || {
+        if continuing {
+            RecorderAudioWriter::resume(&writer_path, writer_rate)
+        } else {
+            RecorderAudioWriter::create(&writer_path, writer_rate)
+        }
+    })
+    .await
+    .map_err(|error| AppError::Audio(format!("Recorder audio setup task failed: {error}")))
+    .and_then(|result| result);
+    let writer = match writer_result {
         Ok(writer) => writer,
         Err(error) => {
             let error = rollback_failed_start(&store, session.id, error);
@@ -1033,6 +1083,14 @@ pub(crate) async fn start_recorder_impl(
             return Err(error);
         }
     };
+    if continuing {
+        if let Err(error) = store.delete_polished(session.id) {
+            drop(writer);
+            let error = rollback_failed_start(&store, session.id, error);
+            streaming_session::release_whisper_busy(&state.whisper_busy);
+            return Err(error);
+        }
+    }
     let generation = match begin_recorder_capture(&app, state, session.id) {
         Ok(value) => value,
         Err(error) => {

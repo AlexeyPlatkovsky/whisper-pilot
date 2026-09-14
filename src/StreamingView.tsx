@@ -8,6 +8,7 @@ import {
 } from "react";
 import {
   acceptStreamingPrettify,
+  clearStreamingSession,
   collapseToBubble,
   createStreamingSession,
   deleteStreamingSession,
@@ -26,6 +27,7 @@ import {
   onStreamingSources,
   onStreamingWindow,
   openStreamingSession,
+  previewStreamingTranslation,
   renameStreamingSession,
   revertStreamingPrettify,
   saveTextDialog,
@@ -54,6 +56,7 @@ import {
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { ModeToggle } from "./ModeToggle";
 import { ToggleSwitch } from "./ToggleSwitch";
 import { formatElapsedClock } from "./format";
@@ -75,7 +78,6 @@ import {
   resolveStreamingRowStatus,
   resolveStreamingWidgetStatus,
 } from "./streamingStatus";
-import { stabilizePartial } from "./partialStability";
 
 // WP-93: Live Translation's target-language options — the select's display
 // names and the split grid's target-column header (uppercased). Shared with
@@ -142,9 +144,8 @@ export function StreamingView({
   const [partialTranscript, setPartialTranscript] = useState<{
     itemId: string | null;
     text: string;
-    stable: string;
-    unstable: string;
   } | null>(null);
+  const partialTranscriptRef = useRef<typeof partialTranscript>(null);
   const [transcriptionEngine, setTranscriptionEngine] = useState<
     "local" | "cloud"
   >("local");
@@ -192,6 +193,7 @@ export function StreamingView({
     id: number;
     title: string;
   } | null>(null);
+  const [clearPending, setClearPending] = useState(false);
   // WP-93/WP-103: Live Translation — switch state, session-owned target
   // language (default Russian), and per-*window* translation status keyed by
   // window_index (WP-103 moved this off paragraph_key). The queue itself
@@ -200,6 +202,11 @@ export function StreamingView({
   const [translationEnabled, setTranslationEnabled] = useState(false);
   const [targetLanguage, setTargetLanguage] =
     useState<StreamingTranslationTargetLanguage>("ru");
+  const targetLanguageRef = useRef<StreamingTranslationTargetLanguage>("ru");
+  function commitTargetLanguage(next: StreamingTranslationTargetLanguage) {
+    targetLanguageRef.current = next;
+    setTargetLanguage(next);
+  }
   const [translations, setTranslations] = useState<
     Map<number, TranslationEntry>
   >(new Map());
@@ -223,9 +230,24 @@ export function StreamingView({
   }, [windows]);
   const [llmModelReady, setLlmModelReady] = useState(false);
   const translationQueueRef = useRef<
-    { windowIndex: number; sourceText: string }[]
+    {
+      sessionId: number;
+      targetLanguage: StreamingTranslationTargetLanguage;
+      token: number;
+      windowIndex: number;
+      sourceText: string;
+    }[]
   >([]);
   const translationBusyRef = useRef(false);
+  const [partialTranslation, setPartialTranslation] = useState<{
+    sourceText: string;
+    translatedText?: string;
+  } | null>(null);
+  const previewWorkRef = useRef<{
+    inFlight: boolean;
+    latestText: string | null;
+  }>({ inFlight: false, latestText: null });
+  const previewGenerationRef = useRef(0);
   // Bumped whenever translation is toggled (either direction) so an
   // in-flight promise from a superseded run discards its result instead of
   // writing into a queue/map that's since been cleared.
@@ -253,6 +275,83 @@ export function StreamingView({
     prettifyingId !== null && prettifyingId === activeId;
   const selectedOwnsLiveCapture =
     isRunning && activeId !== null && activeId === liveCaptureSessionId;
+  const hasVisiblePartial =
+    partialTranscript !== null && partialTranscript.text.trim().length > 0;
+
+  function runLatestPreviewTranslation() {
+    const work = previewWorkRef.current;
+    if (work.inFlight) return;
+    const sourceText = work.latestText;
+    work.latestText = null;
+    if (!sourceText || partialTranscriptRef.current?.text.trim() !== sourceText)
+      return;
+    const token = translationTokenRef.current;
+    const previewGeneration = previewGenerationRef.current;
+    work.inFlight = true;
+    setPartialTranslation((current) => ({
+      sourceText,
+      translatedText: current?.translatedText,
+    }));
+    const context = precedingWindowsContext(
+      windowsRef.current,
+      windowsRef.current.length,
+      translationsRef.current,
+    );
+    void previewStreamingTranslation(
+      targetLanguageRef.current,
+      sourceText,
+      context,
+    )
+      .then((translatedText) => {
+        if (
+          translationTokenRef.current === token &&
+          previewGenerationRef.current === previewGeneration &&
+          partialTranscriptRef.current
+        ) {
+          setPartialTranslation((current) =>
+            current === null ? null : { ...current, translatedText },
+          );
+        }
+      })
+      .catch(() => {
+        // A provisional failure is intentionally silent. The committed
+        // window still enters the durable translation queue and owns errors.
+      })
+      .finally(() => {
+        work.inFlight = false;
+        if (
+          work.latestText &&
+          partialTranscriptRef.current?.text.trim() === work.latestText
+        ) {
+          runLatestPreviewTranslation();
+        }
+      });
+  }
+
+  useEffect(() => {
+    partialTranscriptRef.current = partialTranscript;
+    const sourceText = partialTranscript?.text.trim() ?? "";
+    if (
+      !translationEnabled ||
+      !selectedOwnsLiveCapture ||
+      !llmModelReady ||
+      sourceText.length === 0
+    ) {
+      previewWorkRef.current.latestText = null;
+      setPartialTranslation(null);
+      return;
+    }
+    if (partialTranslation?.sourceText === sourceText) return;
+    previewWorkRef.current.latestText = sourceText;
+    runLatestPreviewTranslation();
+  }, [
+    llmModelReady,
+    partialTranscript,
+    partialTranslation?.sourceText,
+    selectedOwnsLiveCapture,
+    targetLanguage,
+    translationEnabled,
+  ]);
 
   // Derived, not stored, so it can't drift from Start/Stop; isRunning wins
   // over busy so a Stop-in-flight still reads as On Air.
@@ -427,7 +526,7 @@ export function StreamingView({
           ),
         );
         setTranslationEnabled(session.translation_enabled ?? false);
-        setTargetLanguage(session.translation_target_language ?? "ru");
+        commitTargetLanguage(session.translation_target_language ?? "ru");
 
         const lastWindow = session.windows.at(-1);
         if (lastWindow) {
@@ -512,6 +611,16 @@ export function StreamingView({
     void (async () => {
       const [w, s, e, p, er] = await Promise.all([
         onStreamingWindow((incoming) => {
+          const currentPartial = partialTranscriptRef.current;
+          if (
+            activeIdRef.current === incoming.session_id &&
+            currentPartial !== null &&
+            (incoming.item_id == null ||
+              incoming.item_id === currentPartial.itemId)
+          ) {
+            previewGenerationRef.current += 1;
+            partialTranscriptRef.current = null;
+          }
           setActiveId((current) => {
             if (current === incoming.session_id) {
               setWindows((prev) => upsertWindow(prev, incoming));
@@ -523,6 +632,7 @@ export function StreamingView({
                 ) {
                   return partial;
                 }
+                partialTranscriptRef.current = null;
                 return null;
               });
             }
@@ -537,22 +647,20 @@ export function StreamingView({
         }),
         onStreamingSessionEnded((incoming) => {
           if (activeIdRef.current === incoming.session_id) {
+            previewGenerationRef.current += 1;
+            partialTranscriptRef.current = null;
             setPartialTranscript(null);
           }
           void refreshSessions();
         }),
         onStreamingPartial((incoming) => {
           if (activeIdRef.current === incoming.session_id) {
-            setPartialTranscript((current) => {
-              const previous =
-                current?.itemId === incoming.item_id ? current.text : "";
-              const display = stabilizePartial(previous, incoming.text);
-              return {
-                itemId: incoming.item_id,
-                text: incoming.text,
-                ...display,
-              };
-            });
+            const nextPartial = {
+              itemId: incoming.item_id,
+              text: incoming.text,
+            };
+            partialTranscriptRef.current = nextPartial;
+            setPartialTranscript(nextPartial);
           }
         }),
         onStreamingError((incoming) => {
@@ -703,7 +811,7 @@ export function StreamingView({
       setPendingPrettify(null);
       setPartialTranscript(null);
       setTranslationEnabled(false);
-      setTargetLanguage(summary.translation_target_language ?? "ru");
+      commitTargetLanguage(summary.translation_target_language ?? "ru");
       commitTranslations(new Map());
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
@@ -756,7 +864,7 @@ export function StreamingView({
       // survives reopening it (and an app restart), matching WP-96's
       // MFU-panel persistence. Absent (pre-WP-101 data) reads as off.
       setTranslationEnabled(session.translation_enabled ?? false);
-      setTargetLanguage(session.translation_target_language ?? "ru");
+      commitTargetLanguage(session.translation_target_language ?? "ru");
       commitTranslations(new Map());
       translationQueueRef.current = [];
       translationTokenRef.current += 1;
@@ -841,6 +949,40 @@ export function StreamingView({
     }
   }, [activeId, deleteTarget, refreshSessions]);
 
+  const confirmClear = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (id === null) return;
+    setError(null);
+    try {
+      const session = await clearStreamingSession(id);
+      if (activeIdRef.current !== id) return;
+      setWindows(session.windows);
+      setMfu(session.mfu ?? null);
+      setPrettifiedText(session.prettified_text ?? null);
+      setPendingPrettify(null);
+      setCraftFailed(false);
+      setPrettifyFailed(false);
+      partialTranscriptRef.current = null;
+      previewGenerationRef.current += 1;
+      setPartialTranscript(null);
+      commitTranslations(new Map());
+      translationQueueRef.current = [];
+      translationTokenRef.current += 1;
+      previewWorkRef.current.latestText = null;
+      setPartialTranslation(null);
+      persistedTranslationsRef.current = new Map();
+      // The clear response is authoritative: no persisted translations remain.
+      // Keep reconciliation ready so newly committed windows can be translated
+      // immediately when this session is resumed.
+      setPersistedReady(true);
+      setClearPending(false);
+      await refreshSessions();
+    } catch (reason) {
+      if (activeIdRef.current === id) setError(String(reason));
+      setClearPending(false);
+    }
+  }, [refreshSessions]);
+
   // Once accepted, the cleaned text is what gets copied/exported. Otherwise,
   // when Live Translation is on with at least one translation entry,
   // Copy/Export switch to the paired original+translation rendering
@@ -924,6 +1066,7 @@ export function StreamingView({
     const id = activeId;
     const text = pendingPrettify.cleaned;
     setError(null);
+    setPrettifyingId(id);
     try {
       const session = await acceptStreamingPrettify(id, text);
       if (activeIdRef.current === id) {
@@ -934,6 +1077,8 @@ export function StreamingView({
       if (activeIdRef.current === id) {
         setError(String(e));
       }
+    } finally {
+      setPrettifyingId((current) => (current === id ? null : current));
     }
   }, [activeId, pendingPrettify]);
 
@@ -946,6 +1091,7 @@ export function StreamingView({
     if (activeId === null || prettifiedText === null) return;
     const id = activeId;
     setError(null);
+    setPrettifyingId(id);
     try {
       const session = await revertStreamingPrettify(id);
       if (activeIdRef.current === id) {
@@ -953,6 +1099,8 @@ export function StreamingView({
       }
     } catch (e) {
       if (activeIdRef.current === id) setError(String(e));
+    } finally {
+      setPrettifyingId((current) => (current === id ? null : current));
     }
   }, [activeId, prettifiedText]);
 
@@ -965,12 +1113,19 @@ export function StreamingView({
   // is enqueued before window 0 has actually translated.
   function runTranslationQueue() {
     if (translationBusyRef.current) return;
-    const item = translationQueueRef.current.shift();
+    let item = translationQueueRef.current.shift();
+    while (
+      item &&
+      (item.token !== translationTokenRef.current ||
+        item.sessionId !== activeIdRef.current ||
+        item.targetLanguage !== targetLanguageRef.current)
+    ) {
+      item = translationQueueRef.current.shift();
+    }
     if (!item) return;
-    const sessionId = activeIdRef.current;
-    if (sessionId === null) return;
-    const lang = targetLanguage;
-    const token = translationTokenRef.current;
+    const sessionId = item.sessionId;
+    const lang = item.targetLanguage;
+    const token = item.token;
     translationBusyRef.current = true;
     const position = windowsRef.current.findIndex(
       (w) => w.window_index === item.windowIndex,
@@ -1033,12 +1188,28 @@ export function StreamingView({
   // order by the reconcile effect and retry below, so the queue — and thus
   // every translate call — processes strictly in that order.
   function enqueueTranslation(windowIndex: number, sourceText: string) {
+    const sessionId = activeIdRef.current;
+    if (sessionId === null) return;
+    const target = targetLanguageRef.current;
+    const token = translationTokenRef.current;
     const queue = translationQueueRef.current;
-    const index = queue.findIndex((entry) => entry.windowIndex === windowIndex);
+    const index = queue.findIndex(
+      (entry) =>
+        entry.sessionId === sessionId &&
+        entry.targetLanguage === target &&
+        entry.windowIndex === windowIndex,
+    );
+    const item = {
+      sessionId,
+      targetLanguage: target,
+      token,
+      windowIndex,
+      sourceText,
+    };
     if (index >= 0) {
-      queue[index] = { windowIndex, sourceText };
+      queue[index] = item;
     } else {
-      queue.push({ windowIndex, sourceText });
+      queue.push(item);
     }
     runTranslationQueue();
   }
@@ -1056,6 +1227,8 @@ export function StreamingView({
     commitTranslations(new Map());
     translationQueueRef.current = [];
     translationTokenRef.current += 1;
+    previewWorkRef.current.latestText = null;
+    setPartialTranslation(null);
     persistedTranslationsRef.current = new Map();
     if (next) setPersistedReady(false);
     // WP-101: best-effort persistence, mirroring handleToggleMfuPanel — the
@@ -1075,7 +1248,7 @@ export function StreamingView({
 
   const handleTargetLanguageChange = useCallback(
     (next: StreamingTranslationTargetLanguage) => {
-      setTargetLanguage(next);
+      commitTargetLanguage(next);
       const sessionId = activeIdRef.current;
       if (sessionId === null) return;
       void (async () => {
@@ -1415,11 +1588,15 @@ export function StreamingView({
             <span className="wp-sep" />
             <ActionIcon
               icon="trash-2"
-              label="Delete active session"
-              onClick={() =>
-                activeId !== null && openDelete(activeId, activeTitle)
+              label="Clear streaming session"
+              onClick={() => setClearPending(true)}
+              disabled={
+                activeId === null ||
+                activeBusy ||
+                (windows.length === 0 &&
+                  mfu === null &&
+                  prettifiedText === null)
               }
-              disabled={activeId === null || isRunning}
             />
           </div>
         </div>
@@ -1474,9 +1651,7 @@ export function StreamingView({
                     key={s.id}
                     title={s.title}
                     when={new Date(s.created_at_ms).toLocaleDateString()}
-                    dur={formatClockTime(
-                      Math.max(0, s.updated_at_ms - s.created_at_ms),
-                    )}
+                    dur={formatClockTime(Math.max(0, s.duration_ms ?? 0))}
                     status={
                       isRunning && s.id === liveCaptureSessionId
                         ? liveCaptureWidget
@@ -1674,7 +1849,8 @@ export function StreamingView({
                   {error}
                 </div>
               )}
-              {windows.length === 0 ? (
+              {windows.length === 0 &&
+              !(selectedOwnsLiveCapture && hasVisiblePartial) ? (
                 <div className="wp-empty">
                   <p>
                     {selectedOwnsLiveCapture
@@ -1852,38 +2028,35 @@ export function StreamingView({
                 </div>
               )}
               {selectedOwnsLiveCapture &&
+                hasVisiblePartial &&
                 partialTranscript &&
                 (translationEnabled ? (
                   <div className="wp-translation-columns wp-translation-row wp-translation-row--partial">
                     <div className="wp-translation-col">
                       <p className="wp-streaming-partial" role="status">
-                        {partialTranscript.stable && (
-                          <span className="wp-streaming-partial-stable">
-                            {partialTranscript.stable}{" "}
-                          </span>
-                        )}
-                        {partialTranscript.unstable && (
-                          <em className="wp-streaming-partial-unstable">
-                            {partialTranscript.unstable}
+                        <em className="wp-streaming-partial-unstable">
+                          {partialTranscript.text}
+                        </em>
+                      </p>
+                    </div>
+                    <div className="wp-translation-col-divider" />
+                    <div className="wp-translation-col">
+                      <p className="wp-streaming-partial wp-streaming-partial--translation">
+                        {partialTranslation?.translatedText ? (
+                          <em>{partialTranslation.translatedText}</em>
+                        ) : (
+                          <em className="wp-translation-pending">
+                            Translating…
                           </em>
                         )}
                       </p>
                     </div>
-                    <div className="wp-translation-col-divider" />
-                    <div className="wp-translation-col" aria-hidden="true" />
                   </div>
                 ) : (
                   <p className="wp-streaming-partial" role="status">
-                    {partialTranscript.stable && (
-                      <span className="wp-streaming-partial-stable">
-                        {partialTranscript.stable}{" "}
-                      </span>
-                    )}
-                    {partialTranscript.unstable && (
-                      <em className="wp-streaming-partial-unstable">
-                        {partialTranscript.unstable}
-                      </em>
-                    )}
+                    <em className="wp-streaming-partial-unstable">
+                      {partialTranscript.text}
+                    </em>
                   </p>
                 ))}
               {selectedOwnsLiveCapture && (
@@ -1980,42 +2153,45 @@ export function StreamingView({
             />
             {renameError && <p role="alert">{renameError}</p>}
             <div className="confirm-actions">
-              <button type="button" onClick={closeRename}>
+              <button
+                type="button"
+                className="modal-button"
+                onClick={closeRename}
+              >
                 Cancel
               </button>
-              <button type="submit">Save</button>
+              <button
+                type="submit"
+                className="modal-button modal-button--primary"
+              >
+                Save
+              </button>
             </div>
           </form>
         </div>
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label={`Delete ${deleteTarget.title}`}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setDeleteTarget(null);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Delete {deleteTarget.title}?</span>
-            </div>
-            <p className="confirm-warning">
-              This permanently removes the session and its transcript.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setDeleteTarget(null)}>
-                Cancel
-              </button>
-              <button type="button" onClick={() => void confirmDelete()}>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label={`Delete ${deleteTarget.title}`}
+          title={`Delete ${deleteTarget.title}?`}
+          description="This permanently removes the session and its transcript."
+          confirmLabel="Delete"
+          destructive
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void confirmDelete()}
+        />
+      )}
+      {clearPending && activeId !== null && (
+        <ConfirmDialog
+          label="Clear streaming session"
+          title="Clear streaming session?"
+          description="The transcript, translation, MFU, and Prettify result will be permanently removed. The empty session will stay in the list."
+          confirmLabel="Clear session"
+          destructive
+          onCancel={() => setClearPending(false)}
+          onConfirm={() => void confirmClear()}
+        />
       )}
     </div>
   );

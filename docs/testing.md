@@ -19,12 +19,12 @@ checklist), and the build/lint/format/typecheck gates pass.
 
 ## Test Levels
 
-| Level | Scope | Tooling |
-| --- | --- | --- |
-| Unit (Rust) | Audio decode validation, timestamp math, bounded queues/windows, model-cache scheduling, M2 merge, error mapping | `cargo test` (`npm run test:api`) |
-| End-to-end pipeline | file → ffmpeg → Whisper → segments, on a real model | `cargo test --test pipeline -- --ignored` (needs model + ffmpeg) |
-| Unit/Component (front-end) | IPC bindings, transcript state, editing, save | Vitest (`npm run test`) |
-| Typecheck | TS ↔ Rust IPC shape agreement | `npm run typecheck` |
+| Level                      | Scope                                                                                                            | Tooling                                                          |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Unit (Rust)                | Audio decode validation, timestamp math, bounded queues/windows, model-cache scheduling, M2 merge, error mapping | `cargo test` (`npm run test:api`)                                |
+| End-to-end pipeline        | file → ffmpeg → Whisper → segments, on a real model                                                              | `cargo test --test pipeline -- --ignored` (needs model + ffmpeg) |
+| Unit/Component (front-end) | IPC bindings, transcript state, editing, save                                                                    | Vitest (`npm run test`)                                          |
+| Typecheck                  | TS ↔ Rust IPC shape agreement                                                                                    | `npm run typecheck`                                              |
 
 The front-end suite grows as the UI does; M1 keeps logic thin and Rust-side.
 
@@ -84,18 +84,28 @@ short meaningful prefixes before
 capture gaps, terminal cloud-gap ordering, model-mutation/path-resolution
 ordering, first-window Live Translation during active capture, and atomic
 cancellation of stale translations after either a toggle-off or source revision.
+The Whisper streaming prompt contract keeps the bilingual punctuation seed
+ahead of rolling context. Its release gate is an ignored real-Metal decode of
+punctuated speech through the production `WhisperSessionDecoder`; mocked or
+text-only tests are not evidence that the model emits punctuation.
 
 Recorder regressions cover native-rate mono PCM16 CAF headers and sample
 conversion, one-second durability checkpoints, tail-before-audio-before-database
 finalization, interrupted-session reconciliation, owned-audio deletion and WAV
 export, shortcut replacement/conflict/repeat policy, backend lifecycle hydration,
 the shared searchable library/header, in-place persisted Prettify, confirmed
-transcript-only Clear with retained audio, and the committed-versus-partial
+recording Clear, and the committed-versus-partial
 transcript UI. They also prove that a full realtime-ASR queue never blocks the
 native-rate writer, and that Recorder errors stay attached to their originating
 session and do not leak into Streaming. Streaming UI regressions cover
 session-owned On Air state, per-session translation targets, an active MFU
 visibility toggle, Original-column partials, and shared MFU overflow scrolling.
+They also cover an all-italic provisional source hypothesis, retention of the
+last usable italic translation while a newer preview is pending, and confirmed
+Clear of transcript, translation, MFU, and Prettify state. Meeting Clear has a
+matching derived-content-only persistence contract. `npm run lint:ui` enforces
+that confirmation alertdialogs use the shared primitive and its destructive
+variant rather than workspace-local modal markup.
 The real default-microphone test
 is ignored by default because it requires explicit macOS TCC approval and audible
 input; it must be run with the real-Metal gate before Recorder release evidence is
@@ -111,7 +121,10 @@ experimental corpus and retired runtime evidence are recorded in
 `docs/validation/phase-4-qwen-asr-qualification.md`; the GGUF runtime has
 real-Metal mixed-language smoke evidence, while equivalent
 full-corpus WER, latency, and sustained-session evidence remains required
-before comparative claims.
+before comparative claims. Unit coverage also pins the upstream prompt shape:
+an always-present plain system context (including the empty case) followed by
+an audio-only user message, with no extra natural-language transcription
+directives.
 The synthetic corpus can be regenerated with
 `scripts/generate-asr-benchmark-corpus.sh`; `scripts/score-asr-corpus.mjs`
 computes Unicode-aware WER/CER from separate hypothesis files and emits metrics
@@ -133,6 +146,39 @@ long MFU schema, protected-number/identifier, language, reasoning-token and
 malformed-output gates pass. The recorded Phase 3 hardware results live in
 `docs/validation/phase-3-llm-qualification.md`; publisher benchmarks are not
 substitutes for those runs.
+Translation regression coverage also includes natural cross-script
+hyphenation so scientific names are not mistaken for exact identifiers; the
+selected Qwen profile is exercised on that case in the ignored real-Metal
+corpus test.
+
+Recorder persistence contracts verify that confirmed Clear recording removes
+final/partial audio plus raw and polished text, retains an empty reusable
+draft, rejects live clearing, and preserves database text when filesystem
+cleanup fails. Injected database-failure and restart tests prove quarantine
+rollback plus pre-/post-commit crash recovery. Frontend coverage includes
+audio-only recordings and the confirmation boundary. Streaming rendering
+coverage asserts that the first non-empty partial replaces the centered
+Listening placeholder while an empty partial leaves it visible.
+Paragraph grouping coverage prefers the next terminal punctuation, keeps a
+normal seven-window unfinished sentence together, and bounds a punctuation-free
+run at the twelve-window safety ceiling.
+Live Translation coverage verifies italic provisional output, partial-update
+coalescing, committed-result replacement, context-free validation fallback,
+committed-job priority over queued previews, and old-completion isolation when
+the next session uses a different target language.
+Race coverage also proves Clear is unavailable during derived-content work,
+pending Meeting autosaves settle before Clear without cancelling an edit queued
+for another meeting or leaking its failure into the newly opened meeting, a
+cleared Recorder/Streaming row rejects late polish/MFU persistence, a
+cleared-then-resumed Streaming duration follows `end_ms` instead of wall-clock
+age, and preview A cannot attach to partial B after A crosses a commit boundary.
+
+Recorder continuation contracts keep the prior finalized CAF unchanged until
+atomic replacement, reject sample-rate mismatch without mutation, append new
+PCM to the old timeline, and drive final duration/quality reads from the
+combined audio. Frontend coverage asserts completed-row continuation plus
+Space/Return confirmation, Escape cancellation with focus restoration, and
+modal Tab trapping for delete.
 
 The model-free contracts live in `audio.rs`, `commands/transcription.rs`,
 `diarize/segmentation.rs`, `diarize_process/transport.rs`,

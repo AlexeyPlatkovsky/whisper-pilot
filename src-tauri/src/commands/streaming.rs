@@ -249,6 +249,14 @@ pub(crate) fn delete_streaming_session(app: tauri::AppHandle, id: i64) -> Result
     streaming::delete_streaming_session(&app_data_dir(&app)?, id)
 }
 
+#[tauri::command]
+pub(crate) fn clear_streaming_session(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<streaming::StreamingSessionDto> {
+    streaming::clear_streaming_session(&app_data_dir(&app)?, id)
+}
+
 /// All persisted window translations for one session and target language
 /// (WP-93) — read counterpart to `translate_streaming_window`, so the
 /// frontend can reuse an already-translated window instead of re-running
@@ -276,6 +284,7 @@ pub(crate) fn create_streaming_session(
         title: session.title,
         created_at_ms: session.created_at_ms,
         updated_at_ms: session.updated_at_ms,
+        duration_ms: 0,
         status: session.status,
         translation_enabled: session.translation_enabled,
         translation_target_language: session.translation_target_language,

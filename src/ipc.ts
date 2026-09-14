@@ -64,6 +64,10 @@ export function deleteMeeting(id: number): Promise<void> {
   return invoke<void>("delete_meeting", { id });
 }
 
+export function clearMeeting(id: number): Promise<Meeting> {
+  return invoke<Meeting>("clear_meeting", { id });
+}
+
 /** Auto-save an edited segment's text; `index` addresses the displayed
  * (speaker-coalesced) segment list. No explicit save action is required. */
 export function updateSegment(
@@ -323,6 +327,8 @@ export interface StreamingSessionSummary {
   title: string;
   created_at_ms: number;
   updated_at_ms: number;
+  /** Captured timeline length; never derived from wall-clock timestamps. */
+  duration_ms?: number;
   status: string;
   /** Whether Live Translation was left on for this session (WP-101). */
   translation_enabled: boolean;
@@ -403,6 +409,10 @@ export function renameStreamingSession(
 
 export function deleteStreamingSession(id: number): Promise<void> {
   return invoke<void>("delete_streaming_session", { id });
+}
+
+export function clearStreamingSession(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("clear_streaming_session", { id });
 }
 
 /** Creates a stopped session record. It does not start audio capture. */
@@ -508,8 +518,8 @@ export function deleteRecorderSession(id: number): Promise<void> {
   return invoke<void>("delete_recorder_session", { id });
 }
 
-export function clearRecorderTranscript(id: number): Promise<RecorderSession> {
-  return invoke<RecorderSession>("clear_recorder_transcript", { id });
+export function clearRecorderRecording(id: number): Promise<RecorderSession> {
+  return invoke<RecorderSession>("clear_recorder_recording", { id });
 }
 
 export function createRecorderDraft(): Promise<RecorderSession> {
@@ -692,6 +702,20 @@ export function translateStreamingWindow(
   return invoke<string>("translate_streaming_window", {
     sessionId,
     windowIndex,
+    targetLanguage,
+    text,
+    context,
+  });
+}
+
+/** Translate the current unstable Streaming hypothesis without persisting it.
+ * The caller replaces this provisional result when a committed window lands. */
+export function previewStreamingTranslation(
+  targetLanguage: StreamingTranslationTargetLanguage,
+  text: string,
+  context?: string,
+): Promise<string> {
+  return invoke<string>("preview_streaming_translation", {
     targetLanguage,
     text,
     context,

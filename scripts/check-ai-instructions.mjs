@@ -10,11 +10,32 @@ const root = execFileSync("git", ["rev-parse", "--show-toplevel"], {
 const staged = process.argv.includes("--staged");
 const maxLines = 100;
 const maxWidth = 120;
+const modelEfforts = new Map([
+  ["gpt-5.6-sol", new Set(["low", "medium", "high", "xhigh", "max", "ultra"])],
+  [
+    "gpt-5.6-terra",
+    new Set(["low", "medium", "high", "xhigh", "max", "ultra"]),
+  ],
+  ["gpt-5.6-luna", new Set(["low", "medium", "high", "xhigh", "max", "ultra"])],
+  ["gpt-5.3-codex-spark", new Set(["low", "medium", "high", "xhigh"])],
+]);
+const expectedSandbox = new Map([
+  ["code-reviewer", "read-only"],
+  ["explorer", "read-only"],
+  ["instruction-evaluator", "read-only"],
+  ["requirements-reviewer", "read-only"],
+  ["sdd-auditor", "read-only"],
+  ["visual-reviewer", "read-only"],
+  ["test-author", "workspace-write"],
+  ["test-runner", "workspace-write"],
+  ["unit-test-author", "workspace-write"],
+]);
 
 function active(file) {
   const value = file.split(path.sep).join("/");
   return (
     value === "AGENTS.md" ||
+    value === ".codex/config.toml" ||
     /^\.agents\/skills\/.+\.md$/.test(value) ||
     /^\.codex\/agents\/[^/]+\.toml$/.test(value) ||
     /^\.claude\/conventions\/.+\.md$/.test(value) ||
@@ -43,6 +64,7 @@ function stagedFiles() {
 function allFiles() {
   return [
     "AGENTS.md",
+    ".codex/config.toml",
     ...walk(".agents/skills"),
     ...walk(".codex/agents"),
     ...walk(".claude/conventions"),
@@ -93,13 +115,62 @@ for (const file of staged ? stagedFiles() : allFiles()) {
     }
   }
   if (file.startsWith(".codex/agents/")) {
-    for (const field of ["name", "description", "developer_instructions"]) {
+    for (const field of [
+      "name",
+      "description",
+      "sandbox_mode",
+      "model",
+      "model_reasoning_effort",
+      "developer_instructions",
+    ]) {
       if (!new RegExp("^" + field + "\\s*=", "m").test(text)) {
         errors.push(file + ": missing " + field);
       }
     }
     if (!text.includes("Isolation reason:")) {
       errors.push(file + ": missing explicit isolation reason");
+    }
+    const role = path.basename(file, ".toml");
+    const declaredName = text.match(/^name\s*=\s*"([^"]+)"/m)?.[1];
+    const sandbox = text.match(/^sandbox_mode\s*=\s*"([^"]+)"/m)?.[1];
+    const model = text.match(/^model\s*=\s*"([^"]+)"/m)?.[1];
+    const effort = text.match(/^model_reasoning_effort\s*=\s*"([^"]+)"/m)?.[1];
+    if (declaredName !== role) {
+      errors.push(file + ": name must match filename " + role);
+    }
+    if (sandbox !== expectedSandbox.get(role)) {
+      errors.push(file + ": unexpected sandbox_mode for " + role);
+    }
+    if (!model || !modelEfforts.has(model)) {
+      errors.push(file + ": unsupported or empty model");
+    } else if (!effort || !modelEfforts.get(model).has(effort)) {
+      errors.push(file + ": reasoning effort is incompatible with " + model);
+    }
+  }
+  if (file === ".codex/config.toml") {
+    for (const field of [
+      "max_concurrent_threads_per_session",
+      "default_subagent_model",
+      "default_subagent_reasoning_effort",
+    ]) {
+      if (!new RegExp("^" + field + "\\s*=", "m").test(text)) {
+        errors.push(file + ": missing " + field);
+      }
+    }
+    const concurrency = text.match(
+      /^max_concurrent_threads_per_session\s*=\s*(\d+)/m,
+    )?.[1];
+    const model = text.match(/^default_subagent_model\s*=\s*"([^"]+)"/m)?.[1];
+    const effort = text.match(
+      /^default_subagent_reasoning_effort\s*=\s*"([^"]+)"/m,
+    )?.[1];
+    if (!concurrency || Number(concurrency) < 1) {
+      errors.push(file + ": concurrency must be a positive integer");
+    }
+    if (!model || !modelEfforts.has(model)) {
+      errors.push(file + ": unsupported or empty default model");
+    } else if (!effort || !modelEfforts.get(model).has(effort)) {
+      errors.push(file + ": default effort is incompatible with " + model);
     }
   }
 }

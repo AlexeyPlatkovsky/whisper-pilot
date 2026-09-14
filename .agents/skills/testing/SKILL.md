@@ -27,11 +27,14 @@ when the task is only to execute final validation.
 - IPC changes need Rust serialization or command coverage and the matching TypeScript wrapper coverage.
 - WKWebView or native-window behavior needs real macOS Tauri evidence in addition to lower-level tests.
 
-## Test authoring agent
+## Test agents
 
-Use `test-author` for recurring non-trivial TDD work when independent context reduces implementation bias. Pass exact
-behavior, allowed test and fixture paths, current production state, and the focused command. Run it sequentially before
-production implementation.
+- Use `unit-test-author` for narrow unit, regression, or coverage tests when expected behavior already exists.
+- Use `test-author` sequentially for non-trivial Red TDD before production implementation.
+- Use `test-runner` for isolated final validation without fixes.
+
+Pass exact behavior, allowed paths, current production state, and the focused command. Do not assign production edits to
+either authoring agent.
 
 ## Commands
 

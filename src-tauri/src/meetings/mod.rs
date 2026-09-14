@@ -153,6 +153,15 @@ pub fn delete_meeting(app_support_dir: &Path, id: MeetingId) -> Result<()> {
     Store::open(app_support_dir)?.delete_meeting(id)
 }
 
+pub fn clear_meeting(app_support_dir: &Path, id: MeetingId) -> Result<MeetingDto> {
+    let store = Store::open(app_support_dir)?;
+    store.clear_meeting_content(id, crate::transcribe::UNDETECTED_LANGUAGE)?;
+    let meeting = store
+        .get_meeting(id)?
+        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+    to_dto(meeting, Vec::new(), None)
+}
+
 /// Auto-save an edited segment's text. `index` addresses the meeting's
 /// currently displayed (speaker-coalesced) segment list — the same list
 /// `open_meeting`/`to_dto` return — not raw storage ordinals. Persisting
@@ -465,6 +474,44 @@ mod tests {
             vec!["First", "Second"]
         );
         assert_eq!(reopened.status, "finished");
+    }
+
+    #[test]
+    fn clearing_content_keeps_the_source_and_resets_transcript_mfu_and_metadata() {
+        let temp = tempfile::tempdir().expect("temporary app-support directory");
+        let created = create_empty_meeting(temp.path(), 1).expect("create meeting");
+        set_meeting_source(temp.path(), created.id, Some("/talk.m4a".to_string()))
+            .expect("attach source");
+        save_transcript(
+            temp.path(),
+            created.id,
+            vec![dto(0, 2_000, "Saved transcript.", Some(1))],
+            Some(2_000),
+            "en".to_string(),
+        )
+        .expect("save transcript");
+        update_mfu(
+            temp.path(),
+            MeetingMfu {
+                meeting_id: created.id,
+                summary: "Summary".to_string(),
+                decisions: String::new(),
+                action_items: String::new(),
+                open_questions: String::new(),
+                participants: String::new(),
+            },
+        )
+        .expect("save mfu");
+
+        let cleared = clear_meeting(temp.path(), created.id).expect("clear meeting");
+
+        assert_eq!(cleared.source_path.as_deref(), Some("/talk.m4a"));
+        assert_eq!(cleared.source_name.as_deref(), Some("talk.m4a"));
+        assert_eq!(cleared.status, "ready");
+        assert_eq!(cleared.duration_ms, None);
+        assert_eq!(cleared.language, crate::transcribe::UNDETECTED_LANGUAGE);
+        assert!(cleared.segments.is_empty());
+        assert_eq!(cleared.mfu, None);
     }
 
     #[test]

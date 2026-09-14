@@ -173,6 +173,24 @@ describe("App — diarize speakers", () => {
     await screen.findByText("Speaker 2");
   });
 
+  it("shows a warning when standalone diarization completes in degraded mode", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+    vi.mocked(ipc.diarizeMeeting).mockResolvedValue({
+      meeting: transcribedMeeting([HELLO_SEGMENT]),
+      diarization_warning: "Speaker model returned incomplete labels",
+    });
+
+    await user.click(diarizeButton);
+
+    expect(
+      await screen.findByRole("alertdialog", {
+        name: "Speaker identification issue",
+      }),
+    ).toHaveTextContent("Speaker model returned incomplete labels");
+  });
+
   it("surfaces a diarization failure as an error without discarding the transcript", async () => {
     const user = userEvent.setup();
     const diarizeButton = await transcribeWithDiarizationActive(user);

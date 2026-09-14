@@ -79,6 +79,7 @@ pub fn run() {
             commands::meetings::open_meeting,
             commands::meetings::rename_meeting,
             commands::meetings::delete_meeting,
+            commands::meetings::clear_meeting,
             commands::meetings::update_segment,
             commands::meetings::update_mfu,
             commands::transcription::set_meeting_source,
@@ -88,6 +89,7 @@ pub fn run() {
             commands::streaming::open_streaming_session,
             commands::streaming::rename_streaming_session,
             commands::streaming::delete_streaming_session,
+            commands::streaming::clear_streaming_session,
             commands::streaming::list_streaming_translations,
             commands::streaming::create_streaming_session,
             commands::streaming::start_streaming_session,
@@ -101,7 +103,7 @@ pub fn run() {
             commands::recorder::create_recorder_draft,
             commands::recorder::rename_recorder_session,
             commands::recorder::delete_recorder_session,
-            commands::recorder::clear_recorder_transcript,
+            commands::recorder::clear_recorder_recording,
             commands::recorder::update_recorder_segment,
             commands::recorder::recover_recorder_session,
             commands::recorder::export_recorder_wav,
@@ -130,7 +132,8 @@ pub fn run() {
             commands::mfu::generate_recorder_polish,
             commands::mfu::accept_recorder_polish,
             commands::mfu::revert_recorder_polish,
-            commands::mfu::translate_streaming_window
+            commands::mfu::translate_streaming_window,
+            commands::mfu::preview_streaming_translation
         ])
         .run(tauri::generate_context!())
         .expect("error while running WhisperPilot");

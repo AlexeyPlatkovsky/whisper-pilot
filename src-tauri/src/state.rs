@@ -60,13 +60,6 @@ pub(crate) struct AppState {
     pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<LiveCaptureRuntime>>,
     #[cfg(not(target_os = "macos"))]
     pub(crate) live_capture: StdMutex<LiveCaptureRuntimeCoordinator<()>>,
-    /// WP-92's single-flight guard for Streaming window translation: at
-    /// most one `translate_streaming_window` call runs its LLM inference
-    /// at a time, claimed via `llm::TranslationUsageGuard`. Independent of
-    /// `whisper_busy` (a different shared resource, the llama.cpp model
-    /// rather than the Whisper context) so translation never blocks or is
-    /// blocked by the streaming decode loop.
-    pub(crate) translation_busy: std::sync::atomic::AtomicBool,
     #[cfg(target_os = "macos")]
     pub(crate) recorder_shortcut_gate: StdMutex<crate::recorder_shortcut::RecorderShortcutGate>,
     #[cfg(target_os = "macos")]

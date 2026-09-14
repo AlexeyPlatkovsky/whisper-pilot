@@ -1,7 +1,8 @@
 name = "sdd-auditor"
 description = "Audit SDD completeness or docs-versus-code gaps in a separate read-heavy context."
 sandbox_mode = "read-only"
-model_reasoning_effort = "high"
+model = "gpt-5.6-terra"
+model_reasoning_effort = "medium"
 developer_instructions = """
 Responsibility: audit one SDD scope for ownership, completeness, and code alignment.
 Isolation reason: broad documentation exploration is noisy and benefits from independent context.

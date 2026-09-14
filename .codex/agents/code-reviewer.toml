@@ -1,6 +1,7 @@
 name = "code-reviewer"
 description = "Independently review a completed diff for correctness, regression, and test gaps."
 sandbox_mode = "read-only"
+model = "gpt-5.6-sol"
 model_reasoning_effort = "high"
 developer_instructions = """
 Responsibility: review one completed diff without editing it.

@@ -48,14 +48,54 @@ describe("groupWindowsIntoParagraphs", () => {
     expect(paragraphs).toEqual([windows]);
   });
 
-  // BVA: the window-count boundary (WP-100: lowered from 6 to 4) forces a
-  // break even without punctuation, so a long run-on span can't grow forever
-  it("forces a break after the max window count even mid-sentence", () => {
-    const windows = Array.from({ length: 5 }, (_, i) => ok(`word${i}`));
+  // Regression: acoustic windows are not sentence boundaries. Even a long
+  // run of windows must stay together until terminal punctuation arrives.
+  it("does not split five-plus windows in the middle of a sentence", () => {
+    const windows = Array.from({ length: 7 }, (_, i) =>
+      ok(`unfinished clause ${i} keeps going`),
+    );
 
     const paragraphs = groupWindowsIntoParagraphs(windows);
 
-    expect(paragraphs).toEqual([windows.slice(0, 4), windows.slice(4)]);
+    expect(paragraphs).toEqual([windows]);
+  });
+
+  it("uses a large hard fallback when punctuation never arrives", () => {
+    const windows = Array.from({ length: 13 }, (_, i) =>
+      ok(`unpunctuated streaming window ${i} keeps growing`),
+    );
+
+    expect(groupWindowsIntoParagraphs(windows)).toEqual([
+      windows.slice(0, 12),
+      windows.slice(12),
+    ]);
+  });
+
+  it("closes a soft-length paragraph at the next sentence ending", () => {
+    const windows = [
+      ...Array.from({ length: 5 }, (_, i) =>
+        ok(`unfinished clause ${i} ${"x".repeat(45)}`),
+      ),
+      ok("The sentence finally ends here."),
+      ok("A new paragraph starts here."),
+    ];
+
+    const paragraphs = groupWindowsIntoParagraphs(windows);
+
+    expect(paragraphs).toEqual([windows.slice(0, 6), windows.slice(6)]);
+  });
+
+  it("recognizes an ellipsis and closing quotation mark as a sentence ending", () => {
+    const windows = [
+      ...Array.from({ length: 4 }, (_, i) => ok(`quoted clause ${i}`)),
+      ok("Так он и сказал…»"),
+      ok("Следующая мысль"),
+    ];
+
+    expect(groupWindowsIntoParagraphs(windows)).toEqual([
+      windows.slice(0, 5),
+      windows.slice(5),
+    ]);
   });
 
   // EP: a fail-open window's empty text can't itself end a sentence

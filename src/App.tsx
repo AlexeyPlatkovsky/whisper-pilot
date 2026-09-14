@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   collapseToBubble,
+  clearMeeting,
   createMeeting,
   deleteMeeting,
   generateMfu,
@@ -44,6 +45,7 @@ import { formatClock, formatDuration, formatRange } from "./format";
 import { AppLogo, Icon } from "./Icon";
 import { ActionIcon } from "./ActionIcon";
 import { CopyButton } from "./CopyButton";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { speakerColorClass, speakerLabel } from "./speakerColors";
 import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
 import { MeetingRow } from "./MeetingRow";
@@ -109,6 +111,7 @@ export function App() {
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<MeetingSummary | null>(null);
+  const [clearPending, setClearPending] = useState(false);
   const [diarizationWarning, setDiarizationWarning] = useState<string | null>(
     null,
   );
@@ -146,14 +149,31 @@ export function App() {
   // Mirrors the active meeting id for use by async continuations, which would
   // otherwise close over a stale `activeMeeting`.
   const activeMeetingIdRef = useRef<number | null>(null);
-  // Pending debounced auto-save timers, keyed by segment index, and the one
-  // pending mfu auto-save timer. Each timer's meeting id is captured at
-  // schedule time, so switching meetings mid-debounce still saves to the
-  // meeting the edit actually belongs to.
-  const segmentSaveTimers = useRef<Map<number, ReturnType<typeof setTimeout>>>(
-    new Map(),
-  );
-  const mfuSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Debounced writes retain their meeting id and immutable payload. Opening
+  // or clearing another meeting must not cancel or misroute an older edit.
+  const segmentSaveTimers = useRef<
+    Map<
+      string,
+      {
+        timer: ReturnType<typeof setTimeout>;
+        meetingId: number;
+        index: number;
+        text: string;
+      }
+    >
+  >(new Map());
+  const mfuSaveTimers = useRef<
+    Map<
+      number,
+      {
+        timer: ReturnType<typeof setTimeout>;
+        mfu: MeetingMfu;
+      }
+    >
+  >(new Map());
+  const autosaveWrites = useRef<
+    Set<{ meetingId: number; write: Promise<unknown> }>
+  >(new Set());
   // Mirrors `mfu` for the debounce timer callback below, which fires
   // outside a React batch and must read the latest merged fields rather than
   // whatever was in scope when the timer was scheduled.
@@ -612,40 +632,91 @@ export function App() {
     }
   }
 
+  async function handleClear() {
+    if (!activeMeeting) return;
+    const id = activeMeeting.id;
+    const writes = [...autosaveWrites.current]
+      .filter((pending) => pending.meetingId === id)
+      .map((pending) => pending.write);
+    for (const [key, pending] of segmentSaveTimers.current) {
+      if (pending.meetingId !== id) continue;
+      clearTimeout(pending.timer);
+      segmentSaveTimers.current.delete(key);
+      writes.push(
+        trackAutosave(id, updateSegment(id, pending.index, pending.text)),
+      );
+    }
+    const pendingMfu = mfuSaveTimers.current.get(id);
+    if (pendingMfu) {
+      clearTimeout(pendingMfu.timer);
+      mfuSaveTimers.current.delete(id);
+      writes.push(trackAutosave(id, updateMfu(pendingMfu.mfu)));
+    }
+    try {
+      await Promise.allSettled([...new Set(writes)]);
+      const meeting = await clearMeeting(id);
+      if (activeMeetingIdRef.current === id) applyActiveMeeting(meeting);
+      upsertSummary(meeting);
+      setClearPending(false);
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+      setClearPending(false);
+    }
+  }
+
+  function trackAutosave<T>(meetingId: number, write: Promise<T>): Promise<T> {
+    const pending = { meetingId, write };
+    autosaveWrites.current.add(pending);
+    void write.then(
+      () => autosaveWrites.current.delete(pending),
+      (error) => {
+        autosaveWrites.current.delete(pending);
+        if (activeMeetingIdRef.current === meetingId) {
+          setStatus({ kind: "error", message: String(error) });
+        }
+      },
+    );
+    return write;
+  }
+
   function editSegment(index: number, text: string) {
     setSegments((prev) =>
       prev.map((s, i) => (i === index ? { ...s, text } : s)),
     );
     const meetingId = activeMeeting?.id;
     if (meetingId === undefined) return;
-    const pending = segmentSaveTimers.current.get(index);
-    if (pending !== undefined) clearTimeout(pending);
-    segmentSaveTimers.current.set(
+    const key = `${meetingId}:${index}`;
+    const pending = segmentSaveTimers.current.get(key);
+    if (pending !== undefined) clearTimeout(pending.timer);
+    segmentSaveTimers.current.set(key, {
+      meetingId,
       index,
-      setTimeout(() => {
-        segmentSaveTimers.current.delete(index);
-        updateSegment(meetingId, index, text).catch((error) => {
-          setStatus({ kind: "error", message: String(error) });
-        });
+      text,
+      timer: setTimeout(() => {
+        segmentSaveTimers.current.delete(key);
+        trackAutosave(meetingId, updateSegment(meetingId, index, text));
       }, AUTOSAVE_DEBOUNCE_MS),
-    );
+    });
   }
 
   function editMfuField(field: keyof MeetingMfu, value: string) {
     if (field === "meeting_id") return;
-    setMfu((prev) => (prev ? { ...prev, [field]: value } : prev));
     const meetingId = activeMeeting?.id;
     if (meetingId === undefined) return;
-    if (mfuSaveTimer.current !== null) clearTimeout(mfuSaveTimer.current);
-    mfuSaveTimer.current = setTimeout(() => {
-      mfuSaveTimer.current = null;
-      const current = mfuRef.current;
-      if (current) {
-        updateMfu({ ...current, meeting_id: meetingId }).catch((error) => {
-          setStatus({ kind: "error", message: String(error) });
-        });
-      }
-    }, AUTOSAVE_DEBOUNCE_MS);
+    const current = mfuRef.current;
+    if (!current) return;
+    const next = { ...current, meeting_id: meetingId, [field]: value };
+    mfuRef.current = next;
+    setMfu(next);
+    const pending = mfuSaveTimers.current.get(meetingId);
+    if (pending) clearTimeout(pending.timer);
+    mfuSaveTimers.current.set(meetingId, {
+      mfu: next,
+      timer: setTimeout(() => {
+        mfuSaveTimers.current.delete(meetingId);
+        trackAutosave(meetingId, updateMfu(next));
+      }, AUTOSAVE_DEBOUNCE_MS),
+    });
   }
 
   async function handleSave() {
@@ -966,19 +1037,11 @@ export function App() {
             <span className="wp-sep" />
             <ActionIcon
               icon="trash-2"
-              label="Delete active meeting"
-              onClick={() =>
-                activeMeeting &&
-                setDeleteTarget({
-                  id: activeMeeting.id,
-                  title: activeMeeting.title,
-                  created_at_ms: activeMeeting.created_at_ms,
-                  duration_ms: activeMeeting.duration_ms,
-                  status: activeMeeting.status,
-                })
-              }
+              label="Clear meeting"
+              onClick={() => setClearPending(true)}
               disabled={
                 !activeMeeting ||
+                (!hasTranscript && !mfu) ||
                 activeIsTranscribing ||
                 isGeneratingMfu ||
                 activeIsDiarizing
@@ -1298,69 +1361,57 @@ export function App() {
             />
             {renameError && <p role="alert">{renameError}</p>}
             <div className="confirm-actions">
-              <button type="button" onClick={closeRename}>
+              <button
+                type="button"
+                className="modal-button"
+                onClick={closeRename}
+              >
                 Cancel
               </button>
-              <button type="submit">Save</button>
+              <button
+                type="submit"
+                className="modal-button modal-button--primary"
+              >
+                Save
+              </button>
             </div>
           </form>
         </div>
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label={`Delete ${deleteTarget.title}`}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setDeleteTarget(null);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Delete {deleteTarget.title}?</span>
-            </div>
-            <p className="confirm-warning">
-              This permanently removes the meeting and its transcript.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setDeleteTarget(null)}>
-                Cancel
-              </button>
-              <button type="button" onClick={() => void handleDelete()}>
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label={`Delete ${deleteTarget.title}`}
+          title={`Delete ${deleteTarget.title}?`}
+          description="This permanently removes the meeting and its transcript."
+          confirmLabel="Delete"
+          destructive
+          onCancel={() => setDeleteTarget(null)}
+          onConfirm={() => void handleDelete()}
+        />
+      )}
+      {clearPending && activeMeeting && (
+        <ConfirmDialog
+          label="Clear meeting"
+          title="Clear meeting?"
+          description="The transcript and MFU will be permanently removed. The meeting and its source file will stay available."
+          confirmLabel="Clear meeting"
+          destructive
+          onCancel={() => setClearPending(false)}
+          onConfirm={() => void handleClear()}
+        />
       )}
       {diarizationWarning && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Speaker identification issue"
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setDiarizationWarning(null);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Speaker identification issue</span>
-            </div>
-            <p className="confirm-warning">{diarizationWarning}</p>
-            <div className="confirm-actions">
-              <button
-                type="button"
-                autoFocus
-                onClick={() => setDiarizationWarning(null)}
-              >
-                OK
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label="Speaker identification issue"
+          title="Speaker identification issue"
+          description={diarizationWarning}
+          confirmLabel="OK"
+          destructive={false}
+          showCancel={false}
+          onCancel={() => setDiarizationWarning(null)}
+          onConfirm={() => setDiarizationWarning(null)}
+        />
       )}
     </div>
   );

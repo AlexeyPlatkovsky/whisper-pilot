@@ -32,6 +32,14 @@ describe("Recorder shortcut settings", () => {
       export_file_type: "txt",
       recorder_shortcut: "Control+Option+Space",
     });
+    vi.mocked(ipc.setBubbleAlwaysOnTop).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "",
+      export_file_type: "txt",
+      recorder_shortcut: "Control+Option+Space",
+      bubble_always_on_top: true,
+    });
   });
 
   it("shows launch registration failure and lets the configured chord be retried", async () => {
@@ -56,5 +64,73 @@ describe("Recorder shortcut settings", () => {
     await waitFor(() =>
       expect(screen.getByText(/Shortcut status: Active/)).toBeInTheDocument(),
     );
+  });
+
+  it("reports shortcut status failures", async () => {
+    vi.mocked(ipc.getRecorderShortcutStatus).mockRejectedValueOnce(
+      new Error("Shortcut service unavailable"),
+    );
+
+    render(<RecorderSettingsSection />);
+
+    expect(
+      await screen.findByText("Error: Shortcut service unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/Shortcut status: Disabled/)).toBeInTheDocument();
+  });
+
+  it("restores the saved shortcut when saving fails", async () => {
+    vi.mocked(ipc.getRecorderShortcutStatus).mockResolvedValue({
+      configured: "Control+Option+Space",
+      active: true,
+    });
+    vi.mocked(ipc.setRecorderShortcut).mockRejectedValueOnce(
+      new Error("Shortcut conflict"),
+    );
+    const user = userEvent.setup();
+    render(<RecorderSettingsSection />);
+
+    const input = await screen.findByRole("textbox", {
+      name: "Recorder global shortcut",
+    });
+    await user.clear(input);
+    await user.type(input, "Command+Shift+R");
+    await user.click(screen.getByRole("button", { name: "Save shortcut" }));
+
+    expect(
+      await screen.findByText("Error: Shortcut conflict"),
+    ).toBeInTheDocument();
+    expect(input).toHaveValue("Control+Option+Space");
+  });
+
+  it("persists the floating bubble Over All setting", async () => {
+    const user = userEvent.setup();
+    render(<RecorderSettingsSection />);
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Keep Recorder bubble over all windows",
+    });
+    await user.click(toggle);
+
+    expect(ipc.setBubbleAlwaysOnTop).toHaveBeenCalledWith(true);
+    expect(toggle).toBeChecked();
+  });
+
+  it("rolls back the floating bubble setting when persistence fails", async () => {
+    vi.mocked(ipc.setBubbleAlwaysOnTop).mockRejectedValueOnce(
+      new Error("Window state unavailable"),
+    );
+    const user = userEvent.setup();
+    render(<RecorderSettingsSection />);
+
+    const toggle = await screen.findByRole("checkbox", {
+      name: "Keep Recorder bubble over all windows",
+    });
+    await user.click(toggle);
+
+    expect(
+      await screen.findByText("Error: Window state unavailable"),
+    ).toBeInTheDocument();
+    expect(toggle).not.toBeChecked();
   });
 });

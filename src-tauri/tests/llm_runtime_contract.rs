@@ -99,6 +99,34 @@ fn selected_model_mutation_is_the_next_job_after_active_inference() {
     assert_eq!(translation.kind(), LlmJobKind::Translation);
 }
 
+#[test]
+fn committed_translation_overtakes_a_queued_preview() {
+    let mut scheduler = BoundedLlmScheduler::new(4);
+    scheduler
+        .try_enqueue(ScheduledLlmJob::new(1, LlmJobKind::Mfu))
+        .expect("queue active MFU");
+    let active = scheduler.start_next().expect("start MFU");
+
+    scheduler
+        .try_enqueue(ScheduledLlmJob::new(2, LlmJobKind::TranslationPreview))
+        .expect("queue provisional translation");
+    scheduler
+        .try_enqueue(ScheduledLlmJob::new(3, LlmJobKind::Translation))
+        .expect("queue committed translation");
+
+    scheduler.finish(active.id()).expect("finish MFU");
+    let committed = scheduler.start_next().expect("start committed translation");
+    assert_eq!(committed.id(), 3);
+    assert_eq!(committed.kind(), LlmJobKind::Translation);
+    scheduler
+        .finish(committed.id())
+        .expect("finish committed translation");
+
+    let preview = scheduler.start_next().expect("start preview");
+    assert_eq!(preview.id(), 2);
+    assert_eq!(preview.kind(), LlmJobKind::TranslationPreview);
+}
+
 // Token counting is injected so this proves the ordering contract without a
 // real model: an overflowing prompt is rejected before the decode callback.
 #[test]
@@ -210,6 +238,20 @@ fn pinned_model_passes_multilingual_translation_polish_and_mfu_smoke() {
             "missing {protected}: {into_english}"
         );
     }
+
+    let scientific = whisperpilot_lib::llm::translate_paragraph(
+        &runtime,
+        &path,
+        "Проблема существования и гладкости уравнений Навье-Стокса оставалась открытой.",
+        "en",
+        None,
+    )
+    .expect("cross-script hyphenated scientific name translates");
+    let scientific_lower = scientific.to_lowercase();
+    assert!(
+        scientific_lower.contains("navier") && scientific_lower.contains("stokes"),
+        "unexpected scientific translation: {scientific}"
+    );
 
     let into_russian = whisperpilot_lib::llm::translate_paragraph(
         &runtime,

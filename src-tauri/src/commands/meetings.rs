@@ -35,6 +35,11 @@ pub(crate) fn delete_meeting(app: tauri::AppHandle, id: i64) -> Result<()> {
     crate::meetings::delete_meeting(&app_data_dir(&app)?, id)
 }
 
+#[tauri::command]
+pub(crate) fn clear_meeting(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+    crate::meetings::clear_meeting(&app_data_dir(&app)?, id)
+}
+
 /// Auto-save a single transcript segment's edited text. `index` addresses the
 /// meeting's currently displayed (speaker-coalesced) segment list, matching
 /// what the workspace renders — see `meetings::update_segment`.

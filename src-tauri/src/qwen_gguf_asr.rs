@@ -79,18 +79,7 @@ impl QwenGgufAsrModel {
             .model
             .chat_template(None)
             .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR chat template: {error}")))?;
-        let content = format!("{}Transcribe this audio exactly.", mtmd_default_marker());
-        let message = LlamaChatMessage::new("user".into(), content)
-            .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR prompt: {error}")))?;
-        let mut messages = Vec::with_capacity(2);
-        if let Some(context) = context.filter(|context| !context.trim().is_empty()) {
-            messages.push(
-                LlamaChatMessage::new("system".into(), context_instruction(context)).map_err(
-                    |error| AppError::Transcribe(format!("Qwen3-ASR context prompt: {error}")),
-                )?,
-            );
-        }
-        messages.push(message);
+        let messages = qwen_messages(context)?;
         let prompt = self
             .model
             .apply_chat_template(&template, &messages, true)
@@ -152,13 +141,26 @@ impl QwenGgufAsrModel {
     }
 }
 
-fn context_instruction(context: &str) -> String {
-    format!(
-        "Previous confirmed transcript, provided only to preserve vocabulary and continuity:\n\
-         <previous_transcript>\n{}\n</previous_transcript>\n\
-         Do not repeat or rewrite the previous transcript. Output only speech from the current audio.",
-        context.trim()
-    )
+fn audio_prompt() -> String {
+    mtmd_default_marker().to_string()
+}
+
+fn context_prompt(context: &str) -> String {
+    context.trim().to_string()
+}
+
+fn qwen_messages(context: Option<&str>) -> Result<Vec<LlamaChatMessage>> {
+    let mut messages = Vec::with_capacity(2);
+    let context = context.map(context_prompt).unwrap_or_default();
+    messages.push(
+        LlamaChatMessage::new("system".into(), context)
+            .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR context prompt: {error}")))?,
+    );
+    messages.push(
+        LlamaChatMessage::new("user".into(), audio_prompt())
+            .map_err(|error| AppError::Transcribe(format!("Qwen3-ASR prompt: {error}")))?,
+    );
+    Ok(messages)
 }
 
 fn available_threads() -> i32 {
@@ -203,15 +205,48 @@ fn normalize_language_code(language: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{context_instruction, protocol_output_to_transcription, QwenGgufAsrModel};
+    use super::{
+        audio_prompt, context_prompt, mtmd_default_marker, protocol_output_to_transcription,
+        qwen_messages, LlamaChatMessage, QwenGgufAsrModel,
+    };
 
     #[test]
-    fn previous_transcript_is_labeled_as_context_that_must_not_be_repeated() {
-        let prompt = context_instruction("предыдущая подтвержденная фраза");
+    fn qwen_user_prompt_contains_only_the_audio_marker() {
+        assert_eq!(audio_prompt(), mtmd_default_marker());
+    }
 
-        assert!(prompt.contains("Previous confirmed transcript"));
-        assert!(prompt.contains("Do not repeat"));
-        assert!(prompt.contains("предыдущая подтвержденная фраза"));
+    #[test]
+    fn previous_transcript_is_passed_as_plain_qwen_context() {
+        let prompt = context_prompt("  предыдущая подтвержденная фраза  ");
+
+        assert_eq!(prompt, "предыдущая подтвержденная фраза");
+    }
+
+    #[test]
+    fn qwen_messages_keep_the_upstream_empty_system_then_audio_user_order() {
+        let messages = qwen_messages(None).expect("build context-free Qwen messages");
+
+        assert_eq!(
+            messages,
+            vec![
+                LlamaChatMessage::new("system".into(), String::new()).unwrap(),
+                LlamaChatMessage::new("user".into(), mtmd_default_marker().to_string()).unwrap(),
+            ]
+        );
+    }
+
+    #[test]
+    fn qwen_messages_keep_plain_context_in_the_upstream_system_turn() {
+        let messages =
+            qwen_messages(Some("  предыдущая фраза  ")).expect("build contextual Qwen messages");
+
+        assert_eq!(
+            messages,
+            vec![
+                LlamaChatMessage::new("system".into(), "предыдущая фраза".into()).unwrap(),
+                LlamaChatMessage::new("user".into(), mtmd_default_marker().to_string()).unwrap(),
+            ]
+        );
     }
 
     #[test]

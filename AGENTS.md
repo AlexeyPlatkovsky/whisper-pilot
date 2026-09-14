@@ -30,9 +30,12 @@ product scope and [docs/architecture.md](docs/architecture.md) for technical bou
 
 ## Agents
 
-Use a subagent only when fresh context materially helps: independent review, isolated TDD test authoring, noisy
-validation, visual comparison, or large read-heavy exploration. Keep write-heavy agents sequential and give every agent
-an exact input and mutation boundary. Project agents are discovered from [.codex/agents](.codex/agents).
+Delegate bounded independent work when it saves elapsed time, token cost, or primary-context space. Prefer `explorer`
+for read-heavy tracing, `unit-test-author` for already-defined unit coverage, `test-author` for Red TDD, and
+`test-runner` for noisy validation. Keep requirements, integration, and conflicting writes in the primary agent.
+Keep write-heavy agents sequential and give every agent an exact input and mutation boundary. Use the dedicated High
+reasoning reviewers for correctness, requirements, instruction, and visual reviews. Project agents are discovered in
+[.codex/agents](.codex/agents). Their files pin model and effort; override them only for a task-specific reason.
 
 ## Skills
 

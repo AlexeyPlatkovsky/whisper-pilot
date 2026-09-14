@@ -14,6 +14,7 @@ pub struct StreamingSessionSummaryDto {
     pub title: String,
     pub created_at_ms: i64,
     pub updated_at_ms: i64,
+    pub duration_ms: i64,
     pub status: String,
     pub translation_enabled: bool,
     pub translation_target_language: String,
@@ -150,6 +151,7 @@ pub fn list_streaming_sessions(app_support_dir: &Path) -> Result<Vec<StreamingSe
             title: s.title,
             created_at_ms: s.created_at_ms,
             updated_at_ms: s.updated_at_ms,
+            duration_ms: s.duration_ms,
             status: s.status,
             translation_enabled: s.translation_enabled,
             translation_target_language: s.translation_target_language,
@@ -253,6 +255,14 @@ pub fn delete_streaming_session(app_support_dir: &Path, id: StreamingSessionId) 
     StreamingStore::open(app_support_dir)?.delete_session(id)
 }
 
+pub fn clear_streaming_session(
+    app_support_dir: &Path,
+    id: StreamingSessionId,
+) -> Result<StreamingSessionDto> {
+    StreamingStore::open(app_support_dir)?.clear_session_content(id)?;
+    open_streaming_session(app_support_dir, id)
+}
+
 /// Create a new, stopped session record without beginning audio capture.
 /// Titled by creation time (matching Meeting's plain default title) — the
 /// user can rename it, then explicitly start it when ready.
@@ -299,6 +309,7 @@ pub fn resume_streaming_session(
             next_window_index: 0,
             last_persisted_end_ms: 0,
         });
+    let duration_ms = resume.last_persisted_end_ms.min(i64::MAX as u64) as i64;
     store.mark_active(id, now_ms)?;
     Ok((
         StreamingSessionSummaryDto {
@@ -306,6 +317,7 @@ pub fn resume_streaming_session(
             title: session.title,
             created_at_ms: session.created_at_ms,
             updated_at_ms: now_ms,
+            duration_ms,
             status: streaming_store::status::ACTIVE.to_string(),
             translation_enabled: session.translation_enabled,
             translation_target_language: session.translation_target_language,
@@ -885,6 +897,9 @@ mod tests {
         let store = StreamingStore::open(temp.path()).expect("open store");
         let id = create_streaming_session(temp.path(), 100).expect("create");
         store
+            .append_window(id, &ok_window(0, "Transcript."), 200)
+            .expect("append window");
+        store
             .upsert_mfu(&crate::streaming_store::StreamingMfu {
                 session_id: id,
                 summary: "Summary.".to_string(),
@@ -925,12 +940,127 @@ mod tests {
         let store = StreamingStore::open(temp.path()).expect("open store");
         let id = create_streaming_session(temp.path(), 100).expect("create");
         store
+            .append_window(id, &ok_window(0, "Transcript."), 200)
+            .expect("append window");
+        store
             .upsert_prettified(id, "Cleaned transcript.")
             .expect("upsert prettified");
 
         let dto = open_streaming_session(temp.path(), id).expect("open");
 
         assert_eq!(dto.prettified_text, Some("Cleaned transcript.".to_string()));
+    }
+
+    #[test]
+    fn clearing_a_stopped_session_removes_all_derived_content_but_keeps_configuration() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        store
+            .append_window(id, &ok_window(0, "Saved transcript."), 200)
+            .expect("append window");
+        store
+            .upsert_mfu(&crate::streaming_store::StreamingMfu {
+                session_id: id,
+                summary: "Summary".to_string(),
+                decisions: String::new(),
+                action_items: String::new(),
+                open_questions: String::new(),
+                participants: String::new(),
+            })
+            .expect("save mfu");
+        store
+            .upsert_prettified(id, "Prettified")
+            .expect("save prettified");
+        store
+            .set_translation_enabled(id, true)
+            .expect("enable translation");
+        store
+            .upsert_translation(&crate::streaming_store::StreamingTranslation {
+                session_id: id,
+                window_index: 0,
+                target_language: "ru".to_string(),
+                source_text: "Saved transcript.".to_string(),
+                translated_text: "Сохранённый текст.".to_string(),
+                updated_at_ms: 200,
+            })
+            .expect("save translation");
+        store
+            .set_session_configuration(
+                id,
+                &crate::streaming_store::StreamingSessionConfiguration {
+                    engine: "local".to_string(),
+                    cloud_provider: None,
+                    cloud_model: None,
+                },
+            )
+            .expect("save configuration");
+
+        let cleared = clear_streaming_session(temp.path(), id).expect("clear session");
+
+        assert!(cleared.windows.is_empty());
+        assert_eq!(cleared.mfu, None);
+        assert_eq!(cleared.prettified_text, None);
+        assert!(cleared.translation_enabled);
+        assert_eq!(cleared.transcription_engine.as_deref(), Some("local"));
+        assert_eq!(
+            store
+                .list_sessions()
+                .expect("list sessions")
+                .into_iter()
+                .find(|session| session.id == id)
+                .expect("cleared summary")
+                .updated_at_ms,
+            100
+        );
+        assert!(list_streaming_translations(temp.path(), id, "ru")
+            .expect("list translations")
+            .is_empty());
+        assert!(store.upsert_prettified(id, "late prettify").is_err());
+        assert!(store
+            .upsert_mfu(&crate::streaming_store::StreamingMfu {
+                session_id: id,
+                summary: "late MFU".to_string(),
+                decisions: String::new(),
+                action_items: String::new(),
+                open_questions: String::new(),
+                participants: String::new(),
+            })
+            .is_err());
+
+        let (_summary, resume) =
+            resume_streaming_session(temp.path(), id, 50_000).expect("resume cleared session");
+        store
+            .append_window(
+                id,
+                &NewStreamingWindow {
+                    window_index: resume.next_window_index as i64,
+                    start_ms: 0,
+                    end_ms: 7_000,
+                    text: "New recording.".to_string(),
+                    language: "en".to_string(),
+                    outcome_ok: true,
+                },
+                57_000,
+            )
+            .expect("append after clear");
+        let resumed_summary = store
+            .list_sessions()
+            .expect("list sessions")
+            .into_iter()
+            .find(|session| session.id == id)
+            .expect("resumed summary");
+        assert_eq!(resumed_summary.duration_ms, 7_000);
+    }
+
+    #[test]
+    fn clearing_an_active_streaming_session_is_rejected() {
+        let temp = tempfile::tempdir().expect("temp dir");
+        let store = StreamingStore::open(temp.path()).expect("open store");
+        let id = create_streaming_session(temp.path(), 100).expect("create");
+        store.mark_active(id, 200).expect("mark active");
+
+        assert!(clear_streaming_session(temp.path(), id).is_err());
     }
 
     #[test]

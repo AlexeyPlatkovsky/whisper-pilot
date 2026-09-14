@@ -32,6 +32,8 @@ const VAD_SPEECH_REFERENCE_SAMPLES: usize = SAMPLE_RATE as usize;
 const VAD_SPEECH_TO_SILENCE_RATIO: f64 = 0.25;
 const HARD_BOUNDARY_OVERLAP_SAMPLES: usize = SAMPLE_RATE as usize * 3 / 4;
 const CONTEXT_MAX_CHARS: usize = 240;
+const WHISPER_PUNCTUATION_SEED: &str =
+    "Здравствуйте! Это пример текста с правильной пунктуацией. Hello! This text uses correct punctuation.";
 
 /// A half-second is long enough to preserve a spoken trailing word without
 /// decoding callback noise at shutdown.
@@ -225,16 +227,24 @@ impl SessionDecoder for WhisperSessionDecoder {
         context: Option<&str>,
         profile: SessionDecodeProfile,
     ) -> crate::error::Result<Transcription> {
+        let prompt = whisper_streaming_prompt(context);
         transcribe::transcribe_with_state_and_prompt_profile(
             &mut self.state,
             samples,
-            context,
+            Some(&prompt),
             profile,
         )
     }
 
     fn has_reliable_segment_timestamps(&self) -> bool {
         true
+    }
+}
+
+fn whisper_streaming_prompt(context: Option<&str>) -> String {
+    match context.filter(|value| !value.trim().is_empty()) {
+        Some(context) => format!("{WHISPER_PUNCTUATION_SEED} {}", context.trim()),
+        None => WHISPER_PUNCTUATION_SEED.to_string(),
     }
 }
 
@@ -381,6 +391,9 @@ fn root_mean_square(samples: &[f32]) -> f64 {
     mean_square.sqrt()
 }
 
+// These explicit decode coordinates make timestamp and overlap ownership
+// visible at every hot-loop call site.
+#[allow(clippy::too_many_arguments)]
 fn decode_result<D: SessionDecoder>(
     decoder: &mut std::result::Result<D, String>,
     samples: &[f32],
@@ -650,6 +663,9 @@ fn sample_position_to_ms(sample: u64) -> u64 {
     sample.saturating_mul(1_000) / SAMPLE_RATE as u64
 }
 
+// The tail flush mutates the same state bundle as the main decode loop; keep
+// those references explicit until the loop itself has an owned state type.
+#[allow(clippy::too_many_arguments)]
 fn flush_trailing_buffer<D: SessionDecoder>(
     decoder: &mut std::result::Result<D, String>,
     buffer: &mut Vec<f32>,
@@ -947,6 +963,15 @@ mod tests {
     #[test]
     fn window_ms_matches_window_seconds_in_milliseconds() {
         assert_eq!(WINDOW_MS, (WINDOW_SECONDS * 1000.0) as u64);
+    }
+
+    #[test]
+    fn whisper_streaming_prompt_seeds_punctuation_and_preserves_recent_context() {
+        let prompt = whisper_streaming_prompt(Some("Продолжаем обсуждение"));
+
+        assert!(prompt.contains("Здравствуйте!"));
+        assert!(prompt.contains("Hello!"));
+        assert!(prompt.ends_with("Продолжаем обсуждение"));
     }
 
     #[test]

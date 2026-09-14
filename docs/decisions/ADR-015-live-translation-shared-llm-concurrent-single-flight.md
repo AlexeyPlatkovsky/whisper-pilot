@@ -1,10 +1,8 @@
 # ADR-015: Live translation reuses the summary LLM and runs concurrently on a single-flight queue
 
 - **Status:** partially superseded by [ADR-016](ADR-016-rolling-per-window-live-translation.md)
-  (translation-unit granularity only — the "Unit" decision below and its
-  "Translate at window granularity" rejected alternative; engine reuse,
-  single-flight concurrency, target languages, and the persistence-reuse
-  concept below all stand)
+  for translation-unit granularity and by the WP-115 bounded shared scheduler
+  for concurrency. Engine reuse, target languages, and persistence reuse stand.
 - **Date:** 2026-08-27
 - **Deciders:** Alexey Platkovsky
 - **Relates to:** [ADR-014](ADR-014-streaming-mode-coexists-with-batch-meeting.md)
@@ -12,6 +10,11 @@
   (the local llama.cpp summarization stack this decision reuses)
 
 ## Context
+
+Implementation update (2026-09-14): the standalone `translation_busy` guard
+was removed. Committed translations and lower-priority provisional previews
+now serialize through the application-owned bounded LLM scheduler; queued
+committed work overtakes previews instead of failing as busy.
 
 Streaming (ADR-014) needed a way to read a live session in a language the user
 does not speak, without waiting for the session to end. WhisperPilot already

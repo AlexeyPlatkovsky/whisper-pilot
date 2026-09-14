@@ -73,6 +73,64 @@ impl RecorderAudioWriter {
         })
     }
 
+    /// Continue a finalized recording without mutating its durable audio in
+    /// place. The existing PCM is copied into a new `.partial` CAF and new
+    /// samples append there; `finalize` atomically replaces the old final file.
+    pub fn resume(final_path: &Path, sample_rate: u32) -> Result<Self> {
+        if sample_rate == 0 {
+            return Err(AppError::Audio(
+                "Recorder sample rate must be greater than zero".into(),
+            ));
+        }
+        let partial_path = Self::partial_path_for(final_path);
+        if partial_path.exists() {
+            return Err(AppError::Audio(
+                "Recorder continuation found an existing partial audio file".into(),
+            ));
+        }
+
+        let mut source = File::open(final_path)?;
+        let (metadata, pcm_bytes) = inspect_caf(&mut source, false)?;
+        if metadata.sample_rate != sample_rate {
+            return Err(AppError::Audio(format!(
+                "Recorder continuation sample rate {sample_rate} does not match existing audio rate {}",
+                metadata.sample_rate
+            )));
+        }
+        let mut partial = OpenOptions::new()
+            .create_new(true)
+            .read(true)
+            .write(true)
+            .open(&partial_path)?;
+        let copied = (|| -> Result<u64> {
+            write_header(&mut partial, sample_rate, -1)?;
+            let copied = std::io::copy(&mut source.take(pcm_bytes), &mut partial)?;
+            if copied != pcm_bytes {
+                return Err(AppError::Audio(
+                    "Recorder continuation could not copy the complete existing audio".into(),
+                ));
+            }
+            partial.flush()?;
+            partial.sync_data()?;
+            Ok(copied)
+        })();
+        if let Err(error) = copied {
+            drop(partial);
+            let _ = std::fs::remove_file(&partial_path);
+            return Err(error);
+        }
+
+        Ok(Self {
+            final_path: final_path.to_path_buf(),
+            partial_path,
+            file: Some(partial),
+            sample_rate,
+            frames: metadata.frames,
+            unsynced_samples: 0,
+            checkpoint_count: 1,
+        })
+    }
+
     pub fn append_f32(&mut self, samples: &[f32]) -> Result<()> {
         let mut offset = 0;
         while offset < samples.len() {
@@ -121,6 +179,10 @@ impl RecorderAudioWriter {
 
     pub fn unsynced_samples(&self) -> u64 {
         self.unsynced_samples
+    }
+
+    pub fn duration_ms(&self) -> u64 {
+        self.frames.saturating_mul(1_000) / u64::from(self.sample_rate)
     }
 
     pub fn finalize(mut self) -> Result<PathBuf> {
@@ -294,6 +356,15 @@ pub fn finalize_partial_caf(final_path: &Path) -> Result<PathBuf> {
         .read(true)
         .write(true)
         .open(&partial_path)?;
+    file.seek(SeekFrom::Start(DATA_CHUNK_SIZE_OFFSET))?;
+    let mut declared_size = [0_u8; 8];
+    file.read_exact(&mut declared_size)?;
+    if i64::from_be_bytes(declared_size) != -1 {
+        return Err(AppError::Audio(
+            "Recorder recovery expected an unfinished partial CAF".into(),
+        ));
+    }
+    file.seek(SeekFrom::Start(0))?;
     let _ = inspect_caf(&mut file, true)?;
     let len = file.metadata()?.len();
     if len < CAF_HEADER_LEN || (len - CAF_HEADER_LEN) % PCM_BYTES_PER_SAMPLE != 0 {
@@ -313,4 +384,69 @@ pub fn finalize_partial_caf(final_path: &Path) -> Result<PathBuf> {
         File::open(parent)?.sync_all()?;
     }
     Ok(final_path.to_path_buf())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{read_caf_audio, RecorderAudioWriter};
+    use std::fs;
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    fn completed_caf(path: &Path, sample_rate: u32, samples: &[f32]) {
+        let mut writer = RecorderAudioWriter::create(path, sample_rate).unwrap();
+        writer.append_f32(samples).unwrap();
+        writer.finalize().unwrap();
+    }
+
+    #[test]
+    fn resuming_is_copy_on_write_until_combined_audio_is_atomically_finalized() {
+        let temp = TempDir::new().unwrap();
+        let final_path = temp.path().join("continued.caf");
+        completed_caf(&final_path, 48_000, &[0.25; 4_800]);
+        let original_bytes = fs::read(&final_path).unwrap();
+
+        let mut writer = RecorderAudioWriter::resume(&final_path, 48_000).unwrap();
+        writer.append_f32(&[-0.25; 2_400]).unwrap();
+
+        assert_eq!(fs::read(&final_path).unwrap(), original_bytes);
+        assert_eq!(read_caf_audio(&final_path).unwrap().samples.len(), 4_800);
+
+        writer.finalize().unwrap();
+
+        let combined = read_caf_audio(&final_path).unwrap();
+        assert_eq!(combined.metadata.frames, 7_200);
+        assert_eq!(&combined.samples[..4_800], &[8_192; 4_800]);
+        assert_eq!(&combined.samples[4_800..], &[-8_192; 2_400]);
+        assert!(!RecorderAudioWriter::partial_path_for(&final_path).exists());
+    }
+
+    #[test]
+    fn resume_rejects_a_sample_rate_mismatch_without_touching_the_completed_caf() {
+        let temp = TempDir::new().unwrap();
+        let final_path = temp.path().join("rate-mismatch.caf");
+        completed_caf(&final_path, 48_000, &[0.125; 480]);
+        let original_bytes = fs::read(&final_path).unwrap();
+
+        let result = RecorderAudioWriter::resume(&final_path, 44_100);
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&final_path).unwrap(), original_bytes);
+        assert!(!RecorderAudioWriter::partial_path_for(&final_path).exists());
+    }
+
+    #[test]
+    fn failed_append_cannot_corrupt_the_previous_completed_caf() {
+        let temp = TempDir::new().unwrap();
+        let final_path = temp.path().join("failed-append.caf");
+        completed_caf(&final_path, 48_000, &[0.5; 480]);
+        let original_bytes = fs::read(&final_path).unwrap();
+        let mut writer = RecorderAudioWriter::resume(&final_path, 48_000).unwrap();
+
+        drop(writer.file.take());
+        assert!(writer.append_f32(&[-0.5; 480]).is_err());
+
+        assert_eq!(fs::read(&final_path).unwrap(), original_bytes);
+        assert_eq!(read_caf_audio(&final_path).unwrap().samples, &[16_384; 480]);
+    }
 }

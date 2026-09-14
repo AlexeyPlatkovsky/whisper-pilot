@@ -12,6 +12,7 @@ use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Mutex;
 use whisper_rs::{WhisperContext, WhisperContextParameters};
+use whisperpilot_lib::streaming_session::{SessionDecoder, WhisperSessionDecoder};
 
 static WHISPER_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
 static PROGRESS_CALLBACK_DROPPED: AtomicBool = AtomicBool::new(false);
@@ -154,15 +155,33 @@ fn meeting_transcription_uses_metal_and_produces_speech_segments() {
         "Whisper invoked the progress callback after its captured state was dropped"
     );
 
-    let partial = whisperpilot_lib::transcribe::transcribe_with_state_and_prompt_profile(
-        &mut streaming_state,
-        &samples,
-        None,
-        whisperpilot_lib::transcribe::DecodeProfile::FastPartial,
-    )
-    .expect("Streaming partial must complete through the real Metal greedy path");
+    let streaming_sample_count = samples
+        .len()
+        .min(whisperpilot_lib::audio::SAMPLE_RATE as usize * 20);
+    let mut session_decoder =
+        WhisperSessionDecoder::new(&ctx).expect("create production Streaming decoder");
+    let partial = session_decoder
+        .decode_window(
+            &samples[..streaming_sample_count],
+            None,
+            whisperpilot_lib::transcribe::DecodeProfile::FastPartial,
+        )
+        .expect("Streaming partial must complete through the real Metal greedy path");
     assert!(
         !partial.segments.is_empty(),
         "the real Metal greedy partial path returned no speech"
+    );
+    let partial_text = partial
+        .segments
+        .iter()
+        .map(|segment| segment.text.trim())
+        .collect::<Vec<_>>()
+        .join(" ");
+    println!("Streaming punctuation sample: {partial_text}");
+    assert!(
+        partial_text
+            .chars()
+            .any(|character| matches!(character, '.' | ',' | '!' | '?')),
+        "the production Streaming decoder emitted no punctuation: {partial_text}"
     );
 }

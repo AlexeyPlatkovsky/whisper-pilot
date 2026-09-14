@@ -15,8 +15,8 @@ import type {
 // hasStreamingTranslations), mirroring the inline vi.mock idiom of
 // StreamingView.translation.test.tsx and StreamingView.test.tsx's clipboard-
 // spy setup. WP-103 moved translation from one call per paragraph to one
-// call per *window* — a "paragraph" below is still 4 windows (the
-// window-count cap from paragraphs.ts), but each of those 4 windows now
+// call per *window* — a "paragraph" below is still 4 windows ending in
+// terminal punctuation, but each of those 4 windows now
 // gets its own translateStreamingWindow call and its own entry.
 
 let writeTextMock: ReturnType<typeof vi.spyOn>;
@@ -112,9 +112,7 @@ function openedSession(
   };
 }
 
-/** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (4) closes a paragraph, so paragraph
- * boundaries are deterministic regardless of text content — mirrors
+/** `count` windows of monotonically increasing index — mirrors
  * StreamingView.translation.test.tsx's helper. Default language is "en" —
  * the mirror image of the "ru" target-language default, so paragraphs built
  * with no override exercise real translation instead of the same-language
@@ -151,8 +149,12 @@ function joinedTranslatedText(
   return windows.map((w) => translatedFor(w.window_index)).join(" ");
 }
 
-const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -391,7 +393,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         1,
         3,
         "ru",
-        "Слово3",
+        "Слово3.",
         expect.any(String),
       ),
     );

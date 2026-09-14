@@ -45,6 +45,12 @@ vi.mock("./ipc", () => ({
   verifyCloudProviderApiKey: vi.fn(),
   saveCloudProviderApiKey: vi.fn(),
   removeCloudProviderApiKey: vi.fn(),
+  getRecorderShortcutStatus: vi.fn(async () => ({
+    configured: "Control+Option+Space",
+    active: true,
+  })),
+  setRecorderShortcut: vi.fn(),
+  setBubbleAlwaysOnTop: vi.fn(),
 }));
 
 const CLOUD_CONFIGURATION = {
@@ -172,6 +178,19 @@ describe("SettingsScreen", () => {
       "true",
     );
     expect(screen.getByRole("radio", { name: "English" })).toBeInTheDocument();
+  });
+
+  it("renders the Export and Recorder settings sections", async () => {
+    const user = userEvent.setup();
+    render(<SettingsScreen onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: "Export" }));
+    expect(screen.getByRole("heading", { name: "Export" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("tab", { name: "Recorder" }));
+    expect(
+      screen.getByRole("heading", { name: "Global recording shortcut" }),
+    ).toBeInTheDocument();
   });
 
   // WP-106 C-3: Cloud provider choice shows only fixed provider/model details
@@ -546,5 +565,86 @@ describe("SettingsScreen", () => {
     expect(
       await screen.findByText("Unable to load Cloud Provider settings."),
     ).toBeInTheDocument();
+  });
+
+  it("reports a generic verification failure without exposing its detail", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.verifyCloudProviderApiKey).mockRejectedValue(
+      new Error("provider returned secret diagnostic detail"),
+    );
+    render(<SettingsScreen onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: "Cloud provider" }));
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Manage API key" }))[0],
+    );
+    const sheet = screen.getByRole("dialog", {
+      name: "Manage Deepgram API key",
+    });
+    await user.type(within(sheet).getByLabelText("API key"), "invalid-key");
+    await user.click(
+      within(sheet).getByRole("button", { name: "Verify API key" }),
+    );
+
+    expect(
+      await within(sheet).findByText(
+        "Unable to verify this API key. Check the key, provider access, and network.",
+      ),
+    ).toBeInTheDocument();
+    expect(sheet).not.toHaveTextContent("secret diagnostic detail");
+  });
+
+  it("reports provider selection failures", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.selectCloudProvider).mockRejectedValue(
+      new Error("provider selection failed"),
+    );
+    render(<SettingsScreen onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: "Cloud provider" }));
+    await user.click(
+      await screen.findByRole("radio", {
+        name: /AssemblyAI.*Universal-3.5 Pro/i,
+      }),
+    );
+
+    expect(
+      await screen.findByText("Unable to select Cloud Provider."),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps a configured key visible when Keychain removal fails", async () => {
+    const user = userEvent.setup();
+    const configured = {
+      ...CLOUD_CONFIGURATION,
+      providers: CLOUD_CONFIGURATION.providers.map((provider) =>
+        provider.id === "deepgram"
+          ? { ...provider, configured: true }
+          : provider,
+      ),
+    };
+    vi.mocked(ipc.getCloudProviderConfig).mockResolvedValue(configured);
+    vi.mocked(ipc.removeCloudProviderApiKey).mockRejectedValue(
+      new Error("keychain locked"),
+    );
+    render(<SettingsScreen onClose={vi.fn()} />);
+
+    await user.click(screen.getByRole("tab", { name: "Cloud provider" }));
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Manage API key" }))[0],
+    );
+    const sheet = await screen.findByRole("dialog", {
+      name: "Manage Deepgram API key",
+    });
+    await user.click(
+      within(sheet).getByRole("button", { name: "Remove API key" }),
+    );
+
+    expect(
+      await within(sheet).findByText(
+        "Unable to remove API key from macOS Keychain.",
+      ),
+    ).toBeInTheDocument();
+    expect(sheet).toBeInTheDocument();
   });
 });

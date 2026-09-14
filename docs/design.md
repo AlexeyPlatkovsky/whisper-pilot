@@ -95,6 +95,9 @@ Row 2 — the active meeting's header:
   modal), **copy** (copies the full transcript to the clipboard and confirms
   with a brief checked button state and "Copied!" toast), **delete**
   (with confirmation — same as the list action).
+- **Clear meeting** removes the transcript and MFU after confirmation while
+  retaining the named meeting and its attached source file. It is unavailable
+  while derived content is empty or a conflicting operation is active.
 - There is no in-header model switcher; model selection lives in
   Settings → AI models only. If **no model is available**, the status bar
   shows a warning.
@@ -108,14 +111,14 @@ Row 2 — the active meeting's header:
 
 Single line reflecting the meeting's current state:
 
-| State                | Shows                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                                                                                                                                                                                                                      |
-| **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting                                                                                                                                                                                                                                                                                                                                              |
+| State                | Shows                                                                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                      |
+| **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting                                                                                                                                              |
 | **Transcribing**     | indeterminate spinner + live timer (updates every second). When the run moves into **identifying speakers**, the persisted transcript appears read-only while the spinner+timer remain. Actions stay blocked until the complete run returns. |
-| **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                                                                                                                                                                                                                        |
-| **No model**         | warning that no Whisper model is available                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                 |
+| **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                        |
+| **No model**         | warning that no Whisper model is available                                                                                                                                                                                                   |
 
 ### Center — transcript
 
@@ -174,6 +177,15 @@ Single line reflecting the meeting's current state:
   one per row (paragraph), re-running every failed window within it rather
   than one control per window. A provisional trailing phrase renders inside
   the left Original column; it never spans or centers beneath both columns.
+  The matching target cell shows an italic provisional translation. Partial
+  revisions replace that draft, while the next committed-window translation
+  replaces it with durable normal text; preview failures stay silent because
+  the committed row owns retry/error UI.
+  Before the first committed window, that partial replaces the centered
+  Listening placeholder immediately, so the live text starts at the top and
+  never jumps there after the first commit.
+  A newer partial keeps the last usable italic target preview visible while its
+  replacement is inferred; the UI does not alternate back to placeholder copy.
   Switching the toggle off restores the single-column view unchanged. Below
   the app's minimum supported window
   width, the compact icon controls and one-row header stay available without a
@@ -192,12 +204,17 @@ Recorder uses the same shell, left library, and fixed top action vocabulary as
 Meeting and Streaming. The left column provides mode switching, search, open,
 new recording, rename, and confirmed deletion. The header keeps sidebar, new,
 Settings, title, status, **Start**, **Stop**, Prettify, Copy, Export, and
-transcript-only Clear controls in the same positions as the other workspaces.
+Clear recording controls in the same positions as the other workspaces.
 **Start** performs permission, model, system-default microphone, and caption-surface
 preflight, then activates the selected draft in place. A failed start leaves the
 draft available without an audio artifact. Shortcut Start creates a session only
 after the same preflight succeeds. Start remains pending across workspace
 navigation, so returning to Recorder cannot enqueue a duplicate preflight.
+Starting an already completed row continues that recording rather than creating
+a replacement: existing text stays visible, new phrases follow its timeline,
+and Stop produces one merged audio master and a combined final transcript. A
+changed default device rate blocks continuation with an actionable prompt to
+restore the original input or create a new recording.
 **Stop** ends capture and enters **Finalizing**;
 copy, export, delete, and playback become available when their durable inputs
 exist. The metadata row shows the default microphone and recording duration.
@@ -220,7 +237,8 @@ reader remains at the bottom, live Recorder text follows the same autoscroll
 behavior and bottom breathing room as Streaming; scrolling upward pauses it and
 returning to the bottom resumes it.
 
-Recorder retains app-owned CAF audio independently of transcript edits. The
+Recorder retains app-owned CAF audio independently of ordinary transcript
+edits. The
 bottom audio surface is disabled during capture, reports safe closing during
 Finalizing, and offers playback plus **Export WAV** after completion. An
 interrupted `.caf.partial` remains visible with **Recover** and **Delete**. A
@@ -230,9 +248,18 @@ ownership and atomic-finalization rules.
 **Prettify transcript** sends the raw committed text to the selected local LLM,
 persists the result, and replaces the visible raw text in the same transcript
 panel. **Restore original transcript** returns to the editable raw segments.
-**Clear transcript** requires confirmation, removes both raw and prettified
-text, and retains the session and captured audio. Prettify and restore never
-rewrite captured audio or raw segment rows.
+**Clear recording** requires confirmation and permanently removes the CAF,
+raw segments, and prettified text while retaining the named list entry as an
+empty draft. It remains available when a saved recording has audio but ASR
+produced no text, and it is unavailable during capture/finalization or once
+the entry is already empty. A filesystem cleanup failure leaves the text and
+non-draft state intact; a database failure restores audio before reporting the
+error. Prettify and restore never rewrite captured audio or raw segment rows.
+Clear remains disabled while Prettify or restore is in flight, and the backend
+rejects any late polish acceptance once the recording has become an empty draft.
+
+Delete confirmation initially focuses its destructive action, so **Space** or
+**Return** confirms and **Escape** cancels without requiring pointer input.
 
 The configurable global shortcut uses **Control + Option + Space** initially and
 toggles Recorder Start/Stop from another application without activating the main
@@ -378,6 +405,18 @@ Whisper model; diarization degrades without its models).
    the list row or the header.
 3. If the source file is missing, the meeting still opens for reading/editing;
    **Transcribe** is disabled with a "source file missing" detail.
+4. **Clear meeting** removes the transcript and MFU after confirmation but
+   keeps the meeting, title, and source ready for another transcription.
+
+### Reopen / manage a streaming session
+
+- **Clear streaming session** is available only while capture is stopped. It
+  removes committed and provisional transcript state, translations, MFU, and
+  accepted or pending Prettify output after confirmation, while retaining the
+  named session and its engine/translation preferences. Clear stays disabled
+  while Craft MFU, Prettify generation, acceptance, or revert can still persist
+  derived content. The library duration comes from captured audio timestamps,
+  so clearing resets it to zero and a subsequent recording starts it from zero.
 
 ### Record a voice note
 
@@ -477,7 +516,10 @@ Whisper model; diarization degrades without its models).
 - **MFU section** — edit in place (auto-saved); copy to clipboard; clear resets
   to empty. Generation is manual and UI-blocking.
 - **Meeting rename** — modal, ≤120 chars, non-empty, Save/Cancel.
-- **Deletes** — both the list-row delete and the header delete confirm first.
+- **Confirmations** — Delete and Clear use the same modal layout and action
+  order in every workspace and Settings. Destructive confirmation is rendered
+  with the shared error color; Escape cancels and keyboard activation uses the
+  native button behavior.
 - **Blocking feedback** — a running Transcribe or Create MFU blocks the UI; a
   spinner and live timer stay visible; failures are shown, not swallowed.
 

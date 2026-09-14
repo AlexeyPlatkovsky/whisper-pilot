@@ -29,11 +29,16 @@ let partialHandler: Handler<ipc.StreamingPartial> | null = null;
 let liveCaptureHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
 let liveCaptureRevision = 0;
 
+const { previewStreamingTranslationMock } = vi.hoisted(() => ({
+  previewStreamingTranslationMock: vi.fn(),
+}));
+
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
   openStreamingSession: vi.fn(),
   renameStreamingSession: vi.fn(),
   deleteStreamingSession: vi.fn(),
+  clearStreamingSession: vi.fn(),
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
@@ -42,6 +47,7 @@ vi.mock("./ipc", () => ({
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
   translateStreamingWindow: vi.fn(async () => "Translated."),
+  previewStreamingTranslation: previewStreamingTranslationMock,
   listStreamingTranslations: vi.fn(async () => []),
   setStreamingTranslationEnabled: vi.fn(),
   setStreamingTranslationTargetLanguage: vi.fn(),
@@ -144,11 +150,9 @@ function openedSession(
   };
 }
 
-/** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (4) closes a paragraph — never the
- * length/sentence heuristic — so paragraph boundaries (used for on-screen
- * display grouping and the paragraph-level retry affordance) are
- * deterministic regardless of text content. Default language is "en" — the
+/** `count` windows of monotonically increasing index. Sentence-closed fixture
+ * groups below make paragraph boundaries deterministic for the on-screen
+ * display and paragraph-level retry affordance. Default language is "en" — the
  * mirror image of the "ru" target-language default, so windows built with no
  * override exercise real translation instead of the same-language mirror
  * path. */
@@ -184,10 +188,14 @@ function paragraphSourceText(windows: StreamingWindow[]): string {
   return windows.map((w) => w.text).join(" ");
 }
 
-// Two full (4-window, WP-100's lowered cap) English paragraphs, closed
-// regardless of running state.
-const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
+// Two sentence-closed English paragraphs. Acoustic window count no longer
+// creates a semantic paragraph boundary.
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -312,6 +320,7 @@ beforeEach(() => {
   });
   vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([]);
   vi.mocked(ipc.setStreamingTranslationEnabled).mockResolvedValue(undefined);
+  previewStreamingTranslationMock.mockResolvedValue("Draft preview.");
 });
 
 describe("StreamingView — Live Translation header control", () => {
@@ -429,6 +438,214 @@ describe("StreamingView — Live Translation split grid", () => {
       row!.querySelectorAll(":scope > .wp-translation-col"),
     );
     expect(columns[0]).toBe(originalColumn);
+  });
+});
+
+describe("StreamingView — provisional Live Translation", () => {
+  it("keeps the whole source hypothesis italic until a committed window replaces it", async () => {
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Still provisional",
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Still provisional")).toBeInTheDocument(),
+    );
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Still provisional",
+      });
+    });
+
+    const source = document.querySelector(
+      ".wp-translation-row--partial .wp-translation-col:first-child",
+    );
+    expect(source?.querySelector("em")).toHaveTextContent("Still provisional");
+    expect(source?.querySelector(".wp-streaming-partial-stable")).toBeNull();
+  });
+
+  it("renders a translated partial as italic preview in the right column", async () => {
+    const user = userEvent.setup();
+    previewStreamingTranslationMock.mockResolvedValue("Черновой перевод.");
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "An unfinished live sentence",
+      });
+    });
+
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledWith(
+        "ru",
+        "An unfinished live sentence",
+        undefined,
+      ),
+    );
+    const row = document.querySelector(".wp-translation-row--partial");
+    expect(row).not.toBeNull();
+    const columns = row!.querySelectorAll(":scope > .wp-translation-col");
+    const preview = await waitFor(() => {
+      const value = Array.from(columns[1].querySelectorAll("em")).find(
+        (element) => element.textContent === "Черновой перевод.",
+      );
+      expect(value).toBeDefined();
+      return value!;
+    });
+    expect(preview.tagName).toBe("EM");
+    expect(columns[1]).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("coalesces partial updates while one preview is in flight and translates only the latest pending text next", async () => {
+    const first = deferred<string>();
+    previewStreamingTranslationMock
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce("Latest draft.");
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "First partial" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledWith(
+        "ru",
+        "First partial",
+        undefined,
+      ),
+    );
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "Skipped middle" });
+      partialHandler!({ session_id: 1, item_id: null, text: "Latest partial" });
+    });
+    expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => first.resolve("Stale draft."));
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenNthCalledWith(
+        2,
+        "ru",
+        "Latest partial",
+        undefined,
+      ),
+    );
+    expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the last usable translated draft visible while a newer draft is translating", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    previewStreamingTranslationMock
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "First partial" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(1),
+    );
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "First partial extended",
+      });
+    });
+
+    await act(async () => first.resolve("Первый черновик."));
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(2),
+    );
+
+    expect(screen.getByText("Первый черновик.")).toBeInTheDocument();
+    expect(screen.queryByText("Draft translation…")).not.toBeInTheDocument();
+  });
+
+  it("lets a committed translation replace a preview and ignores a late preview result", async () => {
+    const preview = deferred<string>();
+    previewStreamingTranslationMock.mockReturnValue(preview.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+      "Final committed translation.",
+    );
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Sentence being recognized",
+      });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledOnce(),
+    );
+
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { prefix: "Sentence committed" })[0],
+        session_id: 1,
+      });
+    });
+    expect(
+      await screen.findByText("Final committed translation."),
+    ).toBeInTheDocument();
+
+    await act(async () => preview.resolve("Late stale preview."));
+    await act(async () => flush());
+
+    expect(screen.queryByText("Late stale preview.")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Final committed translation."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not attach preview A to partial B after A was committed", async () => {
+    const previewA = deferred<string>();
+    previewStreamingTranslationMock.mockReturnValue(previewA.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+      "Committed translation A.",
+    );
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "Partial A" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledOnce(),
+    );
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { prefix: "Committed A" })[0],
+        session_id: 1,
+      });
+      partialHandler!({ session_id: 1, item_id: null, text: "Partial B" });
+    });
+
+    await act(async () => previewA.resolve("Stale preview A."));
+    await act(async () => flush());
+
+    expect(screen.queryByText("Stale preview A.")).not.toBeInTheDocument();
   });
 });
 
@@ -769,7 +986,7 @@ describe("StreamingView — Live Translation failure and retry", () => {
         1,
         7,
         "ru",
-        "Слово7",
+        "Слово7.",
         expect.any(String),
       ),
     );
@@ -958,6 +1175,57 @@ describe("StreamingView — Live Translation edge cases", () => {
     first.resolve("Word batch A (en).");
     await flush();
     expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
+  });
+
+  it("an old completion dequeues a new session only with that session's target language", async () => {
+    const user = userEvent.setup();
+    const first = deferred<string>();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      { ...SESSION_A, id: 2, title: "Design Review" },
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      openedSession({
+        id,
+        title: id === 1 ? "Standup" : "Design Review",
+        windows:
+          id === 1
+            ? makeWindows(1, { prefix: "Old" })
+            : makeWindows(1, { prefix: "New", language: "ru" }),
+        translation_enabled: id === 2,
+        translation_target_language: id === 2 ? "en" : "ru",
+      }),
+    );
+    vi.mocked(ipc.translateStreamingWindow)
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce("New translation.");
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+    await user.click(await findTranslationSwitch());
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        0,
+        "ru",
+        "Old0",
+        undefined,
+      ),
+    );
+
+    await user.click(await screen.findByText("Design Review"));
+    await waitFor(() => expect(findTargetLanguageSelect()).toHaveValue("en"));
+    first.resolve("Discarded old translation.");
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenLastCalledWith(
+        2,
+        0,
+        "en",
+        "New0",
+        undefined,
+      ),
+    );
   });
 });
 

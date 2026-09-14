@@ -11,7 +11,7 @@ use serde_json::Value as JsonValue;
 use std::collections::VecDeque;
 use std::num::NonZeroU32;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::OnceLock;
 use std::sync::{Arc, Condvar, Mutex};
 
@@ -287,6 +287,7 @@ fn model_fingerprint(model_path: &Path) -> Result<ModelFingerprint> {
 pub enum LlmJobKind {
     ModelMutation,
     Translation,
+    TranslationPreview,
     Mfu,
     Prettify,
 }
@@ -296,8 +297,9 @@ impl LlmJobKind {
         match self {
             Self::ModelMutation => 0,
             Self::Translation => 1,
-            Self::Mfu => 2,
-            Self::Prettify => 3,
+            Self::TranslationPreview => 2,
+            Self::Mfu => 3,
+            Self::Prettify => 4,
         }
     }
 }
@@ -1167,12 +1169,36 @@ fn validate_translation_candidate(
 
     for token in protected_tokens(source) {
         let normalized = normalize_protected_token(token);
-        if !normalized
-            .chars()
-            .any(|character| character.is_ascii_digit())
-            && !normalized.contains('-')
-            && !normalized.contains('_')
-        {
+        let contains_digit = normalized.chars().any(|c| c.is_ascii_digit());
+        let alphabetic_parts = normalized
+            .split(|c: char| !c.is_ascii_alphabetic())
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let protected_parts = alphabetic_parts
+            .iter()
+            .copied()
+            .filter(|part| part.chars().filter(|c| c.is_ascii_uppercase()).count() >= 2)
+            .collect::<Vec<_>>();
+        let whole_ascii_code_like = !alphabetic_parts.is_empty()
+            && protected_parts.len() == alphabetic_parts.len()
+            && normalized
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '%'));
+        if !contains_digit && !normalized.contains('_') && !whole_ascii_code_like {
+            for protected_part in protected_parts {
+                let retained = candidate
+                    .split_whitespace()
+                    .map(normalize_protected_token)
+                    .flat_map(|candidate_token| {
+                        candidate_token.split(|c: char| !c.is_ascii_alphabetic())
+                    })
+                    .any(|candidate_part| candidate_part == protected_part);
+                if !retained {
+                    return Err(AppError::Llm(format!(
+                        "translation dropped protected term '{protected_part}'; review was rejected"
+                    )));
+                }
+            }
             continue;
         }
         let retained = candidate
@@ -1214,10 +1240,29 @@ pub fn translate_paragraph_with_model_resolver(
     source_text: &str,
     target_language: &str,
     prior_context: Option<&str>,
-    resolve_model: impl FnOnce() -> Result<std::path::PathBuf>,
+    mut resolve_model: impl FnMut() -> Result<std::path::PathBuf>,
 ) -> Result<String> {
     translate_paragraph_with_inference(source_text, target_language, prior_context, |prompt| {
-        runtime.infer_with_model_resolver(LlmJobKind::Translation, prompt, resolve_model)
+        runtime.infer_with_model_resolver(LlmJobKind::Translation, prompt, &mut resolve_model)
+    })
+}
+
+/// Lower-priority, non-persisted translation of an unstable Streaming
+/// hypothesis. A committed translation can enter the scheduler ahead of a
+/// queued preview, while the shared model weights remain cached.
+pub fn preview_translation_with_model_resolver(
+    runtime: &LlmRuntime,
+    source_text: &str,
+    target_language: &str,
+    prior_context: Option<&str>,
+    mut resolve_model: impl FnMut() -> Result<std::path::PathBuf>,
+) -> Result<String> {
+    translate_paragraph_with_inference(source_text, target_language, prior_context, |prompt| {
+        runtime.infer_with_model_resolver(
+            LlmJobKind::TranslationPreview,
+            prompt,
+            &mut resolve_model,
+        )
     })
 }
 
@@ -1225,41 +1270,30 @@ fn translate_paragraph_with_inference(
     source_text: &str,
     target_language: &str,
     prior_context: Option<&str>,
-    inference: impl FnOnce(&str) -> Result<String>,
+    mut inference: impl FnMut(&str) -> Result<String>,
 ) -> Result<String> {
     ensure_translation_fits_context_budget(source_text, prior_context)?;
     let prompt = build_translate_prompt(source_text, target_language, prior_context);
     let raw_output = inference(&prompt)?;
     let cleaned = clean_prettify_output(&raw_output);
-    validate_translation_candidate(source_text, &cleaned, target_language)
-}
-
-/// RAII hold enforcing translation single-flight (WP-92): at most one
-/// translation runs at a time, isolated from the streaming decode loop's own
-/// (separate) Whisper-model transcription. Mirrors
-/// `streaming_session::WhisperUsageGuard`'s claim/release idiom — a
-/// compare-exchange over a shared atomic, released on drop — applied to the
-/// LLM's own contention point. Non-blocking single-flight guard; contention
-/// returns `AppError::TranslationBusy` to the caller.
-pub struct TranslationUsageGuard<'a> {
-    busy: &'a AtomicBool,
-}
-
-impl<'a> TranslationUsageGuard<'a> {
-    /// Contention returns `Err(())`, which the caller
-    /// (`translate_streaming_window`) maps to `AppError::TranslationBusy`.
-    #[allow(clippy::result_unit_err)]
-    pub fn acquire(busy: &'a AtomicBool) -> std::result::Result<Self, ()> {
-        match busy.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire) {
-            Ok(_) => Ok(Self { busy }),
-            Err(_) => Err(()),
+    match validate_translation_candidate(source_text, &cleaned, target_language) {
+        Ok(candidate) => Ok(candidate),
+        Err(first_error) if prior_context.is_some() => {
+            // Context improves continuity, but a small local model can
+            // occasionally echo it or under-translate. Retry once without
+            // context before surfacing a stable per-window failure.
+            let fallback_prompt = build_translate_prompt(source_text, target_language, None);
+            let fallback_raw = inference(&fallback_prompt)?;
+            let fallback = clean_prettify_output(&fallback_raw);
+            validate_translation_candidate(source_text, &fallback, target_language).map_err(
+                |fallback_error| {
+                    AppError::Llm(format!(
+                        "translation failed with context ({first_error}) and without context ({fallback_error})"
+                    ))
+                },
+            )
         }
-    }
-}
-
-impl Drop for TranslationUsageGuard<'_> {
-    fn drop(&mut self) {
-        self.busy.store(false, Ordering::Release);
+        Err(error) => Err(error),
     }
 }
 
@@ -1697,6 +1731,96 @@ Translate the text.<|im_end|>\n\
     }
 
     #[test]
+    fn validate_translation_candidate_allows_cross_script_hyphenated_names() {
+        let source =
+            "Проблема существования и гладкости уравнений Навье-Стокса оставалась открытой.";
+        let candidate =
+            "The existence and smoothness problem for the Navier-Stokes equations remained open.";
+
+        assert_eq!(
+            validate_translation_candidate(source, candidate, "en").unwrap(),
+            candidate
+        );
+    }
+
+    #[test]
+    fn validate_translation_candidate_keeps_ascii_acronyms_and_code_identifiers() {
+        let source = "The API price is 20 USD for ABC-DEF today.";
+        let candidate = "Сегодня цена интерфейса составляет 20 долларов за сервис.";
+
+        assert!(validate_translation_candidate(source, candidate, "ru").is_err());
+    }
+
+    #[test]
+    fn validate_translation_candidate_allows_natural_lowercase_hyphenated_words_to_translate() {
+        let source = "We need real-time translation for the meeting today.";
+        let candidate = "Сегодня нам нужен перевод в реальном времени для встречи.";
+
+        assert_eq!(
+            validate_translation_candidate(source, candidate, "ru").unwrap(),
+            candidate
+        );
+    }
+
+    #[test]
+    fn validate_translation_candidate_preserves_only_the_acronym_in_a_natural_compound() {
+        let source = "We need an AI-powered feature for the meeting today.";
+        let candidate = "Сегодня нам нужна функция на базе AI для встречи.";
+
+        assert_eq!(
+            validate_translation_candidate(source, candidate, "ru").unwrap(),
+            candidate
+        );
+    }
+
+    #[test]
+    fn validate_translation_candidate_preserves_plain_mixed_case_technical_terms() {
+        let source = "OpenAI provides the transcription service for this meeting.";
+        let candidate = "Сервис транскрибации для этой встречи предоставляет компания.";
+
+        assert!(validate_translation_candidate(source, candidate, "ru").is_err());
+    }
+
+    #[test]
+    fn validate_translation_candidate_preserves_mixed_case_term_inside_natural_compound() {
+        let source = "We need an OpenAI-powered feature for the meeting.";
+        let retained = "Для встречи нам нужна функция на базе OpenAI.";
+        let dropped = "Для встречи нам нужна функция на базе модели.";
+
+        assert_eq!(
+            validate_translation_candidate(source, retained, "ru").unwrap(),
+            retained
+        );
+        assert!(validate_translation_candidate(source, dropped, "ru").is_err());
+    }
+
+    #[test]
+    fn translation_retries_without_context_when_contextual_output_fails_validation() {
+        let mut prompts = Vec::new();
+        let mut calls = 0;
+        let translated = translate_paragraph_with_inference(
+            "Привет, как прошёл твой день сегодня?",
+            "en",
+            Some("We already discussed yesterday."),
+            |prompt| {
+                prompts.push(prompt.to_string());
+                calls += 1;
+                Ok(if calls == 1 {
+                    "Привет, как прошёл твой день сегодня?".to_string()
+                } else {
+                    "Hello, how did your day go today?".to_string()
+                })
+            },
+        )
+        .expect("context-free fallback should recover a valid translation");
+
+        assert_eq!(translated, "Hello, how did your day go today?");
+        assert_eq!(prompts.len(), 2);
+        assert!(prompts[0].contains("We already discussed yesterday."));
+        assert!(!prompts[1].contains("We already discussed yesterday."));
+    }
+
+    #[test]
     fn validate_translation_candidate_accepts_a_well_formed_english_to_russian_translation() {
         let source = "Hello, how did your day go today?";
         let candidate = "Привет, как прошёл твой день сегодня?";
@@ -1768,21 +1892,5 @@ Translate the text.<|im_end|>\n\
             matches!(combined, Err(AppError::Llm(_))),
             "source+context combined must overflow CTX_SIZE and be rejected"
         );
-    }
-
-    #[test]
-    fn translation_usage_guard_enforces_single_flight() {
-        let busy = AtomicBool::new(false);
-
-        let first = TranslationUsageGuard::acquire(&busy).expect("first acquire succeeds");
-        let second = TranslationUsageGuard::acquire(&busy);
-        assert!(
-            second.is_err(),
-            "a second concurrent acquire must be rejected"
-        );
-
-        drop(first);
-        let third = TranslationUsageGuard::acquire(&busy);
-        assert!(third.is_ok(), "acquire succeeds again once released");
     }
 }
