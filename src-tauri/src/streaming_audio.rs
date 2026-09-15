@@ -8,7 +8,6 @@ use crate::error::{AppError, Result};
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "macos")]
 use std::sync::mpsc::{SyncSender, TrySendError};
 #[cfg(target_os = "macos")]
 use std::sync::{Arc, Mutex, TryLockError};
@@ -54,7 +53,6 @@ enum NativePushOutcome {
     Contended,
 }
 
-#[cfg(target_os = "macos")]
 pub fn try_send_drop_newest(
     tx: &SyncSender<CapturedAudioChunk>,
     chunk: CapturedAudioChunk,
@@ -443,6 +441,7 @@ mod tests {
 
     // WP-114 sustained-overload boundary: the native callback buffer itself
     // is bounded too, before any channel send can occur.
+    #[cfg(target_os = "macos")]
     #[test]
     fn native_sample_buffer_never_exceeds_its_declared_capacity() {
         let buffer = new_shared_buffer();
@@ -467,6 +466,7 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
     #[test]
     fn stopping_pump_forwards_the_final_staged_samples_before_disconnect() {
         let buffer = new_shared_buffer();
@@ -492,6 +492,7 @@ mod tests {
     // Regression contract: Stop must never wait forever merely because the
     // downstream decode queue is saturated. The final capture tail may be
     // delivered or reported as dropped, but shutdown itself is bounded.
+    #[cfg(target_os = "macos")]
     #[test]
     fn stopping_pump_finishes_when_the_decode_queue_is_already_full() {
         let buffer = new_shared_buffer();
