@@ -484,6 +484,116 @@ fn prettify_accepts_small_filler_cleanup_with_protected_terms() {
     );
 }
 
+// WP-131: frozen bilingual filler-cleanup corpus. Expected candidates must
+// remain within the existing production safety boundary before model evaluation.
+#[test]
+fn prettify_filler_corpus_has_balanced_complete_safe_cases() {
+    #[derive(Deserialize)]
+    struct FillerCorpusCase {
+        id: String,
+        language: String,
+        kind: String,
+        original: String,
+        expected: String,
+        protected_terms: Vec<String>,
+    }
+
+    let cases: Vec<FillerCorpusCase> = serde_json::from_str(include_str!(
+        "../../tests/fixtures/prettify_filler_corpus.json"
+    ))
+    .expect("prettify filler corpus JSON");
+
+    assert_eq!(cases.len(), 30, "the corpus must have exactly 30 cases");
+    for language in ["ru", "en", "mixed"] {
+        let language_cases: Vec<_> = cases
+            .iter()
+            .filter(|case| case.language == language)
+            .collect();
+        assert_eq!(language_cases.len(), 10, "{language} must have ten cases");
+        for (kind, expected_count) in [
+            ("remove_filler_sound", 2),
+            ("remove_discourse_filler", 2),
+            ("remove_adjacent_repetition", 2),
+            ("preserve_meaningful_hesitation", 1),
+            ("preserve_valid_slang", 1),
+            ("remove_filler_preserve_facts", 1),
+            ("remove_filler_preserve_technical_term", 1),
+        ] {
+            assert_eq!(
+                language_cases
+                    .iter()
+                    .filter(|case| case.kind == kind)
+                    .count(),
+                expected_count,
+                "{language} must have {expected_count} {kind} case(s)"
+            );
+        }
+    }
+
+    let unique_ids: std::collections::HashSet<_> = cases.iter().map(|case| &case.id).collect();
+    assert_eq!(unique_ids.len(), cases.len(), "case IDs must be unique");
+
+    for case in cases {
+        assert!(!case.id.is_empty(), "case ID must not be empty");
+        assert!(!case.kind.is_empty(), "{} must declare a kind", case.id);
+        assert!(
+            !case.original.is_empty(),
+            "{} must have original text",
+            case.id
+        );
+        assert!(
+            !case.expected.is_empty(),
+            "{} must have expected text",
+            case.id
+        );
+        if case.kind.starts_with("preserve_") {
+            assert_eq!(
+                case.expected, case.original,
+                "{} preservation control must be byte-identical",
+                case.id
+            );
+        } else {
+            assert_ne!(
+                case.expected, case.original,
+                "{} positive cleanup must change the original",
+                case.id
+            );
+        }
+        for term in &case.protected_terms {
+            assert!(
+                case.expected.contains(term),
+                "{} expected text must retain protected term {term:?}",
+                case.id
+            );
+        }
+        assert_eq!(
+            validate_prettify_candidate(&case.original, &case.expected).unwrap_or_else(
+                |error| panic!("{} expected candidate was rejected: {error}", case.id)
+            ),
+            case.expected,
+            "{} expected candidate must be accepted unchanged",
+            case.id
+        );
+    }
+}
+
+// WP-131: both language branches constrain filler cleanup to obvious cases and
+// preserve meaning and language switches when the model is uncertain.
+#[test]
+fn build_prettify_prompt_declares_bilingual_conservative_filler_cleanup() {
+    let russian = build_prettify_prompt("Хм, это может сломать API.");
+    assert!(russian.contains("только очевидные слова-паразиты"));
+    assert!(russian.contains("Сохрани исходный смысл"));
+    assert!(russian.contains("языковые переключения"));
+    assert!(russian.contains("Если не уверен"));
+
+    let english = build_prettify_prompt("Hmm, this could break the API.");
+    assert!(english.contains("only obvious filler words"));
+    assert!(english.contains("Preserve the original meaning"));
+    assert!(english.contains("language switch"));
+    assert!(english.contains("If unsure"));
+}
+
 // --- WP-92: Streaming paragraph translation ---
 
 // EP: the valid-class representatives (the only two supported targets).

@@ -1,0 +1,311 @@
+[
+  {
+    "id": "ru-filler-sound-001",
+    "language": "ru",
+    "kind": "remove_filler_sound",
+    "original": "Эээ, релиз 1.60.0 выйдет в пятницу.",
+    "expected": "Релиз 1.60.0 выйдет в пятницу.",
+    "protected_terms": [
+      "1.60.0"
+    ]
+  },
+  {
+    "id": "ru-filler-sound-002",
+    "language": "ru",
+    "kind": "remove_filler_sound",
+    "original": "Хм, эээ, Алексей проверит API до 14:00.",
+    "expected": "Алексей проверит API до 14:00.",
+    "protected_terms": [
+      "API",
+      "14:00"
+    ]
+  },
+  {
+    "id": "ru-discourse-003",
+    "language": "ru",
+    "kind": "remove_discourse_filler",
+    "original": "Ну, в общем, мы отправим 42 письма клиентам.",
+    "expected": "Мы отправим 42 письма клиентам.",
+    "protected_terms": [
+      "42"
+    ]
+  },
+  {
+    "id": "ru-discourse-004",
+    "language": "ru",
+    "kind": "remove_discourse_filler",
+    "original": "Типа, я думаю, PostgreSQL миграция готова.",
+    "expected": "Я думаю, PostgreSQL миграция готова.",
+    "protected_terms": [
+      "PostgreSQL"
+    ]
+  },
+  {
+    "id": "ru-repeat-005",
+    "language": "ru",
+    "kind": "remove_adjacent_repetition",
+    "original": "Мы, мы добавим кнопку записи в WhisperPilot.",
+    "expected": "Мы добавим кнопку записи в WhisperPilot.",
+    "protected_terms": [
+      "WhisperPilot"
+    ]
+  },
+  {
+    "id": "ru-repeat-006",
+    "language": "ru",
+    "kind": "remove_adjacent_repetition",
+    "original": "Версия 3.8, 3.8 будет доступна завтра.",
+    "expected": "Версия 3.8 будет доступна завтра.",
+    "protected_terms": [
+      "3.8"
+    ]
+  },
+  {
+    "id": "ru-meaningful-hesitation-007",
+    "language": "ru",
+    "kind": "preserve_meaningful_hesitation",
+    "original": "Хм, это действительно может сломать оплату.",
+    "expected": "Хм, это действительно может сломать оплату.",
+    "protected_terms": []
+  },
+  {
+    "id": "ru-valid-slang-008",
+    "language": "ru",
+    "kind": "preserve_valid_slang",
+    "original": "Мы просто шипнем этот фикс завтра после QA.",
+    "expected": "Мы просто шипнем этот фикс завтра после QA.",
+    "protected_terms": [
+      "QA"
+    ]
+  },
+  {
+    "id": "ru-facts-009",
+    "language": "ru",
+    "kind": "remove_filler_preserve_facts",
+    "original": "Эм, Мария загрузит 99% отчёта в S3 к 09:30.",
+    "expected": "Мария загрузит 99% отчёта в S3 к 09:30.",
+    "protected_terms": [
+      "99%",
+      "S3",
+      "09:30"
+    ]
+  },
+  {
+    "id": "ru-technical-010",
+    "language": "ru",
+    "kind": "remove_filler_preserve_technical_term",
+    "original": "Ну, llama.cpp использует модель Gemma 4 локально.",
+    "expected": "llama.cpp использует модель Gemma 4 локально.",
+    "protected_terms": [
+      "llama.cpp",
+      "Gemma",
+      "4"
+    ]
+  },
+  {
+    "id": "en-filler-sound-011",
+    "language": "en",
+    "kind": "remove_filler_sound",
+    "original": "Umm, the 1.60.0 release ships on Friday.",
+    "expected": "The 1.60.0 release ships on Friday.",
+    "protected_terms": [
+      "1.60.0"
+    ]
+  },
+  {
+    "id": "en-filler-sound-012",
+    "language": "en",
+    "kind": "remove_filler_sound",
+    "original": "Er, Alex will verify the API by 14:00.",
+    "expected": "Alex will verify the API by 14:00.",
+    "protected_terms": [
+      "API",
+      "14:00"
+    ]
+  },
+  {
+    "id": "en-discourse-013",
+    "language": "en",
+    "kind": "remove_discourse_filler",
+    "original": "Well, you know, we will send 42 emails to customers.",
+    "expected": "We will send 42 emails to customers.",
+    "protected_terms": [
+      "42"
+    ]
+  },
+  {
+    "id": "en-discourse-014",
+    "language": "en",
+    "kind": "remove_discourse_filler",
+    "original": "Like, I think the PostgreSQL migration is ready.",
+    "expected": "I think the PostgreSQL migration is ready.",
+    "protected_terms": [
+      "PostgreSQL"
+    ]
+  },
+  {
+    "id": "en-repeat-015",
+    "language": "en",
+    "kind": "remove_adjacent_repetition",
+    "original": "We, we will add a record button to WhisperPilot.",
+    "expected": "We will add a record button to WhisperPilot.",
+    "protected_terms": [
+      "WhisperPilot"
+    ]
+  },
+  {
+    "id": "en-repeat-016",
+    "language": "en",
+    "kind": "remove_adjacent_repetition",
+    "original": "Version 3.8, 3.8 will be available tomorrow.",
+    "expected": "Version 3.8 will be available tomorrow.",
+    "protected_terms": [
+      "3.8"
+    ]
+  },
+  {
+    "id": "en-meaningful-hesitation-017",
+    "language": "en",
+    "kind": "preserve_meaningful_hesitation",
+    "original": "Hmm, that could genuinely break payments.",
+    "expected": "Hmm, that could genuinely break payments.",
+    "protected_terms": []
+  },
+  {
+    "id": "en-valid-slang-018",
+    "language": "en",
+    "kind": "preserve_valid_slang",
+    "original": "We should just ship this fix after QA signs off.",
+    "expected": "We should just ship this fix after QA signs off.",
+    "protected_terms": [
+      "QA"
+    ]
+  },
+  {
+    "id": "en-facts-019",
+    "language": "en",
+    "kind": "remove_filler_preserve_facts",
+    "original": "Uh, Maria will upload 99% of the report to S3 by 09:30.",
+    "expected": "Maria will upload 99% of the report to S3 by 09:30.",
+    "protected_terms": [
+      "99%",
+      "S3",
+      "09:30"
+    ]
+  },
+  {
+    "id": "en-technical-020",
+    "language": "en",
+    "kind": "remove_filler_preserve_technical_term",
+    "original": "So, llama.cpp runs the Gemma 4 model locally.",
+    "expected": "llama.cpp runs the Gemma 4 model locally.",
+    "protected_terms": [
+      "llama.cpp",
+      "Gemma",
+      "4"
+    ]
+  },
+  {
+    "id": "mixed-filler-sound-021",
+    "language": "mixed",
+    "kind": "remove_filler_sound",
+    "original": "Эээ, the 1.60.0 release выйдет в Friday.",
+    "expected": "The 1.60.0 release выйдет в Friday.",
+    "protected_terms": [
+      "1.60.0"
+    ]
+  },
+  {
+    "id": "mixed-filler-sound-022",
+    "language": "mixed",
+    "kind": "remove_filler_sound",
+    "original": "Um, Алексей will verify the API до 14:00.",
+    "expected": "Алексей will verify the API до 14:00.",
+    "protected_terms": [
+      "API",
+      "14:00"
+    ]
+  },
+  {
+    "id": "mixed-discourse-023",
+    "language": "mixed",
+    "kind": "remove_discourse_filler",
+    "original": "Ну, you know, мы отправим 42 emails клиентам.",
+    "expected": "Мы отправим 42 emails клиентам.",
+    "protected_terms": [
+      "42"
+    ]
+  },
+  {
+    "id": "mixed-discourse-024",
+    "language": "mixed",
+    "kind": "remove_discourse_filler",
+    "original": "Like, я думаю, the PostgreSQL migration готова.",
+    "expected": "Я думаю, the PostgreSQL migration готова.",
+    "protected_terms": [
+      "PostgreSQL"
+    ]
+  },
+  {
+    "id": "mixed-repeat-025",
+    "language": "mixed",
+    "kind": "remove_adjacent_repetition",
+    "original": "Мы, мы will add a record button в WhisperPilot.",
+    "expected": "Мы will add a record button в WhisperPilot.",
+    "protected_terms": [
+      "WhisperPilot"
+    ]
+  },
+  {
+    "id": "mixed-repeat-026",
+    "language": "mixed",
+    "kind": "remove_adjacent_repetition",
+    "original": "Version 3.8, 3.8 будет доступна tomorrow.",
+    "expected": "Version 3.8 будет доступна tomorrow.",
+    "protected_terms": [
+      "3.8"
+    ]
+  },
+  {
+    "id": "mixed-meaningful-hesitation-027",
+    "language": "mixed",
+    "kind": "preserve_meaningful_hesitation",
+    "original": "Хм, this could действительно break payments.",
+    "expected": "Хм, this could действительно break payments.",
+    "protected_terms": []
+  },
+  {
+    "id": "mixed-valid-slang-028",
+    "language": "mixed",
+    "kind": "preserve_valid_slang",
+    "original": "Мы просто ship it завтра после QA.",
+    "expected": "Мы просто ship it завтра после QA.",
+    "protected_terms": [
+      "QA"
+    ]
+  },
+  {
+    "id": "mixed-facts-029",
+    "language": "mixed",
+    "kind": "remove_filler_preserve_facts",
+    "original": "Эм, Maria загрузит 99% report в S3 к 09:30.",
+    "expected": "Maria загрузит 99% report в S3 к 09:30.",
+    "protected_terms": [
+      "99%",
+      "S3",
+      "09:30"
+    ]
+  },
+  {
+    "id": "mixed-technical-030",
+    "language": "mixed",
+    "kind": "remove_filler_preserve_technical_term",
+    "original": "So, llama.cpp запускает Gemma 4 model локально.",
+    "expected": "llama.cpp запускает Gemma 4 model локально.",
+    "protected_terms": [
+      "llama.cpp",
+      "Gemma",
+      "4"
+    ]
+  }
+]

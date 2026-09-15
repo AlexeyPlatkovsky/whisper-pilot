@@ -43,3 +43,7 @@ pub(crate) use translation::ensure_prompt_fits_context_budget;
 #[cfg(test)]
 #[path = "llm/tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "llm/prettify_filler_metal.rs"]
+mod prettify_filler_metal;
