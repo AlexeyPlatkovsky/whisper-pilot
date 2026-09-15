@@ -3,9 +3,9 @@ id: WP-86
 title: Restore reliable Metal Meeting transcription
 priority: normal
 type: bug
-status: in_progress
+status: done
 created_at: '2026-08-10T18:39:21Z'
-updated_at: '2026-08-11T09:28:37Z'
+updated_at: '2026-09-15T10:09:00Z'
 description: On macOS, Meeting Metal transcription can fail to encode or return zero segments when whisper-rs and llama-cpp-2 statically link incompatible ggml versions into one executable. Keep Whisper static on Metal and dynamically link llama-cpp-2 so each engine resolves its own ggml symbols. Stage all eight native sherpa/ONNX/llama/ggml dylibs in Tauri beforeBundleCommand, after Cargo has produced them, so clean builds cannot race build.rs. Meeting uses the cached Metal context without progress or abort callbacks; remove the dead Meeting percent-progress IPC/UI state and retain the indeterminate phase/timer UI. Streaming keeps its progress callback with closure storage alive for the entire synchronous native decode. The Stop UI control, cancel_transcription IPC command, running-transcription state and guard, and Meeting cancellation plumbing remain removed. Retain persistence/diarization ordering and the zero-segment Meeting guard with neutral user guidance. Coverage includes a real ignored Apple Metal transcription plus callback-lifetime probe, a Meeting command-registration contract test, clean-target build verification, bundle/signature checks, and the four formerly failing recordings. Update the affected README, architecture, design, roadmap, ADR, and F002/F004 specification surfaces. Do not add a worker process or new UI behavior in this item.
 dod:
 - Meeting transcription calls Whisper without an abort callback; no Meeting code path installs `set_abort_callback`, `set_abort_callback_safe`, or abort callback user data.
