@@ -5,7 +5,7 @@ use whisperpilot_lib::microphone_permission::{
 };
 
 const LIB_RS: &str = include_str!("../src/lib.rs");
-const IPC_TS: &str = include_str!("../../src/ipc.ts");
+const RECORDER_IPC_TS: &str = include_str!("../../src/ipc/recorder.ts");
 
 fn exported_function_body<'a>(source: &'a str, name: &str) -> &'a str {
     let marker = format!("export function {name}(");
@@ -132,17 +132,18 @@ fn tauri_registers_the_two_approved_recorder_permission_commands() {
         .split(',')
         .map(str::trim)
         .filter(|command| command.starts_with("commands::recorder::"))
+        .filter_map(|command| command.rsplit("::").next())
         .collect();
 
-    assert!(recorder_commands.contains(&"commands::recorder::get_microphone_permission_status"));
-    assert!(recorder_commands.contains(&"commands::recorder::request_microphone_permission"));
+    assert!(recorder_commands.contains(&"get_microphone_permission_status"));
+    assert!(recorder_commands.contains(&"request_microphone_permission"));
 }
 
 #[test]
 fn typescript_exports_the_exact_microphone_permission_union() {
-    let (_, after_marker) = IPC_TS
+    let (_, after_marker) = RECORDER_IPC_TS
         .split_once("export type MicrophonePermissionStatus =")
-        .expect("ipc.ts must export MicrophonePermissionStatus");
+        .expect("Recorder IPC module must export MicrophonePermissionStatus");
     let declaration = after_marker
         .split_once(';')
         .expect("MicrophonePermissionStatus must terminate with a semicolon")
@@ -177,7 +178,7 @@ fn typescript_permission_wrappers_invoke_the_approved_commands() {
             "request_microphone_permission",
         ),
     ] {
-        let body = exported_function_body(IPC_TS, wrapper);
+        let body = exported_function_body(RECORDER_IPC_TS, wrapper);
         let invocation = format!("invoke<MicrophonePermissionStatus>(\"{command}\")");
         assert_eq!(
             body.matches(&invocation).count(),

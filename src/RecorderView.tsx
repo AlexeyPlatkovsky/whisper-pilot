@@ -6,30 +6,19 @@ import {
   useRef,
   useState,
 } from "react";
-import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   acceptRecorderPolish,
   clearRecorderRecording,
   collapseToBubble,
-  createRecorderDraft,
   deleteRecorderSession,
   exportRecorderWav,
   generateRecorderPolish,
-  getLiveCaptureSnapshot,
-  getMicrophonePermissionStatus,
   listRecorderSessions,
-  onLiveCaptureState,
-  onRecorderError,
-  onRecorderPartial,
-  onRecorderSegmentCommitted,
-  onRecorderSessionChanged,
   openRecorderSession,
   recoverRecorderSession,
   renameRecorderSession,
-  requestMicrophonePermission,
   revertRecorderPolish,
   saveTextDialog,
-  startRecorderSession,
   stopRecorderSession,
   updateRecorderSegment,
   type LiveCaptureSnapshot,
@@ -38,157 +27,28 @@ import {
   type RecorderSessionSummary,
   type RecorderStatus,
 } from "./ipc";
-import { reconcileLiveCaptureSnapshot } from "./liveCaptureState";
-import { ModeToggle } from "./ModeToggle";
-import { AppLogo, Icon } from "./Icon";
-import { ActionIcon } from "./ActionIcon";
-import { CopyButton } from "./CopyButton";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { StreamingSessionRow } from "./StreamingSessionRow";
-import type { StreamingStatusView } from "./streamingStatus";
-import { formatDuration, formatElapsedClock } from "./format";
-import { stabilizePartial, type StablePartial } from "./partialStability";
+import {
+  filterRecorderSessions,
+  persistedRecorderStatus,
+  recorderCaptureStatus,
+  resolveRecorderError,
+  resolveRecorderStatus,
+} from "./recorderStatus";
+import { RecorderDialogs, type RecorderDialogTarget } from "./RecorderDialogs";
+import { RecorderInfoBar } from "./RecorderInfoBar";
+import { RecorderSidebar } from "./RecorderSidebar";
+import { RecorderHeader } from "./RecorderHeader";
+import {
+  createRecorderDraftAction,
+  runRecorderAction,
+  startRecorderCaptureAction,
+} from "./recorderCaptureActions";
+import { RecorderTranscriptPanel } from "./RecorderTranscriptPanel";
+import { formatElapsedClock } from "./format";
+import { type StablePartial } from "./partialStability";
+import { useRecorderEventListeners } from "./useRecorderEventListeners";
 import { groupWindowsIntoParagraphs } from "./paragraphs";
-
 const AUTOSCROLL_RESUME_THRESHOLD_PX = 48;
-
-function persistedStatus(
-  status: RecorderStatus,
-  isDraft = false,
-): StreamingStatusView {
-  if (isDraft) {
-    return {
-      tone: "finished",
-      label: "Ready",
-      icon: "check",
-      spinning: false,
-      showTimer: false,
-      statusKey: "ready",
-    };
-  }
-  switch (status) {
-    case "recording":
-      return {
-        tone: "error",
-        label: "Recording",
-        icon: "refresh-cw",
-        spinning: true,
-        showTimer: true,
-        statusKey: "on-air",
-      };
-    case "finalizing":
-      return {
-        tone: "unknown",
-        label: "Finalizing",
-        icon: "refresh-cw",
-        spinning: true,
-        showTimer: false,
-        statusKey: "starting",
-      };
-    case "recoverable":
-      return {
-        tone: "error",
-        label: "Recoverable",
-        icon: "alert-circle",
-        spinning: false,
-        showTimer: false,
-        statusKey: "error",
-      };
-    case "delete_failed":
-      return {
-        tone: "error",
-        label: "Delete failed",
-        icon: "alert-circle",
-        spinning: false,
-        showTimer: false,
-        statusKey: "error",
-      };
-    case "completed":
-      return {
-        tone: "finished",
-        label: "Completed",
-        icon: "check",
-        spinning: false,
-        showTimer: false,
-        statusKey: "finished",
-      };
-  }
-}
-
-function recorderCaptureStatus(
-  snapshot: LiveCaptureSnapshot | null,
-): StreamingStatusView | null {
-  if (snapshot?.source === "recorder") {
-    if (snapshot.phase === "starting") {
-      return {
-        tone: "unknown",
-        label: "Starting",
-        icon: "refresh-cw",
-        spinning: true,
-        showTimer: false,
-        statusKey: "starting",
-      };
-    }
-    if (snapshot.phase === "capturing") {
-      return persistedStatus("recording");
-    }
-    if (snapshot.phase === "stopping") {
-      return {
-        tone: "unknown",
-        label: "Stopping · Finalizing",
-        icon: "refresh-cw",
-        spinning: true,
-        showTimer: false,
-        statusKey: "starting",
-      };
-    }
-    if (snapshot.phase === "error") {
-      return {
-        tone: "error",
-        label: "Error",
-        icon: "alert-circle",
-        spinning: false,
-        showTimer: false,
-        statusKey: "error",
-      };
-    }
-  }
-  return null;
-}
-
-function recorderStatus(
-  active: RecorderSession | null,
-  snapshot: LiveCaptureSnapshot | null,
-  polishing: boolean,
-): StreamingStatusView {
-  if (polishing) {
-    return {
-      tone: "crafting",
-      label: "Prettifying…",
-      icon: "refresh-cw",
-      spinning: true,
-      showTimer: false,
-      statusKey: "prettifying",
-    };
-  }
-  if (active?.is_draft) {
-    return persistedStatus(active.status, true);
-  }
-  if (active !== null && snapshot?.session_id === active.id) {
-    const captureStatus = recorderCaptureStatus(snapshot);
-    if (captureStatus) return captureStatus;
-  }
-  return active
-    ? persistedStatus(active.status)
-    : {
-        tone: "finished",
-        label: snapshot ? "Ready" : "Loading",
-        icon: snapshot ? "check" : "refresh-cw",
-        spinning: snapshot === null,
-        showTimer: false,
-        statusKey: snapshot ? "ready" : "unknown",
-      };
-}
 
 interface RecorderViewProps {
   onSelectMeeting: () => void;
@@ -208,6 +68,7 @@ export function RecorderView({
   onRecorderStartPendingChange = () => {},
 }: RecorderViewProps) {
   const [sessions, setSessions] = useState<RecorderSessionSummary[]>([]);
+  const [sessionsHydrated, setSessionsHydrated] = useState(false);
   const [active, setActive] = useState<RecorderSession | null>(null);
   const [snapshot, setSnapshot] = useState<LiveCaptureSnapshot | null>(null);
   const [partial, setPartial] = useState("");
@@ -218,27 +79,34 @@ export function RecorderView({
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [search, setSearch] = useState("");
-  const [renameTarget, setRenameTarget] = useState<{
-    id: number;
-    title: string;
-  } | null>(null);
+  const [renameTarget, setRenameTarget] = useState<RecorderDialogTarget | null>(
+    null,
+  );
   const [renameDraft, setRenameDraft] = useState("");
   const [renameError, setRenameError] = useState<string | null>(null);
-  const [deleteTarget, setDeleteTarget] = useState<{
-    id: number;
-    title: string;
-  } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<RecorderDialogTarget | null>(
+    null,
+  );
   const [clearPending, setClearPending] = useState(false);
-  const [polishBusy, setPolishBusy] = useState(false);
+  const [polishingId, setPolishingId] = useState<number | null>(null);
   const [creatingDraft, setCreatingDraft] = useState(false);
   const [startPending, setStartPending] = useState(false);
   const [segmentEdits, setSegmentEdits] = useState<Record<number, string>>({});
+  const [editingSegmentId, setEditingSegmentId] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
   const partialCursor = useRef<{ sessionId: number | null; revision: number }>({
     sessionId: null,
     revision: -1,
   });
   const activeId = useRef<number | null>(null);
+  const libraryRevision = useRef(0);
+  const initialSelectionAttempted = useRef(false);
+  const openRequest = useRef(0);
+  // A delete may finish while an earlier `openRecorderSession` request is
+  // still resolving. Keep the invalidation scoped to that id so a later open
+  // for a different row remains valid.
+  const deletedSessionIds = useRef(new Set<number>());
+  const openGenerations = useRef(new Map<number, number>());
   const activeStatus = useRef<RecorderStatus | null>(null);
   const previousPartial = useRef("");
   const transcriptScrollRef = useRef<HTMLDivElement | null>(null);
@@ -254,6 +122,8 @@ export function RecorderView({
   }, []);
 
   const upsertSession = useCallback((session: RecorderSessionSummary) => {
+    if (deletedSessionIds.current.has(session.id)) return;
+    libraryRevision.current += 1;
     setSessions((current) => [
       session,
       ...current.filter((item) => item.id !== session.id),
@@ -265,6 +135,7 @@ export function RecorderView({
       if (activeId.current !== session.id) {
         autoScrollEnabledRef.current = true;
         setSegmentEdits({});
+        setEditingSegmentId(null);
       }
       if (activeId.current !== session.id || session.status !== "recording") {
         resetPartial();
@@ -279,96 +150,42 @@ export function RecorderView({
 
   useEffect(() => {
     let cancelled = false;
+    const hydrationRevision = libraryRevision.current;
     void listRecorderSessions()
       .then((items) => {
-        if (!cancelled) setSessions(items);
+        // A slow initial list must not replace an item created, renamed,
+        // deleted, or received through an event while that list was in flight.
+        if (!cancelled && libraryRevision.current === hydrationRevision) {
+          setSessions(items);
+        }
       })
       .catch((reason) => {
         if (!cancelled) setError(String(reason));
+      })
+      .finally(() => {
+        if (!cancelled) setSessionsHydrated(true);
       });
     return () => {
       cancelled = true;
     };
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    const unlisteners: Array<() => void> = [];
-    const register = async () => {
-      unlisteners.push(
-        await onLiveCaptureState((next) => {
-          if (!cancelled) {
-            setSnapshot((current) =>
-              reconcileLiveCaptureSnapshot(current, next),
-            );
-          }
-        }),
-        await onRecorderSessionChanged((session) => {
-          if (cancelled) return;
-          upsertSession(session);
-          if (
-            activeId.current === session.id ||
-            session.status === "recording"
-          ) {
-            displaySession(session);
-          }
-        }),
-        await onRecorderSegmentCommitted((segment) => {
-          if (cancelled || activeId.current !== segment.session_id) return;
-          setActive((current) => {
-            if (!current || current.id !== segment.session_id) return current;
-            const withoutSame = current.segments.filter(
-              (item) => item.id !== segment.id,
-            );
-            return { ...current, segments: [...withoutSame, segment] };
-          });
-          resetPartial();
-        }),
-        await onRecorderPartial((next) => {
-          if (
-            cancelled ||
-            activeId.current !== next.session_id ||
-            activeStatus.current !== "recording"
-          ) {
-            return;
-          }
-          const cursor = partialCursor.current;
-          const previousRevision =
-            cursor.sessionId === next.session_id ? cursor.revision : -1;
-          if (next.revision <= previousRevision) return;
-          partialCursor.current = {
-            sessionId: next.session_id,
-            revision: next.revision,
-          };
-          setPartialDisplay(
-            stabilizePartial(previousPartial.current, next.text),
-          );
-          previousPartial.current = next.text;
-          setPartial(next.text);
-        }),
-        await onRecorderError((next) => {
-          if (
-            !cancelled &&
-            (next.session_id === undefined ||
-              next.session_id === activeId.current)
-          ) {
-            setError(next.message);
-          }
-        }),
-      );
-      const initial = await getLiveCaptureSnapshot();
-      if (!cancelled) {
-        setSnapshot((current) =>
-          reconcileLiveCaptureSnapshot(current, initial),
-        );
-      }
-    };
-    void register();
-    return () => {
-      cancelled = true;
-      unlisteners.forEach((unlisten) => unlisten());
-    };
-  }, [displaySession, resetPartial, upsertSession]);
+  useRecorderEventListeners({
+    activeId,
+    activeStatus,
+    openRequest,
+    deletedSessionIds,
+    previousPartial,
+    partialCursor,
+    setSnapshot,
+    upsertSession,
+    displaySession,
+    setActive,
+    resetPartial,
+    setPartialDisplay,
+    setPartial,
+    setError,
+  });
 
   useEffect(() => {
     const sessionId = snapshot?.session_id;
@@ -380,15 +197,31 @@ export function RecorderView({
       return;
     }
     let cancelled = false;
+    const request = ++openRequest.current;
+    const generation = (openGenerations.current.get(sessionId) ?? 0) + 1;
+    openGenerations.current.set(sessionId, generation);
     void openRecorderSession(sessionId)
       .then((session) => {
-        if (!cancelled && session.id === sessionId) {
+        if (
+          !cancelled &&
+          request === openRequest.current &&
+          openGenerations.current.get(sessionId) === generation &&
+          !deletedSessionIds.current.has(sessionId) &&
+          session.id === sessionId
+        ) {
           displaySession(session);
           upsertSession(session);
         }
       })
       .catch((reason) => {
-        if (!cancelled) setError(String(reason));
+        if (
+          !cancelled &&
+          request === openRequest.current &&
+          openGenerations.current.get(sessionId) === generation &&
+          !deletedSessionIds.current.has(sessionId)
+        ) {
+          setError(String(reason));
+        }
       });
     return () => {
       cancelled = true;
@@ -449,29 +282,65 @@ export function RecorderView({
     return () => window.clearInterval(timer);
   }, [active?.duration_ms, canStop]);
 
-  async function openSession(id: number) {
-    setError(null);
-    try {
-      displaySession(await openRecorderSession(id));
-    } catch (reason) {
-      setError(String(reason));
+  const openSession = useCallback(
+    async (id: number) => {
+      initialSelectionAttempted.current = true;
+      const request = ++openRequest.current;
+      const generation = (openGenerations.current.get(id) ?? 0) + 1;
+      openGenerations.current.set(id, generation);
+      setError(null);
+      try {
+        const session = await openRecorderSession(id);
+        if (
+          request === openRequest.current &&
+          openGenerations.current.get(id) === generation &&
+          !deletedSessionIds.current.has(id) &&
+          session.id === id
+        ) {
+          displaySession(session);
+        }
+      } catch (reason) {
+        if (
+          request === openRequest.current &&
+          openGenerations.current.get(id) === generation &&
+          !deletedSessionIds.current.has(id)
+        ) {
+          setError(String(reason));
+        }
+      }
+    },
+    [displaySession],
+  );
+
+  useEffect(() => {
+    if (
+      !sessionsHydrated ||
+      snapshot === null ||
+      initialSelectionAttempted.current
+    ) {
+      return;
     }
-  }
+    initialSelectionAttempted.current = true;
+    if (ownsCapture || activeId.current !== null) return;
+    const first = sessions[0];
+    if (first) void openSession(first.id);
+  }, [openSession, ownsCapture, sessions, sessionsHydrated, snapshot]);
 
   async function newRecording() {
     if (ownsCapture || creatingDraft) return;
     setError(null);
     setCreatingDraft(true);
-    try {
-      const draft = await createRecorderDraft();
-      autoScrollEnabledRef.current = true;
-      displaySession(draft);
-      upsertSession(draft);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      setCreatingDraft(false);
-    }
+    await createRecorderDraftAction({
+      onCreated: (draft) => {
+        openRequest.current += 1;
+        deletedSessionIds.current.delete(draft.id);
+        autoScrollEnabledRef.current = true;
+        displaySession(draft);
+        upsertSession(draft);
+      },
+      onError: (error) => setError(String(error)),
+    });
+    setCreatingDraft(false);
   }
 
   async function start() {
@@ -480,37 +349,20 @@ export function RecorderView({
     setStartPending(true);
     onRecorderStartPendingChange(true);
     setError(null);
-    try {
-      let permission = await getMicrophonePermissionStatus();
-      if (permission === "not_determined") {
-        permission = await requestMicrophonePermission();
-      }
-      if (permission !== "authorized") {
-        setError(`Microphone permission is ${permission.replace("_", " ")}.`);
-        return;
-      }
-      // Starting from an open library row continues that recording in place;
-      // only an empty workspace creates a new session.
-      const session = await startRecorderSession(active?.id);
-      displaySession(session);
-      upsertSession(session);
-    } catch (reason) {
-      setError(String(reason));
-    } finally {
-      startPendingRef.current = false;
-      setStartPending(false);
-      onRecorderStartPendingChange(false);
-    }
+    await startRecorderCaptureAction({
+      sessionId: active?.id,
+      onStarted: (session) => {
+        displaySession(session);
+        upsertSession(session);
+      },
+      onError: (error) => setError(String(error)),
+    });
+    startPendingRef.current = false;
+    setStartPending(false);
+    onRecorderStartPendingChange(false);
   }
 
-  async function stop() {
-    setError(null);
-    try {
-      await stopRecorderSession();
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
+  const stop = () => runRecorderAction(stopRecorderSession, setError);
 
   function openRename(id: number, title: string) {
     setRenameTarget({ id, title });
@@ -544,11 +396,19 @@ export function RecorderView({
     setDeleteTarget(null);
   }
 
-  async function deleteSession(target: { id: number; title: string }) {
+  async function deleteSession(target: RecorderDialogTarget) {
     const id = target.id;
+    // Guard the in-flight initial list before the destructive IPC awaits.
+    // Otherwise an old list response can resurrect an item just deleted here.
+    libraryRevision.current += 1;
     setError(null);
     try {
       await deleteRecorderSession(id);
+      deletedSessionIds.current.add(id);
+      openGenerations.current.set(
+        id,
+        (openGenerations.current.get(id) ?? 0) + 1,
+      );
       setSessions((items) => items.filter((item) => item.id !== id));
       if (activeId.current === id) {
         activeId.current = null;
@@ -654,25 +514,18 @@ export function RecorderView({
     active?.status === "recording" ||
     active?.status === "finalizing" ||
     (ownsCapture && active?.id === snapshot?.session_id);
-  const widget = recorderStatus(active, snapshot, polishBusy);
+  const activePolishing = polishingId === active?.id;
+  // The model is process-wide single-flight even though the visible status is
+  // owned by the recording which started the operation.
+  const polishBusy = polishingId !== null;
+  const widget = resolveRecorderStatus(active, snapshot, activePolishing);
   const snapshotWidget = recorderCaptureStatus(snapshot);
-  const effectiveError =
-    error ??
-    (snapshot?.source === "recorder" &&
-    snapshot.phase === "error" &&
-    snapshot.session_id === active?.id
-      ? snapshot.error
-      : null) ??
-    active?.recovery_reason ??
-    null;
+  const effectiveError = resolveRecorderError(error, snapshot, active);
 
-  const filteredSessions = useMemo(() => {
-    const query = search.trim().toLocaleLowerCase();
-    if (!query) return sessions;
-    return sessions.filter((session) =>
-      session.title.toLocaleLowerCase().includes(query),
-    );
-  }, [search, sessions]);
+  const filteredSessions = useMemo(
+    () => filterRecorderSessions(sessions, search),
+    [search, sessions],
+  );
 
   async function recover() {
     if (!active) return;
@@ -686,15 +539,8 @@ export function RecorderView({
     }
   }
 
-  async function exportWav() {
-    if (!active) return;
-    setError(null);
-    try {
-      await exportRecorderWav(active.id);
-    } catch (reason) {
-      setError(String(reason));
-    }
-  }
+  const exportWav = () =>
+    active && runRecorderAction(() => exportRecorderWav(active.id), setError);
 
   async function exportTranscript() {
     if (!active) return;
@@ -710,7 +556,7 @@ export function RecorderView({
     if (!active) return;
     const sessionId = active.id;
     setError(null);
-    setPolishBusy(true);
+    setPolishingId(sessionId);
     try {
       const candidate = await generateRecorderPolish(sessionId);
       if (activeId.current !== sessionId) return;
@@ -723,7 +569,7 @@ export function RecorderView({
     } catch (reason) {
       if (activeId.current === sessionId) setError(String(reason));
     } finally {
-      setPolishBusy(false);
+      setPolishingId((current) => (current === sessionId ? null : current));
     }
   }
 
@@ -731,7 +577,7 @@ export function RecorderView({
     if (!active) return;
     const sessionId = active.id;
     setError(null);
-    setPolishBusy(true);
+    setPolishingId(sessionId);
     try {
       const updated = await revertRecorderPolish(sessionId);
       if (activeId.current === sessionId) {
@@ -741,7 +587,7 @@ export function RecorderView({
     } catch (reason) {
       if (activeId.current === sessionId) setError(String(reason));
     } finally {
-      setPolishBusy(false);
+      setPolishingId((current) => (current === sessionId ? null : current));
     }
   }
 
@@ -765,464 +611,107 @@ export function RecorderView({
 
   return (
     <div className="app recorder-view">
-      <header className="wp-header" data-tauri-drag-region="deep">
-        <div className="wp-header-lead">
-          <div className="wp-header-left">
-            <span
-              className="wp-traffic-space"
-              aria-hidden="true"
-              data-tauri-drag-region
-            />
-            <button
-              type="button"
-              className="wp-logo-button"
-              aria-label="Collapse to floating bubble"
-              onClick={() => void collapseToBubble()}
-            >
-              <AppLogo size={28} />
-            </button>
-            <div className="wp-action-group">
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="Toggle sidebar"
-                aria-pressed={sidebarOpen}
-                onClick={() => setSidebarOpen((value) => !value)}
-              >
-                <Icon name="panel-left" size={18} />
-              </button>
-              <span className="wp-sep" />
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="New recording"
-                title="New recording"
-                onClick={() => void newRecording()}
-                disabled={ownsCapture || creatingDraft}
-              >
-                <Icon name="plus" size={18} />
-              </button>
-              <span className="wp-sep" />
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="Settings"
-                onClick={onOpenSettings}
-                disabled={snapshot === null}
-              >
-                <Icon name="settings" size={18} />
-              </button>
-            </div>
-          </div>
+      <RecorderHeader
+        active={active}
+        sidebarOpen={sidebarOpen}
+        captureReady={snapshot !== null}
+        newRecordingDisabled={ownsCapture || creatingDraft}
+        destructiveDisabled={destructiveDisabled}
+        widget={widget}
+        elapsedLabel={formatElapsedClock(elapsed)}
+        transcript={transcript}
+        rawTranscript={rawTranscript}
+        canStart={canStart}
+        canStop={canStop}
+        polishBusy={polishBusy}
+        hasPendingSegmentEdits={hasPendingSegmentEdits}
+        onCollapse={() => void collapseToBubble()}
+        onToggleSidebar={() => setSidebarOpen((value) => !value)}
+        onNewRecording={() => void newRecording()}
+        onOpenSettings={onOpenSettings}
+        onRename={openRename}
+        onDelete={(id, title) => openDelete({ id, title })}
+        onStart={() => void start()}
+        onStop={() => void stop()}
+        onPrettify={() => void prettify()}
+        onExport={() => void exportTranscript()}
+        onClear={() => setClearPending(true)}
+        onError={setError}
+      />
 
-          <div className="wp-title-group">
-            <h1 className="wp-title">{active?.title ?? "New recording"}</h1>
-            <button
-              type="button"
-              className="wp-icon-btn wp-icon-btn--ghost"
-              aria-label="Rename recording"
-              onClick={() => active && openRename(active.id, active.title)}
-              disabled={!active || destructiveDisabled}
-            >
-              <Icon name="pencil" size={14} />
-            </button>
-            <button
-              type="button"
-              className="wp-icon-btn wp-icon-btn--ghost"
-              aria-label="Delete recording"
-              onClick={() =>
-                active && openDelete({ id: active.id, title: active.title })
-              }
-              disabled={!active || destructiveDisabled}
-            >
-              <Icon name="trash-2" size={14} />
-            </button>
-          </div>
-        </div>
-
-        <div className="wp-header-right">
-          <div
-            className={`wp-status wp-status--${widget.statusKey}`}
-            role="status"
-          >
-            <Icon
-              name={widget.icon}
-              size={14}
-              className={`${widget.spinning ? "wp-spin " : ""}wp-tone--${widget.tone} wp-status--${widget.statusKey}`}
-            />
-            <span
-              className={`wp-status-label wp-tone--${widget.tone} wp-status--${widget.statusKey}`}
-            >
-              {widget.label}
-            </span>
-            {widget.showTimer && (
-              <span className="wp-status-timer" aria-hidden="true">
-                {formatElapsedClock(elapsed)}
-              </span>
-            )}
-          </div>
-
-          <div className="wp-action-group">
-            <ActionIcon
-              icon="play"
-              label="Start"
-              onClick={() => void start()}
-              disabled={!canStart}
-            />
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="square"
-              label="Stop"
-              onClick={() => void stop()}
-              disabled={!canStop}
-            />
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="sparkles"
-              label="Prettify transcript"
-              accent
-              onClick={() => void prettify()}
-              disabled={
-                !active ||
-                polishBusy ||
-                hasPendingSegmentEdits ||
-                destructiveDisabled ||
-                !rawTranscript.trim()
-              }
-            />
-            <span className="wp-sep" />
-            <CopyButton
-              text={transcript}
-              resetKey={active?.id ?? null}
-              onError={setError}
-              onCopied={() => setError(null)}
-              disabled={!transcript.trim()}
-            />
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="download"
-              label="Export transcript"
-              onClick={() => void exportTranscript()}
-              disabled={!active || !transcript.trim()}
-            />
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="trash-2"
-              label="Clear recording"
-              onClick={() => setClearPending(true)}
-              disabled={
-                !active ||
-                polishBusy ||
-                hasPendingSegmentEdits ||
-                destructiveDisabled ||
-                active.is_draft === true
-              }
-            />
-          </div>
-        </div>
-      </header>
-
-      <div className="wp-info-bar">
-        <div className="wp-info-left">
-          <span className="wp-info-label">Audio Source:</span>
-          <span className="wp-file-chip">
-            <Icon name="mic" size={14} />
-            Default microphone
-          </span>
-        </div>
-        <div className="wp-info-right">
-          {active && (
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label="Export WAV"
-              title="Export WAV"
-              onClick={() => void exportWav()}
-              disabled={active.status !== "completed" || active.is_draft}
-            >
-              <Icon name="download" size={16} />
-            </button>
-          )}
-          <span className="wp-info-meta">
-            {active ? formatDuration(active.duration_ms) : "—"}
-          </span>
-        </div>
-      </div>
+      <RecorderInfoBar active={active} onExportWav={() => void exportWav()} />
 
       <div className="wp-main">
         {sidebarOpen && (
-          <aside className="wp-sidebar">
-            <ModeToggle
-              mode="recorder"
-              onSelectMeeting={onSelectMeeting}
-              onSelectStreaming={onSelectStreaming}
-              onSelectRecorder={() => {}}
-            />
-            <div className="wp-search">
-              <Icon name="search" size={16} />
-              <input
-                type="search"
-                className="wp-search-input"
-                placeholder="Search recordings..."
-                aria-label="Search recordings"
-                value={search}
-                onChange={(event) => setSearch(event.target.value)}
-              />
-            </div>
-
-            {sessions.length === 0 ? (
-              <p className="wp-info-muted">No recordings yet</p>
-            ) : filteredSessions.length === 0 ? (
-              <p className="wp-info-muted">No matches</p>
-            ) : (
-              <ul className="wp-meeting-list" role="list">
-                {filteredSessions.map((session) => (
-                  <StreamingSessionRow
-                    key={session.id}
-                    title={session.title}
-                    when={new Date(session.created_at_ms).toLocaleDateString()}
-                    dur={formatDuration(session.duration_ms)}
-                    status={
-                      snapshot?.source === "recorder" &&
-                      session.id === snapshot.session_id &&
-                      snapshotWidget !== null
-                        ? snapshotWidget
-                        : session.id === active?.id
-                          ? widget
-                          : persistedStatus(session.status, session.is_draft)
-                    }
-                    selected={session.id === active?.id}
-                    onSelect={() => void openSession(session.id)}
-                    onRename={() => openRename(session.id, session.title)}
-                    onDelete={() =>
-                      openDelete({ id: session.id, title: session.title })
-                    }
-                  />
-                ))}
-              </ul>
-            )}
-          </aside>
+          <RecorderSidebar
+            sessions={sessions}
+            filteredSessions={filteredSessions}
+            activeId={active?.id ?? null}
+            search={search}
+            onSearchChange={setSearch}
+            onSelectMeeting={onSelectMeeting}
+            onSelectStreaming={onSelectStreaming}
+            onOpenSession={(id) => void openSession(id)}
+            onRename={openRename}
+            onDelete={(id, title) => openDelete({ id, title })}
+            statusFor={(session) =>
+              snapshot?.source === "recorder" &&
+              session.id === snapshot.session_id &&
+              snapshotWidget !== null
+                ? snapshotWidget
+                : session.id === active?.id
+                  ? widget
+                  : persistedRecorderStatus(session.status, session.is_draft)
+            }
+          />
         )}
 
-        <section className="wp-workspace">
-          <div className="wp-transcript-panel">
-            <div className="wp-transcript-header">
-              <div className="wp-transcript-title-group">
-                <h2 className="wp-transcript-title">Transcript</h2>
-                {active && (
-                  <span className="wp-transcript-meta">
-                    {active.segments.length} segments · Editable
-                  </span>
-                )}
-              </div>
-              {active?.polished_text && (
-                <button
-                  type="button"
-                  className="wp-icon-btn wp-icon-btn--ghost"
-                  aria-label="Restore original transcript"
-                  title="Restore original transcript"
-                  onClick={() => void restoreOriginal()}
-                  disabled={polishBusy}
-                >
-                  <Icon name="rotate-ccw" size={15} />
-                </button>
-              )}
-            </div>
-            <div className="wp-separator" />
-            <div
-              ref={transcriptScrollRef}
-              className="wp-transcript-content wp-transcript-content--inset recorder-transcript"
-              aria-label="Recorder transcript"
-              onScroll={handleTranscriptScroll}
-            >
-              {effectiveError && (
-                <p className="wp-error" role="alert">
-                  {effectiveError}
-                </p>
-              )}
-              {!active ? (
-                <div className="wp-empty-state">
-                  <Icon name="mic" size={28} />
-                  <p>Start a voice recording or open a saved recording.</p>
-                </div>
-              ) : active.polished_text ? (
-                <p className="streaming-transcript-text">
-                  {active.polished_text}
-                </p>
-              ) : active.segments.length === 0 && !partial ? (
-                <div className="wp-empty-state">
-                  <Icon name="messages-square" size={28} />
-                  <p>The transcript will appear here while you dictate.</p>
-                </div>
-              ) : (
-                <>
-                  <div className="streaming-transcript-text">
-                    {transcriptParagraphs.map((paragraph) => (
-                      <p key={paragraph[0].id} className="streaming-paragraph">
-                        {paragraph.map((segment) => (
-                          <span key={segment.id}>
-                            <span
-                              className="streaming-window recorder-segment-text"
-                              role="textbox"
-                              aria-label={`Transcript segment ${segment.id}`}
-                              contentEditable
-                              suppressContentEditableWarning
-                              spellCheck
-                              title={`${Math.floor(segment.start_sample / active.sample_rate)}–${Math.ceil(segment.end_sample / active.sample_rate)}s (${segment.language})`}
-                              onBlur={(event) =>
-                                void commitEdit(
-                                  segment,
-                                  event.currentTarget.textContent ?? "",
-                                )
-                              }
-                              onInput={(event) => {
-                                const text =
-                                  event.currentTarget.textContent ?? "";
-                                segmentEditVersions.current.set(
-                                  segment.id,
-                                  (segmentEditVersions.current.get(
-                                    segment.id,
-                                  ) ?? 0) + 1,
-                                );
-                                setSegmentEdits((current) => ({
-                                  ...current,
-                                  [segment.id]: text,
-                                }));
-                              }}
-                            >
-                              {segment.text}
-                            </span>{" "}
-                          </span>
-                        ))}
-                      </p>
-                    ))}
-                  </div>
-                  {partial && (
-                    <p className="wp-streaming-partial" role="status">
-                      {partialDisplay.stable && (
-                        <span className="wp-streaming-partial-stable">
-                          {partialDisplay.stable}{" "}
-                        </span>
-                      )}
-                      {partialDisplay.unstable && (
-                        <em className="wp-streaming-partial-unstable">
-                          {partialDisplay.unstable}
-                        </em>
-                      )}
-                    </p>
-                  )}
-                </>
-              )}
-              {ownsCapture && (
-                <div
-                  className="wp-streaming-autoscroll-tail"
-                  aria-hidden="true"
-                />
-              )}
-              {active?.audio_path &&
-                active.status === "completed" &&
-                !active.is_draft && (
-                  <audio
-                    className="recorder-audio"
-                    controls
-                    preload="metadata"
-                    src={convertFileSrc(active.audio_path)}
-                  >
-                    Saved Recorder audio
-                  </audio>
-                )}
-              {active?.status === "recoverable" && (
-                <button type="button" onClick={() => void recover()}>
-                  Recover
-                </button>
-              )}
-              {active?.status === "delete_failed" && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    void deleteSession({ id: active.id, title: active.title })
-                  }
-                >
-                  Retry delete
-                </button>
-              )}
-            </div>
-          </div>
-        </section>
+        <RecorderTranscriptPanel
+          active={active}
+          transcriptParagraphs={transcriptParagraphs}
+          partial={partial}
+          partialDisplay={partialDisplay}
+          effectiveError={effectiveError}
+          ownsCapture={ownsCapture}
+          polishBusy={polishBusy}
+          editingSegmentId={editingSegmentId}
+          transcriptScrollRef={transcriptScrollRef}
+          onScroll={handleTranscriptScroll}
+          onRestoreOriginal={() => void restoreOriginal()}
+          onEditingChange={setEditingSegmentId}
+          onCommitEdit={(segment, text) => void commitEdit(segment, text)}
+          onEditChange={(segmentId, text) => {
+            segmentEditVersions.current.set(
+              segmentId,
+              (segmentEditVersions.current.get(segmentId) ?? 0) + 1,
+            );
+            setSegmentEdits((current) => ({ ...current, [segmentId]: text }));
+          }}
+          onRecover={() => void recover()}
+          onRetryDelete={() =>
+            active && void deleteSession({ id: active.id, title: active.title })
+          }
+        />
       </div>
 
-      {renameTarget && (
-        <div className="modal-overlay">
-          <form
-            className="modal-panel confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Rename recording"
-            onSubmit={(event) => void saveRename(event)}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") setRenameTarget(null);
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Rename recording</span>
-            </div>
-            <label htmlFor="recorder-title">Recording title</label>
-            <input
-              id="recorder-title"
-              type="text"
-              aria-label="Recorder title"
-              value={renameDraft}
-              autoFocus
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => {
-                setRenameDraft(event.target.value);
-                setRenameError(null);
-              }}
-              aria-invalid={renameError ? true : undefined}
-            />
-            {renameError && <p role="alert">{renameError}</p>}
-            <div className="confirm-actions">
-              <button
-                type="button"
-                className="modal-button"
-                onClick={() => setRenameTarget(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="modal-button modal-button--primary"
-              >
-                Save rename
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {deleteTarget && (
-        <ConfirmDialog
-          label={`Delete ${deleteTarget.title}`}
-          title={`Delete ${deleteTarget.title}?`}
-          description="This permanently removes the recording, its transcript, and its app-owned audio."
-          confirmLabel="Confirm delete"
-          destructive
-          onCancel={closeDelete}
-          onConfirm={() => void deleteSession(deleteTarget)}
-        />
-      )}
-
-      {clearPending && active && (
-        <ConfirmDialog
-          label="Clear recording"
-          title="Clear recording?"
-          description="Audio and all transcript text will be permanently removed. The empty recording will stay in the list."
-          confirmLabel="Clear recording"
-          destructive
-          onCancel={() => setClearPending(false)}
-          onConfirm={() => void clearRecording()}
-        />
-      )}
+      <RecorderDialogs
+        renameTarget={renameTarget}
+        renameDraft={renameDraft}
+        renameError={renameError}
+        onRenameDraftChange={(value) => {
+          setRenameDraft(value);
+          setRenameError(null);
+        }}
+        onRenameCancel={() => setRenameTarget(null)}
+        onSaveRename={(event) => void saveRename(event)}
+        deleteTarget={deleteTarget}
+        onDeleteCancel={closeDelete}
+        onDelete={(target) => void deleteSession(target)}
+        clearPending={clearPending}
+        active={active}
+        onClearCancel={() => setClearPending(false)}
+        onClear={() => void clearRecording()}
+      />
     </div>
   );
 }

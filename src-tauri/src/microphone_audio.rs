@@ -4,148 +4,19 @@
 //! sample rate. Provider-specific consumers can then derive a band-limited
 //! stream at the exact rate their ASR contract requires.
 
-use crate::streaming_audio::CapturedAudioChunk;
-use rubato::audioadapter::{Adapter, AdapterMut};
-use rubato::{
-    calculate_cutoff, Async, FixedAsync, Indexing, Resampler, SincInterpolationParameters,
-    SincInterpolationType, WindowFunction,
-};
-use std::collections::VecDeque;
+mod normalizer;
+
 use std::fmt;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TryRecvError};
 
-const RESAMPLER_INPUT_CHUNK_FRAMES: usize = 1_024;
-const RESAMPLER_SINC_LENGTH: usize = 128;
+mod resampler;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MicrophoneAudioError(String);
+pub use resampler::BandlimitedChunkResampler;
 
-impl fmt::Display for MicrophoneAudioError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter.write_str(&self.0)
-    }
-}
-
-impl std::error::Error for MicrophoneAudioError {}
-
-/// Stateful channel converter for one input device.
-///
-/// The output clock is the device's native sample clock. Keeping resampling
-/// out of the CPAL callback preserves a recoverable master and keeps the
-/// real-time callback bounded.
-pub struct MicrophoneChunkNormalizer {
-    channels: usize,
-    emitted_samples: u64,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct MicrophoneClockSpan {
-    pub start_sample: u64,
-    pub captured_end_sample: u64,
-}
-
-/// Sample conversion used by the allocation-reuse contract tests and by
-/// non-CPAL callers. Native CPAL formats use the equivalent closure-based
-/// path so every supported device format keeps CPAL's canonical conversion.
-pub trait IntoMicrophoneF32: Copy {
-    fn into_microphone_f32(self) -> f32;
-}
-
-impl IntoMicrophoneF32 for f32 {
-    fn into_microphone_f32(self) -> f32 {
-        self
-    }
-}
-
-impl IntoMicrophoneF32 for i16 {
-    fn into_microphone_f32(self) -> f32 {
-        f32::from(self) / 32_768.0
-    }
-}
-
-/// Owns one preallocated mono callback buffer and its native sample clock.
-///
-/// Production rotates the storage through a bounded recycle pool before a
-/// chunk crosses the callback boundary. `prepare_from_with` never grows the
-/// buffer: an unexpectedly large hardware callback becomes an explicit error
-/// instead of allocating on CoreAudio's real-time thread.
-pub struct ReusableMicrophoneChunkBuffer {
-    channels: usize,
-    frame_capacity: usize,
-    samples: Vec<f32>,
-    emitted_samples: u64,
-}
-
-impl ReusableMicrophoneChunkBuffer {
-    pub fn new(channels: usize, frame_capacity: usize) -> Result<Self, MicrophoneAudioError> {
-        if channels == 0 {
-            return Err(MicrophoneAudioError(
-                "microphone channel count must be greater than zero".into(),
-            ));
-        }
-        if frame_capacity == 0 {
-            return Err(MicrophoneAudioError(
-                "microphone callback capacity must be greater than zero".into(),
-            ));
-        }
-        Ok(Self {
-            channels,
-            frame_capacity,
-            samples: Vec::with_capacity(frame_capacity),
-            emitted_samples: 0,
-        })
-    }
-
-    pub fn prepare_from<T: IntoMicrophoneF32>(
-        &mut self,
-        interleaved_samples: &[T],
-    ) -> Result<MicrophoneClockSpan, MicrophoneAudioError> {
-        self.prepare_from_with(interleaved_samples, IntoMicrophoneF32::into_microphone_f32)
-    }
-
-    fn prepare_from_with<T: Copy>(
-        &mut self,
-        interleaved_samples: &[T],
-        convert: impl Fn(T) -> f32,
-    ) -> Result<MicrophoneClockSpan, MicrophoneAudioError> {
-        if interleaved_samples.len() % self.channels != 0 {
-            return Err(MicrophoneAudioError(format!(
-                "microphone callback returned {} samples for {} channels",
-                interleaved_samples.len(),
-                self.channels
-            )));
-        }
-        let frames = interleaved_samples.len() / self.channels;
-        if frames > self.frame_capacity {
-            return Err(MicrophoneAudioError(format!(
-                "microphone callback returned {frames} frames, exceeding the preallocated capacity of {}",
-                self.frame_capacity
-            )));
-        }
-
-        self.samples.clear();
-        for frame in interleaved_samples.chunks_exact(self.channels) {
-            let mono = frame.iter().copied().map(&convert).sum::<f32>() / self.channels as f32;
-            self.samples.push(mono);
-        }
-
-        let start_sample = self.emitted_samples;
-        self.emitted_samples = self.emitted_samples.saturating_add(frames as u64);
-        Ok(MicrophoneClockSpan {
-            start_sample,
-            captured_end_sample: self.emitted_samples,
-        })
-    }
-
-    pub fn samples(&self) -> &[f32] {
-        &self.samples
-    }
-
-    pub fn capacity(&self) -> usize {
-        self.samples.capacity()
-    }
-}
-
+pub use normalizer::{
+    IntoMicrophoneF32, MicrophoneAudioError, MicrophoneChunkNormalizer, MicrophoneClockSpan,
+    ReusableMicrophoneChunkBuffer,
+};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MicrophoneBufferPoolError {
     InvalidAudio(MicrophoneAudioError),
@@ -183,6 +54,15 @@ impl MicrophoneBufferRecycler {
         if samples.capacity() >= self.minimum_capacity {
             let _ = self.tx.try_send(samples);
         }
+    }
+
+    /// A checkout rejected before it is handed to the consumer must still be
+    /// returned. Keeping malformed test/device storage in the pool makes the
+    /// invariant failure deterministic instead of turning the next callback
+    /// into a misleading pool-exhaustion failure.
+    fn recycle_rejected(&self, mut samples: Vec<f32>) {
+        samples.clear();
+        let _ = self.tx.try_send(samples);
     }
 }
 
@@ -231,6 +111,30 @@ pub struct ReusableMicrophoneBufferPool {
     available: Receiver<Vec<f32>>,
     recycler: MicrophoneBufferRecycler,
     emitted_samples: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MicrophoneBufferPoolError, ReusableMicrophoneBufferPool};
+
+    #[test]
+    fn invalid_storage_is_returned_to_the_callback_pool() {
+        let mut pool =
+            ReusableMicrophoneBufferPool::from_storage(1, 2, vec![Vec::with_capacity(1)])
+                .expect("a deliberately undersized test buffer is accepted at construction");
+
+        let first = pool.prepare_from(&[0.1_f32]);
+        assert!(matches!(
+            first,
+            Err(MicrophoneBufferPoolError::InvalidStorage)
+        ));
+
+        let second = pool.prepare_from(&[0.2_f32]);
+        assert!(
+            matches!(second, Err(MicrophoneBufferPoolError::InvalidStorage)),
+            "a rejected checkout must be returned instead of draining the pool into Exhausted"
+        );
+    }
 }
 
 impl ReusableMicrophoneBufferPool {
@@ -326,6 +230,11 @@ impl ReusableMicrophoneBufferPool {
             Err(TryRecvError::Disconnected) => return Err(MicrophoneBufferPoolError::Disconnected),
         };
         if samples.capacity() < self.frame_capacity {
+            // A malformed pool entry is still owned by the pool. Return it
+            // before reporting the invariant violation; otherwise one bad
+            // checkout permanently drains the bounded callback pool and turns
+            // the next callback into a misleading `Exhausted` failure.
+            self.recycler.recycle_rejected(samples);
             return Err(MicrophoneBufferPoolError::InvalidStorage);
         }
 
@@ -345,313 +254,6 @@ impl ReusableMicrophoneBufferPool {
             samples: Some(samples),
             recycler: self.recycler.clone(),
         })
-    }
-}
-
-impl MicrophoneChunkNormalizer {
-    pub fn new(source_sample_rate: u32, channels: usize) -> Result<Self, MicrophoneAudioError> {
-        if source_sample_rate == 0 {
-            return Err(MicrophoneAudioError(
-                "microphone sample rate must be greater than zero".into(),
-            ));
-        }
-        if channels == 0 {
-            return Err(MicrophoneAudioError(
-                "microphone channel count must be greater than zero".into(),
-            ));
-        }
-
-        Ok(Self {
-            channels,
-            emitted_samples: 0,
-        })
-    }
-
-    pub fn push_f32(
-        &mut self,
-        interleaved_samples: &[f32],
-    ) -> Result<CapturedAudioChunk, MicrophoneAudioError> {
-        if interleaved_samples.len() % self.channels != 0 {
-            return Err(MicrophoneAudioError(format!(
-                "microphone callback returned {} samples for {} channels",
-                interleaved_samples.len(),
-                self.channels
-            )));
-        }
-
-        let start_sample = self.emitted_samples;
-        let samples: Vec<f32> = interleaved_samples
-            .chunks_exact(self.channels)
-            .map(|frame| frame.iter().copied().sum::<f32>() / self.channels as f32)
-            .collect();
-        self.emitted_samples = self.emitted_samples.saturating_add(samples.len() as u64);
-        Ok(CapturedAudioChunk {
-            start_sample,
-            captured_end_sample: self.emitted_samples,
-            samples,
-        })
-    }
-}
-
-/// Stateful, streaming sinc resampler for provider-specific audio derivatives.
-///
-/// Arbitrary callback sizes are buffered into stable processing blocks so the
-/// output is identical whether the source arrived in one slice or many. The
-/// filter delay is removed and `finish` flushes the tail to the exact target
-/// duration.
-pub struct BandlimitedChunkResampler {
-    source_sample_rate: u32,
-    target_sample_rate: u32,
-    engine: Option<Async<f32>>,
-    pending: VecDeque<f32>,
-    delay_remaining: usize,
-    total_input_samples: u64,
-    emitted_samples: u64,
-    finished: bool,
-}
-
-impl BandlimitedChunkResampler {
-    pub fn new(
-        source_sample_rate: u32,
-        target_sample_rate: u32,
-    ) -> Result<Self, MicrophoneAudioError> {
-        if source_sample_rate == 0 || target_sample_rate == 0 {
-            return Err(MicrophoneAudioError(
-                "resampler sample rates must be greater than zero".into(),
-            ));
-        }
-
-        let engine = if source_sample_rate == target_sample_rate {
-            None
-        } else {
-            let window = WindowFunction::Blackman2;
-            let parameters = SincInterpolationParameters {
-                sinc_len: RESAMPLER_SINC_LENGTH,
-                f_cutoff: calculate_cutoff(RESAMPLER_SINC_LENGTH, window),
-                oversampling_factor: 256,
-                interpolation: SincInterpolationType::Quadratic,
-                window,
-            };
-            let ratio = f64::from(target_sample_rate) / f64::from(source_sample_rate);
-            Some(
-                Async::<f32>::new_sinc(
-                    ratio,
-                    1.0,
-                    &parameters,
-                    RESAMPLER_INPUT_CHUNK_FRAMES,
-                    1,
-                    FixedAsync::Input,
-                )
-                .map_err(|error| {
-                    MicrophoneAudioError(format!("failed to create audio resampler: {error}"))
-                })?,
-            )
-        };
-        let delay_remaining = engine.as_ref().map_or(0, Resampler::output_delay);
-
-        Ok(Self {
-            source_sample_rate,
-            target_sample_rate,
-            engine,
-            pending: VecDeque::new(),
-            delay_remaining,
-            total_input_samples: 0,
-            emitted_samples: 0,
-            finished: false,
-        })
-    }
-
-    pub fn push_f32(
-        &mut self,
-        samples: &[f32],
-    ) -> Result<CapturedAudioChunk, MicrophoneAudioError> {
-        if self.finished {
-            return Err(MicrophoneAudioError(
-                "cannot append audio after the resampler is finished".into(),
-            ));
-        }
-        self.total_input_samples = self
-            .total_input_samples
-            .checked_add(samples.len() as u64)
-            .ok_or_else(|| MicrophoneAudioError("resampler input clock overflowed".into()))?;
-
-        if self.engine.is_none() {
-            return Ok(self.emit(samples.to_vec()));
-        }
-
-        self.pending.extend(samples.iter().copied());
-        let mut output = Vec::new();
-        loop {
-            let required = self
-                .engine
-                .as_ref()
-                .expect("non-passthrough resampler has an engine")
-                .input_frames_next();
-            if self.pending.len() < required {
-                break;
-            }
-            let input: Vec<f32> = self.pending.drain(..required).collect();
-            let raw = process_resampler_block(
-                self.engine
-                    .as_mut()
-                    .expect("non-passthrough resampler has an engine"),
-                &input,
-                None,
-            )?;
-            append_after_delay(&mut self.delay_remaining, raw, &mut output);
-        }
-
-        Ok(self.emit(output))
-    }
-
-    pub fn finish(&mut self) -> Result<CapturedAudioChunk, MicrophoneAudioError> {
-        if self.finished {
-            return Ok(self.emit(Vec::new()));
-        }
-        self.finished = true;
-
-        if self.engine.is_none() {
-            return Ok(self.emit(Vec::new()));
-        }
-
-        let expected_output_samples = div_ceil_u128(
-            u128::from(self.total_input_samples) * u128::from(self.target_sample_rate),
-            u128::from(self.source_sample_rate),
-        ) as u64;
-        let mut output = Vec::new();
-
-        if !self.pending.is_empty() {
-            let partial_len = self.pending.len();
-            let required = self
-                .engine
-                .as_ref()
-                .expect("non-passthrough resampler has an engine")
-                .input_frames_next();
-            let mut input = vec![0.0; required];
-            for (slot, sample) in input.iter_mut().zip(self.pending.drain(..)) {
-                *slot = sample;
-            }
-            let raw = process_resampler_block(
-                self.engine
-                    .as_mut()
-                    .expect("non-passthrough resampler has an engine"),
-                &input,
-                Some(partial_len),
-            )?;
-            append_after_delay(&mut self.delay_remaining, raw, &mut output);
-        }
-
-        while self.emitted_samples.saturating_add(output.len() as u64) < expected_output_samples {
-            let required = self
-                .engine
-                .as_ref()
-                .expect("non-passthrough resampler has an engine")
-                .input_frames_next();
-            let input = vec![0.0; required];
-            let raw = process_resampler_block(
-                self.engine
-                    .as_mut()
-                    .expect("non-passthrough resampler has an engine"),
-                &input,
-                Some(0),
-            )?;
-            append_after_delay(&mut self.delay_remaining, raw, &mut output);
-        }
-
-        let remaining = expected_output_samples.saturating_sub(self.emitted_samples) as usize;
-        output.truncate(remaining);
-        Ok(self.emit(output))
-    }
-
-    fn emit(&mut self, samples: Vec<f32>) -> CapturedAudioChunk {
-        let start_sample = self.emitted_samples;
-        self.emitted_samples = self.emitted_samples.saturating_add(samples.len() as u64);
-        CapturedAudioChunk {
-            start_sample,
-            captured_end_sample: self.emitted_samples,
-            samples,
-        }
-    }
-}
-
-fn div_ceil_u128(numerator: u128, denominator: u128) -> u128 {
-    numerator / denominator + u128::from(numerator % denominator != 0)
-}
-
-fn append_after_delay(delay_remaining: &mut usize, raw: Vec<f32>, output: &mut Vec<f32>) {
-    let trim = (*delay_remaining).min(raw.len());
-    *delay_remaining -= trim;
-    output.extend_from_slice(&raw[trim..]);
-}
-
-fn process_resampler_block(
-    resampler: &mut Async<f32>,
-    input: &[f32],
-    partial_len: Option<usize>,
-) -> Result<Vec<f32>, MicrophoneAudioError> {
-    let mut output = vec![0.0; resampler.output_frames_max()];
-    let input_adapter = MonoSlice { samples: input };
-    let mut output_adapter = MonoSliceMut {
-        samples: &mut output,
-    };
-    let indexing = Indexing {
-        input_offset: 0,
-        output_offset: 0,
-        partial_len,
-        active_channels_mask: None,
-    };
-    let (_, written) = resampler
-        .process_into_buffer(&input_adapter, &mut output_adapter, Some(&indexing))
-        .map_err(|error| MicrophoneAudioError(format!("audio resampling failed: {error}")))?;
-    output.truncate(written);
-    Ok(output)
-}
-
-struct MonoSlice<'a> {
-    samples: &'a [f32],
-}
-
-impl<'a> Adapter<'a, f32> for MonoSlice<'a> {
-    unsafe fn read_sample_unchecked(&self, _channel: usize, frame: usize) -> f32 {
-        unsafe { *self.samples.get_unchecked(frame) }
-    }
-
-    fn channels(&self) -> usize {
-        1
-    }
-
-    fn frames(&self) -> usize {
-        self.samples.len()
-    }
-}
-
-struct MonoSliceMut<'a> {
-    samples: &'a mut [f32],
-}
-
-impl<'a> Adapter<'a, f32> for MonoSliceMut<'a> {
-    unsafe fn read_sample_unchecked(&self, _channel: usize, frame: usize) -> f32 {
-        unsafe { *self.samples.get_unchecked(frame) }
-    }
-
-    fn channels(&self) -> usize {
-        1
-    }
-
-    fn frames(&self) -> usize {
-        self.samples.len()
-    }
-}
-
-impl<'a> AdapterMut<'a, f32> for MonoSliceMut<'a> {
-    unsafe fn write_sample_unchecked(
-        &mut self,
-        _channel: usize,
-        frame: usize,
-        value: &f32,
-    ) -> bool {
-        unsafe { *self.samples.get_unchecked_mut(frame) = *value };
-        false
     }
 }
 

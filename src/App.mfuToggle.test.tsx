@@ -145,7 +145,7 @@ describe("App — MFU panel toggle", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     const toggle = await screen.findByRole("switch", { name: /mfu/i });
     await user.click(toggle);
@@ -210,7 +210,7 @@ describe("App — MFU panel toggle", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     const craft = screen.getByRole("button", { name: "Craft MFU" });
     await waitFor(() => expect(craft).toBeEnabled());
@@ -261,7 +261,7 @@ describe("App — MFU panel toggle", () => {
       expect(meetingToggle).toHaveAttribute("aria-checked", "false"),
     );
 
-    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
 
     const streamingToggle = await screen.findByRole("switch", {
       name: /mfu/i,

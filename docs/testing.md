@@ -25,6 +25,7 @@ checklist), and the build/lint/format/typecheck gates pass.
 | End-to-end pipeline        | file → ffmpeg → Whisper → segments, on a real model                                                              | `cargo test --test pipeline -- --ignored` (needs model + ffmpeg) |
 | Unit/Component (front-end) | IPC bindings, transcript state, editing, save                                                                    | Vitest (`npm run test`)                                          |
 | Typecheck                  | TS ↔ Rust IPC shape agreement                                                                                    | `npm run typecheck`                                              |
+| Source structure           | Production, test, and architecture-document size boundaries                                                     | `npm run lint:source-size`                                      |
 
 The front-end suite grows as the UI does; M1 keeps logic thin and Rust-side.
 
@@ -43,8 +44,9 @@ manual checklist wherever such a flow is touched: the file picker filters to
 audio/video files and cancelling it is a no-op; a saved file reopens with the
 edited transcript text intact.
 
-The manual checklist is run before a TaskPilot item closes, per
-`.claude/skills/task-quality/SKILL.md`.
+The manual checklist is recorded before a TaskPilot item closes, following the
+project contract in `AGENTS.md` and the testing workflow in
+`.agents/skills/testing/SKILL.md`.
 
 ## Coverage Expectations
 
@@ -66,7 +68,7 @@ RSS:
 - direct s16le conversion peaks at one 219.73 MiB PCM buffer plus one 439.45
   MiB f32 buffer (659.18 MiB), below the 700 MiB payload target and 25% below
   the previous PCM + synthetic WAV + f32 path (878.91 MiB);
-- blocking Meeting transcription retains one 439.45 MiB f32 allocation, not a
+- blocking Transcription retains one 439.45 MiB f32 allocation, not a
   second full clone;
 - 90%-overlap segmentation would eagerly materialize 7,191 windows (4,389.04
   MiB); the 32-window iterator caps its input batch at 19.53 MiB, including the
@@ -74,7 +76,7 @@ RSS:
 - diarization transport serialization and deserialization add at most a 16 KiB
   byte buffer instead of another 439.45 MiB byte vector.
 
-Streaming regressions additionally cover backend-owned lifecycle hydration,
+Meeting regressions additionally cover backend-owned lifecycle hydration,
 Stop during asynchronous `starting`, 100 ms contiguous-pause VAD boundaries,
 background-relative pause thresholds, hard-boundary audio overlap and
 timestamp-proven Whisper reconciliation (including intentional repeated
@@ -84,7 +86,11 @@ short meaningful prefixes before
 capture gaps, terminal cloud-gap ordering, model-mutation/path-resolution
 ordering, first-window Live Translation during active capture, and atomic
 cancellation of stale translations after either a toggle-off or source revision.
-The Whisper streaming prompt contract keeps the bilingual punctuation seed
+The local durable-result queue is additionally filled to its fixed 32-window
+boundary: all accepted windows remain readable in order, while the next one
+returns immediately to the decoder and causes an explicit terminal session
+failure instead of unbounded buffering or silent loss.
+The Whisper Meeting prompt contract keeps the bilingual punctuation seed
 ahead of rolling context. Its release gate is an ignored real-Metal decode of
 punctuated speech through the production `WhisperSessionDecoder`; mocked or
 text-only tests are not evidence that the model emits punctuation.
@@ -97,15 +103,24 @@ the shared searchable library/header, in-place persisted Prettify, confirmed
 recording Clear, and the committed-versus-partial
 transcript UI. They also prove that a full realtime-ASR queue never blocks the
 native-rate writer, and that Recorder errors stay attached to their originating
-session and do not leak into Streaming. Streaming UI regressions cover
+session and do not leak into Meeting. Recorder and Meeting view tests also
+prove that the first saved item opens only after lifecycle hydration. Meeting
+UI regressions cover
 session-owned On Air state, per-session translation targets, an active MFU
 visibility toggle, Original-column partials, and shared MFU overflow scrolling.
 They also cover an all-italic provisional source hypothesis, retention of the
-last usable italic translation while a newer preview is pending, and confirmed
-Clear of transcript, translation, MFU, and Prettify state. Meeting Clear has a
+last usable italic Cloud translation while a newer preview is pending, local
+Whisper partials that do not invoke the text LLM, failed ASR windows that render
+unavailable in both columns without entering translation, and confirmed Clear
+of transcript, translation, MFU, and Prettify state. Transcription Clear has a
 matching derived-content-only persistence contract. `npm run lint:ui` enforces
 that confirmation alertdialogs use the shared primitive and its destructive
 variant rather than workspace-local modal markup.
+Deterministic local-LLM tests use a short injected timeout to prove that one
+runtime-owned worker evicts cached weights after idle time, defers eviction
+while a scheduler lease is active, keeps eviction atomic with respect to a new
+lease, and resets the deadline after completion; the production timeout remains
+two minutes.
 The real default-microphone test
 is ignored by default because it requires explicit macOS TCC approval and audible
 input; it must be run with the real-Metal gate before Recorder release evidence is
@@ -141,7 +156,7 @@ Motion, keyboard restore and capture-status changes while main is hidden.
 Local text-model qualification uses the frozen synthetic corpus at
 `src-tauri/tests/fixtures/llm_profile_corpus.json` and the reproducible
 `scripts/benchmark-llm-profiles.sh` runner. A candidate is promoted only after
-real-Metal RU/EN/mixed translation, Streaming and Recorder polishing, short and
+real-Metal RU/EN/mixed translation, Meeting and Recorder polishing, short and
 long MFU schema, protected-number/identifier, language, reasoning-token and
 malformed-output gates pass. The recorded Phase 3 hardware results live in
 `docs/validation/phase-3-llm-qualification.md`; publisher benchmarks are not
@@ -156,21 +171,25 @@ final/partial audio plus raw and polished text, retains an empty reusable
 draft, rejects live clearing, and preserves database text when filesystem
 cleanup fails. Injected database-failure and restart tests prove quarantine
 rollback plus pre-/post-commit crash recovery. Frontend coverage includes
-audio-only recordings and the confirmation boundary. Streaming rendering
+audio-only recordings and the confirmation boundary. Meeting rendering
 coverage asserts that the first non-empty partial replaces the centered
 Listening placeholder while an empty partial leaves it visible.
 Paragraph grouping coverage prefers the next terminal punctuation, keeps a
 normal seven-window unfinished sentence together, and bounds a punctuation-free
 run at the twelve-window safety ceiling.
-Live Translation coverage verifies italic provisional output, partial-update
-coalescing, committed-result replacement, context-free validation fallback,
-committed-job priority over queued previews, and old-completion isolation when
-the next session uses a different target language.
+Live Translation coverage verifies italic Cloud provisional output,
+partial-update coalescing, committed-result replacement, context-free
+validation fallback, committed-job priority over queued previews, and
+old-completion isolation when the next session uses a different target
+language. Backend regressions reject failed or source-revised windows before
+inference, cap translation output separately from long-form work, and prove the
+local capture queue accepts 600 nominal 100 ms chunks before dropping the
+601st without blocking.
 Race coverage also proves Clear is unavailable during derived-content work,
-pending Meeting autosaves settle before Clear without cancelling an edit queued
+pending Transcription autosaves settle before Clear without cancelling an edit queued
 for another meeting or leaking its failure into the newly opened meeting, a
-cleared Recorder/Streaming row rejects late polish/MFU persistence, a
-cleared-then-resumed Streaming duration follows `end_ms` instead of wall-clock
+cleared Recorder/Meeting row rejects late polish/MFU persistence, a
+cleared-then-resumed Meeting duration follows `end_ms` instead of wall-clock
 age, and preview A cannot attach to partial B after A crosses a commit boundary.
 
 Recorder continuation contracts keep the prior finalized CAF unchanged until
@@ -196,5 +215,14 @@ the authority for end-to-end quality and total process RSS.
 ## Quality Gates
 
 Blocking before completion: `cargo build`/`clippy` (zero warnings), `cargo fmt
---check`, `cargo test`, `npm run typecheck`, the Vitest suite, and the
-`task-quality` smoke checklist. Run them via `.claude/skills/validate/SKILL.md`.
+--check`, `cargo test`, `npm run typecheck`, the Vitest suite, and the applicable
+TaskPilot/manual smoke checklist. `npm run lint:source-size` rejects a production
+module as soon as it reaches 750 lines, documentation over 600 lines, and
+front-end or Rust test modules as soon as they reach 1,750 lines. It also covers repository
+scripts, workflows, root documentation, and the Rust build script. The staged
+form runs in pre-commit; the full gate and its tests run again in CI together
+with AI-instruction validation. The only temporary exception is
+`cloud_streaming.rs`, fixed at its 935-line WP-130 baseline and rejected if it
+grows. Code review must require a coherent ownership boundary, not a mechanical
+line move, when a module approaches the limit. The authoritative command list
+is in `docs/development.md`.

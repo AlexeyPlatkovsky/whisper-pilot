@@ -14,7 +14,7 @@ const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   transcription: {
     title: "Transcription Models",
     subtitle:
-      "One local ASR model is used by Meeting, Streaming, and Recorder.",
+      "One local ASR model is used by Transcription, Meeting, and Recorder.",
   },
   diarization: {
     title: "Speaker Diarization",
@@ -22,7 +22,8 @@ const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   },
   llm: {
     title: "MFU Models",
-    subtitle: "Choose the language model used to generate meeting mfu.",
+    subtitle:
+      "Choose the language model used for translation, MFU, and transcript polishing.",
   },
 };
 
@@ -211,7 +212,7 @@ export function AiModelsSection() {
                       </span>
                       <button
                         type="button"
-                        className="model-icon-btn"
+                        className="model-icon-btn model-icon-btn--danger"
                         aria-label={`Delete ${m.label}`}
                         title={`Delete ${m.label}`}
                         disabled={!m.downloaded}
@@ -250,6 +251,20 @@ export function AiModelsSection() {
             role="dialog"
             aria-modal="true"
             aria-label={`Download ${downloadTarget.label}`}
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                event.preventDefault();
+                event.currentTarget
+                  .querySelector<HTMLElement>("button:not([disabled])")
+                  ?.focus();
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setDownloadModalId(null);
+              }
+            }}
           >
             <div className="modal-header">
               <span className="modal-title">
@@ -260,6 +275,7 @@ export function AiModelsSection() {
                 className="model-icon-btn"
                 aria-label="Close"
                 title="Close"
+                autoFocus
                 onClick={() => setDownloadModalId(null)}
               >
                 <Icon name="x" size={18} />

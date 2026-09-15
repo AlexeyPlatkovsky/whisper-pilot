@@ -45,10 +45,10 @@ describe("App — file handling", () => {
     // File is attached, but no transcript is produced on its own.
     expect(await screen.findByText("meeting.mp3")).toBeInTheDocument();
     expect(ipc.transcribeMeeting).not.toHaveBeenCalled();
-    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hello")).not.toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Transcribe" }));
-    expect(await screen.findByDisplayValue("Hello")).toBeInTheDocument();
+    expect(await screen.findByText("Hello")).toBeInTheDocument();
     expect(ipc.transcribeMeeting).toHaveBeenCalledWith(EMPTY_MEETING.id);
   });
 
@@ -112,7 +112,7 @@ describe("App — file handling", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     expect(
       screen.queryByRole("alertdialog", {
@@ -128,13 +128,13 @@ describe("App — file handling", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     await user.click(screen.getByRole("button", { name: "Remove file" }));
 
     expect(ipc.setMeetingSource).toHaveBeenCalledWith(EMPTY_MEETING.id, null);
     expect(await screen.findByText("No file loaded")).toBeInTheDocument();
-    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
+    expect(screen.queryByText("Hello")).not.toBeInTheDocument();
   });
 
   it("saves the transcript when Save is clicked", async () => {
@@ -144,7 +144,7 @@ describe("App — file handling", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -164,7 +164,7 @@ describe("App — file handling", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     await user.click(screen.getByRole("button", { name: "Save" }));
 
@@ -192,7 +192,7 @@ describe("App — file handling", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
@@ -220,12 +220,16 @@ describe("App — sidebar", () => {
     render(<App />);
 
     await waitFor(() =>
-      expect(screen.getByLabelText("Search meetings")).toBeInTheDocument(),
+      expect(
+        screen.getByLabelText("Search transcriptions"),
+      ).toBeInTheDocument(),
     );
 
     await user.click(screen.getByRole("button", { name: "Toggle sidebar" }));
 
-    expect(screen.queryByLabelText("Search meetings")).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Search transcriptions"),
+    ).not.toBeInTheDocument();
   });
 
   it("filters meetings by title only after three characters and shows no matches", async () => {
@@ -252,7 +256,7 @@ describe("App — sidebar", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    const search = await screen.findByLabelText("Search meetings");
+    const search = await screen.findByLabelText("Search transcriptions");
     const sidebar = search.closest("aside");
     expect(sidebar).not.toBeNull();
     // BVA: filtering starts at exactly three characters and resets at two.
@@ -277,13 +281,13 @@ describe("App — Streaming mode toggle", () => {
     render(<App />);
     await waitForAddFileEnabled();
 
-    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
 
     expect(
-      await screen.findByRole("heading", { name: "Streaming Session" }),
+      await screen.findByRole("heading", { name: "Meeting" }),
     ).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Meeting" }));
+    await user.click(screen.getByRole("button", { name: "Transcription" }));
 
     expect(
       await screen.findByRole("button", { name: "Choose file" }),
@@ -309,9 +313,9 @@ describe("App — Streaming mode toggle", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Close settings" }));
 
-    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
     expect(
-      await screen.findByRole("heading", { name: "Streaming Session" }),
+      await screen.findByRole("heading", { name: "Meeting" }),
     ).toBeInTheDocument();
     const streamingSettings = screen.getByRole("button", { name: "Settings" });
     await waitFor(() => expect(streamingSettings).toBeEnabled());
@@ -325,7 +329,7 @@ describe("App — Streaming mode toggle", () => {
     expect(
       await screen.findByRole("heading", { name: "New recording" }),
     ).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Meeting" }));
+    await user.click(screen.getByRole("button", { name: "Transcription" }));
     expect(
       await screen.findByRole("button", { name: "Choose file" }),
     ).toBeInTheDocument();

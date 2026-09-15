@@ -85,19 +85,15 @@ pub(crate) fn prepare_and_supervise(
     worker_exe: &Path,
     request: &WorkerRequest,
     request_path: &Path,
-    samples: Vec<f32>,
+    samples: &[f32],
     inactivity: Duration,
 ) -> ChildOutcome {
-    if let Err(e) = write_samples(&request.samples_path, &samples) {
+    if let Err(e) = write_samples(&request.samples_path, samples) {
         return ChildOutcome::Failed {
             code: None,
             detail: e.to_string(),
         };
     }
-    // Freed here rather than at the end of the call: the child owns a full
-    // second copy of these samples for the whole run.
-    drop(samples);
-
     let request_written = serde_json::to_vec(request)
         .map_err(|e| e.to_string())
         .and_then(|bytes| std::fs::write(request_path, bytes).map_err(|e| e.to_string()));

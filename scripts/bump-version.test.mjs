@@ -13,6 +13,10 @@ function createVersionFixture(version = "1.9.0") {
   execFileSync("mkdir", ["-p", join(root, "src-tauri")]);
   writeFileSync(join(root, "src-tauri/Cargo.toml"), `[package]\nversion = "${version}"\n`);
   writeFileSync(
+    join(root, "src-tauri/Cargo.lock"),
+    `[[package]]\nname = "whisper-pilot"\nversion = "${version}"\n`,
+  );
+  writeFileSync(
     join(root, "src-tauri/tauri.conf.json"),
     `{\n  "version": "${version}"\n}\n`,
   );
@@ -33,14 +37,21 @@ function run(root, ...args) {
 }
 
 function versions(root) {
+  const packageLock = JSON.parse(
+    readFileSync(join(root, "package-lock.json"), "utf8"),
+  );
   return [
     /version = "([^"]+)"/.exec(
       readFileSync(join(root, "src-tauri/Cargo.toml"), "utf8"),
     )[1],
+    /name = "whisper-pilot"\nversion = "([^"]+)"/.exec(
+      readFileSync(join(root, "src-tauri/Cargo.lock"), "utf8"),
+    )[1],
     JSON.parse(readFileSync(join(root, "src-tauri/tauri.conf.json"), "utf8"))
       .version,
     JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
-    JSON.parse(readFileSync(join(root, "package-lock.json"), "utf8")).version,
+    packageLock.version,
+    packageLock.packages[""].version,
   ];
 }
 
@@ -49,7 +60,14 @@ test("minor updates every release-version source for a fix", () => {
   try {
     const result = run(root, "minor");
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(versions(root), ["1.9.1", "1.9.1", "1.9.1", "1.9.1"]);
+    assert.deepEqual(versions(root), [
+      "1.9.1",
+      "1.9.1",
+      "1.9.1",
+      "1.9.1",
+      "1.9.1",
+      "1.9.1",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -60,7 +78,14 @@ test("major advances the feature version", () => {
   try {
     const result = run(root, "major");
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(versions(root), ["1.10.0", "1.10.0", "1.10.0", "1.10.0"]);
+    assert.deepEqual(versions(root), [
+      "1.10.0",
+      "1.10.0",
+      "1.10.0",
+      "1.10.0",
+      "1.10.0",
+      "1.10.0",
+    ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -88,7 +113,64 @@ test("sync makes package metadata match canonical Cargo and Tauri versions", () 
     );
     const result = run(root, "sync");
     assert.equal(result.status, 0, result.stderr);
-    assert.deepEqual(versions(root), ["1.9.0", "1.9.0", "1.9.0", "1.9.0"]);
+    assert.deepEqual(versions(root), [
+      "1.9.0",
+      "1.9.0",
+      "1.9.0",
+      "1.9.0",
+      "1.9.0",
+      "1.9.0",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verify rejects a stale root package record in package-lock", () => {
+  const root = createVersionFixture();
+  try {
+    const lock = JSON.parse(
+      readFileSync(join(root, "package-lock.json"), "utf8"),
+    );
+    lock.packages[""].version = "9.9.9";
+    writeFileSync(join(root, "package-lock.json"), `${JSON.stringify(lock)}\n`);
+    const result = run(root, "verify");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /version sources disagree/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release rejects an explicit version that does not advance", () => {
+  const root = createVersionFixture("1.15.1");
+  try {
+    const result = run(root, "release", "1.0.0");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /must be later than 1\.15\.1/);
+    assert.deepEqual(versions(root), [
+      "1.15.1",
+      "1.15.1",
+      "1.15.1",
+      "1.15.1",
+      "1.15.1",
+      "1.15.1",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("verify rejects a stale root package version in Cargo.lock", () => {
+  const root = createVersionFixture();
+  try {
+    writeFileSync(
+      join(root, "src-tauri/Cargo.lock"),
+      '[[package]]\nname = "whisper-pilot"\nversion = "1.8.9"\n',
+    );
+    const result = run(root, "verify");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /version sources disagree/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

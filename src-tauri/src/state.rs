@@ -115,6 +115,18 @@ impl AppState {
         Ok(ctx)
     }
 
+    /// Release every cached ASR runtime after a safe transcription-model
+    /// selection change. The setting command first proves no Meeting,
+    /// Streaming, or Recorder decode owns either Arc, so this cannot unload a
+    /// model underneath a live decoder.
+    pub(crate) async fn clear_asr_model_caches(&self) {
+        *self.model.lock().await = None;
+        #[cfg(target_os = "macos")]
+        {
+            *self.qwen_gguf_asr_model.lock().await = None;
+        }
+    }
+
     #[cfg(target_os = "macos")]
     pub(crate) async fn clear_qwen_asr_model(&self) {
         *self.qwen_gguf_asr_model.lock().await = None;

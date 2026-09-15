@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -99,6 +100,7 @@ async function verifySheetKey(
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(ipc.listTaskModels).mockResolvedValue([]);
   vi.mocked(ipc.getCloudProviderConfig).mockResolvedValue(CLOUD_CONFIGURATION);
   vi.mocked(ipc.verifyCloudProviderApiKey).mockResolvedValue();
 });
@@ -150,6 +152,114 @@ describe("SettingsScreen", () => {
     await user.keyboard("{Escape}");
 
     expect(onClose).toHaveBeenCalledOnce();
+  });
+
+  it("[WP-130] moves focus into Settings, traps Tab, and restores the opener on close", async () => {
+    const user = userEvent.setup();
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>
+            Open settings
+          </button>
+          {open && <SettingsScreen onClose={() => setOpen(false)} />}
+        </>
+      );
+    }
+    render(<Harness />);
+
+    const opener = screen.getByRole("button", { name: "Open settings" });
+    await user.click(opener);
+    const close = screen.getByRole("button", { name: "Close settings" });
+    expect(close).toHaveFocus();
+
+    const dialog = screen.getByRole("dialog", { name: "Settings" });
+    const controls = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        "button:not([disabled]), input:not([disabled])",
+      ),
+    );
+    controls.at(-1)?.focus();
+    await user.tab();
+    expect(document.activeElement).toBe(close);
+
+    await user.click(close);
+    expect(opener).toHaveFocus();
+  });
+
+  it("Escape in a model-delete confirmation closes only that modal and keeps Settings open", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      {
+        id: "transcription",
+        task: "transcription",
+        label: "Whisper large-v3-turbo (Q8)",
+        downloaded: true,
+        size_bytes: 874_188_075,
+        recommended: false,
+        engine: "whisper",
+        compatible_modes: ["meeting", "streaming", "recorder"],
+      },
+    ]);
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<SettingsScreen onClose={onClose} />);
+
+    const settings = screen.getByRole("dialog", { name: "Settings" });
+    await user.click(
+      await screen.findByRole("button", {
+        name: /delete whisper large-v3-turbo/i,
+      }),
+    );
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(settings).toBeInTheDocument();
+  });
+
+  it("Escape in a model-download dialog closes only that dialog and keeps Settings open", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      {
+        id: "transcription",
+        task: "transcription",
+        label: "Whisper large-v3-turbo (Q8)",
+        downloaded: false,
+        size_bytes: 874_188_075,
+        recommended: false,
+        engine: "whisper",
+        compatible_modes: ["meeting", "streaming", "recorder"],
+      },
+    ]);
+    vi.mocked(ipc.downloadModel).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    const onClose = vi.fn();
+    render(<SettingsScreen onClose={onClose} />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: /download whisper large-v3-turbo/i,
+      }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: /download whisper large-v3-turbo/i,
+    });
+    const close = within(dialog).getByRole("button", { name: "Close" });
+    expect(close).toHaveFocus();
+
+    await user.keyboard("{Tab}");
+    expect(close).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(
+      screen.queryByRole("dialog", {
+        name: /download whisper large-v3-turbo/i,
+      }),
+    ).not.toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
   });
 
   it("reaches the close button and every section tab via Tab alone", async () => {
@@ -368,7 +478,7 @@ describe("SettingsScreen", () => {
     expect(ipc.saveCloudProviderApiKey).not.toHaveBeenCalled();
   });
 
-  it("locks Cloud provider changes while a Streaming session is live", async () => {
+  it("locks Cloud provider changes while a Meeting is live", async () => {
     const user = userEvent.setup();
     render(<SettingsScreen onClose={vi.fn()} cloudProviderLocked />);
 
@@ -381,7 +491,7 @@ describe("SettingsScreen", () => {
     ).toBeDisabled();
     expect(
       screen.getByText(
-        "Cloud provider settings are locked while streaming is live.",
+        "Cloud provider settings are locked while a meeting is live.",
       ),
     ).toBeInTheDocument();
   });
@@ -452,6 +562,42 @@ describe("SettingsScreen", () => {
           .closest(".model-row"),
       ).not.toHaveTextContent("API Key"),
     );
+  });
+
+  it("keeps a busy API-key sheet open when Escape is pressed", async () => {
+    const user = userEvent.setup();
+    const verification = deferred<void>();
+    const onClose = vi.fn();
+    vi.mocked(ipc.verifyCloudProviderApiKey).mockReturnValue(
+      verification.promise,
+    );
+    render(<SettingsScreen onClose={onClose} />);
+
+    await user.click(screen.getByRole("tab", { name: "Cloud provider" }));
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Manage API key" }))[0],
+    );
+    const sheet = await screen.findByRole("dialog", {
+      name: "Manage Deepgram API key",
+    });
+    await user.type(within(sheet).getByLabelText("API key"), "not-a-real-key");
+    await user.click(
+      within(sheet).getByRole("button", { name: "Verify API key" }),
+    );
+    await waitFor(() =>
+      expect(ipc.verifyCloudProviderApiKey).toHaveBeenCalledTimes(1),
+    );
+
+    await user.keyboard("{Escape}");
+
+    expect(
+      screen.getByRole("dialog", { name: "Manage Deepgram API key" }),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+
+    await act(async () => {
+      verification.resolve();
+    });
   });
 
   it("keeps the sheet open and explains Keychain failures", async () => {

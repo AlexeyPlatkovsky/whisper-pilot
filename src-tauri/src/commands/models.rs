@@ -56,7 +56,8 @@ pub(crate) async fn delete_model(
         .map_err(|error| AppError::Llm(error.to_string()))?;
     }
 
-    let is_asr = crate::asr::spec_by_id(&id).is_some();
+    let deleted_asr_engine = crate::asr::spec_by_id(&id).map(|spec| spec.engine);
+    let is_asr = deleted_asr_engine.is_some();
     let _asr_mutation = if is_asr {
         Some(state.recorder_asr_mutation.lock().await)
     } else {
@@ -80,13 +81,19 @@ pub(crate) async fn delete_model(
     } else {
         models::delete_model(&dir, &id)
     };
-    #[cfg(target_os = "macos")]
-    if crate::asr::spec_by_id(&id)
-        .is_some_and(|spec| spec.engine == crate::asr::AsrEngine::Qwen3Asr)
-    {
-        state.clear_qwen_asr_model().await;
-    }
     deletion_result?;
+    // A successful ASR deletion must invalidate its already-loaded runtime,
+    // even if that model was not selected when this command started. A stale
+    // Whisper context otherwise lets a deleted model appear usable until the
+    // next launch. Leave the unrelated engine cache alone.
+    match deleted_asr_engine {
+        Some(crate::asr::AsrEngine::Whisper) => *state.model.lock().await = None,
+        #[cfg(target_os = "macos")]
+        Some(crate::asr::AsrEngine::Qwen3Asr) => state.clear_qwen_asr_model().await,
+        #[cfg(not(target_os = "macos"))]
+        Some(crate::asr::AsrEngine::Qwen3Asr) => {}
+        None => {}
+    }
     if models::delete_clears_active_diarization_variant(&id, &settings.active_model_diarization) {
         settings::set_setting(&dir, "active_model.diarization", "none")?;
     }
@@ -229,6 +236,19 @@ mod tests {
             current.active_model_transcription.as_deref(),
             Some(crate::asr::DEFAULT_ASR_MODEL_ID)
         );
+    }
+
+    #[test]
+    fn deleting_each_asr_model_selects_only_its_own_runtime_cache() {
+        assert_eq!(
+            crate::asr::spec_by_id(crate::asr::DEFAULT_ASR_MODEL_ID).map(|spec| spec.engine),
+            Some(crate::asr::AsrEngine::Whisper)
+        );
+        assert_eq!(
+            crate::asr::spec_by_id(crate::asr::QWEN3_ASR_17_GGUF_MODEL_ID).map(|spec| spec.engine),
+            Some(crate::asr::AsrEngine::Qwen3Asr)
+        );
+        assert!(crate::asr::spec_by_id("not-an-asr-model").is_none());
     }
 
     #[cfg(target_os = "macos")]

@@ -296,6 +296,30 @@ describe("StreamingView — paired Copy/Export when Live Translation is off (WP-
 });
 
 describe("StreamingView — paired Copy/Export when Live Translation is on (WP-94/WP-103)", () => {
+  it("copies a failed-only session in the same two-column shape shown on screen", async () => {
+    const user = setupUser();
+    const failedWindow: StreamingWindow = {
+      window_index: 0,
+      start_ms: 0,
+      end_ms: 1_000,
+      text: "",
+      language: "auto",
+      outcome_ok: false,
+    };
+    await openSessionWithWindows(user, [failedWindow]);
+    await user.click(await findTranslationSwitch());
+    await expectTranslatedCellText("[unavailable]", "[unavailable]");
+
+    await clickCopy(user);
+
+    expect(writeTextMock).toHaveBeenCalledWith(
+      ["Original:", "[unavailable]", "", "Русский:", "[unavailable]"].join(
+        "\n",
+      ),
+    );
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+  });
+
   it("@WP-94-happy-paired-export: Copy places one Original + target-language block per paragraph, each window's own translation joined in screen order", async () => {
     const user = setupUser();
     vi.mocked(ipc.translateStreamingWindow).mockImplementation(

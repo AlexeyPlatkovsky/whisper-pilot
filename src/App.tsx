@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  collapseToBubble,
   clearMeeting,
   createMeeting,
   deleteMeeting,
@@ -10,19 +9,14 @@ import {
   setSetting,
   listMeetings,
   listTaskModels,
-  openMeeting,
   openFileDialog,
   setMeetingSource,
   transcribeMeeting,
   diarizeMeeting,
-  onTranscriptionPhase,
-  onTranscriptionProgress,
   onLiveCaptureState,
   onOpenRecorderWorkspace,
   saveTextDialog,
   renameMeeting,
-  updateSegment,
-  updateMfu,
   type Meeting as PersistedMeeting,
   type MeetingSummary,
   type MeetingMfu,
@@ -33,41 +27,27 @@ import {
   isLiveCaptureActive,
   reconcileLiveCaptureSnapshot,
 } from "./liveCaptureState";
-import { SettingsScreen } from "./SettingsScreen";
-import { StreamingView } from "./StreamingView";
-import { RecorderView } from "./RecorderView";
-import { ModeToggle } from "./ModeToggle";
-import { ToggleSwitch } from "./ToggleSwitch";
+import { AppModeView } from "./AppModeView";
 import { applyTheme, type Theme } from "./theme";
 import { applyStatusColors, parseStatusColors } from "./statusColors";
-import { t } from "./i18n";
-import { formatClock, formatDuration, formatRange } from "./format";
-import { AppLogo, Icon } from "./Icon";
-import { ActionIcon } from "./ActionIcon";
-import { CopyButton } from "./CopyButton";
-import { ConfirmDialog } from "./ConfirmDialog";
-import { speakerColorClass, speakerLabel } from "./speakerColors";
-import { SpeakerLabelEditor } from "./SpeakerLabelEditor";
-import { MeetingRow } from "./MeetingRow";
-import { formatDetectedLanguage, toSummary } from "./meetingUtils";
+import { formatDuration } from "./format";
+import { MeetingDialogs } from "./MeetingDialogs";
+import { TranscriptionWorkspace } from "./TranscriptionWorkspace";
+import { speakerLabel } from "./speakerColors";
+import { toSummary } from "./meetingUtils";
 import { resolveMeetingStatus, type MeetingStatusView } from "./meetingStatus";
+import { useMeetingAutosave } from "./useMeetingAutosave";
+import { useMeetingSelection } from "./useMeetingSelection";
+import { useTranscriptionEvents } from "./useTranscriptionEvents";
 import {
   renderForExport,
   exportFileExtension,
   type ExportFileType,
 } from "./export";
-
-// A running transcription is tracked by meeting id (`transcribingId`), not by
-// this union, so that it survives the user switching to another meeting and
-// back. This union only carries what the workspace itself is showing.
-type Status = { kind: "idle" } | { kind: "error"; message: string };
-
-// How long an edited segment or mfu field waits, idle, before it is
-// auto-saved to the database. There is no explicit save action or state.
-const AUTOSAVE_DEBOUNCE_MS = 500;
-
 export function App() {
-  const [status, setStatus] = useState<Status>({ kind: "idle" });
+  const [status, setStatus] = useState<
+    { kind: "idle" } | { kind: "error"; message: string }
+  >({ kind: "idle" });
   const [fileName, setFileName] = useState<string | null>(null);
   const [segments, setSegments] = useState<Segment[]>([]);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -76,8 +56,6 @@ export function App() {
   const [recorderStartPending, setRecorderStartPending] = useState(false);
   const [liveCaptureSnapshot, setLiveCaptureSnapshot] =
     useState<LiveCaptureSnapshot | null>(null);
-  // Unknown must fail closed: until the backend snapshot arrives, Settings
-  // cannot safely assume no capture owns a model/provider configuration.
   const isStreamingActive =
     liveCaptureSnapshot === null || isLiveCaptureActive(liveCaptureSnapshot);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -95,6 +73,9 @@ export function App() {
   );
   const [meetingSearch, setMeetingSearch] = useState("");
   const [activeMeeting, setActiveMeeting] = useState<PersistedMeeting | null>(
+    null,
+  );
+  const [editingSegmentIndex, setEditingSegmentIndex] = useState<number | null>(
     null,
   );
   const filteredMeetingSummaries = useMemo(() => {
@@ -117,19 +98,8 @@ export function App() {
   );
   const [exportFileType, setExportFileType] =
     useState<ExportFileType>("plain_text");
-  // WP-96: view-only visibility of the MFU (summary) panel, persisted under
-  // its own settings key so it survives a restart independently of
-  // Streaming's. Defaults ON; a settings read/write failure keeps it ON
-  // without surfacing a blocking error (see the getSettings effect below and
-  // handleToggleMfuPanel).
   const [mfuPanelVisible, setMfuPanelVisible] = useState(true);
-  // The meeting currently being transcribed, or null. Kept outside `status`
-  // and outside `activeMeeting` so that opening a different meeting cannot
-  // discard a run that is still going.
   const [transcribingId, setTranscribingId] = useState<number | null>(null);
-  // Which pass of the in-flight run is showing. Diarization runs after
-  // transcription completes, on the same run, so this is reset per run rather
-  // than tracked alongside `transcribingId`.
   const [transcribingPhase, setTranscribingPhase] = useState<
     "transcribing" | "diarizing"
   >("transcribing");
@@ -138,56 +108,49 @@ export function App() {
   >(null);
   const [generatingMfuId, setGeneratingMfuId] = useState<number | null>(null);
   const isGeneratingMfu = generatingMfuId !== null;
-  // The meeting whose standalone "Diarize" run is in flight, or null — the
-  // header action that re-runs speaker identification alone, without
-  // re-transcribing (separate from diarization folded into Transcribe).
   const [diarizingId, setDiarizingId] = useState<number | null>(null);
   const isDiarizing = diarizingId !== null;
   const [diarizationModelReady, setDiarizationModelReady] = useState<
     boolean | null
   >(null);
-  // Mirrors the active meeting id for use by async continuations, which would
-  // otherwise close over a stale `activeMeeting`.
-  const activeMeetingIdRef = useRef<number | null>(null);
-  // Debounced writes retain their meeting id and immutable payload. Opening
-  // or clearing another meeting must not cancel or misroute an older edit.
-  const segmentSaveTimers = useRef<
-    Map<
-      string,
-      {
-        timer: ReturnType<typeof setTimeout>;
-        meetingId: number;
-        index: number;
-        text: string;
-      }
-    >
-  >(new Map());
-  const mfuSaveTimers = useRef<
-    Map<
-      number,
-      {
-        timer: ReturnType<typeof setTimeout>;
-        mfu: MeetingMfu;
-      }
-    >
-  >(new Map());
-  const autosaveWrites = useRef<
-    Set<{ meetingId: number; write: Promise<unknown> }>
-  >(new Set());
-  // Mirrors `mfu` for the debounce timer callback below, which fires
-  // outside a React batch and must read the latest merged fields rather than
-  // whatever was in scope when the timer was scheduled.
-  const mfuRef = useRef<MeetingMfu | null>(null);
-  useEffect(() => {
-    mfuRef.current = mfu;
-  }, [mfu]);
-  // Mirrors `transcribingId` for the phase-change listener below, which is
-  // registered once and would otherwise close over a stale id.
-  const transcribingIdRef = useRef<number | null>(null);
-  useEffect(() => {
-    transcribingIdRef.current = transcribingId;
-  }, [transcribingId]);
-
+  const libraryRevisionRef = useRef(0);
+  const {
+    activeMeetingIdRef,
+    meetingOpenGenerationRef,
+    applyActiveMeeting,
+    upsertSummary,
+    openSelectedMeeting,
+    clearActiveMeeting,
+  } = useMeetingSelection({
+    setActiveMeeting,
+    setFileName,
+    setSegments,
+    setEditingSegmentIndex,
+    setSpeakerLabels,
+    setStatus,
+    setMfu,
+    setMeetingSummaries,
+  });
+  useTranscriptionEvents({
+    transcribingId,
+    activeMeetingIdRef,
+    setTranscribingPhase,
+    setTranscribingProgress,
+    setActiveMeeting,
+    setFileName,
+    setSegments,
+    setSpeakerLabels,
+    setMfu,
+    upsertSummary,
+  });
+  const { editSegment, editMfuField, flushMeetingWrites } = useMeetingAutosave({
+    activeMeetingId: activeMeeting?.id,
+    activeMeetingIdRef,
+    mfu,
+    setMfu,
+    setSegments,
+    onError: (message) => setStatus({ kind: "error", message }),
+  });
   // Subscribe before reading the snapshot. Revision reconciliation closes the
   // event-between-listen-and-query race and keeps Settings locked even when
   // StreamingView is unmounted.
@@ -220,7 +183,6 @@ export function App() {
       unlisten?.();
     };
   }, []);
-
   useEffect(() => {
     let cancelled = false;
     let unlisten: (() => void) | undefined;
@@ -240,7 +202,6 @@ export function App() {
     };
   }, []);
 
-  // Tick a once-per-second elapsed clock while a run is in flight.
   useEffect(() => {
     if (
       transcribingId === null &&
@@ -308,9 +269,6 @@ export function App() {
     void refreshExportFileType();
   }, [refreshExportFileType]);
 
-  // View-only: never gates Craft MFU, Diarize, Transcribe, or any other
-  // action. Persistence is best-effort — a write failure leaves the switch
-  // exactly as the user set it, with no blocking error (S-1..S-3, DoD 2-3).
   const handleToggleMfuPanel = useCallback((next: boolean) => {
     setMfuPanelVisible(next);
     void (async () => {
@@ -322,98 +280,26 @@ export function App() {
     })();
   }, []);
 
-  const applyActiveMeeting = useCallback((meeting: PersistedMeeting) => {
-    activeMeetingIdRef.current = meeting.id;
-    setActiveMeeting(meeting);
-    setFileName(meeting.source_name ?? null);
-    setSegments(meeting.segments);
-    setSpeakerLabels({});
-    setStatus({ kind: "idle" });
-    setMfu(meeting.mfu ?? null);
-  }, []);
-
-  const upsertSummary = useCallback((meeting: PersistedMeeting) => {
-    setMeetingSummaries((previous) =>
-      previous.some((summary) => summary.id === meeting.id)
-        ? previous.map((summary) =>
-            summary.id === meeting.id ? toSummary(meeting) : summary,
-          )
-        : [toSummary(meeting), ...previous],
-    );
-  }, []);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    onTranscriptionPhase((event) => {
-      if (event.id !== transcribingIdRef.current) return;
-
-      setTranscribingPhase(event.phase);
-      setTranscribingProgress(null);
-
-      // Transcription persists its segments before diarization begins. Reload
-      // the meeting so the user can read that completed work immediately.
-      if (
-        event.phase === "diarizing" &&
-        activeMeetingIdRef.current === event.id
-      ) {
-        void Promise.resolve()
-          .then(() => openMeeting(event.id))
-          .then((meeting) => {
-            if (!meeting) return;
-            if (activeMeetingIdRef.current !== meeting.id) return;
-            setActiveMeeting(meeting);
-            setFileName(meeting.source_name ?? null);
-            setSegments(meeting.segments);
-            setSpeakerLabels({});
-            setMfu(meeting.mfu ?? null);
-            upsertSummary(meeting);
-          })
-          .catch(() => {});
-      }
-    }).then((fn) => {
-      unlisten = fn;
-    });
-    return () => unlisten?.();
-  }, [upsertSummary]);
-
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    onTranscriptionProgress((event) => {
-      if (event.id !== transcribingIdRef.current) return;
-      setTranscribingProgress(Math.max(0, Math.min(100, event.percent)));
-    })
-      .then((cleanup) => {
-        if (disposed) cleanup();
-        else unlisten = cleanup;
-      })
-      .catch(() => {});
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, []);
-
   useEffect(() => {
     let cancelled = false;
 
     async function loadMeetingLibrary() {
+      const revision = libraryRevisionRef.current;
       try {
         const summaries = await listMeetings();
-        if (cancelled) return;
+        if (cancelled || revision !== libraryRevisionRef.current) return;
         // The workspace is always backed by a real, persisted meeting. When the
         // library is empty we seed one so the initial meeting can be renamed or
         // deleted and never loses its transcript when another meeting is opened.
         if (summaries.length === 0) {
           const meeting = await createMeeting();
-          if (cancelled) return;
+          if (cancelled || revision !== libraryRevisionRef.current) return;
           setMeetingSummaries([toSummary(meeting)]);
           applyActiveMeeting(meeting);
           return;
         }
         setMeetingSummaries(summaries);
-        const meeting = await openMeeting(summaries[0].id);
-        if (!cancelled) applyActiveMeeting(meeting);
+        await openSelectedMeeting(summaries[0].id);
       } catch (error) {
         if (!cancelled) setStatus({ kind: "error", message: String(error) });
       }
@@ -422,9 +308,9 @@ export function App() {
     void loadMeetingLibrary();
     return () => {
       cancelled = true;
+      meetingOpenGenerationRef.current += 1;
     };
-  }, [applyActiveMeeting]);
-
+  }, [applyActiveMeeting, meetingOpenGenerationRef, openSelectedMeeting]);
   function resolveSpeakerLabel(speakerId: number): string {
     return speakerLabels[speakerId] ?? speakerLabel(speakerId);
   }
@@ -448,7 +334,7 @@ export function App() {
   // Selecting a file only attaches it to the active meeting; transcription is
   // a separate, explicit action (the Transcribe button).
   async function handleChooseFile() {
-    if (!activeMeeting) return;
+    if (!activeMeeting || isDiarizing) return;
     try {
       const path = await openFileDialog();
       if (!path) return;
@@ -537,7 +423,7 @@ export function App() {
   }
 
   async function handleRemoveFile() {
-    if (!activeMeeting) return;
+    if (!activeMeeting || isDiarizing) return;
     try {
       const meeting = await setMeetingSource(activeMeeting.id, null);
       applyActiveMeeting(meeting);
@@ -548,21 +434,23 @@ export function App() {
   }
 
   async function handleCreateMeeting() {
+    libraryRevisionRef.current += 1;
+    const generation = ++meetingOpenGenerationRef.current;
     try {
       const meeting = await createMeeting();
       upsertSummary(meeting);
-      applyActiveMeeting(meeting);
+      if (generation === meetingOpenGenerationRef.current) {
+        applyActiveMeeting(meeting);
+      }
     } catch (error) {
-      setStatus({ kind: "error", message: String(error) });
+      if (generation === meetingOpenGenerationRef.current) {
+        setStatus({ kind: "error", message: String(error) });
+      }
     }
   }
 
   async function handleOpenMeeting(id: number) {
-    try {
-      applyActiveMeeting(await openMeeting(id));
-    } catch (error) {
-      setStatus({ kind: "error", message: String(error) });
-    }
+    await openSelectedMeeting(id);
   }
 
   function openRename(meeting: Pick<PersistedMeeting, "id" | "title">) {
@@ -581,11 +469,11 @@ export function App() {
     if (!renameTarget) return;
     const title = renameDraft.trim();
     if (!title) {
-      setRenameError("Meeting label is required");
+      setRenameError("Transcription title is required");
       return;
     }
     if (Array.from(title).length > 120) {
-      setRenameError("Meeting label must be 120 characters or fewer");
+      setRenameError("Transcription title must be 120 characters or fewer");
       return;
     }
     try {
@@ -597,7 +485,9 @@ export function App() {
             : summary,
         ),
       );
-      applyActiveMeeting(meeting);
+      if (activeMeetingIdRef.current === meeting.id) {
+        applyActiveMeeting(meeting);
+      }
       closeRename();
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
@@ -612,48 +502,41 @@ export function App() {
     );
     try {
       await deleteMeeting(target.id);
-      const wasActive = activeMeeting?.id === target.id;
+      // A deleted row must never be revived by an earlier open request that
+      // resolves after the store has committed this deletion.
+      meetingOpenGenerationRef.current += 1;
+      const wasActive = activeMeetingIdRef.current === target.id;
+      // Deletion has committed. Make the library and dialog reflect that
+      // durable boundary before best-effort opening/creating a replacement.
+      setMeetingSummaries(remaining);
+      setDeleteTarget(null);
+      if (!wasActive) return;
+      clearActiveMeeting();
       if (wasActive && remaining[0]) {
-        const next = await openMeeting(remaining[0].id);
-        setMeetingSummaries(remaining);
-        applyActiveMeeting(next);
-      } else if (wasActive) {
+        await openSelectedMeeting(remaining[0].id);
+      } else {
         // Deleting the last meeting seeds a fresh empty one so the workspace
         // always has a real, persisted meeting backing it.
+        const generation = ++meetingOpenGenerationRef.current;
         const meeting = await createMeeting();
-        setMeetingSummaries([toSummary(meeting)]);
-        applyActiveMeeting(meeting);
-      } else {
-        setMeetingSummaries(remaining);
+        upsertSummary(meeting);
+        if (generation === meetingOpenGenerationRef.current) {
+          applyActiveMeeting(meeting);
+        }
       }
-      setDeleteTarget(null);
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
+      // ConfirmDialog owns its in-flight guard. Propagating the failure lets
+      // it release that guard while this workspace keeps the error visible.
+      throw error;
     }
   }
 
   async function handleClear() {
     if (!activeMeeting) return;
     const id = activeMeeting.id;
-    const writes = [...autosaveWrites.current]
-      .filter((pending) => pending.meetingId === id)
-      .map((pending) => pending.write);
-    for (const [key, pending] of segmentSaveTimers.current) {
-      if (pending.meetingId !== id) continue;
-      clearTimeout(pending.timer);
-      segmentSaveTimers.current.delete(key);
-      writes.push(
-        trackAutosave(id, updateSegment(id, pending.index, pending.text)),
-      );
-    }
-    const pendingMfu = mfuSaveTimers.current.get(id);
-    if (pendingMfu) {
-      clearTimeout(pendingMfu.timer);
-      mfuSaveTimers.current.delete(id);
-      writes.push(trackAutosave(id, updateMfu(pendingMfu.mfu)));
-    }
     try {
-      await Promise.allSettled([...new Set(writes)]);
+      await flushMeetingWrites(id);
       const meeting = await clearMeeting(id);
       if (activeMeetingIdRef.current === id) applyActiveMeeting(meeting);
       upsertSummary(meeting);
@@ -661,78 +544,22 @@ export function App() {
     } catch (error) {
       setStatus({ kind: "error", message: String(error) });
       setClearPending(false);
+      throw error;
     }
-  }
-
-  function trackAutosave<T>(meetingId: number, write: Promise<T>): Promise<T> {
-    const pending = { meetingId, write };
-    autosaveWrites.current.add(pending);
-    void write.then(
-      () => autosaveWrites.current.delete(pending),
-      (error) => {
-        autosaveWrites.current.delete(pending);
-        if (activeMeetingIdRef.current === meetingId) {
-          setStatus({ kind: "error", message: String(error) });
-        }
-      },
-    );
-    return write;
-  }
-
-  function editSegment(index: number, text: string) {
-    setSegments((prev) =>
-      prev.map((s, i) => (i === index ? { ...s, text } : s)),
-    );
-    const meetingId = activeMeeting?.id;
-    if (meetingId === undefined) return;
-    const key = `${meetingId}:${index}`;
-    const pending = segmentSaveTimers.current.get(key);
-    if (pending !== undefined) clearTimeout(pending.timer);
-    segmentSaveTimers.current.set(key, {
-      meetingId,
-      index,
-      text,
-      timer: setTimeout(() => {
-        segmentSaveTimers.current.delete(key);
-        trackAutosave(meetingId, updateSegment(meetingId, index, text));
-      }, AUTOSAVE_DEBOUNCE_MS),
-    });
-  }
-
-  function editMfuField(field: keyof MeetingMfu, value: string) {
-    if (field === "meeting_id") return;
-    const meetingId = activeMeeting?.id;
-    if (meetingId === undefined) return;
-    const current = mfuRef.current;
-    if (!current) return;
-    const next = { ...current, meeting_id: meetingId, [field]: value };
-    mfuRef.current = next;
-    setMfu(next);
-    const pending = mfuSaveTimers.current.get(meetingId);
-    if (pending) clearTimeout(pending.timer);
-    mfuSaveTimers.current.set(meetingId, {
-      mfu: next,
-      timer: setTimeout(() => {
-        mfuSaveTimers.current.delete(meetingId);
-        trackAutosave(meetingId, updateMfu(next));
-      }, AUTOSAVE_DEBOUNCE_MS),
-    });
   }
 
   async function handleSave() {
     const base = (fileName ?? "transcript").replace(/\.[^.]+$/, "");
-    await saveTextDialog(
-      exportText,
-      `${base}.${exportFileExtension(exportFileType)}`,
-    );
+    try {
+      await saveTextDialog(
+        exportText,
+        `${base}.${exportFileExtension(exportFileType)}`,
+      );
+    } catch (error) {
+      setStatus({ kind: "error", message: String(error) });
+    }
   }
 
-  // `busy` is global because only one transcription may run at a time: it
-  // gates starting another run, anywhere, and — conservatively — creating a
-  // meeting, which would move the workspace mid-run. It does NOT gate
-  // actions that belong to whichever meeting is on screen — those use
-  // `activeIsTranscribing`, so exporting an unrelated finished transcript or
-  // attaching a file to an idle meeting still works while a run is going.
   const busy = transcribingId !== null || isGeneratingMfu || isDiarizing;
   const activeIsTranscribing =
     activeMeeting !== null && transcribingId === activeMeeting.id;
@@ -741,10 +568,8 @@ export function App() {
   const activeIsDiarizing =
     activeMeeting !== null && diarizingId === activeMeeting.id;
   const hasTranscript = segments.length > 0;
-  const meetingTitle = activeMeeting?.title ?? "New Meeting";
+  const meetingTitle = activeMeeting?.title ?? "New Transcription";
 
-  // The header describes the meeting the user is looking at, through the same
-  // resolver the sidebar rows use, so the two can never disagree.
   const headerStatus: MeetingStatusView | null = useMemo(() => {
     if (activeIsGeneratingMfu)
       return resolveMeetingStatus(undefined, "crafting");
@@ -767,652 +592,114 @@ export function App() {
     activeMeeting,
   ]);
 
-  // Streaming is checked first: it renders its own top-level view as a
-  // mounted child, and a session may be actively recording in the backend
-  // while Settings opens on top of it. Replacing that child with
-  // SettingsScreen (as the Meeting branch below does, safely, since Meeting's
-  // own state lives in this component rather than a child) would unmount it
-  // and drop its live session state, so Settings layers as an overlay here
-  // instead of swapping the tree.
-  if (isRecorderOpen) {
-    return (
-      <>
-        <RecorderView
-          onSelectMeeting={() => setIsRecorderOpen(false)}
-          onSelectStreaming={() => {
-            setIsRecorderOpen(false);
-            setIsStreamingOpen(true);
-          }}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          meetingTranscriptionActive={transcribingId !== null}
-          recorderStartPending={recorderStartPending}
-          onRecorderStartPendingChange={setRecorderStartPending}
-        />
-        {isSettingsOpen && (
-          <div className="settings-overlay">
-            <SettingsScreen
-              cloudProviderLocked={isStreamingActive}
-              onClose={() => {
-                setIsSettingsOpen(false);
-                void refreshModelAvailability();
-                void refreshExportFileType();
-              }}
-            />
-          </div>
-        )}
-      </>
-    );
+  function closeSettings() {
+    setIsSettingsOpen(false);
+    void refreshModelAvailability();
+    void refreshExportFileType();
   }
 
-  if (isStreamingOpen) {
-    return (
-      <>
-        <StreamingView
-          onClose={() => {
-            setIsStreamingOpen(false);
-          }}
-          onOpenSettings={() => setIsSettingsOpen(true)}
-          settingsOpen={isSettingsOpen}
-          meetingTranscriptionActive={transcribingId !== null}
-          onSelectRecorder={() => {
-            setIsStreamingOpen(false);
-            setIsRecorderOpen(true);
-          }}
-        />
-        {isSettingsOpen && (
-          <div className="settings-overlay">
-            <SettingsScreen
-              cloudProviderLocked={isStreamingActive}
-              onClose={() => {
-                setIsSettingsOpen(false);
-                void refreshModelAvailability();
-                void refreshExportFileType();
-              }}
-            />
-          </div>
-        )}
-      </>
-    );
-  }
-
-  if (isSettingsOpen) {
-    return (
-      <div className="app">
-        <SettingsScreen
-          cloudProviderLocked={isStreamingActive}
-          onClose={() => {
-            setIsSettingsOpen(false);
-            void refreshModelAvailability();
-            void refreshExportFileType();
-          }}
-        />
-      </div>
-    );
-  }
+  const modeProps = {
+    settingsOpen: isSettingsOpen,
+    meetingTranscriptionActive: transcribingId !== null,
+    recorderStartPending,
+    onRecorderStartPendingChange: setRecorderStartPending,
+    isStreamingActive,
+    onSelectMeeting: () => setIsRecorderOpen(false),
+    onCloseStreaming: () => setIsStreamingOpen(false),
+    onSelectStreaming: () => {
+      setIsRecorderOpen(false);
+      setIsStreamingOpen(true);
+    },
+    onSelectRecorder: () => {
+      setIsStreamingOpen(false);
+      setIsRecorderOpen(true);
+    },
+    onOpenSettings: () => setIsSettingsOpen(true),
+    onCloseSettings: closeSettings,
+  };
+  if (isRecorderOpen) return <AppModeView mode="recorder" {...modeProps} />;
+  if (isStreamingOpen) return <AppModeView mode="streaming" {...modeProps} />;
+  if (isSettingsOpen) return <AppModeView mode="settings" {...modeProps} />;
 
   return (
     <div className="app">
-      {/* ---- Top header (shares the row with the macOS traffic lights, which
-          the OS draws via the Overlay titleBarStyle — we reserve space for
-          them on the left rather than drawing our own) ------------------------ */}
-      <header className="wp-header" data-tauri-drag-region="deep">
-        <div className="wp-header-lead">
-          <div className="wp-header-left">
-            {/* Reserved gap for the OS traffic lights (close/min/max) */}
-            <span
-              className="wp-traffic-space"
-              aria-hidden="true"
-              data-tauri-drag-region
-            />
-            <button
-              type="button"
-              className="wp-logo-button"
-              aria-label="Collapse to floating bubble"
-              onClick={() => void collapseToBubble()}
-            >
-              <AppLogo size={28} />
-            </button>
-            <div className="wp-action-group">
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="Toggle sidebar"
-                aria-pressed={sidebarOpen}
-                onClick={() => setSidebarOpen((v) => !v)}
-              >
-                <Icon name="panel-left" size={18} />
-              </button>
-              <span className="wp-sep" />
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="New meeting"
-                title="New meeting"
-                onClick={handleCreateMeeting}
-                disabled={busy}
-              >
-                <Icon name="plus" size={18} />
-              </button>
-              <span className="wp-sep" />
-              <button
-                type="button"
-                className="wp-icon-btn"
-                aria-label="Settings"
-                onClick={() => setIsSettingsOpen(true)}
-              >
-                <Icon name="settings" size={18} />
-              </button>
-            </div>
-          </div>
+      <TranscriptionWorkspace
+        sidebarOpen={sidebarOpen}
+        setSidebarOpen={setSidebarOpen}
+        onCreate={handleCreateMeeting}
+        busy={busy}
+        onOpenSettings={() => setIsSettingsOpen(true)}
+        meetingTitle={meetingTitle}
+        activeMeeting={activeMeeting}
+        activeIsTranscribing={activeIsTranscribing}
+        activeIsGeneratingMfu={activeIsGeneratingMfu}
+        activeIsDiarizing={activeIsDiarizing}
+        isGeneratingMfu={isGeneratingMfu}
+        openRename={openRename}
+        onDeleteRequest={setDeleteTarget}
+        headerStatus={headerStatus}
+        transcribingProgress={transcribingProgress}
+        elapsed={elapsed}
+        transcribingPhase={transcribingPhase}
+        onTranscribe={handleTranscribe}
+        isStreamingActive={isStreamingActive}
+        transcriptionModelReady={transcriptionModelReady}
+        onGenerateMfu={handleGenerateMfu}
+        hasTranscript={hasTranscript}
+        llmModelReady={llmModelReady}
+        exportText={exportText}
+        status={status}
+        onStatusError={(message) => setStatus({ kind: "error", message })}
+        onSave={handleSave}
+        onClearRequest={() => setClearPending(true)}
+        mfu={mfu}
+        fileName={fileName}
+        onChooseFile={handleChooseFile}
+        onRemoveFile={handleRemoveFile}
+        durationLabel={durationLabel}
+        setIsStreamingOpen={setIsStreamingOpen}
+        setIsRecorderOpen={setIsRecorderOpen}
+        meetingSearch={meetingSearch}
+        setMeetingSearch={setMeetingSearch}
+        meetingSummaries={meetingSummaries}
+        filteredMeetingSummaries={filteredMeetingSummaries}
+        transcribingId={transcribingId}
+        diarizingId={diarizingId}
+        generatingMfuId={generatingMfuId}
+        onOpenMeeting={handleOpenMeeting}
+        segments={segments}
+        editingSegmentIndex={editingSegmentIndex}
+        setEditingSegmentIndex={setEditingSegmentIndex}
+        resolveSpeakerLabel={resolveSpeakerLabel}
+        renameSpeaker={renameSpeaker}
+        editSegment={editSegment}
+        diarizationModelReady={diarizationModelReady}
+        onDiarize={handleDiarize}
+        mfuPanelVisible={mfuPanelVisible}
+        onToggleMfuPanel={handleToggleMfuPanel}
+        editMfuField={editMfuField}
+      />
 
-          <div className="wp-title-group">
-            <h1 className="wp-title">{meetingTitle}</h1>
-            <button
-              type="button"
-              className="wp-icon-btn wp-icon-btn--ghost"
-              aria-label="Rename meeting"
-              onClick={() => activeMeeting && openRename(activeMeeting)}
-              disabled={
-                !activeMeeting ||
-                activeIsTranscribing ||
-                isGeneratingMfu ||
-                activeIsDiarizing
-              }
-            >
-              <Icon name="pencil" size={14} />
-            </button>
-            <button
-              type="button"
-              className="wp-icon-btn wp-icon-btn--ghost"
-              aria-label="Delete meeting"
-              onClick={() =>
-                activeMeeting &&
-                setDeleteTarget({
-                  id: activeMeeting.id,
-                  title: activeMeeting.title,
-                  created_at_ms: activeMeeting.created_at_ms,
-                  duration_ms: activeMeeting.duration_ms,
-                  status: activeMeeting.status,
-                })
-              }
-              disabled={
-                !activeMeeting ||
-                activeIsTranscribing ||
-                isGeneratingMfu ||
-                activeIsDiarizing
-              }
-            >
-              <Icon name="trash-2" size={14} />
-            </button>
-          </div>
-        </div>
-
-        <div className="wp-header-right">
-          <div className="wp-status" role="status">
-            {headerStatus && (
-              <>
-                <Icon
-                  name={headerStatus.icon}
-                  size={14}
-                  className={`${activeIsTranscribing || activeIsGeneratingMfu || activeIsDiarizing ? "wp-spin " : ""}wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
-                />
-                <span
-                  className={`wp-status-label wp-tone--${headerStatus.tone} wp-status--${headerStatus.statusKey}`}
-                >
-                  {headerStatus.label}
-                </span>
-                {(activeIsTranscribing ||
-                  activeIsGeneratingMfu ||
-                  activeIsDiarizing) && (
-                  <span className="wp-status-timer">
-                    {formatClock(elapsed)}
-                  </span>
-                )}
-                {activeIsTranscribing && transcribingProgress !== null && (
-                  <span className="wp-status-progress">
-                    <progress
-                      className="wp-status-progress-bar"
-                      value={transcribingProgress}
-                      max={100}
-                      aria-label="Transcription progress"
-                    />
-                    <span className="wp-status-progress-label">
-                      {transcribingProgress}%
-                    </span>
-                  </span>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="wp-action-group">
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label="Transcribe"
-              title="Transcribe"
-              onClick={handleTranscribe}
-              disabled={
-                busy ||
-                isStreamingActive ||
-                !activeMeeting?.source_path ||
-                activeMeeting?.source_missing ||
-                transcriptionModelReady !== true
-              }
-            >
-              <Icon name="play" size={17} />
-            </button>
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="sparkles"
-              label="Craft MFU"
-              accent
-              onClick={() => void handleGenerateMfu()}
-              disabled={
-                !hasTranscript ||
-                llmModelReady !== true ||
-                activeIsTranscribing ||
-                isGeneratingMfu ||
-                activeIsDiarizing
-              }
-            />
-            <span className="wp-sep" />
-            <CopyButton
-              text={exportText}
-              resetKey={activeMeeting?.id ?? null}
-              onError={(message) => setStatus({ kind: "error", message })}
-              disabled={activeIsTranscribing || !hasTranscript}
-            />
-            <span className="wp-sep" />
-            <button
-              type="button"
-              className="wp-icon-btn"
-              aria-label={t("save")}
-              title={t("save")}
-              onClick={handleSave}
-              disabled={activeIsTranscribing || !hasTranscript}
-            >
-              <Icon name="download" size={17} />
-            </button>
-            <span className="wp-sep" />
-            <ActionIcon
-              icon="trash-2"
-              label="Clear meeting"
-              onClick={() => setClearPending(true)}
-              disabled={
-                !activeMeeting ||
-                (!hasTranscript && !mfu) ||
-                activeIsTranscribing ||
-                isGeneratingMfu ||
-                activeIsDiarizing
-              }
-            />
-          </div>
-        </div>
-      </header>
-
-      {/* ---- Meeting info bar ---------------------------------------------- */}
-      <div className="wp-info-bar">
-        <div className="wp-info-left">
-          <span className="wp-info-label">Files:</span>
-          <button
-            type="button"
-            className="wp-icon-btn wp-info-add"
-            aria-label="Choose file"
-            title="Choose an audio or video file"
-            onClick={handleChooseFile}
-            disabled={
-              activeIsTranscribing ||
-              isGeneratingMfu ||
-              !activeMeeting ||
-              transcriptionModelReady !== true
-            }
-          >
-            <Icon name="folder" size={16} />
-          </button>
-          {fileName ? (
-            <span className="wp-file-chip">
-              {fileName}
-              <button
-                type="button"
-                className="wp-icon-btn wp-icon-btn--tiny"
-                aria-label="Remove file"
-                onClick={handleRemoveFile}
-                disabled={
-                  activeIsTranscribing || isGeneratingMfu || activeIsDiarizing
-                }
-              >
-                <Icon name="x" size={12} />
-              </button>
-            </span>
-          ) : (
-            <span className="wp-info-muted">No file loaded</span>
-          )}
-          {activeMeeting?.source_missing && (
-            <span className="wp-info-warning" role="status">
-              Source file missing — re-transcribe disabled. The transcript and
-              mfu are still readable and editable.
-            </span>
-          )}
-        </div>
-        <div className="wp-info-right">
-          {activeMeeting?.status === "finished" && (
-            <span className="wp-info-meta">
-              <Icon name="globe" size={14} />
-              {formatDetectedLanguage(activeMeeting.language)}
-            </span>
-          )}
-          <span className="wp-info-meta">{durationLabel}</span>
-        </div>
-      </div>
-
-      {/* ---- Main content -------------------------------------------------- */}
-      <div className="wp-main">
-        {sidebarOpen && (
-          <aside className="wp-sidebar">
-            <ModeToggle
-              mode="meeting"
-              onSelectMeeting={() => {}}
-              onSelectStreaming={() => setIsStreamingOpen(true)}
-              onSelectRecorder={() => setIsRecorderOpen(true)}
-            />
-            <div className="wp-search">
-              <Icon name="search" size={16} />
-              <input
-                type="search"
-                className="wp-search-input"
-                placeholder="Search meetings..."
-                aria-label="Search meetings"
-                value={meetingSearch}
-                onChange={(event) => setMeetingSearch(event.target.value)}
-              />
-            </div>
-            {/* The empty-state copy stays outside the list: a list may only
-                own list items. */}
-            {meetingSummaries.length === 0 ? (
-              <p className="wp-info-muted">No meetings yet</p>
-            ) : filteredMeetingSummaries.length === 0 ? (
-              <p className="wp-info-muted">No matches</p>
-            ) : (
-              // WebKit drops the implicit list role from a <ul> styled
-              // `list-style: none`, and from flex list items — and WKWebView is
-              // this app's only runtime. These roles restore the native
-              // semantics rather than override them.
-              <ul className="wp-meeting-list" role="list">
-                {filteredMeetingSummaries.map((meeting) => (
-                  <MeetingRow
-                    key={meeting.id}
-                    title={meeting.title}
-                    when={new Date(meeting.created_at_ms).toLocaleDateString()}
-                    dur={
-                      meeting.duration_ms
-                        ? formatDuration(meeting.duration_ms)
-                        : "—"
-                    }
-                    status={resolveMeetingStatus(
-                      meeting.status,
-                      transcribingId === meeting.id
-                        ? transcribingPhase
-                        : diarizingId === meeting.id
-                          ? "diarizing"
-                          : generatingMfuId === meeting.id
-                            ? "crafting"
-                            : "none",
-                    )}
-                    selected={activeMeeting?.id === meeting.id}
-                    onSelect={() => void handleOpenMeeting(meeting.id)}
-                    onRename={() => openRename(meeting)}
-                    onDelete={() => setDeleteTarget(meeting)}
-                  />
-                ))}
-              </ul>
-            )}
-          </aside>
-        )}
-
-        <section className="wp-workspace">
-          <div className="wp-transcript-panel">
-            <div className="wp-transcript-header">
-              <div className="wp-transcript-title-group">
-                <h2 className="wp-transcript-title">Transcript</h2>
-                <span className="wp-transcript-meta">
-                  {hasTranscript
-                    ? `${segments.length} segment${segments.length === 1 ? "" : "s"}`
-                    : "No segments"}
-                </span>
-              </div>
-              <div className="wp-transcript-actions">
-                <Icon name="pencil" size={14} />
-                <span>Editable</span>
-                <span className="wp-sep" />
-                <ActionIcon
-                  icon="messages-square"
-                  label="Diarize speakers"
-                  onClick={() => void handleDiarize()}
-                  disabled={
-                    !hasTranscript ||
-                    activeMeeting?.source_missing ||
-                    diarizationModelReady !== true ||
-                    busy
-                  }
-                />
-                <span className="wp-sep" />
-                <span className="wp-mfu-toggle-label">MFU</span>
-                <ToggleSwitch
-                  checked={mfuPanelVisible}
-                  onChange={handleToggleMfuPanel}
-                  label="MFU panel"
-                />
-              </div>
-            </div>
-            <div className="wp-separator" />
-
-            <div className="wp-transcript-content">
-              {transcriptionModelReady === false && (
-                <div className="wp-notice wp-notice--error">
-                  {t("modelMissing")}
-                </div>
-              )}
-
-              {status.kind === "error" && (
-                <div className="wp-notice wp-notice--error" role="alert">
-                  {status.message}
-                </div>
-              )}
-
-              {activeIsTranscribing && !hasTranscript && (
-                <div className="wp-empty">
-                  <p>
-                    {transcribingPhase === "diarizing"
-                      ? "Diarizing…"
-                      : "Transcribing…"}
-                  </p>
-                </div>
-              )}
-
-              {!activeIsTranscribing &&
-                !hasTranscript &&
-                status.kind !== "error" && (
-                  <div className="wp-empty">
-                    <p>{t("emptyState")}</p>
-                  </div>
-                )}
-
-              {hasTranscript &&
-                segments.map((seg, i) => {
-                  const hasSpeaker = seg.speaker_id !== undefined;
-                  return (
-                    <div className="wp-speaker-block" key={i}>
-                      <span
-                        className={`wp-speaker-bar ${hasSpeaker ? speakerColorClass(seg.speaker_id!) : "wp-speaker-bar--none"}`}
-                      />
-                      <div className="wp-speaker-body">
-                        <div className="wp-speaker-head">
-                          {hasSpeaker && (
-                            <SpeakerLabelEditor
-                              speakerId={seg.speaker_id!}
-                              label={resolveSpeakerLabel(seg.speaker_id!)}
-                              onRename={renameSpeaker}
-                              disabled={
-                                activeIsTranscribing ||
-                                isGeneratingMfu ||
-                                activeIsDiarizing
-                              }
-                            />
-                          )}
-                          <span className="wp-speaker-time">
-                            {formatRange(seg.start_ms, seg.end_ms)}
-                          </span>
-                        </div>
-                        <textarea
-                          className="wp-speaker-text"
-                          value={seg.text}
-                          rows={1}
-                          onChange={(e) => editSegment(i, e.target.value)}
-                          disabled={
-                            activeIsTranscribing ||
-                            isGeneratingMfu ||
-                            activeIsDiarizing
-                          }
-                        />
-                      </div>
-                    </div>
-                  );
-                })}
-            </div>
-          </div>
-
-          {/* MFU (summary) panel — hidden by the header switch (WP-96); the
-              transcript panel above fills the freed width via its existing
-              flex:1 in .wp-transcript-panel. */}
-          {mfuPanelVisible && (
-            <aside className="wp-mfu">
-              {mfu ? (
-                <div className="wp-mfu-content wp-mfu-mfu">
-                  {(
-                    [
-                      ["summary", "Summary"],
-                      ["decisions", "Decisions"],
-                      ["action_items", "Action Items"],
-                      ["open_questions", "Open Questions"],
-                      ["participants", "Participants"],
-                    ] as const
-                  ).map(([field, heading]) => (
-                    <section className="wp-mfu-section" key={field}>
-                      <h3 className="wp-mfu-heading">{heading}</h3>
-                      <textarea
-                        className="wp-mfu-text wp-mfu-textarea"
-                        value={mfu[field]}
-                        rows={1}
-                        onChange={(e) => editMfuField(field, e.target.value)}
-                        disabled={
-                          activeIsTranscribing ||
-                          isGeneratingMfu ||
-                          activeIsDiarizing
-                        }
-                      />
-                    </section>
-                  ))}
-                </div>
-              ) : (
-                <div className="wp-mfu-placeholder">
-                  <div className="wp-mfu-icon-frame">
-                    <Icon name="sparkles" size={32} />
-                  </div>
-                  <p className="wp-mfu-title">Run MFU Craft</p>
-                  <p className="wp-mfu-subtitle">
-                    Generate summary, decisions, action items, and open
-                    questions.
-                  </p>
-                </div>
-              )}
-            </aside>
-          )}
-        </section>
-      </div>
-
-      {renameTarget && (
-        <div className="modal-overlay">
-          <form
-            className="modal-panel confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Rename meeting"
-            onSubmit={handleRename}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") closeRename();
-            }}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Rename meeting</span>
-            </div>
-            <label htmlFor="meeting-label">Meeting label</label>
-            <input
-              id="meeting-label"
-              type="text"
-              value={renameDraft}
-              autoFocus
-              onFocus={(event) => event.currentTarget.select()}
-              onChange={(event) => {
-                setRenameDraft(event.target.value);
-                setRenameError(null);
-              }}
-              aria-invalid={renameError ? true : undefined}
-            />
-            {renameError && <p role="alert">{renameError}</p>}
-            <div className="confirm-actions">
-              <button
-                type="button"
-                className="modal-button"
-                onClick={closeRename}
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                className="modal-button modal-button--primary"
-              >
-                Save
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
-
-      {deleteTarget && (
-        <ConfirmDialog
-          label={`Delete ${deleteTarget.title}`}
-          title={`Delete ${deleteTarget.title}?`}
-          description="This permanently removes the meeting and its transcript."
-          confirmLabel="Delete"
-          destructive
-          onCancel={() => setDeleteTarget(null)}
-          onConfirm={() => void handleDelete()}
-        />
-      )}
-      {clearPending && activeMeeting && (
-        <ConfirmDialog
-          label="Clear meeting"
-          title="Clear meeting?"
-          description="The transcript and MFU will be permanently removed. The meeting and its source file will stay available."
-          confirmLabel="Clear meeting"
-          destructive
-          onCancel={() => setClearPending(false)}
-          onConfirm={() => void handleClear()}
-        />
-      )}
-      {diarizationWarning && (
-        <ConfirmDialog
-          label="Speaker identification issue"
-          title="Speaker identification issue"
-          description={diarizationWarning}
-          confirmLabel="OK"
-          destructive={false}
-          showCancel={false}
-          onCancel={() => setDiarizationWarning(null)}
-          onConfirm={() => setDiarizationWarning(null)}
-        />
-      )}
+      <MeetingDialogs
+        renameTarget={renameTarget}
+        renameDraft={renameDraft}
+        renameError={renameError}
+        onRenameDraftChange={(value) => {
+          setRenameDraft(value);
+          setRenameError(null);
+        }}
+        onRename={handleRename}
+        onCloseRename={closeRename}
+        deleteTarget={deleteTarget}
+        onDeleteCancel={() => setDeleteTarget(null)}
+        onDelete={handleDelete}
+        clearPending={clearPending}
+        activeMeeting={activeMeeting}
+        onClearCancel={() => setClearPending(false)}
+        onClear={handleClear}
+        diarizationWarning={diarizationWarning}
+        onDismissDiarizationWarning={() => setDiarizationWarning(null)}
+      />
     </div>
   );
 }

@@ -1,8 +1,6 @@
-// A two-segment control switching between the app's two top-level windows.
-// Each window is still its own top-level view (mirroring `pencil/main_view.pen`'s
-// separate "WhisperPilot Window" / "Streaming Window" frames) — this replaces
-// the header's old, separate "Streaming" icon button as the way to move
-// between them.
+// A three-segment control switches between the app's Transcription, Meeting,
+// and Recorder workspaces. Internal mode values retain their legacy names so
+// persisted settings and IPC contracts do not need a migration.
 
 export function ModeToggle({
   mode,
@@ -23,7 +21,7 @@ export function ModeToggle({
         aria-pressed={mode === "meeting"}
         onClick={onSelectMeeting}
       >
-        Meeting
+        Transcription
       </button>
       <button
         type="button"
@@ -31,7 +29,7 @@ export function ModeToggle({
         aria-pressed={mode === "streaming"}
         onClick={onSelectStreaming}
       >
-        Streaming
+        Meeting
       </button>
       <button
         type="button"

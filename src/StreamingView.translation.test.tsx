@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
+import { readCssBundle } from "./test/readCssBundle";
 import type {
   StreamingSession,
   StreamingSessionSummary,
@@ -276,11 +283,25 @@ function findTargetLanguageSelect() {
 async function startRunningSessionWithWindows(
   user: ReturnType<typeof userEvent.setup>,
   windows: StreamingWindow[],
+  engine: "local" | "cloud" = "local",
 ) {
+  if (engine === "cloud") {
+    vi.mocked(ipc.getCloudProviderConfig).mockResolvedValue({
+      selected_provider: "deepgram",
+      providers: [
+        { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: true },
+      ],
+    });
+  }
   vi.mocked(ipc.startStreamingSession).mockResolvedValue(ACTIVE_SESSION_A);
   render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
   const toggle = await findTranslationSwitch();
   await user.click(toggle);
+  if (engine === "cloud") {
+    await user.click(
+      screen.getByRole("button", { name: "Use cloud transcription" }),
+    );
+  }
   await user.click(await screen.findByRole("button", { name: "Start" }));
   liveCaptureRevision += 1;
   act(() => {
@@ -301,6 +322,13 @@ async function startRunningSessionWithWindows(
       windowHandler!({ ...w, session_id: 1 });
     }
   });
+}
+
+function startCloudStreamingSessionWithWindows(
+  user: ReturnType<typeof userEvent.setup>,
+  windows: StreamingWindow[],
+) {
+  return startRunningSessionWithWindows(user, windows, "cloud");
 }
 
 beforeEach(() => {
@@ -410,6 +438,40 @@ describe("StreamingView — Live Translation split grid", () => {
     expect(findTargetLanguageSelect()).not.toBeDisabled();
   });
 
+  it("locks paired-text selection to the source or target column where the drag starts", async () => {
+    const user = userEvent.setup();
+    await openSessionWithWindows(user, TWO_PARAGRAPHS);
+    await user.click(await findTranslationSwitch());
+    await screen.findByText(SOURCE_A);
+
+    const grid = document.querySelector(".wp-translation-grid");
+    const firstRowColumns = document
+      .querySelector(".wp-translation-row")
+      ?.querySelectorAll(":scope > .wp-translation-col");
+    expect(grid).not.toBeNull();
+    expect(firstRowColumns).toHaveLength(2);
+
+    fireEvent.pointerDown(firstRowColumns![0]);
+    expect(grid).toHaveAttribute("data-selection-column", "source");
+
+    fireEvent.pointerDown(firstRowColumns![1]);
+    expect(grid).toHaveAttribute("data-selection-column", "target");
+
+    const styles = readCssBundle();
+    for (const selected of ["source", "target"]) {
+      const lockRules = styles.match(
+        new RegExp(
+          `[^{}]*data-selection-column=["']${selected}["'][^{}]*\\{[^}]*user-select:\\s*none;[^}]*\\}`,
+          "gs",
+        ),
+      );
+      expect(
+        lockRules,
+        `${selected} must disable the opposite column`,
+      ).not.toBeNull();
+    }
+  });
+
   it("renders a live partial in the Original column while translation is enabled", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.translateStreamingWindow).mockReturnValue(
@@ -439,12 +501,52 @@ describe("StreamingView — Live Translation split grid", () => {
     );
     expect(columns[0]).toBe(originalColumn);
   });
+
+  it("keeps a failed decode unavailable on both sides without enqueuing translation", async () => {
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { language: "en", outcomeOk: false })[0],
+        session_id: 1,
+      });
+    });
+    await act(async () => flush());
+
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+    const row = document.querySelector(".wp-translation-row");
+    const columns = row?.querySelectorAll(":scope > .wp-translation-col");
+    expect(columns?.[0]?.textContent).toContain("[unavailable]");
+    expect(columns?.[1]?.textContent).toContain("[unavailable]");
+    expect(columns?.[1]?.textContent).not.toMatch(/Pending|Translating/);
+  });
 });
 
 describe("StreamingView — provisional Live Translation", () => {
+  it("does not send a local Whisper/Qwen partial to the LLM and keeps the finalization wait stable", async () => {
+    const user = userEvent.setup();
+    previewStreamingTranslationMock.mockReturnValue(new Promise(() => {}));
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Local decoder hypothesis",
+      });
+    });
+
+    expect(previewStreamingTranslationMock).not.toHaveBeenCalled();
+    const row = document.querySelector(".wp-translation-row--partial");
+    expect(row?.textContent).toContain("Waiting for final transcript…");
+    expect(row?.textContent).not.toContain("Translating…");
+  });
+
   it("keeps the whole source hypothesis italic until a committed window replaces it", async () => {
     const user = userEvent.setup();
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -475,7 +577,7 @@ describe("StreamingView — provisional Live Translation", () => {
   it("renders a translated partial as italic preview in the right column", async () => {
     const user = userEvent.setup();
     previewStreamingTranslationMock.mockResolvedValue("Черновой перевод.");
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -513,7 +615,7 @@ describe("StreamingView — provisional Live Translation", () => {
       .mockReturnValueOnce(first.promise)
       .mockResolvedValueOnce("Latest draft.");
     const user = userEvent.setup();
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -552,7 +654,7 @@ describe("StreamingView — provisional Live Translation", () => {
       .mockReturnValueOnce(first.promise)
       .mockReturnValueOnce(second.promise);
     const user = userEvent.setup();
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -585,7 +687,7 @@ describe("StreamingView — provisional Live Translation", () => {
       "Final committed translation.",
     );
     const user = userEvent.setup();
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -625,7 +727,7 @@ describe("StreamingView — provisional Live Translation", () => {
       "Committed translation A.",
     );
     const user = userEvent.setup();
-    await startRunningSessionWithWindows(user, []);
+    await startCloudStreamingSessionWithWindows(user, []);
     await waitFor(() => expect(partialHandler).not.toBeNull());
 
     act(() => {
@@ -1421,7 +1523,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     await user.click(
-      await screen.findByRole("button", { name: "New streaming session" }),
+      await screen.findByRole("button", { name: "New meeting" }),
     );
 
     const toggle = await findTranslationSwitch();
@@ -1478,7 +1580,8 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
     );
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    await user.click(await screen.findByText("Standup"));
+    // The first persisted session opens automatically once capture lifecycle
+    // state is hydrated; do not click it again and create a duplicate open.
     await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Cached W1.");
     expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
 

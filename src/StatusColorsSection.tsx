@@ -113,6 +113,8 @@ export function StatusColorsSection({
     if (!openKey && !confirmReset) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
       closePicker();
       setConfirmReset(false);
     }

@@ -64,6 +64,7 @@ current task.
 
 ## Deterministic checks
 
-Run `npm run lint:ai-instructions` after changing the active landscape. Active instruction files must have at most 100
-lines and 120 characters per line. Product commits use the version workflow in `scripts/bump-version.sh`.
-AI-landscape-only commits do not change the product version.
+Run `npm run lint:ai-instructions` after changing the active landscape. Run `npm run lint:source-size` after
+structural changes; production source and documentation modules have enforced size limits. Active instruction files
+must have at most 100 lines and 120 characters per line. Product commits use the version workflow in
+`scripts/bump-version.sh`. AI-landscape-only commits do not change the product version.

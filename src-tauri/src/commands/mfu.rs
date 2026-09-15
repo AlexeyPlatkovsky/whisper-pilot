@@ -48,12 +48,12 @@ pub(crate) async fn generate_mfu(
     let store = store::Store::open(&app_support_dir)?;
     let _meeting = store
         .get_meeting(id)?
-        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+        .ok_or_else(|| AppError::Store(format!("transcription {id} was not found")))?;
 
     let segments = store.list_segments(id)?;
     if segments.is_empty() {
         return Err(AppError::Llm(
-            "meeting has no transcript to summarize".into(),
+            "transcription has no transcript to summarize".into(),
         ));
     }
 
@@ -309,7 +309,7 @@ pub(crate) async fn preview_streaming_translation(
     }
     if text.trim().is_empty() {
         return Err(AppError::Llm(
-            "cannot translate an empty Streaming preview".into(),
+            "cannot translate an empty Meeting preview".into(),
         ));
     }
     let app_support_dir = app_data_dir(&app)?;

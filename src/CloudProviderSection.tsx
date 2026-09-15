@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getCloudProviderConfig,
   removeCloudProviderApiKey,
@@ -47,13 +47,13 @@ export function CloudProviderSection({ locked = false }: { locked?: boolean }) {
     };
   }, []);
 
-  function closeSheet() {
+  const closeSheet = useCallback(() => {
     setEditingProvider(null);
     setApiKey("");
     setSheetError(null);
     setVerified(false);
     openerRef.current?.focus();
-  }
+  }, []);
 
   useEffect(() => {
     if (!editingProvider) return;
@@ -62,7 +62,13 @@ export function CloudProviderSection({ locked = false }: { locked?: boolean }) {
 
   useEffect(() => {
     if (!editingProvider) return;
-    function trapSheetFocus(event: KeyboardEvent) {
+    function trapSheetKeyboard(event: KeyboardEvent) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!busy) closeSheet();
+        return;
+      }
       if (event.key !== "Tab" || !sheetRef.current) return;
       const focusable = Array.from(
         sheetRef.current.querySelectorAll<HTMLElement>("button, input"),
@@ -82,17 +88,9 @@ export function CloudProviderSection({ locked = false }: { locked?: boolean }) {
         first.focus();
       }
     }
-    window.addEventListener("keydown", trapSheetFocus, true);
-    return () => window.removeEventListener("keydown", trapSheetFocus, true);
-  }, [editingProvider]);
-
-  function handleSheetKeyDown(event: React.KeyboardEvent<HTMLFormElement>) {
-    if (event.key === "Escape" && !busy) {
-      event.preventDefault();
-      event.stopPropagation();
-      closeSheet();
-    }
-  }
+    window.addEventListener("keydown", trapSheetKeyboard, true);
+    return () => window.removeEventListener("keydown", trapSheetKeyboard, true);
+  }, [busy, closeSheet, editingProvider]);
 
   async function handleProviderSelect(provider: CloudProviderId) {
     if (
@@ -184,12 +182,12 @@ export function CloudProviderSection({ locked = false }: { locked?: boolean }) {
       <div className="section-header">
         <h4 className="section-title">Cloud transcription</h4>
         <p className="section-subtitle">
-          Select the provider used for new Cloud streaming sessions.
+          Select the provider used for new Cloud meetings.
         </p>
       </div>
       {locked && (
         <p className="cloud-provider-lock-note" role="status">
-          Cloud provider settings are locked while streaming is live.
+          Cloud provider settings are locked while a meeting is live.
         </p>
       )}
       <ul
@@ -251,7 +249,6 @@ export function CloudProviderSection({ locked = false }: { locked?: boolean }) {
             role="dialog"
             aria-modal="true"
             aria-label={`Manage ${editingStatus.name} API key`}
-            onKeyDown={handleSheetKeyDown}
             onSubmit={(event) => void handleSave(event)}
           >
             <div className="modal-header">

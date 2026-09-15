@@ -33,14 +33,14 @@ fingerprint. Resolution uses stable IDs and rejects unknown, incomplete, or
 unsupported bundles before capture.
 
 `active_model.transcription` is the only persisted ASR selection. It controls
-future Meeting, local Streaming, and Recorder work. Existing installs without a
+future Transcription, local Meeting, and Recorder work. Existing installs without a
 selection use Whisper, and persisted IDs no longer present in the catalog
 normalize to Whisper. A selected engine is copied into each Recorder session so
 historical provenance remains immutable.
 
 Whisper remains the default. Qwen3-ASR 1.7B Q8_0 is the only optional Qwen ASR
 and runs in-process through the existing `llama.cpp` backend with its MTMD audio
-projector. Meeting uses app-controlled 30-second windows; Streaming and Recorder
+projector. Transcription uses app-controlled 30-second windows; Meeting and Recorder
 use bounded live windows. The model protocol prefix becomes detected-language
 metadata and is never shown as transcript text. Because the runtime does not
 provide model timestamps, WhisperPilot assigns each result its capture or file
@@ -49,9 +49,13 @@ window span rather than presenting word timing.
 The GGUF bundle pins ggml-org revision
 `36a678687ba7d07a74ca70ccb0e36902e005fb80` and consists of
 `Qwen3-ASR-1.7B-Q8_0.gguf` plus
-`mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`. Both files must pass catalog byte-size and
-SHA-256 checks. Text LLM and GGUF-ASR models share one process-wide `llama.cpp`
-backend while retaining separate model and inference-context caches.
+`mmproj-Qwen3-ASR-1.7B-Q8_0.gguf`. Download completion requires catalog byte-size
+and SHA-256 verification before the temporary asset is promoted. Runtime
+readiness checks presence and expected byte size; cache identity additionally
+uses the catalog hash and a bounded content fingerprint, avoiding a full
+multi-gigabyte rehash before every inference. Text LLM and GGUF-ASR models share
+one process-wide `llama.cpp` backend while retaining separate model and
+inference-context caches.
 
 The former Qwen3-ASR 0.6B catalog entry, pure-Rust `qwen-asr` runtime,
 Recorder-specific model setting, and Recorder language setting are removed.
@@ -60,8 +64,8 @@ report, not a shipped runtime or selectable model.
 
 Fallback is explicit. A missing or unloadable selected bundle prevents Start
 and points the user to model settings; it never silently starts Whisper under
-the same session. ASR bundle deletion is blocked while Meeting transcription,
-Streaming, or Recorder owns transcription resources. When idle, deleting the
+the same session. ASR bundle deletion is blocked while Transcription, Meeting,
+or Recorder owns transcription resources. When idle, deleting the
 selected Qwen bundle first resets the shared selection to Whisper and retains
 that safe selection if a multi-file removal fails.
 

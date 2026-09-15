@@ -1,0 +1,499 @@
+/* ==========================================================================
+   Meeting info bar
+   ========================================================================== */
+.wp-info-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--wp-info-bar-height);
+  padding: 0 var(--wp-space-lg);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.wp-info-left,
+.wp-info-right {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+}
+
+.wp-info-left {
+  gap: 8px;
+}
+
+.wp-info-right {
+  gap: var(--wp-space-lg);
+}
+
+.wp-info-add:hover:not(:disabled) {
+  color: var(--accent);
+}
+
+.wp-info-label {
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-info-muted {
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-info-warning {
+  font-size: var(--wp-font-size-sm);
+  color: var(--tone-error);
+}
+
+.wp-file-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  height: 26px;
+  padding: 0 8px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-xs);
+  font-size: var(--wp-font-size-sm);
+  color: var(--text-secondary);
+}
+
+.wp-info-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  font-size: var(--wp-font-size-sm);
+  color: var(--text-secondary);
+}
+
+.wp-info-meta svg {
+  color: var(--muted);
+}
+
+/* ==========================================================================
+   Main content: sidebar + workspace
+   ========================================================================== */
+.wp-main {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.wp-sidebar {
+  flex: 0 0 var(--wp-sidebar-width);
+  /* `min-width: 0` is the load-bearing line for the fixed rail. A flex item's
+     automatic minimum size is its *content's* min-content width — here the
+     full nowrap meeting title — and that overrides `flex-basis`, so one long
+     name used to push the whole sidebar past 300px. Zeroing it re-pins the
+     column and pushes the clipping down to .wp-meeting-title, whose
+     text-overflow could never engage while nothing above it was constrained.
+     max-width is a belt-and-braces guard against a future grow/shrink edit. */
+  min-width: 0;
+  max-width: var(--wp-sidebar-width);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-sm);
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+  min-height: 0;
+}
+
+.wp-mode-toggle {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 36px;
+  padding: 3px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+  flex: 0 0 auto;
+}
+
+.wp-mode-toggle-segment {
+  flex: 1;
+  height: 100%;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.wp-mode-toggle-segment.is-active {
+  background: var(--panel);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.recorder-transcript {
+  gap: 2px;
+}
+
+.recorder-segment-text {
+  border-radius: 3px;
+  color: var(--text);
+  outline: none;
+}
+
+.recorder-segment-text:focus {
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.wp-streaming-partial-stable {
+  color: var(--text);
+  font-style: normal;
+}
+
+.wp-streaming-partial-unstable {
+  color: var(--text-secondary);
+  font-style: italic;
+  opacity: 0.8;
+}
+
+.wp-streaming-partial {
+  margin: 0;
+  line-height: 1.55;
+}
+
+.wp-streaming-partial--translation {
+  color: var(--text-secondary);
+  opacity: 0.8;
+}
+
+.recorder-info-left {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.recorder-audio-tools {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  min-width: 0;
+  height: 28px;
+}
+
+.recorder-audio {
+  display: block;
+}
+
+.wp-audio-player--header {
+  width: clamp(180px, 28vw, 340px);
+  min-width: 0;
+  height: 28px;
+}
+
+.recorder-wav-export {
+  flex: 0 0 auto;
+}
+
+.recorder-caption {
+  min-height: 100vh;
+  box-sizing: border-box;
+  border: 2px solid var(--success);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  color: var(--text);
+  padding: 14px 18px;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.recorder-caption__status {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+
+.recorder-caption__status span {
+  margin-left: auto;
+  color: var(--muted);
+}
+
+.bubble-document {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent !important;
+}
+
+.wp-logo-button {
+  display: grid;
+  padding: 0;
+  color: inherit;
+  background: none;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  place-items: center;
+}
+
+.wp-logo-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.recorder-bubble-shell {
+  display: grid;
+  width: 120px;
+  height: 120px;
+  place-items: center;
+  background: transparent;
+}
+
+.recorder-bubble {
+  position: relative;
+  display: grid;
+  width: 112px;
+  height: 112px;
+  padding: 0;
+  place-items: center;
+  color: var(--text);
+  background: var(--panel);
+  background: color-mix(in srgb, var(--panel) 94%, transparent);
+  border: 0;
+  border-radius: 50%;
+  box-shadow: 0 12px 34px rgb(0 0 0 / 32%);
+  cursor: grab;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.recorder-bubble:active {
+  cursor: grabbing;
+  transform: scale(0.98);
+}
+
+.recorder-bubble:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: -8px;
+}
+
+.recorder-bubble__ring {
+  position: absolute;
+  inset: 2px;
+  border: 7px solid #d2a52b;
+  border-radius: 50%;
+}
+
+.recorder-bubble--listening .recorder-bubble__ring {
+  border-color: #26a269;
+  box-shadow: 0 0 0 4px rgb(38 162 105 / 18%);
+  animation: bubble-listening 1.5s ease-in-out infinite;
+}
+
+.recorder-bubble--error .recorder-bubble__ring {
+  border-color: #d13c3c;
+}
+
+.recorder-bubble__state {
+  position: absolute;
+  right: 12px;
+  bottom: 10px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  color: white;
+  background: #2c313a;
+  border: 2px solid white;
+  border-radius: 50%;
+  place-items: center;
+}
+
+@keyframes bubble-listening {
+  50% {
+    opacity: 0.55;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recorder-bubble--listening .recorder-bubble__ring {
+    animation: none;
+  }
+}
+
+.recorder-caption p {
+  margin: 10px 0 0;
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  line-height: 1.45;
+}
+
+.recorder-caption em {
+  color: var(--text-secondary);
+}
+
+.wp-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 10px;
+  background: var(--bg);
+  border-radius: var(--wp-radius-sm);
+  color: var(--muted);
+}
+
+.wp-search-input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: var(--wp-font-size-body);
+  outline: none;
+}
+
+.wp-search-input::placeholder {
+  color: var(--muted);
+}
+
+.wp-meeting-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow-y: auto;
+  /* Never scroll sideways: an over-long row must clip, not widen the rail. */
+  overflow-x: hidden;
+  min-height: 0;
+  /* Native <ul>/<li> carry the list semantics; strip the default marker and
+     block spacing so the rows lay out exactly as before. */
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.wp-meeting-row {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  /* Trimmed on the right so the action icons sit close to the rail edge. */
+  padding: 10px var(--wp-space-xs) 10px 10px;
+  border-radius: var(--wp-radius-sm);
+  background: transparent;
+  color: inherit;
+  text-align: left;
+}
+
+.wp-meeting-open {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The trailing control slot. Its width is fixed at the two-button size so the
+   row does not reflow when the spinner takes their place mid-run. */
+.wp-meeting-actions {
+  /* One button's box, and the gap between the pair — tight enough that the two
+     icons read as one group. Both sizes live here so the reserved slot below
+     stays correct if either changes. */
+  --wp-row-action: 22px;
+  --wp-row-action-gap: 2px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  gap: var(--wp-row-action-gap);
+  min-width: calc(2 * var(--wp-row-action) + var(--wp-row-action-gap));
+}
+
+.wp-meeting-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--wp-row-action);
+  height: var(--wp-row-action);
+  padding: 0;
+  border: 0;
+  border-radius: var(--wp-radius-sm);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.wp-meeting-row.is-selected {
+  background: var(--selected);
+}
+
+.wp-meeting-row:not(.is-selected):hover {
+  background: var(--bg);
+}
+
+.wp-meeting-dot {
+  flex: 0 0 auto;
+  /* The dot is the row's only status surface, so its tooltip has to be
+     catchable: 6px of padding widens the hover target to 20px, and the
+     negative margin hands that padding back to the layout so the row keeps
+     the 8px footprint it always had.
+     These numbers are border-box (see the `*` reset above): 20px outer minus
+     2x6px padding leaves the painted 8px content box. */
+  width: 20px;
+  height: 20px;
+  padding: 6px;
+  margin: -6px;
+  border-radius: 50%;
+  /* Filled from the --tone set by the .wp-tone--* class it carries, so the dot
+     and the header's status label are literally the same colour value. Reading
+     the custom property rather than `currentColor` keeps this independent of
+     where the rule sits relative to the tone classes. */
+  background: var(--tone, var(--tone-unknown));
+  /* Must stay AFTER the `background` shorthand, which resets every background
+     longhand it does not mention. Clips the paint to the 8px content box; the
+     border-radius follows, 10px at the border edge less 6px of padding = 4px,
+     which is still a full circle on an 8px box. */
+  background-clip: content-box;
+}
+
+.wp-meeting-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+}
+
+.wp-meeting-title {
+  font-size: var(--wp-font-size-body);
+  font-weight: 500;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wp-meeting-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  font-size: var(--wp-font-size-xs);
+  color: var(--muted);
+}
+
+/* Matches one action button, so the fixed-width action slot around it keeps the
+   row from reflowing when a transcription starts or ends. */
+.wp-meeting-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  /* Falls back in case this ever renders outside .wp-meeting-actions, which is
+     where the custom property is declared. */
+  width: var(--wp-row-action, 22px);
+  height: var(--wp-row-action, 22px);
+}
+

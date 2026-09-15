@@ -1,0 +1,643 @@
+/* ==========================================================================
+   Settings screen (unchanged structure; consumes the same semantic vars)
+   ========================================================================== */
+.settings-screen {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px var(--wp-space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: var(--wp-font-size-lg);
+  font-weight: 600;
+}
+
+.settings-body {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.settings-nav {
+  flex: 0 0 200px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-right: 1px solid var(--border);
+  padding: var(--wp-space-md) 12px;
+  background: var(--panel);
+}
+
+.settings-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  margin-bottom: var(--wp-space-xs);
+}
+
+.settings-brand-name {
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-nav button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  border: none;
+  border-radius: var(--wp-radius-xs);
+  padding: 8px 10px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: var(--wp-font-size-body);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.settings-nav button svg {
+  color: var(--text-secondary);
+  flex: 0 0 auto;
+}
+
+.settings-nav button:hover:not(:disabled) {
+  background: var(--bg);
+}
+
+.settings-nav button.active {
+  background: var(--selected);
+  color: var(--text);
+}
+
+.settings-nav button.active svg {
+  color: var(--accent);
+}
+
+.settings-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--wp-space-xl) 40px;
+  color: var(--muted);
+}
+
+.settings-tab-title {
+  margin: 0 0 var(--wp-space-xl);
+  font-size: var(--wp-font-size-h2);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.settings-section-intro {
+  margin: calc(-1 * var(--wp-space-md)) 0 var(--wp-space-lg);
+  color: var(--muted);
+}
+
+.cloud-provider-section {
+  max-width: 640px;
+}
+
+.cloud-provider-list {
+  width: 100%;
+}
+
+.cloud-provider-row {
+  min-width: 0;
+}
+
+.cloud-provider-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.cloud-provider-choice input {
+  margin: 0;
+}
+
+.cloud-provider-lock-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--success);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 600;
+}
+
+.cloud-provider-security-note {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-xs);
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-sheet {
+  width: min(368px, calc(100vw - 32px));
+  gap: var(--wp-space-sm);
+  padding: var(--wp-space-md);
+}
+
+.cloud-key-sheet-title {
+  margin: 0;
+  color: var(--text);
+  font-size: var(--wp-font-size-body);
+  font-weight: 600;
+}
+
+.cloud-key-sheet-copy,
+.cloud-key-error {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.cloud-key-error {
+  color: var(--error);
+}
+
+.cloud-key-sheet-caution {
+  margin: 0;
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+  line-height: 1.45;
+}
+
+.cloud-key-verified {
+  margin: 0;
+}
+
+.cloud-key-label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xs);
+  color: var(--text);
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+}
+
+.cloud-key-label input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 6px var(--wp-space-sm);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+}
+
+.cloud-key-sheet-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  flex-wrap: nowrap;
+}
+
+.cloud-key-sheet-spacer {
+  flex: 1;
+}
+
+.settings-content .cloud-key-remove {
+  color: var(--error);
+}
+
+.model-sections {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-xl);
+}
+
+.model-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+}
+
+.section-header {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.section-title {
+  margin: 0;
+  font-size: var(--wp-font-size-xl);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.section-subtitle {
+  margin: 0;
+  font-size: var(--wp-font-size-body);
+  color: var(--muted);
+}
+
+.model-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  background: var(--panel);
+  border-radius: var(--wp-radius-sm);
+  overflow: hidden;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  padding: 0 var(--wp-space-md);
+  height: 44px;
+  border-bottom: 1px solid var(--border);
+}
+
+.model-row:last-child {
+  border-bottom: none;
+}
+
+.model-label {
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  font-weight: 500;
+}
+
+.model-row-spacer {
+  flex: 1;
+}
+
+.model-size {
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+}
+
+.model-row-status {
+  color: var(--muted);
+  font-size: var(--wp-font-size-sm);
+  font-variant-numeric: tabular-nums;
+}
+
+.model-icon-slot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+}
+
+.model-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  font-size: var(--wp-font-size-sm);
+}
+
+.model-status--ready {
+  color: var(--success);
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.model-row-error {
+  color: var(--error);
+  font-size: var(--wp-font-size-sm);
+}
+
+.model-row input[type="radio"] {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--wp-speaker-0);
+}
+
+.model-badge {
+  margin-left: var(--wp-space-sm);
+  padding: 1px 6px;
+  border-radius: var(--wp-radius-sm);
+  border: 1px solid var(--accent);
+  color: var(--text);
+  font-size: var(--wp-font-size-xs, 0.75rem);
+  font-weight: 600;
+  vertical-align: middle;
+}
+
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Higher specificity than the generic ".settings-content button" rule below,
+   so these row icon buttons keep a borderless, fixed-size footprint that
+   never shifts as a row toggles between download/checkmark/disabled-delete. */
+.settings-content .model-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.settings-content .model-icon-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.settings-content .model-icon-btn--accent {
+  color: var(--accent);
+}
+
+.settings-content .model-icon-btn--danger {
+  color: var(--error);
+}
+
+.settings-content .model-icon-btn:disabled {
+  color: var(--border);
+  cursor: default;
+}
+
+/* The Keychain Save action is intentionally disabled until Verify succeeds.
+   Keep that state clearly visible in both themes instead of reducing the icon
+   to the border colour, while the lack of hover and default cursor still make
+   its unavailable state unambiguous. */
+.settings-content .cloud-key-save--awaiting-verification:disabled {
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--border));
+  border-radius: var(--wp-radius-xs);
+  background: color-mix(in srgb, var(--accent) 12%, var(--panel));
+  color: color-mix(in srgb, var(--accent) 68%, var(--text-secondary));
+  opacity: 1;
+}
+
+.settings-radio-group {
+  border: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-radio-group legend {
+  font-weight: 600;
+  margin-bottom: var(--wp-space-xs);
+  padding: 0;
+}
+
+.settings-radio-group label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text);
+}
+
+/* ==========================================================================
+   Settings → Appearance → Status Colors (WP-88). Mirrors the pencil frame
+   "Settings Appearance — Status Colors": a header row with the Reset-all
+   action, then a card listing one row per status in two columns.
+   ========================================================================== */
+.wp-status-colors {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wp-space-sm);
+  margin-top: var(--wp-space-xl);
+}
+
+.wp-status-colors-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--wp-space-md);
+}
+
+.wp-status-colors-title {
+  margin: 0;
+  font-size: var(--wp-font-size-md);
+  font-weight: 600;
+  color: var(--text);
+}
+
+.wp-status-colors-description {
+  margin: 2px 0 0;
+  font-size: var(--wp-font-size-sm);
+  color: var(--muted);
+}
+
+.wp-status-colors-reset {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  color: var(--text-secondary) !important;
+  font-size: var(--wp-font-size-body) !important;
+  font-weight: 500;
+}
+
+.wp-status-color-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: var(--panel);
+  border-radius: var(--wp-radius-sm);
+  overflow: hidden;
+}
+
+.wp-status-color-column {
+  display: flex;
+  flex-direction: column;
+}
+
+.wp-status-color-column .wp-status-color-row + .wp-status-color-row {
+  border-top: 1px solid var(--border);
+}
+
+.wp-status-color-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  height: 36px;
+  padding: 0 var(--wp-space-md);
+}
+
+/* The row's main hit target opens the picker popover; it is styled as plain
+   content, not as one of the settings screen's bordered buttons. */
+.wp-status-color-pick {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: var(--wp-space-sm);
+  min-width: 0;
+  padding: 0 !important;
+  border: none !important;
+  background: none !important;
+  font: inherit;
+  cursor: pointer;
+}
+
+.wp-status-color-name {
+  font-size: var(--wp-font-size-md);
+  font-weight: 500;
+}
+
+.wp-status-color-spacer {
+  flex: 1;
+}
+
+.wp-status-color-swatch {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px #0000001f;
+}
+
+.wp-status-color-hex {
+  width: 76px;
+  text-align: right;
+  font-size: var(--wp-font-size-sm);
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+
+/* Fixed-size slot: the row's dimensions stay identical whether or not the
+   revert icon is shown (WP-88 DoD). */
+.wp-status-color-revert-slot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+}
+
+.wp-status-color-revert {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px !important;
+  border: none !important;
+  background: none !important;
+  color: var(--muted) !important;
+  cursor: pointer;
+}
+
+.wp-status-color-popover {
+  position: absolute;
+  top: 38px;
+  right: var(--wp-space-md);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 232px;
+  padding: var(--wp-space-sm);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  box-shadow: 0 12px 32px color-mix(in srgb, #0a2e3d 12%, transparent);
+}
+
+.wp-status-color-popover-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wp-status-color-popover-inputs input[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--wp-space-xs);
+  background: none;
+  cursor: pointer;
+}
+
+.wp-status-color-popover-inputs input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  font-size: var(--wp-font-size-body);
+}
+
+.wp-status-color-warning {
+  margin: 0;
+  font-size: var(--wp-font-size-sm);
+  color: var(--accent);
+}
+
+.wp-status-color-popover-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Buttons inside the settings screen keep a conventional bordered look. */
+.settings-content button:not(.modal-button):not(.model-icon-btn),
+.settings-header button {
+  padding: 8px var(--wp-space-md);
+  border: 1px solid var(--border);
+  border-radius: var(--wp-radius-sm);
+  background: var(--panel);
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  cursor: pointer;
+}
+
+.settings-content
+  button:not(.modal-button):not(.model-icon-btn):hover:not(:disabled),
+.settings-header button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.settings-content button:not(.modal-button):not(.model-icon-btn):disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.settings-content button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+

@@ -13,6 +13,8 @@ export type IconName =
   | "square"
   | "sparkles"
   | "download"
+  | "file-wav"
+  | "eraser"
   | "trash-2"
   | "pencil"
   | "globe"
@@ -86,6 +88,23 @@ const PATHS: Record<IconName, ReactElement> = {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M7 10l5 5 5-5" />
       <path d="M12 15V3" />
+    </>
+  ),
+  "file-wav": (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 2v6h6" />
+      <path
+        d="m6.25 13 .75 5 1-3 1 3 .75-5m1 5 1.25-5 1.25 5m-2-1.5h1.5m1.25-3.5 1.25 5 1.25-5"
+        strokeWidth="1.35"
+      />
+    </>
+  ),
+  eraser: (
+    <>
+      <path d="m7 21-4-4a2.5 2.5 0 0 1 0-3.5L13.5 3a2.5 2.5 0 0 1 3.5 0l4 4a2.5 2.5 0 0 1 0 3.5L10.5 21Z" />
+      <path d="m5 11.5 7.5 7.5" />
+      <path d="M22 21H7" />
     </>
   ),
   "trash-2": (
@@ -258,6 +277,7 @@ export function Icon({
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
+      data-icon={name}
     >
       {PATHS[name]}
     </svg>

@@ -70,8 +70,10 @@ pub(crate) async fn set_setting(
         }
         ensure_asr_selection_is_downloaded(&dir, &value)?;
         let updated = settings::set_setting(&dir, &key, &value)?;
-        #[cfg(target_os = "macos")]
-        state.clear_qwen_asr_model().await;
+        // A later switch back must load the selected runtime afresh. Retaining
+        // the previously selected Whisper/Qwen weights wastes several GB and
+        // makes model-selection memory behaviour depend on switch direction.
+        state.clear_asr_model_caches().await;
         Ok(updated)
     } else {
         settings::set_setting(&dir, &key, &value)

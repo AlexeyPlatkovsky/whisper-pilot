@@ -236,7 +236,7 @@ describe("StreamingView — MFU panel toggle", () => {
     expect(document.querySelector("aside.wp-mfu")).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(
-      await screen.findByText("Start a session, or open one from the list."),
+      await screen.findByText("Start a meeting, or open one from the list."),
     ).toBeInTheDocument();
   });
 

@@ -1,4 +1,4 @@
-# ADR-009: Structured meeting MFU (full set), editable
+# ADR-009: Structured MFU (full set), editable
 
 - **Status:** accepted
 - **Date:** 2026-07-21
@@ -12,7 +12,7 @@ is less useful than an actionable follow-up.
 
 ## Decision
 
-Generate **structured meeting MFU** (not a free-form blurb), in **Russian**, with
+Generate **structured MFU** (not a free-form blurb), in **Russian**, with
 a fixed section set:
 
 - **Summary** — brief gist.

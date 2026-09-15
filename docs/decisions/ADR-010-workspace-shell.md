@@ -1,4 +1,4 @@
-# ADR-010: Two-pane meeting workspace shell with manual Transcribe/MFU triggers
+# ADR-010: Two-pane Transcription workspace shell with manual Transcribe/MFU triggers
 
 - **Status:** accepted
 - **Date:** 2026-07-21
@@ -8,7 +8,7 @@
 
 M1 was a single-screen, wizard-like flow: pick a file and it transcribes
 immediately, with nothing kept. With the library (ADR-008) the app needs a
-durable home for many meetings and a predictable place to run the two long,
+durable home for many transcriptions and a predictable place to run the two long,
 GPU-heavy operations (transcription and MFU generation) without the UI acting on
 its own. We also needed to settle the product's core noun and what the transcript
 area shows now that diarization (F002) is part of M2.
@@ -17,21 +17,22 @@ area shows now that diarization (F002) is part of M2.
 
 Adopt a **persistent two-pane shell**, mirroring VoicePilot's Sessions layout:
 
-- **Left pane** — a **Meetings** list with `+ New meeting`, per-row rename
+- **Left pane** — a **Transcriptions** list with `+ New transcription`, per-row rename
   (modal, ≤120 chars, non-empty) and delete (confirmation). The pane is
   collapsible via a header **toggle** placed immediately after the macOS traffic
   lights; the collapsed state persists across restarts.
-- **Right pane** — the active meeting: a header (meeting label with
+- **Right pane** — the active item: a header (Transcription title with
   edit/copy/delete, model switcher, Transcribe, Create MFU), a **status
   bar**, the transcript, and the **MFU section** beneath it. (The language
   selector listed here originally was withdrawn by ADR-012.)
-- **"Meeting"** is the single product noun — UI copy, data model, and IPC all use
-  it (supersedes "document"; see ADR-008 wording).
+- **"Transcription"** is the user-facing noun for this full-file workspace.
+  Existing data and IPC identifiers retain the legacy `Meeting` name to avoid a
+  migration. Live system-audio capture is now the user-facing **Meeting** mode.
 - **Manual, explicit, UI-blocking operations.** Transcription runs only on
   **Transcribe** and currently runs to completion; MFU is generated only on **Create MFU**
   (enabled after transcription finishes) and cannot be cancelled. While either
   runs, the UI is blocked and an indeterminate spinner with a live 1-second timer
-  is shown. Safe Meeting cancellation is deferred to WP-87's isolated worker.
+  is shown. Safe Transcription cancellation is deferred to WP-87's isolated worker.
 - **Transcript rendering.** The transcript renders as a per-speaker chat of
   **colored bubbles** (10 predefined shades) from **M2**, since diarization
   (F002) is now part of M2. F004 owns the editable segment surface; F002 owns the

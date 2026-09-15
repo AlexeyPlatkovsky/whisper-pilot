@@ -217,6 +217,18 @@ describe("renderStreamingPaired", () => {
     expect(TRANSLATION_FAILED_PLACEHOLDER).not.toBe(TRANSLATION_PLACEHOLDER);
   });
 
+  it("exports a failed ASR window as unavailable on both paired sides", () => {
+    const paragraphs = [[win(0, "ignored", { outcomeOk: false })]];
+
+    const text = renderStreamingPaired(paragraphs, new Map(), "en");
+
+    expect(text).toBe(
+      ["Original:", "[unavailable]", "", "English:", "[unavailable]"].join(
+        "\n",
+      ),
+    );
+  });
+
   // A mirrored window is not a failure at all: its own language already
   // matches the target, so no model call was made by design and the
   // on-screen right cell shows the window's own text in a muted style.

@@ -15,6 +15,9 @@ Required input:
 Review observable correctness, error paths, state cleanup, concurrency, IPC consistency,
 data safety, and coverage at the lowest useful boundary. Load only relevant project
 documentation and conventions. Distinguish defects from optional improvements.
+Report structural growth separately: flag duplicated responsibilities, a production module at 750+ lines,
+a test module at 1,750+ lines, or a test matrix that has become difficult to navigate. Require a clear
+ownership boundary before accepting a split or a new large module; block growth past the source-size gate.
 
 Return findings first, ordered Blocking, Major, Minor. Each finding needs an absolute path,
 line, user impact, evidence, and smallest safe correction. Then report test gaps and

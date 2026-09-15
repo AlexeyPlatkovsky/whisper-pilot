@@ -7,9 +7,11 @@ use crate::error::{AppError, Result};
 #[cfg(target_os = "macos")]
 use std::collections::VecDeque;
 #[cfg(target_os = "macos")]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "macos")]
 use std::sync::mpsc::{SyncSender, TrySendError};
 #[cfg(target_os = "macos")]
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, TryLockError};
 #[cfg(target_os = "macos")]
 use std::time::Duration;
 
@@ -39,6 +41,17 @@ pub enum QueueSendOutcome {
     Sent,
     DroppedNewest,
     Disconnected,
+}
+
+/// Result of the deliberately non-blocking callback-side staging operation.
+/// A dropped block is preferable to holding up ScreenCaptureKit's audio
+/// callback and producing an unobservable loss later in the pipeline.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativePushOutcome {
+    Stored,
+    DroppedNewest,
+    Contended,
 }
 
 #[cfg(target_os = "macos")]
@@ -82,26 +95,42 @@ pub fn system_audio_capture_spec(sample_rate: u32) -> Result<StreamingCaptureSpe
 struct NativeSampleBuffer {
     samples: VecDeque<f32>,
     start_sample: u64,
-    next_sample: u64,
 }
 
 #[cfg(target_os = "macos")]
-type SharedBuffer = Arc<Mutex<NativeSampleBuffer>>;
+struct SharedNativeBuffer {
+    buffer: Mutex<NativeSampleBuffer>,
+    /// Incremented before attempting the callback-side lock. Therefore a
+    /// contended callback block still becomes an explicit downstream gap.
+    next_sample: AtomicU64,
+    dropped_callback_blocks: AtomicU64,
+}
+
+#[cfg(target_os = "macos")]
+type SharedBuffer = Arc<SharedNativeBuffer>;
 
 #[cfg(target_os = "macos")]
 fn new_shared_buffer() -> SharedBuffer {
-    Arc::new(Mutex::new(NativeSampleBuffer {
-        samples: VecDeque::new(),
-        start_sample: 0,
-        next_sample: 0,
-    }))
+    Arc::new(SharedNativeBuffer {
+        buffer: Mutex::new(NativeSampleBuffer {
+            // Allocate before ScreenCaptureKit starts. The audio callback
+            // must not trigger a VecDeque growth allocation.
+            samples: VecDeque::with_capacity(NATIVE_SAMPLE_BUFFER_CAPACITY),
+            start_sample: 0,
+        }),
+        next_sample: AtomicU64::new(0),
+        dropped_callback_blocks: AtomicU64::new(0),
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn drain(buf: &SharedBuffer) -> CapturedAudioChunk {
-    let mut guard = buf.lock().expect("streaming audio buffer mutex poisoned");
+    let mut guard = buf
+        .buffer
+        .lock()
+        .expect("streaming audio buffer mutex poisoned");
     let start_sample = guard.start_sample;
-    let captured_end_sample = guard.next_sample;
+    let captured_end_sample = buf.next_sample.load(Ordering::Acquire);
     let samples = guard.samples.drain(..).collect();
     guard.start_sample = captured_end_sample;
     CapturedAudioChunk {
@@ -112,19 +141,46 @@ fn drain(buf: &SharedBuffer) -> CapturedAudioChunk {
 }
 
 #[cfg(target_os = "macos")]
-/// Returns `true` when newest samples did not fit and were dropped.
-fn push(buf: &SharedBuffer, samples: &[f32]) -> bool {
-    let mut guard = buf.lock().expect("streaming audio buffer mutex poisoned");
-    let callback_start = guard.next_sample;
-    guard.next_sample = guard.next_sample.saturating_add(samples.len() as u64);
+/// Copies PCM into the preallocated staging buffer without allocating or
+/// waiting. `try_lock` makes the ScreenCaptureKit callback realtime-safe:
+/// when the pump owns the buffer, this block is explicitly dropped instead
+/// of blocking the callback thread.
+fn push_pcm_f32le(buf: &SharedBuffer, bytes: &[u8]) -> NativePushOutcome {
+    let sample_count = bytes.len() / std::mem::size_of::<f32>();
+    let callback_start = buf
+        .next_sample
+        .fetch_add(sample_count as u64, Ordering::AcqRel);
+    let mut guard = match buf.buffer.try_lock() {
+        Ok(guard) => guard,
+        Err(TryLockError::WouldBlock) => return NativePushOutcome::Contended,
+        Err(TryLockError::Poisoned(_)) => return NativePushOutcome::DroppedNewest,
+    };
     if guard.samples.is_empty() {
         guard.start_sample = callback_start;
     }
     let available = NATIVE_SAMPLE_BUFFER_CAPACITY.saturating_sub(guard.samples.len());
-    guard
-        .samples
-        .extend(samples.iter().take(available).copied());
-    samples.len() > available
+    for chunk in bytes
+        .chunks_exact(std::mem::size_of::<f32>())
+        .take(available)
+    {
+        guard
+            .samples
+            .push_back(f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    if sample_count > available {
+        NativePushOutcome::DroppedNewest
+    } else {
+        NativePushOutcome::Stored
+    }
+}
+
+#[cfg(all(target_os = "macos", test))]
+fn push_samples_for_test(buf: &SharedBuffer, samples: &[f32]) -> NativePushOutcome {
+    let bytes = samples
+        .iter()
+        .flat_map(|sample| sample.to_le_bytes())
+        .collect::<Vec<_>>();
+    push_pcm_f32le(buf, &bytes)
 }
 
 /// Drains native system-audio samples without mixing or resampling. Empty
@@ -139,10 +195,28 @@ fn run_capture_pump(
     loop {
         std::thread::sleep(CAPTURE_TICK);
         let stopping = stop.load(Ordering::Acquire);
+        let dropped_callback_blocks = system_buf.dropped_callback_blocks.swap(0, Ordering::AcqRel);
+        if dropped_callback_blocks > 0 {
+            log::warn!(
+                "Streaming native audio callback dropped {dropped_callback_blocks} block(s) under overload"
+            );
+        }
         let chunk = drain(&system_buf);
         if stopping {
-            if tx.send(chunk).is_err() {
-                log::warn!("Streaming audio final drain had no receiver");
+            // This copy is only made on shutdown. It lets the non-blocking
+            // overload branch preserve the exact terminal timeline.
+            match try_send_drop_newest(&tx, chunk.clone()) {
+                QueueSendOutcome::Sent => {}
+                QueueSendOutcome::DroppedNewest => {
+                    // The capture thread must stop promptly, but the decoder
+                    // still needs an explicit timeline discontinuity. A tiny
+                    // detached sender waits for queue space and forwards a
+                    // zero-sample gap marker; it never holds up teardown.
+                    send_terminal_gap_without_blocking(tx.clone(), chunk);
+                }
+                QueueSendOutcome::Disconnected => {
+                    log::warn!("Streaming audio final drain had no receiver")
+                }
             }
             return;
         }
@@ -154,6 +228,23 @@ fn run_capture_pump(
             QueueSendOutcome::Disconnected => return,
         }
     }
+}
+
+#[cfg(target_os = "macos")]
+fn send_terminal_gap_without_blocking(
+    tx: SyncSender<CapturedAudioChunk>,
+    dropped: CapturedAudioChunk,
+) {
+    std::thread::spawn(move || {
+        let gap = CapturedAudioChunk {
+            start_sample: dropped.start_sample,
+            captured_end_sample: dropped.captured_end_sample,
+            samples: Vec::new(),
+        };
+        if tx.send(gap).is_err() {
+            log::warn!("Streaming audio terminal gap had no decoder receiver");
+        }
+    });
 }
 
 #[cfg(target_os = "macos")]
@@ -187,14 +278,12 @@ mod platform {
                 return;
             };
             let bytes = buffer.data();
-            let samples: Vec<f32> = bytes
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
-                .collect();
-            if push(&self.buf, &samples) {
-                log::warn!(
-                    "Streaming native audio buffer overloaded; dropping newest capture samples"
-                );
+            if !matches!(push_pcm_f32le(&self.buf, bytes), NativePushOutcome::Stored) {
+                // The callback cannot log or wait: both may allocate/lock.
+                // The non-realtime pump emits one aggregated warning instead.
+                self.buf
+                    .dropped_callback_blocks
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -357,17 +446,22 @@ mod tests {
     #[test]
     fn native_sample_buffer_never_exceeds_its_declared_capacity() {
         let buffer = new_shared_buffer();
-        let dropped = push(
+        let dropped = push_samples_for_test(
             &buffer,
             &vec![0.25_f32; NATIVE_SAMPLE_BUFFER_CAPACITY + 1_024],
         );
 
         assert!(
-            dropped,
+            dropped == NativePushOutcome::DroppedNewest,
             "overflow must be observable at the producer boundary"
         );
         assert!(
-            buffer.lock().expect("sample-buffer mutex").samples.len()
+            buffer
+                .buffer
+                .lock()
+                .expect("sample-buffer mutex")
+                .samples
+                .len()
                 <= NATIVE_SAMPLE_BUFFER_CAPACITY,
             "native samples must remain bounded when the capture pump is slow"
         );
@@ -376,7 +470,10 @@ mod tests {
     #[test]
     fn stopping_pump_forwards_the_final_staged_samples_before_disconnect() {
         let buffer = new_shared_buffer();
-        assert!(!push(&buffer, &[0.1, 0.2, 0.3]));
+        assert_eq!(
+            push_samples_for_test(&buffer, &[0.1, 0.2, 0.3]),
+            NativePushOutcome::Stored
+        );
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
         let (tx, rx) = sync_channel(1);
 
@@ -390,5 +487,51 @@ mod tests {
             rx.recv().is_err(),
             "the sender closes after the final drain"
         );
+    }
+
+    // Regression contract: Stop must never wait forever merely because the
+    // downstream decode queue is saturated. The final capture tail may be
+    // delivered or reported as dropped, but shutdown itself is bounded.
+    #[test]
+    fn stopping_pump_finishes_when_the_decode_queue_is_already_full() {
+        let buffer = new_shared_buffer();
+        buffer.next_sample.store(1, Ordering::Release);
+        assert_eq!(
+            push_samples_for_test(&buffer, &[0.1, 0.2, 0.3]),
+            NativePushOutcome::Stored
+        );
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (tx, rx) = sync_channel(1);
+        tx.send(CapturedAudioChunk {
+            start_sample: 0,
+            captured_end_sample: 1,
+            samples: vec![9.0],
+        })
+        .expect("saturate the decode queue");
+
+        let handle = std::thread::spawn(move || run_capture_pump(buffer, tx, stop));
+        std::thread::sleep(CAPTURE_TICK + Duration::from_millis(75));
+        let stopped_without_waiting_for_queue_space = handle.is_finished();
+
+        handle
+            .join()
+            .expect("capture pump thread joins after cleanup");
+
+        assert!(
+            stopped_without_waiting_for_queue_space,
+            "Stop must have a bounded outcome when the final audio queue is full"
+        );
+
+        let queued = rx.recv().expect("already queued audio remains available");
+        assert_eq!(queued.start_sample, 0);
+        let terminal_gap = rx
+            .recv_timeout(Duration::from_millis(250))
+            .expect("a dropped terminal tail must be reported after queue space opens");
+        assert!(
+            terminal_gap.samples.is_empty(),
+            "terminal overload is a gap marker"
+        );
+        assert_eq!(terminal_gap.start_sample, 1);
+        assert_eq!(terminal_gap.captured_end_sample, 4);
     }
 }

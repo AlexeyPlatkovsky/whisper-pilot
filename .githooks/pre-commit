@@ -3,6 +3,7 @@ set -euo pipefail
 
 root="$(git rev-parse --show-toplevel)"
 node "$root/scripts/check-ai-instructions.mjs" --staged
+node "$root/scripts/check-source-size.mjs" --staged
 
 staged_paths="$(git -C "$root" diff --cached --name-only --diff-filter=ACMRD)"
 ai_only=true
@@ -24,6 +25,7 @@ fi
 version_paths=(
   package.json
   package-lock.json
+  src-tauri/Cargo.lock
   src-tauri/Cargo.toml
   src-tauri/tauri.conf.json
 )

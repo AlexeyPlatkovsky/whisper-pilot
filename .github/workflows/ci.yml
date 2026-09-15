@@ -19,10 +19,17 @@ jobs:
       matrix:
         check:
           - typecheck
+          - build
           - lint
           - lint-ui
           - lint-comments
+          - lint-ai-instructions
+          - lint-source-size
           - format-check
+          - ai-instruction-tests
+          - source-size-tests
+          - repository-policy-tests
+          - version-check
           - frontend-test-coverage
           - rust-fmt
           - rust-clippy
@@ -97,6 +104,9 @@ jobs:
             typecheck)
               npm run typecheck
               ;;
+            build)
+              npm run build
+              ;;
             lint)
               npm run lint
               ;;
@@ -106,8 +116,26 @@ jobs:
             lint-comments)
               npm run lint:comments
               ;;
+            lint-ai-instructions)
+              npm run lint:ai-instructions
+              ;;
+            lint-source-size)
+              npm run lint:source-size
+              ;;
             format-check)
               npm run format:check
+              ;;
+            ai-instruction-tests)
+              npm run test:ai-instructions
+              ;;
+            source-size-tests)
+              npm run test:source-size
+              ;;
+            repository-policy-tests)
+              npm run test:repository-policy
+              ;;
+            version-check)
+              npm run version:check
               ;;
             frontend-test-coverage)
               npm run test:coverage
@@ -135,10 +163,17 @@ jobs:
           script: |
             const checkNames = [
               'typecheck',
+              'build',
               'lint',
               'lint-ui',
               'lint-comments',
+              'lint-ai-instructions',
+              'lint-source-size',
               'format-check',
+              'ai-instruction-tests',
+              'source-size-tests',
+              'repository-policy-tests',
+              'version-check',
               'frontend-test-coverage',
               'rust-fmt',
               'rust-clippy',

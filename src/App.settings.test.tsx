@@ -37,12 +37,12 @@ describe("App — Settings entry point", () => {
     await waitForAddFileEnabled();
 
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     await user.click(screen.getByRole("button", { name: "Settings" }));
     await user.click(screen.getByRole("button", { name: "Close settings" }));
 
-    expect(screen.getByDisplayValue("Hello")).toBeInTheDocument();
+    expect(screen.getByText("Hello")).toBeInTheDocument();
   });
 
   it("keeps the gear in the header when other header content changes", async () => {
@@ -52,7 +52,7 @@ describe("App — Settings entry point", () => {
     await waitForAddFileEnabled();
 
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     expect(
       screen.getByRole("button", { name: "Settings" }),

@@ -133,7 +133,7 @@ describe("App — English strings", () => {
       );
 
       resolveTranscribe(transcribeResult(transcribedMeeting([HELLO_SEGMENT])));
-      await screen.findByDisplayValue("Hello");
+      await screen.findByText("Hello");
     } finally {
       vi.useRealTimers();
     }
@@ -210,7 +210,7 @@ describe("App — Meeting and Streaming capture are mutually exclusive", () => {
     });
     await waitFor(() => expect(transcribe).toBeEnabled());
     await user.click(transcribe);
-    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
 
     expect(await screen.findByRole("button", { name: "Start" })).toBeDisabled();
     await user.click(screen.getByRole("button", { name: "Start" }));
@@ -439,10 +439,10 @@ describe("App — controls unrelated to the running meeting", () => {
     // Renaming or deleting a meeting that is not the one running is likewise
     // none of the run's business — and this matches the sidebar row's rule.
     expect(
-      screen.getByRole("button", { name: "Rename meeting" }),
+      screen.getByRole("button", { name: "Rename transcription" }),
     ).not.toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Delete meeting" }),
+      screen.getByRole("button", { name: "Delete transcription" }),
     ).not.toBeDisabled();
   });
 });
@@ -496,7 +496,7 @@ describe("App — transcript panel while its own meeting is transcribing", () =>
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
     const transcribe = screen.getByRole("button", { name: "Transcribe" });
     await waitFor(() => expect(transcribe).not.toBeDisabled());
     await user.click(transcribe);
@@ -512,7 +512,12 @@ describe("App — transcript panel while its own meeting is transcribing", () =>
     await screen.findByRole("heading", { name: RUNNER.title });
 
     // The stale transcript is back on screen, but locked.
-    expect(await screen.findByDisplayValue("Hello")).toBeDisabled();
+    const transcript = await screen.findByText("Hello", {
+      selector: ".wp-speaker-text--display",
+    });
+    expect(transcript).toHaveAttribute("aria-readonly", "true");
+    await user.click(transcript);
+    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
   });
 });
 

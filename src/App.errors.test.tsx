@@ -70,6 +70,18 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     ).toBeInTheDocument();
   });
 
+  it("[WP-130] reports an export failure in the workspace instead of rejecting the click", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.saveTextDialog).mockRejectedValue(new Error("export denied"));
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("export denied");
+  });
+
   it("reports a failure to remove the attached file and keeps the file attached", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     const user = userEvent.setup();
@@ -98,10 +110,14 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     render(<App />);
     await screen.findByRole("heading", { name: SAVED_MEETING.title });
 
-    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
-    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    await user.click(
+      screen.getByRole("button", { name: "Rename transcription" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Rename transcription",
+    });
     const input = within(dialog).getByRole("textbox", {
-      name: "Meeting label",
+      name: "Transcription title",
     });
     await user.clear(input);
     await user.type(input, "Renamed");
@@ -121,7 +137,9 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     render(<App />);
     await screen.findByRole("heading", { name: SAVED_MEETING.title });
 
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Delete",
@@ -134,6 +152,30 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     expect(
       screen.getByRole("heading", { name: SAVED_MEETING.title }),
     ).toBeInTheDocument();
+  });
+
+  it("allows retrying a delete after the store rejects the first attempt", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.deleteMeeting)
+      .mockRejectedValueOnce(new Error("delete rejected by store"))
+      .mockResolvedValueOnce(undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
+    const dialog = screen.getByRole("alertdialog");
+    const confirm = within(dialog).getByRole("button", { name: "Delete" });
+    await user.click(confirm);
+
+    await screen.findByText(/delete rejected by store/);
+    await waitFor(() => expect(confirm).not.toBeDisabled());
+    await user.click(confirm);
+
+    await waitFor(() => expect(ipc.deleteMeeting).toHaveBeenCalledTimes(2));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
   });
 
   // The workspace is always backed by a real meeting, so deleting the last one
@@ -150,7 +192,9 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     render(<App />);
     await screen.findByRole("heading", { name: SAVED_MEETING.title });
 
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Delete",
@@ -163,13 +207,93 @@ describe("App — IPC failures surface as errors without breaking the workspace"
     expect(ipc.createMeeting).toHaveBeenCalled();
   });
 
+  it("removes a deleted transcription from the sidebar and closes its dialog when opening the replacement fails", async () => {
+    const replacement: Meeting = {
+      ...SAVED_MEETING,
+      id: 8,
+      title: "Replacement transcription",
+      created_at_ms: 1_000,
+    };
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: SAVED_MEETING.id,
+        title: SAVED_MEETING.title,
+        created_at_ms: SAVED_MEETING.created_at_ms,
+        status: SAVED_MEETING.status,
+      },
+      {
+        id: replacement.id,
+        title: replacement.title,
+        created_at_ms: replacement.created_at_ms,
+        status: replacement.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting)
+      .mockResolvedValueOnce(SAVED_MEETING)
+      .mockRejectedValueOnce(new Error("replacement cannot open"));
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(
+      await screen.findByText(/replacement cannot open/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Open ${SAVED_MEETING.title}` }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: `Open ${replacement.title}` }),
+    ).toBeInTheDocument();
+  });
+
+  it("closes the delete dialog and removes the last transcription even when seeding fails", async () => {
+    arrangeSavedMeeting();
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    vi.mocked(ipc.createMeeting).mockRejectedValue(
+      new Error("replacement cannot be created"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: SAVED_MEETING.title });
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+
+    expect(
+      await screen.findByText(/replacement cannot be created/),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: `Open ${SAVED_MEETING.title}` }),
+    ).not.toBeInTheDocument();
+  });
+
   it("closes the delete confirmation on Escape without deleting", async () => {
     arrangeSavedMeeting();
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: SAVED_MEETING.title });
 
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     const dialog = screen.getByRole("alertdialog");
     // Escape is handled on the panel, and this dialog does not move focus into
     // itself when it opens, so it only reaches the handler once focus is inside

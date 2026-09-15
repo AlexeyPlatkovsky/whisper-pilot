@@ -48,6 +48,9 @@ export function RecorderCaption() {
   useEffect(() => {
     const unlisteners: Array<() => void> = [];
     let cancelled = false;
+    const disposeListeners = () => {
+      for (const unlisten of unlisteners.splice(0)) unlisten();
+    };
     void (async () => {
       const refreshShortcut = async () => {
         try {
@@ -62,68 +65,82 @@ export function RecorderCaption() {
           return null;
         }
       };
-      unlisteners.push(
-        await onRecorderSessionChanged((session) => {
-          if (cancelled) return;
-          if (
-            session.status === "recording" &&
-            sessionId.current !== session.id
-          ) {
-            sessionId.current = session.id;
-            setCommitted("");
+      try {
+        unlisteners.push(
+          await onRecorderSessionChanged((session) => {
+            if (cancelled) return;
+            if (
+              session.status === "recording" &&
+              sessionId.current !== session.id
+            ) {
+              sessionId.current = session.id;
+              setCommitted("");
+              clearPartial();
+              void refreshShortcut();
+            }
+            if (sessionId.current === session.id)
+              setStatus(STATUS[session.status]);
+          }),
+        );
+        unlisteners.push(
+          await onRecorderSegmentCommitted((segment) => {
+            if (cancelled || segment.session_id !== sessionId.current) return;
+            setCommitted(segment.text);
             clearPartial();
-            void refreshShortcut();
-          }
-          if (sessionId.current === session.id)
-            setStatus(STATUS[session.status]);
-        }),
-        await onRecorderSegmentCommitted((segment) => {
-          if (cancelled || segment.session_id !== sessionId.current) return;
-          setCommitted(segment.text);
-          clearPartial();
-        }),
-        await onRecorderPartial((next) => {
-          if (!cancelled && next.session_id === sessionId.current) {
-            setPartialDisplay(
-              stabilizePartial(previousPartial.current, next.text),
-            );
-            previousPartial.current = next.text;
-            setPartial(next.text);
-          }
-        }),
-        await onRecorderError((error) => {
-          if (
-            cancelled ||
-            (error.session_id !== undefined &&
-              error.session_id !== sessionId.current)
-          ) {
-            return;
-          }
-          setStatus("Recorder error");
-          showTransientMessage(error.message);
-        }),
-      );
-      const [snapshot, shortcutStatus] = await Promise.all([
-        getLiveCaptureSnapshot(),
-        refreshShortcut(),
-      ]);
-      if (cancelled) return;
-      if (shortcutStatus?.error) {
-        setStatus("Shortcut disabled");
-        showTransientMessage(shortcutStatus.error);
-      }
-      if (snapshot.source === "recorder" && snapshot.session_id !== null) {
-        const session = await openRecorderSession(snapshot.session_id);
+          }),
+        );
+        unlisteners.push(
+          await onRecorderPartial((next) => {
+            if (!cancelled && next.session_id === sessionId.current) {
+              setPartialDisplay(
+                stabilizePartial(previousPartial.current, next.text),
+              );
+              previousPartial.current = next.text;
+              setPartial(next.text);
+            }
+          }),
+        );
+        unlisteners.push(
+          await onRecorderError((error) => {
+            if (
+              cancelled ||
+              (error.session_id !== undefined &&
+                error.session_id !== sessionId.current)
+            ) {
+              return;
+            }
+            setStatus("Recorder error");
+            showTransientMessage(error.message);
+          }),
+        );
+        const [snapshot, shortcutStatus] = await Promise.all([
+          getLiveCaptureSnapshot(),
+          refreshShortcut(),
+        ]);
         if (cancelled) return;
-        sessionId.current = session.id;
-        setStatus(STATUS[session.status]);
-        setCommitted(session.segments.at(-1)?.text ?? "");
-        clearPartial();
+        if (shortcutStatus?.error) {
+          setStatus("Shortcut disabled");
+          showTransientMessage(shortcutStatus.error);
+        }
+        if (snapshot.source === "recorder" && snapshot.session_id !== null) {
+          const session = await openRecorderSession(snapshot.session_id);
+          if (cancelled) return;
+          sessionId.current = session.id;
+          setStatus(STATUS[session.status]);
+          setCommitted(session.segments.at(-1)?.text ?? "");
+          clearPartial();
+        }
+      } catch (error) {
+        disposeListeners();
+        if (!cancelled) {
+          setStatus("Recorder error");
+          showTransientMessage(String(error));
+        }
       }
     })();
     return () => {
       cancelled = true;
-      unlisteners.forEach((unlisten) => unlisten());
+      disposeListeners();
     };
   }, []);
 

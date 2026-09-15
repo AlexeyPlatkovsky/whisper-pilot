@@ -8,7 +8,7 @@ working on this repo is [`../AGENTS.md`](../AGENTS.md).
 ## Prerequisites
 
 - macOS on Apple Silicon (macOS 13+)
-- Rust (stable), Node.js 20+
+- Rust (stable), Node.js 20.19+ or 22.12+
 - `ffmpeg` on PATH (`brew install ffmpeg`)
 - libclang (bundled with Xcode Command Line Tools; already required for other
   native deps) — `sherpa-rs`'s build script always runs `bindgen`, download or
@@ -32,7 +32,7 @@ Vite serves the front end on port 1420; Tauri drives the Rust core in
 `src-tauri/frameworks/` — a staging copy of the sherpa-onnx and ONNX Runtime
 dylibs that the bundler puts into `Contents/Frameworks`. It is generated and
 gitignored; do not edit or commit it. See
-[`architecture.md`](architecture.md) §Build MFU for why it exists.
+[`architecture/desktop.md`](architecture/desktop.md#build-mfu) for why it exists.
 
 ## Scripts
 
@@ -42,9 +42,20 @@ gitignored; do not edit or commit it. See
 | `npm run build` | Type-check and build the front end |
 | `npm test` / `npm run test:run` | Front-end tests (Vitest) |
 | `npm run test:api` | Rust core tests (`cargo test`) |
+| `npm run test:coverage` | Front-end tests with the enforced coverage thresholds |
 | `npm run typecheck` | TypeScript type-check only |
 | `npm run lint` | ESLint over `src/` |
-| `npm run format` | Prettier over `src/` |
+| `npm run lint:ui` | Enforce shared confirmation and destructive-action UI contracts |
+| `npm run lint:comments` | Reject oversized explanatory comment blocks |
+| `npm run format` / `npm run format:check` | Write or verify Prettier formatting in `src/` |
+| `npm run lint:ai-instructions` / `npm run test:ai-instructions` | Validate active agent/skill contracts, model-effort compatibility, TOML syntax, and validator regressions |
+| `npm run lint:source-size` / `npm run test:source-size` | Reject production modules at 750 lines, test modules at 1,750, and documentation over 600; also covers scripts, workflows, and `build.rs` |
+| `npm run test:repository-policy` | Test staged version and pre-commit enforcement |
+| `npm run version:check` | Verify all six release-version records agree |
+| `cargo fmt --manifest-path src-tauri/Cargo.toml --check` | Verify Rust formatting |
+| `cargo build --manifest-path src-tauri/Cargo.toml --all-targets --all-features` | Build every Rust target and feature |
+| `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings` | Reject Rust warnings and lints |
+| `cargo test --manifest-path src-tauri/Cargo.toml` | Run the default Rust suite |
 
 ## Debugging
 
@@ -56,14 +67,15 @@ level.
 
 ```
 React UI (src/)  ──Tauri IPC──▶  Rust core (src-tauri/src/)
-  meetings list                    lib.rs        crate root; `run()` registration
-  meeting workspace                commands/     thin Tauri command layer
+  Transcriptions list              lib.rs        crate root; `run()` registration
+  Transcription workspace          commands/     thin Tauri command layer
   transcript editor                audio.rs      ffmpeg normalize + direct PCM decode
-  ...                               store.rs      SQLite meeting library
+  ...                               store.rs      SQLite Transcription library
 ```
 
-See [`architecture.md`](architecture.md) for the full layer map, IPC contract,
-data model, and build MFU.
+Start with [`architecture.md`](architecture.md) for the layer map, then open
+the linked functional document for the relevant IPC contract, data model, or
+build boundary.
 
 ## Environment Variables
 

@@ -31,6 +31,8 @@ let committedHandler: Handler<SegmentEvent> | null = null;
 let partialHandler: Handler<PartialEvent> | null = null;
 let errorHandler: Handler<{ session_id?: number; message: string }> | null =
   null;
+let sessionUnlisten: () => void;
+let committedUnlisten: () => void;
 
 vi.mock("./ipc", () => ({
   getLiveCaptureSnapshot: vi.fn(async () => ({
@@ -75,7 +77,30 @@ describe("Recorder compact caption", () => {
     committedHandler = null;
     partialHandler = null;
     errorHandler = null;
+    sessionUnlisten = vi.fn();
+    committedUnlisten = vi.fn();
     vi.clearAllMocks();
+  });
+
+  it("releases listeners registered before a later subscription rejects", async () => {
+    vi.mocked(ipc.onRecorderSessionChanged).mockResolvedValueOnce(
+      sessionUnlisten,
+    );
+    vi.mocked(ipc.onRecorderSegmentCommitted).mockResolvedValueOnce(
+      committedUnlisten,
+    );
+    vi.mocked(ipc.onRecorderPartial).mockRejectedValueOnce(
+      new Error("partial listener unavailable"),
+    );
+
+    const { unmount } = render(<RecorderCaption />);
+
+    await waitFor(() => expect(ipc.onRecorderPartial).toHaveBeenCalledOnce());
+    expect(sessionUnlisten).toHaveBeenCalledOnce();
+    expect(committedUnlisten).toHaveBeenCalledOnce();
+    unmount();
+    expect(sessionUnlisten).toHaveBeenCalledOnce();
+    expect(committedUnlisten).toHaveBeenCalledOnce();
   });
 
   it("hydrates the active note, shows the registered chord, and clears stale text for a new note", async () => {

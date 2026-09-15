@@ -43,7 +43,7 @@ const STALE_TRANSPORT_AGE: Duration = Duration::from_secs(6 * 60 * 60);
 /// is wanted.
 pub fn diarize_isolated(
     app_support_dir: &Path,
-    samples: Vec<f32>,
+    samples: &[f32],
     speaker_count: Option<i32>,
     active_variant: &str,
 ) -> ChildOutcome {
@@ -73,7 +73,7 @@ pub fn diarize_isolated(
 pub fn diarize_isolated_with(
     worker_exe: &Path,
     app_support_dir: &Path,
-    samples: Vec<f32>,
+    samples: &[f32],
     speaker_count: Option<i32>,
     active_variant: &str,
     inactivity: Duration,
@@ -157,21 +157,16 @@ fn variant_display_name(variant: &str) -> &str {
 /// clean first-attempt success, `Some` when the fallback was used (successful
 /// or not).
 ///
-/// The fallback attempt itself runs under the same process isolation as the
-/// first. `samples` are cloned so the retry has its own copy; on a typical
-/// recording (~6 MB) this is acceptable even on the common non-crash path.
+/// The fallback also runs in isolation. Each attempt stages the shared sample
+/// slice into its own transport file, so retry capability does not duplicate
+/// the full recording in parent-process memory.
 pub fn diarize_with_fallback(
     app_support_dir: &Path,
     samples: Vec<f32>,
     speaker_count: Option<i32>,
     active_variant: &str,
 ) -> (Result<Vec<SpeakerTurn>>, Option<String>) {
-    let first = diarize_isolated(
-        app_support_dir,
-        samples.clone(),
-        speaker_count,
-        active_variant,
-    );
+    let first = diarize_isolated(app_support_dir, &samples, speaker_count, active_variant);
 
     if !should_retry_diarization(&first) {
         return (first.into_result(), None);
@@ -186,7 +181,7 @@ pub fn diarize_with_fallback(
         return (first.into_result(), None);
     }
 
-    let second = diarize_isolated(app_support_dir, samples, speaker_count, fallback_variant);
+    let second = diarize_isolated(app_support_dir, &samples, speaker_count, fallback_variant);
 
     match second {
         ChildOutcome::Completed(turns) => {

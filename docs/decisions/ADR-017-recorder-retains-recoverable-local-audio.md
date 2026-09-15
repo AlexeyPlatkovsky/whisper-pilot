@@ -3,22 +3,22 @@
 - **Status:** accepted
 - **Date:** 2026-09-12
 - **Deciders:** Alexey Platkovsky
-- **Relates to:** [ADR-008](ADR-008-persisted-library.md) for Meeting's
+- **Relates to:** [ADR-008](ADR-008-persisted-library.md) for Transcription's
   reference-only source-file policy. Recorder owns the audio it captures and
   therefore uses a different lifecycle.
 
 ## Context
 
 Recorder is a third live mode for dictating Russian, English, or mixed speech.
-Unlike Streaming, its purpose includes reopening and listening to a voice note,
+Unlike Meeting, its purpose includes reopening and listening to a voice note,
 not only reading the transcript. A live microphone stream can also end because
 of a crash, device loss, full disk, or failed final transcription. Treating the
 transcript as the only durable artifact would make those failures destructive
 and would make the feature a dictation surface rather than a recorder.
 
 Recorder therefore needs explicit ownership, format, commit, recovery, export,
-and deletion rules. These rules must not change Meeting's reference-only source
-files or Streaming's no-retained-audio contract.
+and deletion rules. These rules must not change Transcription's reference-only
+source files or Meeting's no-retained-audio contract.
 
 ## Decision
 
@@ -74,7 +74,7 @@ a recoverable error.
 ## Consequences
 
 - Recorder can satisfy playback and crash-recovery expectations without changing
-  Meeting or Streaming audio ownership.
+  Transcription or Meeting audio ownership.
 - A session comprises coordinated database and filesystem resources, so startup
   reconciliation and failure-injection tests are required.
 - CAF is the durable macOS capture format; WAV is an interoperability export,

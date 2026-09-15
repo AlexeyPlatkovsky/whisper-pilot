@@ -1,12 +1,12 @@
 name: OpenCode Review
 
 # Public repo: this workflow is restricted to the repository owner only.
-# - On PR open: runs once (no re-run on pushes/synchronize).
+# - On PR open/update: reviews the current diff.
 # - On a PR comment containing /oc or /opencode: runs on demand.
 on:
   workflow_dispatch:
   pull_request:
-    types: [opened]
+    types: [opened, synchronize, reopened]
   issue_comment:
     types: [created]
 
@@ -15,14 +15,13 @@ permissions:
   contents: read
   pull-requests: write
   issues: write
-  id-token: write
 
 jobs:
   review:
     # Gate every entry point to the owner. On a public repo this stops anyone
     # else from triggering OpenCode (and burning the API key) via a comment.
     if: >
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.actor == 'AlexeyPlatkovsky') ||
       (
         github.event_name == 'pull_request' &&
         github.event.pull_request.user.login == 'AlexeyPlatkovsky'
@@ -40,27 +39,40 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Install verified OpenCode CLI
+        env:
+          OPENCODE_VERSION: v1.18.31
+          OPENCODE_SHA256: e9312be75ed803b7415fc2aeabda1f4fe938912a39673762dc0c38c0e11ebde4
+        run: |
+          archive="$RUNNER_TEMP/opencode-linux-x64.tar.gz"
+          bin_dir="$RUNNER_TEMP/opencode-bin"
+          curl --fail --silent --show-error --location \
+            --output "$archive" \
+            "https://github.com/anomalyco/opencode/releases/download/${OPENCODE_VERSION}/opencode-linux-x64.tar.gz"
+          echo "${OPENCODE_SHA256}  ${archive}" | sha256sum --check --strict
+          mkdir -p "$bin_dir"
+          tar -xzf "$archive" -C "$bin_dir"
+          chmod 0755 "$bin_dir/opencode"
+          echo "$bin_dir" >> "$GITHUB_PATH"
+
       - name: OpenCode review
-        uses: sst/opencode/github@latest
-        with:
-          model: opencode-go/deepseek-v4-pro
-          # Use the built-in GITHUB_TOKEN so the OpenCode GitHub App is not required.
-          use_github_token: true
-          # Do not publish a shareable session link for this public repo.
-          share: false
-          # This prompt is the default for pull_request/workflow_dispatch runs only.
-          # On an issue_comment (/oc, /opencode), the comment text takes precedence
-          # over this prompt, so on-demand instructions still work as before.
-          prompt: |
+        # This prompt is used for pull_request/workflow_dispatch. On an
+        # issue_comment, `opencode github run` reads the triggering comment.
+        run: opencode github run
+        env:
+          MODEL: opencode-go/deepseek-v4-pro
+          USE_GITHUB_TOKEN: "true"
+          SHARE: "false"
+          MENTIONS: /opencode,/oc
+          PROMPT: |
             Review this pull request against WhisperPilot's own conventions in
             AGENTS.md and docs/. You cannot run tests, lint, build, or the app
             itself in this environment — base every finding only on reading the
             diff and the repository files, never on assumed runtime behavior.
 
-            WhisperPilot is a macOS desktop app for offline transcription of local
-            audio/video files: a Tauri v2 + React/TypeScript front-end in src/,
-            and a Rust core in src-tauri/src/. There is no live capture and no
-            cloud calls.
+            WhisperPilot is a macOS transcription app with file, live system-audio,
+            microphone, local-model, and optional BYOK paths: a Tauri v2 +
+            React/TypeScript front-end in src/ and a Rust core in src-tauri/src/.
 
             Review only the files changed in this PR, across these dimensions:
             0. Ignore any changes under .claude, .ai, .manifesto or .github/workflows/opencode.yml.
@@ -75,6 +87,10 @@ jobs:
                - KISS/DRY: flag over-engineered solutions where a simpler one
                  would do, and repeated constants/logic that should be factored
                  out.
+               - Structure: a production source module at 750 lines or more is a
+                 blocking split candidate; test modules at 1,750 lines or more
+                 require an explicit navigation/split finding. Do not accept a
+                 mechanical split that merely moves the same mixed responsibility.
 
             2. Test case quality (do not attempt to run any test)
                - Rust: unit tests colocated in src-tauri/src/, integration tests
@@ -94,8 +110,8 @@ jobs:
                - If the change affects behavior, IPC commands, screens/flows, or
                  architecture, check whether the matching doc was updated in this
                  same PR: docs/architecture.md, docs/design.md, docs/testing.md,
-                 docs/development.md, docs/features/F*/ (requirements/tasks/
-                 scenarios), README.md, or docs/INDEX.md.
+                 docs/development.md, README.md, docs/INDEX.md, and the relevant
+                 `.taskpilot/items/` lifecycle record when the work is tracked.
                - Flag docs that now contradict the code, or new behavior/commands
                  left undocumented. Do not flag pre-existing doc gaps unrelated to
                  this diff.
@@ -111,6 +127,5 @@ jobs:
             all. If, after reviewing across all the dimensions above, there is
             nothing worth changing, fixing, or reworking, post a review body
             consisting of exactly: "No objections."
-        env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}

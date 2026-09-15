@@ -1,12 +1,22 @@
 //! Recorder-only SQLite entities and recovery reconciliation.
-
 use crate::error::{AppError, Result};
 use crate::recorder_audio::{finalize_partial_caf, read_caf_metadata, RecorderAudioWriter};
 use rusqlite::{params, Connection, OptionalExtension, Row, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard};
-
+#[path = "recorder_store_schema.rs"]
+mod schema;
+use schema::{migrate, SCHEMA};
+#[path = "recorder_store_rows.rs"]
+mod rows;
+use rows::segment_from_row;
+#[path = "recorder_store/clear.rs"]
+mod clear;
+#[path = "recorder_store/recovery.rs"]
+mod recovery;
+#[path = "recorder_store/sessions.rs"]
+mod sessions;
 fn clear_quarantine_path(path: &Path) -> PathBuf {
     let mut quarantine = path.as_os_str().to_os_string();
     quarantine.push(".clearing");
@@ -136,180 +146,11 @@ impl RecorderStore {
             .execute_batch("PRAGMA foreign_keys = ON;")
             .map_err(store_error)?;
         connection.execute_batch(SCHEMA).map_err(store_error)?;
-        migrate_recorder_schema(&connection)?;
+        migrate(&connection)?;
         Ok(Self {
             connection: Mutex::new(connection),
             recordings_dir,
         })
-    }
-
-    pub fn create_session(&self, session: NewRecorderSession) -> Result<RecorderSession> {
-        self.insert_session(session, false)
-    }
-
-    pub fn create_draft(&self, session: NewRecorderSession) -> Result<RecorderSession> {
-        self.insert_session(session, true)
-    }
-
-    fn insert_session(
-        &self,
-        session: NewRecorderSession,
-        is_draft: bool,
-    ) -> Result<RecorderSession> {
-        if session.sample_rate == 0 {
-            return Err(AppError::Store(
-                "Recorder sample rate must be greater than zero".into(),
-            ));
-        }
-        let mut connection = self.connection()?;
-        let transaction = connection.transaction().map_err(store_error)?;
-        transaction
-            .execute(
-                "INSERT INTO recorder_sessions
-                    (title, created_at_ms, updated_at_ms, sample_rate, duration_ms, status, audio_path, asr_model_id, asr_engine, asr_language, is_draft)
-                 VALUES (?1, ?2, ?2, ?3, 0, ?4, '', ?5, ?6, ?7, ?8)",
-                params![
-                    session.title,
-                    session.created_at_ms,
-                    session.sample_rate,
-                    if is_draft { "completed" } else { "recording" },
-                    session.asr_model_id,
-                    session.asr_engine,
-                    session.asr_language,
-                    is_draft,
-                ],
-            )
-            .map_err(store_error)?;
-        let id = transaction.last_insert_rowid();
-        let audio_path = self.recordings_dir.join(format!("{id}.caf"));
-        transaction
-            .execute(
-                "UPDATE recorder_sessions SET audio_path = ?1 WHERE id = ?2",
-                params![audio_path.to_string_lossy(), id],
-            )
-            .map_err(store_error)?;
-        transaction.commit().map_err(store_error)?;
-        drop(connection);
-        self.get_session(id)?
-            .ok_or_else(|| AppError::Store("new Recorder session was not found".into()))
-    }
-
-    pub fn activate_draft(
-        &self,
-        id: RecorderSessionId,
-        sample_rate: u32,
-    ) -> Result<RecorderSession> {
-        if sample_rate == 0 {
-            return Err(AppError::Store(
-                "Recorder sample rate must be greater than zero".into(),
-            ));
-        }
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE recorder_sessions
-                 SET status = 'recording', is_draft = 0, sample_rate = ?1,
-                     duration_ms = 0, recovery_reason = NULL
-                 WHERE id = ?2 AND is_draft = 1",
-                params![sample_rate, id],
-            )
-            .map_err(store_error)?;
-        require_changed(changed, "Recorder draft", id)?;
-        self.get_session(id)?
-            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))
-    }
-
-    /// Re-open a completed recording for copy-on-write audio continuation.
-    /// Existing transcript rows remain visible until the combined quality
-    /// pass atomically replaces them after Stop.
-    pub fn resume_session(&self, id: RecorderSessionId) -> Result<RecorderSession> {
-        let session = self
-            .get_session(id)?
-            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
-        if session.is_draft || session.status != RecorderStatus::Completed {
-            return Err(AppError::Store(format!(
-                "Recorder session {id} is not a completed recording"
-            )));
-        }
-        let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
-        if partial.exists() {
-            return Err(AppError::Store(format!(
-                "Recorder session {id} already has partial audio to recover"
-            )));
-        }
-        let metadata = read_caf_metadata(&session.audio_path)?;
-        if metadata.sample_rate != session.sample_rate {
-            return Err(AppError::Store(format!(
-                "Recorder audio sample rate {} does not match session sample rate {}",
-                metadata.sample_rate, session.sample_rate
-            )));
-        }
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE recorder_sessions
-                 SET status = 'recording', recovery_reason = NULL
-                 WHERE id = ?1 AND status = 'completed' AND is_draft = 0",
-                params![id],
-            )
-            .map_err(store_error)?;
-        require_changed(changed, "Recorder session", id)?;
-        self.get_session(id)?
-            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))
-    }
-
-    pub fn restore_completed_after_failed_resume(&self, id: RecorderSessionId) -> Result<()> {
-        let session = self
-            .get_session(id)?
-            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
-        let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
-        if partial.exists() {
-            if let Err(error) = std::fs::remove_file(&partial) {
-                let reason = format!(
-                    "Recorder continuation cleanup failed; the original audio is safe: {error}"
-                );
-                self.set_status(id, RecorderStatus::Recoverable, Some(&reason))?;
-                return Err(AppError::Io(reason));
-            }
-        }
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE recorder_sessions
-                 SET status = 'completed', recovery_reason = NULL
-                 WHERE id = ?1 AND status = 'recording' AND is_draft = 0",
-                params![id],
-            )
-            .map_err(store_error)?;
-        require_changed(changed, "Recorder session", id)
-    }
-
-    pub fn restore_draft_after_failed_start(&self, id: RecorderSessionId) -> Result<()> {
-        let session = self
-            .get_session(id)?
-            .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
-        let changed = self
-            .connection()?
-            .execute(
-                "UPDATE recorder_sessions
-                 SET status = 'completed', is_draft = 1, duration_ms = 0,
-                     recovery_reason = NULL
-                 WHERE id = ?1 AND status = 'recording'",
-                params![id],
-            )
-            .map_err(store_error)?;
-        require_changed(changed, "Recorder session", id)?;
-
-        // Restore the durable lifecycle first. Even if filesystem cleanup is
-        // blocked, the row must never remain a phantom live capture that can
-        // neither be retried as a draft nor reconciled at launch.
-        let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
-        for path in [&session.audio_path, &partial] {
-            if path.is_file() {
-                std::fs::remove_file(path)?;
-            }
-        }
-        Ok(())
     }
 
     pub fn get_session(&self, id: RecorderSessionId) -> Result<Option<RecorderSession>> {
@@ -542,114 +383,8 @@ impl RecorderStore {
         Ok(())
     }
 
-    /// Clear every recording artifact while retaining its named library row
-    /// as an empty draft. Existing audio is first renamed to a same-volume
-    /// quarantine and restored if the database transaction fails.
     pub fn clear_recording(&self, session_id: RecorderSessionId) -> Result<()> {
-        let mut connection = self.connection()?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(store_error)?;
-        let (status, audio_path) = transaction
-            .query_row(
-                "SELECT status, audio_path FROM recorder_sessions WHERE id = ?1",
-                params![session_id],
-                |row| {
-                    Ok((
-                        row.get::<_, String>(0)?,
-                        PathBuf::from(row.get::<_, String>(1)?),
-                    ))
-                },
-            )
-            .optional()
-            .map_err(store_error)?
-            .ok_or_else(|| {
-                AppError::Store(format!("Recorder session {session_id} was not found"))
-            })?;
-        if matches!(status.as_str(), "recording" | "finalizing") {
-            return Err(AppError::Store(format!(
-                "Recorder session {session_id} cannot be cleared while capture is active"
-            )));
-        }
-
-        let partial = RecorderAudioWriter::partial_path_for(&audio_path);
-        let artifacts = [audio_path, partial];
-        for path in &artifacts {
-            if path.exists() && !path.is_file() {
-                return Err(AppError::Io(format!(
-                    "Recorder audio cleanup failed: {} is not a file",
-                    path.display()
-                )));
-            }
-            let quarantine = clear_quarantine_path(path);
-            if quarantine.exists() {
-                return Err(AppError::Io(format!(
-                    "Recorder audio cleanup is already pending at {}",
-                    quarantine.display()
-                )));
-            }
-        }
-
-        let mut quarantined = Vec::with_capacity(artifacts.len());
-        for original in artifacts {
-            if !original.exists() {
-                continue;
-            }
-            let quarantine = clear_quarantine_path(&original);
-            if let Err(error) = std::fs::rename(&original, &quarantine) {
-                let restore = restore_quarantined_audio(&quarantined);
-                let detail = restore.err().map_or_else(String::new, |restore_error| {
-                    format!("; rollback also failed: {restore_error}")
-                });
-                return Err(AppError::Io(format!(
-                    "Recorder audio cleanup failed: {error}{detail}"
-                )));
-            }
-            quarantined.push((original, quarantine));
-        }
-
-        let database_result = (|| -> Result<()> {
-            transaction
-                .execute(
-                    "DELETE FROM recorder_polished WHERE session_id = ?1",
-                    params![session_id],
-                )
-                .map_err(store_error)?;
-            transaction
-                .execute(
-                    "DELETE FROM recorder_segments WHERE session_id = ?1",
-                    params![session_id],
-                )
-                .map_err(store_error)?;
-            transaction
-                .execute(
-                    "UPDATE recorder_sessions
-                     SET status = 'completed', is_draft = 1, duration_ms = 0,
-                         recovery_reason = NULL
-                     WHERE id = ?1",
-                    params![session_id],
-                )
-                .map_err(store_error)?;
-            transaction.commit().map_err(store_error)
-        })();
-        if let Err(error) = database_result {
-            return match restore_quarantined_audio(&quarantined) {
-                Ok(()) => Err(error),
-                Err(restore_error) => Err(AppError::Io(format!(
-                    "{error}; Recorder audio rollback also failed: {restore_error}"
-                ))),
-            };
-        }
-
-        for (_, quarantine) in quarantined {
-            if let Err(error) = std::fs::remove_file(&quarantine) {
-                log::warn!(
-                    "Recorder clear committed but quarantine cleanup failed at {}: {error}",
-                    quarantine.display()
-                );
-            }
-        }
-        Ok(())
+        clear::clear_recording(self, session_id)
     }
 
     pub fn update_segment_text(
@@ -781,21 +516,99 @@ impl RecorderStore {
                 "Recorder session {id} cannot be deleted while active"
             )));
         }
+        // Keep the row and its audio recoverable until the database deletion
+        // commits. Deleting the file first could leave a completed row which
+        // claims an audio artifact that no longer exists when SQLite rejects
+        // the delete (lock, trigger, or disk failure).
         let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
-        for path in [&session.audio_path, &partial] {
-            if path.exists() {
-                if let Err(error) = std::fs::remove_file(path) {
-                    let message = format!("Recorder audio cleanup failed: {error}");
-                    let _ = self.set_status(id, RecorderStatus::DeleteFailed, Some(&message));
-                    return Err(AppError::Io(message));
-                }
+        let artifacts = [session.audio_path.clone(), partial];
+        let mut quarantined = Vec::with_capacity(artifacts.len());
+        for original in artifacts {
+            if !original.exists() {
+                continue;
+            }
+            if !original.is_file() {
+                let message = format!(
+                    "Recorder audio cleanup failed: {} is not a file",
+                    original.display()
+                );
+                let _ = self.set_status(id, RecorderStatus::DeleteFailed, Some(&message));
+                return Err(AppError::Io(message));
+            }
+            let quarantine = clear_quarantine_path(&original);
+            if quarantine.exists() {
+                let message = format!(
+                    "Recorder audio cleanup is already pending at {}",
+                    quarantine.display()
+                );
+                let _ = self.set_status(id, RecorderStatus::DeleteFailed, Some(&message));
+                return Err(AppError::Io(message));
+            }
+            if let Err(error) = std::fs::rename(&original, &quarantine) {
+                let rollback = restore_quarantined_audio(&quarantined);
+                let detail = rollback.err().map_or_else(String::new, |restore_error| {
+                    format!("; rollback also failed: {restore_error}")
+                });
+                let message = format!("Recorder audio cleanup failed: {error}{detail}");
+                let _ = self.set_status(id, RecorderStatus::DeleteFailed, Some(&message));
+                return Err(AppError::Io(message));
+            }
+            quarantined.push((original, quarantine));
+        }
+
+        let deletion = (|| -> Result<()> {
+            let mut connection = self.connection()?;
+            let transaction = connection
+                .transaction_with_behavior(TransactionBehavior::Immediate)
+                .map_err(store_error)?;
+            for (_, quarantine) in &quarantined {
+                transaction
+                    .execute(
+                        "INSERT OR IGNORE INTO recorder_cleanup_tombstones (quarantine_path) VALUES (?1)",
+                        params![quarantine.to_string_lossy()],
+                    )
+                    .map_err(store_error)?;
+            }
+            let changed = transaction
+                .execute("DELETE FROM recorder_sessions WHERE id = ?1", params![id])
+                .map_err(store_error)?;
+            require_changed(changed, "Recorder session", id)?;
+            transaction.commit().map_err(store_error)
+        })();
+        if let Err(error) = deletion {
+            let restore = restore_quarantined_audio(&quarantined);
+            let detail = restore.err().map_or_else(String::new, |restore_error| {
+                format!("; audio rollback also failed: {restore_error}")
+            });
+            let message = format!("Recorder deletion failed: {error}{detail}");
+            let _ = self.set_status(id, RecorderStatus::DeleteFailed, Some(&message));
+            return Err(AppError::Store(message));
+        }
+
+        for (_, quarantine) in quarantined {
+            if let Err(error) = std::fs::remove_file(&quarantine) {
+                log::warn!(
+                    "Recorder delete committed but quarantine cleanup failed at {}: {error}",
+                    quarantine.display()
+                );
+                continue;
+            }
+            if let Err(error) = self.connection().and_then(|connection| {
+                connection
+                    .execute(
+                        "DELETE FROM recorder_cleanup_tombstones WHERE quarantine_path = ?1",
+                        params![quarantine.to_string_lossy()],
+                    )
+                    .map_err(store_error)
+                    .map(|_| ())
+            }) {
+                log::warn!(
+                    "Recorder delete removed {} but could not clear its recovery tombstone: {error}",
+                    quarantine.display()
+                );
             }
         }
-        let changed = self
-            .connection()?
-            .execute("DELETE FROM recorder_sessions WHERE id = ?1", params![id])
-            .map_err(store_error)?;
-        require_changed(changed, "Recorder session", id)
+        Ok(())
     }
 
     pub(crate) fn discard_failed_start(&self, id: RecorderSessionId) -> Result<()> {
@@ -836,62 +649,6 @@ impl RecorderStore {
         require_changed(changed, "Recorder session", id)
     }
 
-    fn reconcile_interrupted_sessions(&self) -> Result<()> {
-        let sessions = self.list_sessions()?;
-        for session in sessions {
-            let partial = RecorderAudioWriter::partial_path_for(&session.audio_path);
-            let artifacts = [&session.audio_path, &partial];
-            if session.is_draft {
-                for original in artifacts {
-                    let quarantine = clear_quarantine_path(original);
-                    if quarantine.is_file() {
-                        if let Err(error) = std::fs::remove_file(&quarantine) {
-                            log::warn!(
-                                "Recorder draft quarantine cleanup failed at {}: {error}",
-                                quarantine.display()
-                            );
-                        }
-                    }
-                }
-                continue;
-            }
-            for original in artifacts {
-                let quarantine = clear_quarantine_path(original);
-                if quarantine.is_file() && !original.exists() {
-                    if let Err(error) = std::fs::rename(&quarantine, original) {
-                        log::warn!(
-                            "Recorder clear quarantine restore failed from {} to {}: {error}",
-                            quarantine.display(),
-                            original.display()
-                        );
-                    }
-                }
-            }
-            let final_exists = session.audio_path.is_file();
-            let partial_exists = partial.is_file();
-            let final_valid = final_exists
-                && read_caf_metadata(&session.audio_path)
-                    .is_ok_and(|metadata| metadata.sample_rate == session.sample_rate);
-            let mismatch = match session.status {
-                RecorderStatus::Completed => !final_valid || partial_exists,
-                RecorderStatus::Recording | RecorderStatus::Finalizing => true,
-                RecorderStatus::Recoverable | RecorderStatus::DeleteFailed => false,
-            };
-            if mismatch {
-                let reason = match (final_exists, partial_exists) {
-                    (true, true) => "A Recorder continuation was preserved after interruption",
-                    (true, false) => {
-                        "Finalized Recorder audio was found before database completion"
-                    }
-                    (false, true) => "Partial Recorder audio was preserved after interruption",
-                    (false, false) => "Recorder database state has no matching audio artifact",
-                };
-                self.set_status(session.id, RecorderStatus::Recoverable, Some(reason))?;
-            }
-        }
-        Ok(())
-    }
-
     fn connection(&self) -> Result<MutexGuard<'_, Connection>> {
         self.connection
             .lock()
@@ -923,17 +680,6 @@ fn session_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSession> {
     })
 }
 
-fn segment_from_row(row: &Row<'_>) -> rusqlite::Result<RecorderSegment> {
-    Ok(RecorderSegment {
-        id: row.get(0)?,
-        session_id: row.get(1)?,
-        start_sample: row.get(2)?,
-        end_sample: row.get(3)?,
-        text: row.get(4)?,
-        language: row.get(5)?,
-    })
-}
-
 fn require_changed(changed: usize, entity: &str, id: i64) -> Result<()> {
     if changed == 0 {
         Err(AppError::Store(format!("{entity} {id} was not found")))
@@ -946,79 +692,6 @@ fn store_error(error: rusqlite::Error) -> AppError {
     AppError::Store(error.to_string())
 }
 
-const SCHEMA: &str = r#"
-CREATE TABLE IF NOT EXISTS recorder_sessions (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    title           TEXT NOT NULL,
-    created_at_ms   INTEGER NOT NULL,
-    updated_at_ms   INTEGER NOT NULL,
-    sample_rate     INTEGER NOT NULL CHECK (sample_rate > 0),
-    duration_ms     INTEGER NOT NULL DEFAULT 0,
-    status          TEXT NOT NULL CHECK (status IN ('recording', 'finalizing', 'completed', 'recoverable', 'delete_failed')),
-    audio_path      TEXT NOT NULL,
-    recovery_reason TEXT,
-    asr_model_id   TEXT NOT NULL DEFAULT 'transcription',
-    asr_engine     TEXT NOT NULL DEFAULT 'whisper',
-    asr_language   TEXT NOT NULL DEFAULT 'auto',
-    is_draft       INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1))
-);
-CREATE TABLE IF NOT EXISTS recorder_segments (
-    id           INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id   INTEGER NOT NULL REFERENCES recorder_sessions(id) ON DELETE CASCADE,
-    start_sample INTEGER NOT NULL CHECK (start_sample >= 0),
-    end_sample   INTEGER NOT NULL CHECK (end_sample >= start_sample),
-    text         TEXT NOT NULL,
-    language     TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_recorder_segments_session_start
-    ON recorder_segments(session_id, start_sample, id);
-CREATE TABLE IF NOT EXISTS recorder_polished (
-    session_id INTEGER PRIMARY KEY REFERENCES recorder_sessions(id) ON DELETE CASCADE,
-    text       TEXT NOT NULL
-);
-"#;
-
-fn migrate_recorder_schema(connection: &Connection) -> Result<()> {
-    let mut statement = connection
-        .prepare("PRAGMA table_info(recorder_sessions)")
-        .map_err(store_error)?;
-    let columns = statement
-        .query_map([], |row| row.get::<_, String>(1))
-        .map_err(store_error)?
-        .collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(store_error)?;
-    drop(statement);
-    if !columns.iter().any(|column| column == "asr_model_id") {
-        connection
-            .execute(
-                "ALTER TABLE recorder_sessions ADD COLUMN asr_model_id TEXT NOT NULL DEFAULT 'transcription'",
-                [],
-            )
-            .map_err(store_error)?;
-    }
-    if !columns.iter().any(|column| column == "asr_engine") {
-        connection
-            .execute(
-                "ALTER TABLE recorder_sessions ADD COLUMN asr_engine TEXT NOT NULL DEFAULT 'whisper'",
-                [],
-            )
-            .map_err(store_error)?;
-    }
-    if !columns.iter().any(|column| column == "asr_language") {
-        connection
-            .execute(
-                "ALTER TABLE recorder_sessions ADD COLUMN asr_language TEXT NOT NULL DEFAULT 'auto'",
-                [],
-            )
-            .map_err(store_error)?;
-    }
-    if !columns.iter().any(|column| column == "is_draft") {
-        connection
-            .execute(
-                "ALTER TABLE recorder_sessions ADD COLUMN is_draft INTEGER NOT NULL DEFAULT 0 CHECK (is_draft IN (0, 1))",
-                [],
-            )
-            .map_err(store_error)?;
-    }
-    Ok(())
-}
+#[cfg(test)]
+#[path = "recorder_store/tests.rs"]
+mod tests;

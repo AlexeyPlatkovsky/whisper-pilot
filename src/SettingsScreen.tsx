@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AiModelsSection } from "./AiModelsSection";
 import { AppearanceSection } from "./AppearanceSection";
 import { AppLanguageSection } from "./AppLanguageSection";
@@ -85,23 +85,85 @@ export function SettingsScreen({
   cloudProviderLocked?: boolean;
 }) {
   const [section, setSection] = useState<SectionId>("ai-models");
+  const dialogRef = useRef<HTMLDivElement | null>(null);
+  const closeRef = useRef<HTMLButtonElement | null>(null);
+  const openerRef = useRef<HTMLElement | null>(
+    document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null,
+  );
+  const hasOpener =
+    openerRef.current !== null && openerRef.current !== document.body;
 
   useEffect(() => {
-    function onKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+    return () => {
+      if (hasOpener) openerRef.current?.focus();
+    };
+  }, [hasOpener]);
+
+  useEffect(() => {
+    function handleWindowEscape(event: KeyboardEvent) {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      // Child dialogs handle Escape themselves.  Their handlers stop
+      // propagation; this guard also covers a native dialog implementation
+      // that cannot do so before the window listener runs.
+      if (document.querySelector('[role="alertdialog"]')) return;
+      const nested = document.querySelectorAll(
+        '[role="dialog"][aria-modal="true"]',
+      );
+      if (nested.length > 1) return;
+      event.preventDefault();
+      onClose();
     }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    window.addEventListener("keydown", handleWindowEscape);
+    return () => window.removeEventListener("keydown", handleWindowEscape);
   }, [onClose]);
+
+  useLayoutEffect(() => {
+    if (hasOpener) closeRef.current?.focus();
+  }, [hasOpener]);
 
   const active = SECTIONS.find((s) => s.id === section)!;
 
+  function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    // A nested sheet/confirmation owns its own Escape and focus cycle.
+    const nestedDialog = (event.target as HTMLElement).closest(
+      '[role="alertdialog"], [role="dialog"]',
+    );
+    if (nestedDialog && nestedDialog !== dialogRef.current) return;
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+      return;
+    }
+    if (event.key !== "Tab") return;
+    const controls = Array.from(
+      dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) ?? [],
+    );
+    if (controls.length === 0) return;
+    const first = controls[0];
+    const last = controls[controls.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
   return (
     <div
+      ref={dialogRef}
       className="settings-screen"
       role="dialog"
       aria-modal="true"
       aria-label="Settings"
+      onKeyDown={handleKeyDown}
     >
       <header className="wp-header" data-tauri-drag-region="deep">
         <div className="wp-header-lead" data-tauri-drag-region="deep">
@@ -119,6 +181,7 @@ export function SettingsScreen({
 
           <div className="wp-action-group">
             <button
+              ref={closeRef}
               type="button"
               className="wp-icon-btn"
               aria-label="Close settings"

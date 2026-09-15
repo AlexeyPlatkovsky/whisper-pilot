@@ -6,7 +6,7 @@
 - **Date:** 2026-08-27
 - **Deciders:** Alexey Platkovsky
 - **Relates to:** [ADR-014](ADR-014-streaming-mode-coexists-with-batch-meeting.md)
-  (Streaming's scope and offline stance), [ADR-006](ADR-006-llamacpp-qwen-summary.md)
+  (Meeting's scope and offline stance), [ADR-006](ADR-006-llamacpp-qwen-summary.md)
   (the local llama.cpp summarization stack this decision reuses)
 
 ## Context
@@ -16,15 +16,15 @@ was removed. Committed translations and lower-priority provisional previews
 now serialize through the application-owned bounded LLM scheduler; queued
 committed work overtakes previews instead of failing as busy.
 
-Streaming (ADR-014) needed a way to read a live session in a language the user
+Meeting (ADR-014) needed a way to read a live session in a language the user
 does not speak, without waiting for the session to end. WhisperPilot already
 runs a selected local GGUF LLM through llama.cpp for
-Meeting's structured MFU (ADR-006) and, more recently, for Streaming's own
+Transcription's structured MFU (ADR-006) and, more recently, for Meeting's own
 Prettify rewrite. A decision was needed on what model powers translation, and
 on when translation is allowed to run relative to live capture.
 
 Two prior features already answer the "when" question one way: Craft MFU
-(Meeting) and Prettify (Streaming) are both gated, in the front end, to run
+(Transcription) and Prettify (Meeting) are both gated, in the front end, to run
 only while their session is **stopped** — never concurrently with active
 transcription — because both share the one cached Whisper context in
 `AppState` and the project has so far treated LLM work and live decoding as
@@ -83,7 +83,7 @@ unit the split paired-row view aligns original and translated text on: one
 paragraph, one row, on both sides.
 
 **Target languages: English and Russian only.** The target-language control
-offers exactly `en` and `ru`; source language keeps Streaming's existing
+offers exactly `en` and `ru`; source language keeps Meeting's existing
 per-window auto-detection (ADR-014) — translation adds a target, it does not
 change how the source is detected. A paragraph whose text is already
 entirely in the target language is never sent to the model; its row mirrors

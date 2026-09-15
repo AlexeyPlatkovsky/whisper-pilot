@@ -24,6 +24,14 @@ vi.mock("./ipc", () => mockCreateIpc());
 
 beforeEach(resetAppMocks);
 
+async function activateTranscriptSegment(text: string) {
+  const display = await screen.findByText(text, {
+    selector: ".wp-speaker-text--display",
+  });
+  fireEvent.click(display);
+  return screen.findByDisplayValue(text);
+}
+
 describe("App — persisted meeting workspace", () => {
   const NEWEST_MEETING = {
     id: 2,
@@ -60,13 +68,184 @@ describe("App — persisted meeting workspace", () => {
     expect(
       await screen.findByRole("heading", { name: "Newest meeting" }),
     ).toBeInTheDocument();
-    expect(
-      await screen.findByDisplayValue("Saved transcript"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Saved transcript")).toBeInTheDocument();
     expect(screen.getByText("Older meeting")).toBeInTheDocument();
     expect(screen.queryByText("Product Standup")).not.toBeInTheDocument();
     // A non-empty library must not seed an extra meeting.
     expect(ipc.createMeeting).not.toHaveBeenCalled();
+  });
+
+  it("keeps the most recently selected transcription when earlier opens resolve late", async () => {
+    const older = {
+      ...NEWEST_MEETING,
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+    };
+    let resolveOlder!: (meeting: Meeting) => void;
+    let resolveNewest!: (meeting: Meeting) => void;
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+      {
+        id: older.id,
+        title: older.title,
+        created_at_ms: older.created_at_ms,
+        status: older.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: NEWEST_MEETING.title });
+    vi.mocked(ipc.openMeeting).mockImplementation(
+      async (id) =>
+        new Promise<Meeting>((resolve) => {
+          if (id === older.id) resolveOlder = resolve;
+          else resolveNewest = resolve;
+        }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Open Older meeting" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Open Newest meeting" }),
+    );
+    await waitFor(() =>
+      expect(ipc.openMeeting).toHaveBeenLastCalledWith(NEWEST_MEETING.id),
+    );
+
+    await act(async () => {
+      resolveNewest({ ...NEWEST_MEETING, title: "Newest selection" });
+    });
+    expect(
+      await screen.findByRole("heading", { name: "Newest selection" }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveOlder(older);
+    });
+    expect(
+      screen.getByRole("heading", { name: "Newest selection" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not resurrect a transcription deleted while its open request is in flight", async () => {
+    const older = {
+      ...NEWEST_MEETING,
+      id: 1,
+      title: "Older meeting",
+      created_at_ms: 1_000,
+    };
+    let resolveOlder!: (meeting: Meeting) => void;
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    vi.mocked(ipc.listMeetings).mockResolvedValue([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: NEWEST_MEETING.status,
+      },
+      {
+        id: older.id,
+        title: older.title,
+        created_at_ms: older.created_at_ms,
+        status: older.status,
+      },
+    ]);
+    vi.mocked(ipc.openMeeting).mockImplementation(async (id) =>
+      id === older.id
+        ? new Promise<Meeting>((resolve) => {
+            resolveOlder = resolve;
+          })
+        : NEWEST_MEETING,
+    );
+    vi.mocked(ipc.deleteMeeting).mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: NEWEST_MEETING.title });
+
+    await user.click(
+      screen.getByRole("button", { name: "Open Older meeting" }),
+    );
+    await waitFor(() => expect(ipc.openMeeting).toHaveBeenCalledWith(older.id));
+    await user.click(
+      screen.getByRole("button", { name: "Delete Older meeting" }),
+    );
+    await user.click(
+      within(screen.getByRole("alertdialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
+    await waitFor(() =>
+      expect(ipc.deleteMeeting).toHaveBeenCalledWith(older.id),
+    );
+
+    await act(async () => {
+      resolveOlder(older);
+    });
+    expect(
+      screen.getByRole("heading", { name: NEWEST_MEETING.title }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Open Older meeting" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("[WP-130] retains a transcription created during initial library hydration", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
+    let resolveLibrary!: (
+      value: Array<{
+        id: number;
+        title: string;
+        created_at_ms: number;
+        status: "finished";
+      }>,
+    ) => void;
+    vi.mocked(ipc.listMeetings).mockReturnValue(
+      new Promise((resolve) => {
+        resolveLibrary = resolve;
+      }),
+    );
+    const created = {
+      id: 9,
+      title: "Fresh transcription",
+      created_at_ms: 9_000,
+      language: "ru",
+      status: "no_files" as const,
+      segments: [],
+      source_missing: false,
+    };
+    vi.mocked(ipc.createMeeting).mockResolvedValue(created);
+    vi.mocked(ipc.openMeeting).mockResolvedValue(NEWEST_MEETING);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await waitFor(() => expect(ipc.listMeetings).toHaveBeenCalledOnce());
+    await user.click(screen.getByRole("button", { name: "New transcription" }));
+    await screen.findByRole("heading", { name: "Fresh transcription" });
+
+    resolveLibrary([
+      {
+        id: NEWEST_MEETING.id,
+        title: NEWEST_MEETING.title,
+        created_at_ms: NEWEST_MEETING.created_at_ms,
+        status: "finished",
+      },
+    ]);
+
+    expect(
+      await screen.findByRole("button", { name: "Open Fresh transcription" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Fresh transcription" }),
+    ).toBeInTheDocument();
   });
 
   // state-transition: idle → copied → idle (timeout rollback).
@@ -95,7 +274,7 @@ describe("App — persisted meeting workspace", () => {
       configurable: true,
     });
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
@@ -160,7 +339,7 @@ describe("App — persisted meeting workspace", () => {
       configurable: true,
     });
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
     await screen.findByText("Copied", { selector: ".wp-toast" });
@@ -168,7 +347,7 @@ describe("App — persisted meeting workspace", () => {
     await user.click(
       screen.getByRole("button", { name: "Open Older meeting" }),
     );
-    await screen.findByDisplayValue("Older transcript");
+    await screen.findByText("Older transcript");
 
     expect(
       screen.queryByText("Copied", { selector: ".wp-toast" }),
@@ -237,7 +416,7 @@ describe("App — persisted meeting workspace", () => {
       configurable: true,
     });
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
     // The write is still in flight: no feedback yet.
@@ -248,7 +427,7 @@ describe("App — persisted meeting workspace", () => {
     await user.click(
       screen.getByRole("button", { name: "Open Older meeting" }),
     );
-    await screen.findByDisplayValue("Older transcript");
+    await screen.findByText("Older transcript");
 
     // The write for the previous meeting resolves only now.
     resolveWrite();
@@ -282,7 +461,7 @@ describe("App — persisted meeting workspace", () => {
       configurable: true,
     });
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
     await user.click(screen.getByRole("button", { name: "Copy transcript" }));
 
@@ -296,14 +475,14 @@ describe("App — persisted meeting workspace", () => {
     ).toBeInTheDocument();
   });
 
-  it("seeds a single New Meeting when the library is empty, without fake sample rows", async () => {
+  it("seeds a single New Transcription when the library is empty, without fake sample rows", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     // listMeetings defaults to [] in beforeEach.
 
     render(<App />);
 
     expect(
-      await screen.findByRole("heading", { name: "New Meeting" }),
+      await screen.findByRole("heading", { name: "New Transcription" }),
     ).toBeInTheDocument();
     expect(ipc.createMeeting).toHaveBeenCalledOnce();
     expect(screen.queryByText("No meetings yet")).not.toBeInTheDocument();
@@ -343,7 +522,7 @@ describe("App — persisted meeting workspace", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: "Older meeting" });
-    await user.click(screen.getByRole("button", { name: "New meeting" }));
+    await user.click(screen.getByRole("button", { name: "New transcription" }));
 
     expect(ipc.createMeeting).toHaveBeenCalledOnce();
     expect(ipc.openFileDialog).not.toHaveBeenCalled();
@@ -405,7 +584,7 @@ describe("App — persisted meeting workspace", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: "Newest meeting" });
-    await user.click(screen.getByRole("button", { name: "New meeting" }));
+    await user.click(screen.getByRole("button", { name: "New transcription" }));
 
     expect(
       screen.getByRole("heading", { name: "Newest meeting" }),
@@ -437,7 +616,7 @@ describe("App — persisted meeting workspace", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: "Newest meeting" });
-    await user.click(screen.getByRole("button", { name: "New meeting" }));
+    await user.click(screen.getByRole("button", { name: "New transcription" }));
 
     // The workspace now shows the new meeting, and the previous one is still
     // listed in the sidebar (nothing is lost).
@@ -474,7 +653,7 @@ describe("App — source file missing", () => {
     await screen.findByText(/Source file missing/);
     expect(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
 
-    const textarea = screen.getByDisplayValue("Hello");
+    const textarea = await activateTranscriptSegment("Hello");
     expect(textarea).not.toBeDisabled();
   });
 
@@ -543,10 +722,14 @@ describe("App — persisted meeting controls", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
-    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
-    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    await user.click(
+      screen.getByRole("button", { name: "Rename transcription" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Rename transcription",
+    });
     const input = within(dialog).getByRole("textbox", {
-      name: "Meeting label",
+      name: "Transcription title",
     });
     await user.clear(input);
     await user.type(input, "Roadmap review");
@@ -561,29 +744,67 @@ describe("App — persisted meeting controls", () => {
     ).toBeInTheDocument();
   });
 
+  it("[WP-130] renames an inactive transcription without navigating away from the active one", async () => {
+    arrangeActiveMeeting();
+    const renamedOlder = {
+      ...ACTIVE_MEETING,
+      id: 1,
+      title: "Archived planning",
+      created_at_ms: 1_000,
+    };
+    vi.mocked(ipc.renameMeeting).mockResolvedValue(renamedOlder);
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
+    await user.click(
+      screen.getByRole("button", { name: "Rename Older meeting" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Rename transcription",
+    });
+    const input = within(dialog).getByRole("textbox", {
+      name: "Transcription title",
+    });
+    await user.clear(input);
+    await user.type(input, "Archived planning");
+    await user.click(within(dialog).getByRole("button", { name: "Save" }));
+
+    expect(
+      await screen.findByRole("heading", { name: ACTIVE_MEETING.title }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Open Archived planning" }),
+    ).toBeInTheDocument();
+  });
+
   it("[EP + BVA] rejects blank and 121-character titles without writing", async () => {
     arrangeActiveMeeting();
     const user = userEvent.setup();
     render(<App />);
 
     await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
-    await user.click(screen.getByRole("button", { name: "Rename meeting" }));
-    const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
+    await user.click(
+      screen.getByRole("button", { name: "Rename transcription" }),
+    );
+    const dialog = screen.getByRole("dialog", {
+      name: "Rename transcription",
+    });
     const input = within(dialog).getByRole("textbox", {
-      name: "Meeting label",
+      name: "Transcription title",
     });
     await user.clear(input);
     await user.type(input, "   ");
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "Meeting label is required",
+      "Transcription title is required",
     );
 
     await user.clear(input);
     await user.type(input, "a".repeat(121));
     await user.click(within(dialog).getByRole("button", { name: "Save" }));
     expect(within(dialog).getByRole("alert")).toHaveTextContent(
-      "Meeting label must be 120 characters or fewer",
+      "Transcription title must be 120 characters or fewer",
     );
     expect(ipc.renameMeeting).not.toHaveBeenCalled();
   });
@@ -598,10 +819,9 @@ describe("App — persisted meeting controls", () => {
       screen.getByRole("button", { name: "Rename Older meeting" }),
     );
     expect(
-      within(screen.getByRole("dialog", { name: "Rename meeting" })).getByRole(
-        "textbox",
-        { name: "Meeting label" },
-      ),
+      within(
+        screen.getByRole("dialog", { name: "Rename transcription" }),
+      ).getByRole("textbox", { name: "Transcription title" }),
     ).toHaveValue("Older meeting");
     await user.keyboard("{Escape}");
 
@@ -629,7 +849,9 @@ describe("App — persisted meeting controls", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     const dialog = screen.getByRole("alertdialog", {
       name: `Delete ${ACTIVE_MEETING.title}`,
     });
@@ -639,7 +861,9 @@ describe("App — persisted meeting controls", () => {
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(ipc.deleteMeeting).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Delete",
@@ -681,21 +905,23 @@ describe("App — persisted meeting controls", () => {
     });
     const user = userEvent.setup();
     render(<App />);
-    expect(
-      await screen.findByDisplayValue("Saved transcript"),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Saved transcript")).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    const clear = screen.getByRole("button", {
+      name: "Clear transcription",
+    });
+    expect(clear.querySelector("svg")).toHaveAttribute("data-icon", "eraser");
+    await user.click(clear);
     expect(ipc.clearMeeting).not.toHaveBeenCalled();
-    const dialog = screen.getByRole("alertdialog", { name: "Clear meeting" });
+    const dialog = screen.getByRole("alertdialog", {
+      name: "Clear transcription",
+    });
     await user.click(
-      within(dialog).getByRole("button", { name: "Clear meeting" }),
+      within(dialog).getByRole("button", { name: "Clear transcription" }),
     );
 
     expect(ipc.clearMeeting).toHaveBeenCalledWith(ACTIVE_MEETING.id);
-    expect(
-      screen.queryByDisplayValue("Saved transcript"),
-    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Saved transcript")).not.toBeInTheDocument();
     expect(screen.queryByText("Summary to clear")).not.toBeInTheDocument();
     expect(screen.getByText("planning.mp3")).toBeInTheDocument();
   });
@@ -707,18 +933,20 @@ describe("App — persisted meeting controls", () => {
     );
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
-    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Clear transcription" }),
+    );
     await user.click(
       within(
-        screen.getByRole("alertdialog", { name: "Clear meeting" }),
-      ).getByRole("button", { name: "Clear meeting" }),
+        screen.getByRole("alertdialog", { name: "Clear transcription" }),
+      ).getByRole("button", { name: "Clear transcription" }),
     );
 
     expect(await screen.findByText(/meeting clear failed/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("alertdialog", { name: "Clear meeting" }),
+      screen.queryByRole("alertdialog", { name: "Clear transcription" }),
     ).not.toBeInTheDocument();
   });
 
@@ -726,17 +954,19 @@ describe("App — persisted meeting controls", () => {
     arrangeActiveMeeting();
     const user = userEvent.setup();
     render(<App />);
-    await screen.findByDisplayValue("Saved transcript");
+    await screen.findByText("Saved transcript");
 
-    await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Clear transcription" }),
+    );
     await user.click(
       within(
-        screen.getByRole("alertdialog", { name: "Clear meeting" }),
+        screen.getByRole("alertdialog", { name: "Clear transcription" }),
       ).getByRole("button", { name: "Cancel" }),
     );
 
     expect(ipc.clearMeeting).not.toHaveBeenCalled();
-    expect(screen.getByDisplayValue("Saved transcript")).toBeInTheDocument();
+    expect(screen.getByText("Saved transcript")).toBeInTheDocument();
   });
 
   it("settles a pending transcript autosave before Clear runs", async () => {
@@ -748,14 +978,16 @@ describe("App — persisted meeting controls", () => {
       segments: [],
     });
     render(<App />);
-    const textarea = await screen.findByDisplayValue("Saved transcript");
+    const textarea = await activateTranscriptSegment("Saved transcript");
 
     fireEvent.change(textarea, { target: { value: "Unsaved edit" } });
-    fireEvent.click(screen.getByRole("button", { name: "Clear meeting" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Clear transcription" }),
+    );
     fireEvent.click(
       within(
-        screen.getByRole("alertdialog", { name: "Clear meeting" }),
-      ).getByRole("button", { name: "Clear meeting" }),
+        screen.getByRole("alertdialog", { name: "Clear transcription" }),
+      ).getByRole("button", { name: "Clear transcription" }),
     );
 
     await waitFor(() =>
@@ -792,18 +1024,20 @@ describe("App — persisted meeting controls", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       render(<App />);
-      const current = await screen.findByDisplayValue("Saved transcript");
+      const current = await activateTranscriptSegment("Saved transcript");
       fireEvent.change(current, { target: { value: "Edit for meeting A" } });
 
       fireEvent.click(
         screen.getByRole("button", { name: "Open Older meeting" }),
       );
-      await screen.findByDisplayValue("Older transcript");
-      fireEvent.click(screen.getByRole("button", { name: "Clear meeting" }));
+      await screen.findByText("Older transcript");
+      fireEvent.click(
+        screen.getByRole("button", { name: "Clear transcription" }),
+      );
       fireEvent.click(
         within(
-          screen.getByRole("alertdialog", { name: "Clear meeting" }),
-        ).getByRole("button", { name: "Clear meeting" }),
+          screen.getByRole("alertdialog", { name: "Clear transcription" }),
+        ).getByRole("button", { name: "Clear transcription" }),
       );
 
       await waitFor(() => expect(ipc.clearMeeting).toHaveBeenCalledWith(1));
@@ -842,13 +1076,13 @@ describe("App — persisted meeting controls", () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     try {
       render(<App />);
-      fireEvent.change(await screen.findByDisplayValue("Saved transcript"), {
+      fireEvent.change(await activateTranscriptSegment("Saved transcript"), {
         target: { value: "Edit for meeting A" },
       });
       fireEvent.click(
         screen.getByRole("button", { name: "Open Older meeting" }),
       );
-      await screen.findByDisplayValue("Older transcript");
+      await screen.findByText("Older transcript");
 
       await vi.advanceTimersByTimeAsync(500);
       await act(async () => {});
@@ -889,7 +1123,9 @@ describe("App — persisted meeting controls", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: ACTIVE_MEETING.title });
-    await user.click(screen.getByRole("button", { name: "Delete meeting" }));
+    await user.click(
+      screen.getByRole("button", { name: "Delete transcription" }),
+    );
     await user.click(
       within(screen.getByRole("alertdialog")).getByRole("button", {
         name: "Delete",

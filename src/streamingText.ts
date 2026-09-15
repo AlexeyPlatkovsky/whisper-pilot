@@ -20,10 +20,32 @@ export function upsertWindow(
   windows: StreamingWindow[],
   incoming: StreamingWindow,
 ): StreamingWindow[] {
-  const next = windows.filter((w) => w.window_index !== incoming.window_index);
-  next.push(incoming);
-  next.sort((a, b) => a.window_index - b.window_index);
-  return next;
+  // Live decoder output is monotonic in the normal case.  Avoid rebuilding
+  // and sorting the full transcript for each committed window: long-running
+  // meetings otherwise turn a constant-time append into repeated O(n log n)
+  // work on the render path.  Retries may still replace an old index, and a
+  // rehydrated/out-of-order event may still need insertion, so retain those
+  // two correctness paths without mutating React state in place.
+  const last = windows.at(-1);
+  if (!last || incoming.window_index > last.window_index) {
+    return [...windows, incoming];
+  }
+
+  let low = 0;
+  let high = windows.length;
+  while (low < high) {
+    const middle = low + Math.floor((high - low) / 2);
+    const candidate = windows[middle];
+    if (candidate.window_index < incoming.window_index) low = middle + 1;
+    else high = middle;
+  }
+
+  if (windows[low]?.window_index === incoming.window_index) {
+    const next = windows.slice();
+    next[low] = incoming;
+    return next;
+  }
+  return [...windows.slice(0, low), incoming, ...windows.slice(low)];
 }
 
 export function sourcesLabel(sources: {
@@ -54,7 +76,7 @@ export function toMarkdown(title: string, text: string): string {
 
 export function fileNameFor(title: string): string {
   const slug = title.replace(/[^\w\- ]+/g, "").trim();
-  return `${slug || "streaming-session"}.md`;
+  return `${slug || "meeting"}.md`;
 }
 
 // --- WP-103: per-window Live Translation entries & display -----------------
@@ -98,6 +120,7 @@ export const TRANSLATION_FAILED_PLACEHOLDER = "[Translation failed]";
  * `pending`, `translating`, `failed`, or a stale source text. */
 export type WindowTranslationDisplay =
   | { kind: "text"; text: string; mirrored: boolean }
+  | { kind: "unavailable" }
   | { kind: "translating" }
   | { kind: "failed" }
   | { kind: "pending" };
@@ -111,6 +134,7 @@ export function windowTranslationDisplay(
   w: StreamingWindow,
   entry: TranslationEntry | undefined,
 ): WindowTranslationDisplay {
+  if (!w.outcome_ok) return { kind: "unavailable" };
   const isCurrent = entry !== undefined && entry.sourceText === windowText(w);
   if (isCurrent) {
     if (entry.status === "mirrored") {
@@ -148,6 +172,7 @@ export function paragraphTranslatedText(
         translations.get(w.window_index),
       );
       if (display.kind === "text") return display.text;
+      if (display.kind === "unavailable") return "[unavailable]";
       if (display.kind === "failed") return TRANSLATION_FAILED_PLACEHOLDER;
       return TRANSLATION_PLACEHOLDER;
     })

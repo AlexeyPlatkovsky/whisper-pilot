@@ -136,8 +136,6 @@ pub(crate) fn transcribe_qwen_recording(
         if language == "auto" && decoded.language != "auto" {
             language = decoded.language;
         }
-        let offset_ms = logical_start as u64 * 1_000 / crate::audio::SAMPLE_RATE as u64;
-        let logical_end_ms = logical_end as u64 * 1_000 / crate::audio::SAMPLE_RATE as u64;
         let decoded_text = decoded
             .segments
             .iter()
@@ -145,15 +143,84 @@ pub(crate) fn transcribe_qwen_recording(
             .filter(|text| !text.is_empty())
             .collect::<Vec<_>>()
             .join(" ");
-        segments.extend(decoded.segments.into_iter().map(|mut segment| {
-            segment.start_ms = offset_ms;
-            segment.end_ms = logical_end_ms.max(offset_ms);
-            segment
-        }));
+        place_qwen_window_segments(
+            &mut segments,
+            decoded.segments,
+            decode_start,
+            logical_start,
+            logical_end,
+        );
         append_confirmed_context(&mut confirmed_context, &decoded_text);
         on_progress((((index + 1) * 100 / total_windows) as i32).min(100));
     }
     Ok(transcribe::Transcription { segments, language })
+}
+
+/// Place Qwen's window-relative timestamps back onto the source timeline.
+///
+/// Decode windows include one second of prior audio for ASR context, but only
+/// their logical range contributes new transcript. We therefore offset by the
+/// *decode* start (not the logical start), discard segments wholly in the
+/// prepended overlap, and clip boundary-crossing ranges without trying to
+/// split their text. Exact repeated overlap output is suppressed against the
+/// preceding committed segment.
+#[cfg(target_os = "macos")]
+fn place_qwen_window_segments(
+    committed: &mut Vec<transcribe::Segment>,
+    decoded: Vec<transcribe::Segment>,
+    decode_start: usize,
+    logical_start: usize,
+    logical_end: usize,
+) {
+    let decode_start_ms = samples_to_ms(decode_start);
+    let logical_start_ms = samples_to_ms(logical_start);
+    let logical_end_ms = samples_to_ms(logical_end);
+
+    for mut segment in decoded {
+        let original_start_ms = decode_start_ms.saturating_add(segment.start_ms);
+        let original_end_ms = decode_start_ms.saturating_add(segment.end_ms);
+        if original_end_ms <= logical_start_ms || original_start_ms >= logical_end_ms {
+            continue;
+        }
+
+        let start_ms = original_start_ms.max(logical_start_ms);
+        let end_ms = original_end_ms.min(logical_end_ms).max(start_ms);
+        if is_repeated_qwen_overlap(committed, &segment.text, original_start_ms, original_end_ms) {
+            continue;
+        }
+
+        segment.start_ms = start_ms;
+        segment.end_ms = end_ms;
+        committed.push(segment);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn samples_to_ms(samples: usize) -> u64 {
+    samples as u64 * 1_000 / crate::audio::SAMPLE_RATE as u64
+}
+
+#[cfg(target_os = "macos")]
+fn is_repeated_qwen_overlap(
+    committed: &[transcribe::Segment],
+    candidate_text: &str,
+    candidate_start_ms: u64,
+    candidate_end_ms: u64,
+) -> bool {
+    let Some(previous) = committed.last() else {
+        return false;
+    };
+    normalize_qwen_segment_text(&previous.text) == normalize_qwen_segment_text(candidate_text)
+        && candidate_start_ms <= previous.end_ms
+        && previous.start_ms <= candidate_end_ms
+}
+
+#[cfg(target_os = "macos")]
+fn normalize_qwen_segment_text(text: &str) -> String {
+    text.split_whitespace()
+        .flat_map(str::chars)
+        .flat_map(char::to_lowercase)
+        .collect()
 }
 
 #[cfg(target_os = "macos")]
@@ -280,6 +347,49 @@ fn segment_dtos(segments: &[transcribe::Segment]) -> Vec<crate::meetings::Segmen
         .collect()
 }
 
+/// Resolve the selected file-transcription ASR while preventing a concurrent
+/// Settings/Delete command from changing that selection or deleting its
+/// assets before this invocation records an active decoder owner.
+async fn resolve_meeting_asr_and_claim<'a>(
+    state: &'a AppState,
+    app_support_dir: &std::path::Path,
+) -> Result<(
+    settings::Settings,
+    &'static crate::asr::AsrModelSpec,
+    streaming_session::WhisperUsageGuard<'a>,
+)> {
+    let mutation = state.recorder_asr_mutation.lock().await;
+    let app_settings = settings::get_settings(app_support_dir);
+    let model_id = app_settings
+        .active_model_transcription
+        .as_deref()
+        .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
+    let asr_spec = crate::asr::resolve_selection(
+        model_id,
+        crate::asr::AsrMode::Meeting,
+        crate::asr::AsrLanguage::Auto,
+    )?;
+    let usage = streaming_session::WhisperUsageGuard::acquire(
+        &state.whisper_busy,
+        streaming_session::WhisperUser::Meeting,
+    )
+    .map_err(|holder| match holder {
+        streaming_session::WhisperUser::Streaming => AppError::Transcribe(
+            "a Meeting is active; stop it before starting a file transcription".into(),
+        ),
+        streaming_session::WhisperUser::Recorder => AppError::Transcribe(
+            "Recorder is active; stop it before starting a file transcription".into(),
+        ),
+        streaming_session::WhisperUser::Meeting => {
+            AppError::Transcribe("another file transcription is already running".into())
+        }
+    })?;
+    // A successful claim makes the exclusive owner visible to mutation
+    // commands, so no lock has to remain held during slow model work.
+    drop(mutation);
+    Ok((app_settings, asr_spec, usage))
+}
+
 /// Attach (or clear, when `path` is `None`) the source file of a meeting.
 /// Selecting the file is separate from running the transcription.
 #[tauri::command]
@@ -302,37 +412,14 @@ pub(crate) async fn transcribe_meeting(
     state: State<'_, AppState>,
 ) -> Result<TranscribeMeetingResult> {
     let app_support_dir = app_data_dir(&app)?;
-    let app_settings = settings::get_settings(&app_support_dir);
-    let model_id = app_settings
-        .active_model_transcription
-        .as_deref()
-        .unwrap_or(crate::asr::DEFAULT_ASR_MODEL_ID);
-    let asr_spec = crate::asr::resolve_selection(
-        model_id,
-        crate::asr::AsrMode::Meeting,
-        crate::asr::AsrLanguage::Auto,
-    )?;
-    // WP-71: serialize Meeting work with Streaming and other Meeting runs.
-    // Held for this whole command, released on return via Drop.
-    let _whisper_guard = streaming_session::WhisperUsageGuard::acquire(
-        &state.whisper_busy,
-        streaming_session::WhisperUser::Meeting,
-    )
-    .map_err(|holder| match holder {
-        streaming_session::WhisperUser::Streaming => AppError::Transcribe(
-            "a Streaming session is active; stop it before transcribing a meeting".into(),
-        ),
-        streaming_session::WhisperUser::Recorder => {
-            AppError::Transcribe("Recorder is active; stop it before transcribing a meeting".into())
-        }
-        streaming_session::WhisperUser::Meeting => {
-            AppError::Transcribe("another meeting transcription is already running".into())
-        }
-    })?;
+    // WP-71: the returned usage guard serializes this work with Meeting and
+    // Recorder capture until the command returns.
+    let (app_settings, asr_spec, _whisper_guard) =
+        resolve_meeting_asr_and_claim(&state, &app_support_dir).await?;
 
     let meeting = crate::meetings::open_meeting(&app_support_dir, id)?;
     let path = meeting.source_path.ok_or_else(|| {
-        AppError::Transcribe("meeting has no source file to transcribe".to_string())
+        AppError::Transcribe("transcription has no source file to transcribe".to_string())
     })?;
 
     let active_diarization_variant =
@@ -411,16 +498,16 @@ pub(crate) async fn diarize_meeting(
     let meeting = crate::meetings::open_meeting(&app_support_dir, id)?;
     if meeting.segments.is_empty() {
         return Err(AppError::Diarization(
-            "meeting has no transcript to diarize yet".into(),
+            "transcription has no transcript to diarize yet".into(),
         ));
     }
     if meeting.source_missing {
         return Err(AppError::Diarization(
-            "meeting's source file is missing".into(),
+            "transcription's source file is missing".into(),
         ));
     }
     let path = meeting.source_path.ok_or_else(|| {
-        AppError::Diarization("meeting has no source file to diarize".to_string())
+        AppError::Diarization("transcription has no source file to diarize".to_string())
     })?;
     let variant = diarization_variant_to_run(
         &settings::get_settings(&app_support_dir).active_model_diarization,
@@ -457,369 +544,5 @@ pub(crate) async fn diarize_meeting(
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Arc;
-
-    #[test]
-    fn qwen_file_windows_overlap_without_moving_the_logical_timeline() {
-        let sample_rate = crate::audio::SAMPLE_RATE as usize;
-        let windows = qwen_window_plan(sample_rate * 61);
-
-        assert_eq!(windows.len(), 3);
-        assert_eq!(windows[0], (0, sample_rate * 30, 0, sample_rate * 30));
-        assert_eq!(
-            windows[1],
-            (
-                sample_rate * 29,
-                sample_rate * 59,
-                sample_rate * 30,
-                sample_rate * 59
-            )
-        );
-        assert_eq!(
-            windows[2],
-            (
-                sample_rate * 58,
-                sample_rate * 61,
-                sample_rate * 59,
-                sample_rate * 61
-            )
-        );
-    }
-
-    // EP: "none" is the sole class that skips diarization; every other
-    // string (however it got there) names a variant to run.
-    #[test]
-    fn diarization_variant_to_run_skips_when_setting_is_none() {
-        assert_eq!(diarization_variant_to_run("none"), None);
-    }
-
-    #[test]
-    fn diarization_variant_to_run_passes_through_a_real_variant() {
-        assert_eq!(diarization_variant_to_run("campplus"), Some("campplus"));
-        assert_eq!(
-            diarization_variant_to_run("titanet-large"),
-            Some("titanet-large")
-        );
-    }
-
-    fn sample_meeting_dto() -> MeetingDto {
-        MeetingDto {
-            id: 1,
-            title: "Test Meeting".to_string(),
-            source_path: None,
-            source_name: None,
-            created_at_ms: 0,
-            duration_ms: None,
-            language: "en".to_string(),
-            status: "transcribed".to_string(),
-            segments: Vec::new(),
-            mfu: None,
-            source_missing: false,
-        }
-    }
-
-    #[test]
-    fn transcribe_meeting_result_round_trips_with_a_diarization_warning() {
-        let original = TranscribeMeetingResult {
-            meeting: sample_meeting_dto(),
-            diarization_warning: Some("active diarization model is missing".to_string()),
-        };
-
-        let json = serde_json::to_value(&original).unwrap();
-        let round_tripped: TranscribeMeetingResult = serde_json::from_value(json).unwrap();
-
-        assert_eq!(round_tripped, original);
-    }
-
-    #[test]
-    fn transcribe_meeting_result_omits_diarization_warning_key_when_none() {
-        let original = TranscribeMeetingResult {
-            meeting: sample_meeting_dto(),
-            diarization_warning: None,
-        };
-
-        let json = serde_json::to_value(&original).unwrap();
-
-        assert!(json.get("diarization_warning").is_none());
-    }
-
-    fn segment(start_ms: u64, end_ms: u64, text: &str) -> transcribe::Segment {
-        transcribe::Segment {
-            start_ms,
-            end_ms,
-            text: text.to_string(),
-            speaker_id: None,
-        }
-    }
-
-    fn transcription(segments: Vec<transcribe::Segment>) -> transcribe::Transcription {
-        transcribe::Transcription {
-            segments,
-            language: "en".to_string(),
-        }
-    }
-
-    /// A meeting row to persist a transcript against, in a throwaway app-support
-    /// directory — never the user's own.
-    fn meeting_in(dir: &std::path::Path) -> i64 {
-        crate::meetings::create_empty_meeting(dir, 0).unwrap().id
-    }
-
-    fn diarization(
-        outcome: DiarizationOutcome,
-    ) -> Option<std::pin::Pin<Box<dyn std::future::Future<Output = DiarizationOutcome> + Send>>>
-    {
-        Some(Box::pin(async move { outcome }))
-    }
-
-    // A zero-segment Meeting decode is not useful output, whether its source
-    // is silent or the decoder could not recover speech. Fail before an empty,
-    // finished meeting can be persisted.
-    #[test]
-    fn ensure_non_empty_transcript_rejects_a_zero_segment_decode_with_neutral_guidance() {
-        let err = ensure_non_empty_transcript(&transcription(Vec::new()))
-            .expect_err("an empty decode must fail the Meeting run");
-        let message = err.to_string();
-        assert!(
-            message.contains("audible speech") && !message.contains("Metal encoder fault"),
-            "the error should explain empty speech without claiming the fixed Metal fault: {message}"
-        );
-    }
-
-    #[test]
-    fn ensure_non_empty_transcript_passes_a_decode_with_segments() {
-        let t = transcription(vec![segment(0, 1_000, "hello")]);
-        ensure_non_empty_transcript(&t).expect("a decode with segments passes");
-    }
-
-    // WP-116 DoD 1: moving the decoded allocation into blocking Whisper work
-    // must not require a full Vec clone merely to retain it for diarization.
-    // Pointer identity makes that ownership behavior observable without a
-    // model, allocator instrumentation, or private media.
-    #[tokio::test]
-    async fn blocking_transcription_owns_and_returns_the_original_sample_allocation() {
-        let samples: Vec<f32> = (0..32_000).map(|sample| sample as f32).collect();
-        let original_pointer = samples.as_ptr() as usize;
-        let observed_pointer = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let observed = Arc::clone(&observed_pointer);
-
-        let (sample_count, returned_samples) = transcribe_owned_samples(samples, move |borrowed| {
-            observed.store(
-                borrowed.as_ptr() as usize,
-                std::sync::atomic::Ordering::SeqCst,
-            );
-            Ok(borrowed.len())
-        })
-        .await
-        .expect("model-free blocking transcription succeeds");
-
-        assert_eq!(sample_count, 32_000);
-        assert_eq!(
-            observed_pointer.load(std::sync::atomic::Ordering::SeqCst),
-            original_pointer
-        );
-        assert_eq!(returned_samples.as_ptr() as usize, original_pointer);
-        assert_eq!(returned_samples.len(), 32_000);
-    }
-
-    // The whole point of WP-54: the transcript must already be readable from
-    // the store at the moment diarization begins, so a diarization failure of
-    // any kind — including a native crash that kills the process outright —
-    // can only ever cost the speaker labels.
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_persists_the_transcript_before_diarization_starts() {
-        let dir = tempfile::tempdir().unwrap();
-        let id = meeting_in(dir.path());
-        let observed = Arc::new(std::sync::Mutex::new(None));
-
-        let seen = Arc::clone(&observed);
-        let path = dir.path().to_path_buf();
-        let (_meeting, warning) = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            id,
-            transcription(vec![
-                segment(0, 1_000, "hello"),
-                segment(2_000, 3_000, "world"),
-            ]),
-            Some(Box::pin(async move {
-                // Reads the store from inside the diarization pass itself.
-                *seen.lock().unwrap() = Some(crate::meetings::open_meeting(&path, id).unwrap());
-                Ok((Ok(Vec::new()), None))
-            })),
-        )
-        .await
-        .unwrap();
-
-        let at_diarization_time = observed.lock().unwrap().clone().expect("diarization ran");
-        assert_eq!(at_diarization_time.segments.len(), 2);
-        assert_eq!(at_diarization_time.segments[0].text, "hello");
-        assert_eq!(at_diarization_time.language, "en");
-        assert_eq!(at_diarization_time.duration_ms, Some(3_000));
-        assert!(
-            at_diarization_time
-                .segments
-                .iter()
-                .all(|s| s.speaker_id.is_none()),
-            "speaker ids are not known until diarization returns"
-        );
-        assert_eq!(warning, None);
-    }
-
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_keeps_the_persisted_transcript_when_diarization_fails()
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let id = meeting_in(dir.path());
-
-        let (_meeting, warning) = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            id,
-            transcription(vec![
-                segment(0, 1_000, "hello"),
-                segment(2_000, 3_000, "world"),
-            ]),
-            diarization(Ok((
-                Err(AppError::Diarization("engine exploded".to_string())),
-                None,
-            ))),
-        )
-        .await
-        .unwrap();
-
-        assert!(warning.is_some(), "the failure is reported, not swallowed");
-        let reopened = crate::meetings::open_meeting(dir.path(), id).unwrap();
-        assert_eq!(reopened.segments.len(), 2);
-        assert_eq!(reopened.segments[0].text, "hello");
-        assert!(reopened.segments.iter().all(|s| s.speaker_id.is_none()));
-    }
-
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_writes_speaker_ids_onto_the_persisted_transcript() {
-        let dir = tempfile::tempdir().unwrap();
-        let id = meeting_in(dir.path());
-        // Distinct speakers, so the read-path coalescing in `to_dto` cannot
-        // merge the two segments and hide a wrong assignment.
-        let turns = vec![
-            diarize::SpeakerTurn {
-                start_ms: 0,
-                end_ms: 1_000,
-                speaker: 3,
-            },
-            diarize::SpeakerTurn {
-                start_ms: 2_000,
-                end_ms: 3_000,
-                speaker: 4,
-            },
-        ];
-
-        let (meeting, warning) = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            id,
-            transcription(vec![
-                segment(0, 1_000, "hello"),
-                segment(2_000, 3_000, "world"),
-            ]),
-            diarization(Ok((Ok(turns), None))),
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(warning, None);
-        assert_eq!(meeting.segments[0].speaker_id, Some(3));
-        assert_eq!(meeting.segments[1].speaker_id, Some(4));
-        let reopened = crate::meetings::open_meeting(dir.path(), id).unwrap();
-        assert_eq!(reopened.segments[0].speaker_id, Some(3));
-        assert_eq!(reopened.segments[1].speaker_id, Some(4));
-        assert_eq!(reopened.language, "en");
-        assert_eq!(reopened.duration_ms, Some(3_000));
-    }
-
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_persists_the_transcript_when_no_model_is_active() {
-        let dir = tempfile::tempdir().unwrap();
-        let id = meeting_in(dir.path());
-
-        let (meeting, warning) = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            id,
-            transcription(vec![segment(0, 1_000, "hello")]),
-            None,
-        )
-        .await
-        .unwrap();
-
-        assert_eq!(warning, None);
-        assert_eq!(meeting.segments.len(), 1);
-        let reopened = crate::meetings::open_meeting(dir.path(), id).unwrap();
-        assert_eq!(reopened.segments.len(), 1);
-        assert!(reopened.segments[0].speaker_id.is_none());
-    }
-
-    // Once the transcript is persisted, nothing downstream may turn into a
-    // failed transcription — including the speaker-id write itself failing.
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_warns_instead_of_failing_when_the_speaker_write_fails()
-    {
-        let dir = tempfile::tempdir().unwrap();
-        let id = meeting_in(dir.path());
-        let path = dir.path().to_path_buf();
-
-        let (meeting, warning) = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            id,
-            transcription(vec![segment(0, 1_000, "hello")]),
-            Some(Box::pin(async move {
-                // The meeting disappears after the transcript was persisted but
-                // before the speaker ids can be written back to it.
-                crate::meetings::delete_meeting(&path, id).unwrap();
-                Ok((
-                    Ok(vec![diarize::SpeakerTurn {
-                        start_ms: 0,
-                        end_ms: 1_000,
-                        speaker: 1,
-                    }]),
-                    None,
-                ))
-            })),
-        )
-        .await
-        .expect("a failed speaker-id write must not fail the transcription");
-
-        assert!(warning.is_some(), "the failed write is reported");
-        assert_eq!(
-            meeting.segments.len(),
-            1,
-            "the transcript is still returned"
-        );
-    }
-
-    // Error path: the first persist is what fails, so diarization must never
-    // start — running it would burn minutes of native inference for a result
-    // that has nowhere to go.
-    #[tokio::test]
-    async fn persist_transcript_then_diarize_skips_diarization_when_the_first_persist_fails() {
-        let dir = tempfile::tempdir().unwrap();
-        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
-
-        let flag = Arc::clone(&ran);
-        let error = persist_transcript_then_diarize(
-            dir.path().to_path_buf(),
-            4_242,
-            transcription(vec![segment(0, 1_000, "hello")]),
-            Some(Box::pin(async move {
-                flag.store(true, std::sync::atomic::Ordering::SeqCst);
-                Ok((Ok(Vec::new()), None))
-            })),
-        )
-        .await
-        .unwrap_err();
-
-        assert!(matches!(error, AppError::Store(_)));
-        assert!(
-            !ran.load(std::sync::atomic::Ordering::SeqCst),
-            "diarization must not run once persisting the transcript has failed"
-        );
-    }
-}
+#[path = "transcription_tests.rs"]
+mod tests;

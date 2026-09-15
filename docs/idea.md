@@ -22,15 +22,15 @@ summary.
 ## Value Proposition
 
 Drop in an audio or video file and get back an accurate, speaker-labelled,
-editable transcript plus structured meeting MFU — kept in a local library you
+editable transcript plus structured MFU — kept in a local library you
 can reopen and edit. Local processing remains on-device and private, with
 accuracy prioritized over speed because batch processing is offline.
 
 For live audio — a meeting in progress, your own dictated thoughts, or audio
-playing in the background — **Streaming** (ADR-014) gives a near-real-time,
+playing in the background — **Meeting** (ADR-014) gives a near-real-time,
 plain-text transcript you can copy or export as it happens, still entirely
 on-device. It trades a small latency budget for immediacy; it does not replace
-Meeting's batch-accuracy pipeline, which is unchanged.
+Transcription's batch-accuracy pipeline, which is unchanged.
 
 The **Recorder** workspace captures the user's microphone as a durable
 voice note. It retains both local audio and an editable live transcript, supports
@@ -49,11 +49,11 @@ defined in ADR-017.
   transcription language itself is always **auto-detected** from the audio,
   never chosen (ADR-012). English added afterward as a focus.
 - A **speaker-attributed**, editable transcript.
-- Structured **meeting MFU** generated locally — summary, key decisions,
+- Structured **MFU** generated locally — summary, key decisions,
   action items, open questions, participants — editable and copyable.
-- A persisted **library** of **meetings** (one meeting = one transcription):
+- A persisted **library** of **transcriptions** (one item = one source file):
   reopen, rename, delete, with edits **auto-saved** locally.
-- **Export** of a meeting (transcript and/or MFU) to Markdown and plain text.
+- **Export** of a Transcription (transcript and/or MFU) to Markdown and plain text.
 - A **Settings** screen: **AI models** (download/delete the model each task needs;
   at release, choose an Active model among several per task), **Appearance**
   (light / dark / system themes; more themes at release), **App language** (the UI
@@ -61,20 +61,20 @@ defined in ADR-017.
   (release only).
 - One language **setting** — the **app UI language** (English by default). The
   **transcription language** is not a setting at all: Whisper detects it per run
-  and the meeting records what was detected.
-- **Streaming** (ADR-014): live, near-real-time transcription of system audio
-  for a Streaming session (the microphone is excluded) — plain, unattributed
+  and the transcription records what was detected.
+- **Meeting** (ADR-014): live, near-real-time transcription of system audio
+  for a Meeting (the microphone is excluded) — plain, unattributed
   running text (no speaker separation), multi-language including mixed-language input
   within one session, with a roughly 5–10s latency budget. A separate,
-  additive capability from Meeting; it does not use or affect Meeting's
-  batch pipeline. No raw audio is retained for a Streaming session, so it
+  additive capability from Transcription; it does not use or affect
+  Transcription's batch pipeline. No raw audio is retained for a Meeting, so it
   cannot later be re-transcribed with a different model.
-- **Streaming live translation** (ADR-015): a Streaming session's transcript
+- **Meeting live translation** (ADR-015): a Meeting transcript
   can be translated into English or Russian as it is captured, shown beside
   the original, using the same local summarization model — no new model and
-  no cloud service. Streaming only; Meeting transcripts are not translated.
-- **Cloud Streaming BYOK:** before starting a
-  Streaming session, users can select Local or Cloud transcription. Cloud
+  no cloud service. Meeting only; Transcription transcripts are not translated.
+- **Cloud Meeting BYOK:** before starting a
+  Meeting, users can select Local or Cloud transcription. Cloud
   exposes a fixed catalog — Deepgram Nova-3, AssemblyAI Universal-3.5 Pro, and
   OpenAI GPT Transcribe — and stores user-provided API keys only in macOS
   Keychain, after the provider verifies the key and model access without
@@ -87,35 +87,35 @@ defined in ADR-017.
 - **Recorder:** microphone-only live capture as a third workspace,
   with Russian, English, and mixed-language transcription, retained app-owned
   audio, editable persisted text, playback, WAV export, interrupted-session
-  recovery, and a configurable global Start/Stop shortcut. Recorder, Streaming,
-  and active Meeting transcription share one mutually exclusive transcription
+  recovery, and a configurable global Start/Stop shortcut. Recorder, Meeting,
+  and active Transcription processing share one mutually exclusive transcription
   resource; Recorder never mixes microphone and system audio.
 
 ### Out of scope
 
-- Cloud summarization and cloud storage. Cloud Streaming transcribes the live
+- Cloud summarization and cloud storage. Cloud Meeting transcribes the live
   audio stream only; API keys never leave macOS Keychain except in the
   authenticated provider connection.
-- Translation between languages, other than Streaming live translation
-  into English or Russian (ADR-015). Meeting transcripts are not
+- Translation between languages, other than Meeting live translation
+  into English or Russian (ADR-015). Transcription transcripts are not
   translated, and no other language pair is offered.
 - Real-name speaker identification (voice enrollment); speakers are generic
   labels the user renames. Reassigning or merging speakers is deferred, so a
   misattributed segment cannot yet be corrected.
 - Batch/queued processing of many files at once.
-- In-app playback of Meeting source files or Streaming audio. Recorder playback
+- In-app playback of Transcription source files or Meeting audio. Recorder playback
   is limited to the audio owned by its saved voice-note sessions.
 - Multi-user collaboration, public distribution, notarization.
 
 ## Non-Goals
 
-- Meeting will not become a real-time transcriber. Its accuracy comes
+- Transcription will not become a real-time transcriber. Its accuracy comes
   specifically from full-file, batch processing (ADR-002), and that does not
-  change. Streaming (ADR-014) is a separate, additive capability with its own
-  quality-over-latency priority — it does not replace or dilute Meeting's
+  change. Meeting (ADR-014) is a separate, additive capability with its own
+  quality-over-latency priority — it does not replace or dilute Transcription's
   batch-accuracy approach.
 - It will not depend on any network service for its **core processing**:
-  transcription (Meeting or Streaming) and MFU detail generation make no network
+  transcription (Transcription or Meeting) and MFU detail generation make no network
   calls. The only network use is downloading models (and, at release, app
   updates).
 

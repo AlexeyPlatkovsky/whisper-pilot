@@ -22,7 +22,7 @@ export const TRANSCRIPTION_NOT_DOWNLOADED = {
 // are separate, explicit steps that each return an updated meeting.
 export const EMPTY_MEETING: Meeting = {
   id: 100,
-  title: "New Meeting",
+  title: "New Transcription",
   created_at_ms: 0,
   language: "ru",
   status: "no_files",

@@ -3,6 +3,7 @@ import {
   useId,
   useLayoutEffect,
   useRef,
+  useState,
   type ReactNode,
 } from "react";
 
@@ -21,7 +22,7 @@ export function ConfirmDialog({
   title: string;
   description: ReactNode;
   confirmLabel: string;
-  onConfirm: () => void;
+  onConfirm: () => void | Promise<void>;
   onCancel: () => void;
   destructive: boolean;
   showCancel?: boolean;
@@ -29,6 +30,8 @@ export function ConfirmDialog({
 }) {
   const dialogRef = useRef<HTMLDivElement | null>(null);
   const confirmRef = useRef<HTMLButtonElement | null>(null);
+  const confirmingRef = useRef(false);
+  const [confirming, setConfirming] = useState(false);
   const descriptionId = useId();
   const openerRef = useRef<HTMLElement | null>(
     document.activeElement instanceof HTMLElement
@@ -47,6 +50,7 @@ export function ConfirmDialog({
   function handleKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
       event.preventDefault();
+      event.stopPropagation();
       onCancel();
       return;
     }
@@ -67,6 +71,25 @@ export function ConfirmDialog({
       first.focus();
     }
   }
+
+  function handleConfirm() {
+    // A dialog can remain mounted while its async IPC action settles.  Do not
+    // let a double click, Return, or Space issue the destructive command a
+    // second time in that interval.
+    if (busy || confirmingRef.current) return;
+    confirmingRef.current = true;
+    setConfirming(true);
+    Promise.resolve()
+      .then(onConfirm)
+      .catch(() => {
+        // The owner keeps the dialog open on failure and renders the error in
+        // its workspace.  Re-enable an intentional retry in that case.
+        confirmingRef.current = false;
+        setConfirming(false);
+      });
+  }
+
+  const disabled = busy || confirming;
 
   return (
     <div className="modal-overlay">
@@ -91,7 +114,7 @@ export function ConfirmDialog({
               type="button"
               className="modal-button"
               onClick={onCancel}
-              disabled={busy}
+              disabled={disabled}
             >
               Cancel
             </button>
@@ -102,8 +125,8 @@ export function ConfirmDialog({
             className={`modal-button ${
               destructive ? "modal-button--danger" : "modal-button--primary"
             }`}
-            onClick={onConfirm}
-            disabled={busy}
+            onClick={handleConfirm}
+            disabled={disabled}
           >
             {confirmLabel}
           </button>
