@@ -65,10 +65,12 @@ test("npm invokes Bash-only repository scripts with Bash", () => {
     "version:minor",
     "version:fix",
     "version:feature",
+    "version:major",
     "version:release",
     "commit:minor",
     "commit:fix",
     "commit:feature",
+    "commit:major",
     "commit:release",
   ];
 

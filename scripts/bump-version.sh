@@ -5,9 +5,9 @@ usage() {
   cat >&2 <<EOF
 Usage: $(basename "$0") <minor|major|release|sync|verify> [VERSION]
 
-  minor    bump a fix version (1.9.0 -> 1.9.1)
-  major    bump a feature version (1.9.0 -> 1.10.0)
-  release  bump MAJOR (1.9.0 -> 2.0.0), or set an explicit later VERSION
+  minor    small fix or local change: bump PATCH (1.9.0 -> 1.9.1)
+  major    feature or medium change: bump MINOR (1.9.0 -> 1.10.0)
+  release  explicit user-requested release: bump to the next MAJOR X+1.0.0
   sync     make Cargo.lock and package metadata match Cargo/Tauri
   verify   fail unless every release-version source agrees
 
@@ -23,11 +23,12 @@ cargo_lock="$root/src-tauri/Cargo.lock"
 tauri_conf="$root/src-tauri/tauri.conf.json"
 package_json="$root/package.json"
 package_lock="$root/package-lock.json"
+readme="$root/README.md"
 mode="${1:-}"
 
 [[ "$mode" =~ ^(minor|major|release|sync|verify)$ ]] || usage
 
-for file in "$cargo_toml" "$cargo_lock" "$tauri_conf" "$package_json" "$package_lock"; do
+for file in "$cargo_toml" "$cargo_lock" "$tauri_conf" "$package_json" "$package_lock" "$readme"; do
   [[ -f "$file" ]] || { echo "FATAL: missing release-version source: $file" >&2; exit 1; }
 done
 
@@ -44,17 +45,19 @@ lock_root_version="$(node -e '
   const p=JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
   console.log(p.packages?.[""]?.version ?? "")
 ' "$package_lock")"
+readme_version="$(sed -n 's/.*badge\/version-\([0-9][0-9.]*\)-.*/\1/p' "$readme" | head -n 1)"
 
 is_semver() {
   [[ "$1" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
 }
 
-for version in "$cargo_version" "$cargo_lock_version" "$tauri_version" "$package_version" "$lock_version" "$lock_root_version"; do
+for version in "$cargo_version" "$cargo_lock_version" "$tauri_version" "$package_version" "$lock_version" "$lock_root_version" "$readme_version"; do
   is_semver "$version" || { echo "FATAL: release version must be X.Y.Z, got: $version" >&2; exit 1; }
 done
 
 write_derived_versions() {
-  VERSION_VALUE="$1" CARGO_LOCK="$cargo_lock" PACKAGE_JSON="$package_json" PACKAGE_LOCK="$package_lock" node <<'NODE'
+  VERSION_VALUE="$1" CARGO_LOCK="$cargo_lock" PACKAGE_JSON="$package_json" \
+    PACKAGE_LOCK="$package_lock" README_PATH="$readme" node <<'NODE'
 const fs = require("fs");
 const version = process.env.VERSION_VALUE;
 const cargoLockPath = process.env.CARGO_LOCK;
@@ -80,27 +83,25 @@ packageLock.version = version;
 packageLock.packages[""].version = version;
 fs.writeFileSync(process.env.PACKAGE_JSON, `${JSON.stringify(packageJson, null, 2)}\n`);
 fs.writeFileSync(process.env.PACKAGE_LOCK, `${JSON.stringify(packageLock, null, 2)}\n`);
+const readmePath = process.env.README_PATH;
+const readme = fs.readFileSync(readmePath, "utf8");
+const updatedReadme = readme.replace(
+  /(badge\/version-)[0-9]+\.[0-9]+\.[0-9]+(-)/,
+  `$1${version}$2`,
+);
+if (updatedReadme === readme && !readme.includes(`badge/version-${version}-`)) {
+  throw new Error("README.md has no version badge");
+}
+fs.writeFileSync(readmePath, updatedReadme);
 NODE
 }
 
 verify_sources() {
-  if [[ "$cargo_version" != "$cargo_lock_version" || "$cargo_version" != "$tauri_version" || "$cargo_version" != "$package_version" || "$cargo_version" != "$lock_version" || "$cargo_version" != "$lock_root_version" ]]; then
-    echo "FATAL: version sources disagree (Cargo=$cargo_version, Cargo.lock=$cargo_lock_version, Tauri=$tauri_version, package=$package_version, package-lock=$lock_version, package-lock root=$lock_root_version)." >&2
+  if [[ "$cargo_version" != "$cargo_lock_version" || "$cargo_version" != "$tauri_version" || "$cargo_version" != "$package_version" || "$cargo_version" != "$lock_version" || "$cargo_version" != "$lock_root_version" || "$cargo_version" != "$readme_version" ]]; then
+    echo "FATAL: version sources disagree (Cargo=$cargo_version, Cargo.lock=$cargo_lock_version, Tauri=$tauri_version, package=$package_version, package-lock=$lock_version, package-lock root=$lock_root_version, README=$readme_version)." >&2
     echo "Run scripts/bump-version.sh sync after confirming Cargo/Tauri are canonical." >&2
     exit 1
   fi
-}
-
-is_later_version() {
-  local candidate="$1"
-  local current="$2"
-  local candidate_major candidate_minor candidate_patch
-  local current_major current_minor current_patch
-  IFS='.' read -r candidate_major candidate_minor candidate_patch <<< "$candidate"
-  IFS='.' read -r current_major current_minor current_patch <<< "$current"
-  (( candidate_major > current_major )) ||
-    (( candidate_major == current_major && candidate_minor > current_minor )) ||
-    (( candidate_major == current_major && candidate_minor == current_minor && candidate_patch > current_patch ))
 }
 
 if [[ "$mode" == "sync" ]]; then
@@ -129,10 +130,15 @@ case "$mode" in
     new_version="${current_major}.$((current_minor + 1)).0"
     ;;
   release)
-    new_version="${2:-$((current_major + 1)).0.0}"
+    [[ "${WHISPERPILOT_RELEASE_AUTHORIZED:-}" == "1" ]] || {
+      echo "FATAL: release requires explicit user authorization in WHISPERPILOT_RELEASE_AUTHORIZED=1." >&2
+      exit 1
+    }
+    expected_release="$((current_major + 1)).0.0"
+    new_version="${2:-$expected_release}"
     is_semver "$new_version" || { echo "FATAL: release version must be X.Y.Z, got: $new_version" >&2; exit 1; }
-    is_later_version "$new_version" "$cargo_version" || {
-      echo "FATAL: release version $new_version must be later than $cargo_version" >&2
+    [[ "$new_version" == "$expected_release" ]] || {
+      echo "FATAL: release version must be $expected_release after $cargo_version, got: $new_version" >&2
       exit 1
     }
     ;;

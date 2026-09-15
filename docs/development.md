@@ -51,13 +51,20 @@ gitignored; do not edit or commit it. See
 | `npm run lint:ai-instructions` / `npm run test:ai-instructions` | Validate active agent/skill contracts, model-effort compatibility, TOML syntax, and validator regressions |
 | `npm run lint:source-size` / `npm run test:source-size` | Reject production modules at 750 lines, test modules at 1,750, and documentation over 600; also covers scripts, workflows, and `build.rs` |
 | `npm run test:repository-policy` | Test staged version and pre-commit enforcement |
-| `npm run version:check` | Verify all six release-version records agree |
+| `npm run version:check` | Verify all release-version records and the README badge agree |
+| `npm run version:minor` / `npm run commit:minor` | Small fix or local change: increment SemVer PATCH |
+| `npm run version:feature` (`version:major`) / `npm run commit:feature` (`commit:major`) | Feature or medium change: increment SemVer MINOR |
+| `WHISPERPILOT_RELEASE_AUTHORIZED=1 npm run commit:release -- -m "…"` | Increment SemVer MAJOR; only after an explicit user release request |
 | `cargo fmt --manifest-path src-tauri/Cargo.toml --check` | Verify Rust formatting |
 | `cargo build --manifest-path src-tauri/Cargo.toml --all-targets --all-features` | Build every Rust target and feature |
 | `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings` | Reject Rust warnings and lints |
 | `cargo test --manifest-path src-tauri/Cargo.toml` | Run the default Rust suite |
 
 ## Debugging
+
+The agent classifies a task as small or feature-sized; the hook validates the chosen SemVer transition, not diff size.
+If a commit attempt fails, rerun the same `commit:*` command: it reuses the pending bump. Add `--amend --no-edit` to
+amend the current task commit without incrementing its version again.
 
 Run with `RUST_LOG=info npm run tauri:dev` and capture stderr before drawing
 conclusions from behavior alone. Transcription decodes are logged at debug

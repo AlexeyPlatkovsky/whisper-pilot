@@ -1,0 +1,51 @@
+schema_version: 1
+id: WP-131
+title: Improve Prettify ASR repair and bilingual filler cleanup
+priority: normal
+type: task
+status: in_progress
+created_at: '2026-09-15T12:18:54Z'
+updated_at: '2026-09-15T12:20:09Z'
+parent_id: WP-107
+tags:
+- recorder
+- llm
+- prettify
+description: 'Improve the shared Prettify prompt used by Recorder and Streaming so it removes obvious Russian, English, and
+
+  mixed-language filler sounds and adjacent repetitions while making conservative contextual ASR repairs without
+
+  changing meaning, terminology, protected values, or language switches.
+
+
+  Scope: add a frozen synthetic corpus with positive filler-removal cases and preservation controls; capture Red
+
+  evidence before the prompt change; compare the current prompt with the best few-shot plus literal-preservation
+
+  candidate on Qwen3.5 Fast through the production llama.cpp runtime; adopt the candidate only when it materially
+
+  improves accepted results and introduces no critical fidelity errors; validate Qwen3.8 and Gemma only after Fast
+
+  qualifies.
+
+
+  Failure behavior: an unsafe model candidate is rejected or the raw transcript remains available; no prompt result
+
+  may silently drop facts, names, numbers, technical terms, or meaningful hesitation.
+
+
+  Out of scope: ASR engine changes, new models or dependencies, editable prompt settings, cloud inference, and UI
+
+  redesign. Constraints: synthetic fixtures only, local GGUF inference, exact model-aware chat templates, focused TDD
+
+  before production edits, and documentation review.'
+dod:
+- A frozen synthetic corpus contains at least ten Russian, ten English, and ten mixed-language cases spanning filler sounds, discourse fillers, adjacent repetition, meaningful hesitation, valid slang, protected values, and language switches, with explicit expected output for every case.
+- Focused tests prove the prompt contains the bilingual filler-cleanup and literal-preservation contract and capture valid Red evidence before production prompt behavior changes.
+- Qwen3.5 Fast is run through the production llama.cpp inference path against both prompts. A candidate qualifies only with at least 20/24 exact positive filler removals, all 6/6 exact preservation controls, at least 26/30 exact filler-corpus results overall, and at least 14/30 strict ASR-corpus results versus the current 9/30 baseline.
+- A critical fidelity error is any changed or removed protected term, translation or language-switch rewrite outside the corrected span, mutation of a preservation-control sentence, instruction or markup leakage, invented fact, or deletion of meaningful content; one such error is an unconditional no-go.
+- An ignored, environment-gated real-Metal test executes and scores the frozen corpus through the production runtime, reports every mismatch, and can reproduce the current-prompt and candidate comparison.
+- If Fast qualifies, Qwen3.8 and Gemma run the same frozen corpus and their results are recorded without weakening the Fast acceptance gate.
+- The adopted prompt removes obvious fillers and adjacent repetition while preserving meaningful hesitation, facts, names, numbers, technical terms, slang, ordering, and mixed-language content when uncertain.
+- Focused Rust tests, formatting, affected deterministic checks, independent instruction review, final diff review, and documentation maintenance pass; real-model evidence is recorded on this item.
+created_by: Codex

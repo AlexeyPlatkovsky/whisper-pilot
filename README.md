@@ -1,6 +1,6 @@
 # WhisperPilot
 
-![Version](https://img.shields.io/badge/version-1.20.0-6f55ff?style=flat-square)
+![Version](https://img.shields.io/badge/version-1.20.1-6f55ff?style=flat-square)
 ![macOS](https://img.shields.io/badge/platform-macOS%2013%2B-111827?style=flat-square&logo=apple)
 ![Local-first](https://img.shields.io/badge/privacy-local--first-0f766e?style=flat-square)
 ![License](https://img.shields.io/badge/license-Apache--2.0-2563eb?style=flat-square)

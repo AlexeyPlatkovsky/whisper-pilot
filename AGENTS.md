@@ -25,7 +25,10 @@ product scope and [docs/architecture.md](docs/architecture.md) for technical bou
 - Finish requested changes by running affected checks and reviewing the final diff.
 - Use an independent reviewer for non-trivial code and instruction-system changes.
 - Check authoritative documentation after behavior, architecture, command, or UI changes.
-- When committing tracked work, include its TaskPilot record in the same task-scoped commit.
+- Every task-scoped commit includes one version bump and, for tracked work, its TaskPilot record.
+- Use `minor` for small fixes and local changes (PATCH), and `major` for features or medium changes (MINOR).
+- Use `release` (MAJOR) only when the user explicitly requests a release; never infer release authority.
+- Change-size classification is the agent's responsibility; the hook validates the selected version transition.
 - Significant transcription changes require an explicit real-Metal macOS validation result.
 
 ## Agents
@@ -66,5 +69,5 @@ current task.
 
 Run `npm run lint:ai-instructions` after changing the active landscape. Run `npm run lint:source-size` after
 structural changes; production source and documentation modules have enforced size limits. Active instruction files
-must have at most 100 lines and 120 characters per line. Product commits use the version workflow in
-`scripts/bump-version.sh`. AI-landscape-only commits do not change the product version.
+must have at most 100 lines and 120 characters per line. Every ordinary task commit uses the version workflow in
+`scripts/bump-version.sh`; the pre-commit hook enforces the staged transition.
