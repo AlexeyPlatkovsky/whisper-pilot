@@ -1,12 +1,11 @@
 name: OpenCode Review
 
 # Public repo: this workflow is restricted to the repository owner only.
-# - On PR open/update: reviews the current diff.
-# - On a PR comment containing /oc or /opencode: runs on demand.
+# - On initial PR open: reviews the current diff once.
+# - On an owner-authored PR comment containing /oc or /opencode: runs on demand.
 on:
-  workflow_dispatch:
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened]
   issue_comment:
     types: [created]
 
@@ -21,9 +20,9 @@ jobs:
     # Gate every entry point to the owner. On a public repo this stops anyone
     # else from triggering OpenCode (and burning the API key) via a comment.
     if: >
-      (github.event_name == 'workflow_dispatch' && github.actor == 'AlexeyPlatkovsky') ||
       (
         github.event_name == 'pull_request' &&
+        github.event.action == 'opened' &&
         github.event.pull_request.user.login == 'AlexeyPlatkovsky'
       ) ||
       (
@@ -56,11 +55,11 @@ jobs:
           echo "$bin_dir" >> "$GITHUB_PATH"
 
       - name: OpenCode review
-        # This prompt is used for pull_request/workflow_dispatch. On an
-        # issue_comment, `opencode github run` reads the triggering comment.
+        # This prompt is used for pull_request. On an issue_comment,
+        # `opencode github run` reads the triggering comment.
         run: opencode github run
         env:
-          MODEL: opencode-go/deepseek-v4-pro
+          MODEL: opencode-go/deepseek-v4-flash
           USE_GITHUB_TOKEN: "true"
           SHARE: "false"
           MENTIONS: /opencode,/oc
