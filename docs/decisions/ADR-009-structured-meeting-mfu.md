@@ -1,4 +1,4 @@
-# ADR-009: Structured meeting MFU (full set), editable
+# ADR-009: Structured MFU (full set), editable
 
 - **Status:** accepted
 - **Date:** 2026-07-21
@@ -12,7 +12,7 @@ is less useful than an actionable follow-up.
 
 ## Decision
 
-Generate **structured meeting MFU** (not a free-form blurb), in **Russian**, with
+Generate **structured MFU** (not a free-form blurb), in **Russian**, with
 a fixed section set:
 
 - **Summary** — brief gist.
@@ -24,7 +24,7 @@ a fixed section set:
 MFU are generated **on demand via the Create MFU action** (enabled after
 transcription finishes; UI-blocking — ADR-010), **editable in place**
 (auto-saved), **clearable**, and **regenerable** on demand. Generation is local
-(llama.cpp / Qwen2.5 — ADR-006).
+(local GGUF LLM through llama.cpp — ADR-006).
 
 ## Consequences
 

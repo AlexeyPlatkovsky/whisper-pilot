@@ -145,7 +145,7 @@ describe("App — MFU panel toggle", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
 
     const toggle = await screen.findByRole("switch", { name: /mfu/i });
     await user.click(toggle);
@@ -178,8 +178,47 @@ describe("App — MFU panel toggle", () => {
     });
 
     // The completed result is not left behind a hidden panel.
-    expect(await screen.findByDisplayValue("Summary text")).toBeInTheDocument();
+    const summary = await screen.findByDisplayValue("Summary text");
+    expect(summary).toBeInTheDocument();
+    expect(summary.closest(".wp-mfu-content")).not.toBeNull();
     expect(document.querySelector("aside.wp-mfu")).toBeInTheDocument();
+  });
+
+  it("reports an MFU generation failure for the active meeting", async () => {
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_DOWNLOADED,
+      {
+        id: "llm-1",
+        task: "llm",
+        label: "Local LLM",
+        downloaded: true,
+        size_bytes: 1,
+        recommended: false,
+      },
+    ]);
+    vi.mocked(ipc.getSettings).mockResolvedValue({
+      theme: "system",
+      ui_language: "en",
+      active_model_diarization: "none",
+      active_model_llm: "llm-1",
+      export_file_type: "plain_text",
+    });
+    vi.mocked(ipc.generateMfu).mockRejectedValue(
+      new Error("MFU model unavailable"),
+    );
+    const user = userEvent.setup();
+    render(<App />);
+    await waitForAddFileEnabled();
+    await chooseAndTranscribe(user);
+    await screen.findByText("Hello");
+
+    const craft = screen.getByRole("button", { name: "Craft MFU" });
+    await waitFor(() => expect(craft).toBeEnabled());
+    await user.click(craft);
+
+    expect(
+      await screen.findByText(/MFU model unavailable/),
+    ).toBeInTheDocument();
   });
 
   it("does not change Diarize's, Craft MFU's, or Transcribe's enabled/disabled behavior when the switch is toggled", async () => {
@@ -222,7 +261,7 @@ describe("App — MFU panel toggle", () => {
       expect(meetingToggle).toHaveAttribute("aria-checked", "false"),
     );
 
-    await user.click(screen.getByRole("button", { name: "Streaming" }));
+    await user.click(screen.getByRole("button", { name: "Meeting" }));
 
     const streamingToggle = await screen.findByRole("switch", {
       name: /mfu/i,

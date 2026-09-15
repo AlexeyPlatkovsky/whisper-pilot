@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { getSettings, setSetting, type Settings } from "./ipc";
 import { applyTheme, type Theme } from "./theme";
 import { StatusColorsSection } from "./StatusColorsSection";
@@ -13,6 +13,7 @@ export function AppearanceSection() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [changeError, setChangeError] = useState<string | null>(null);
+  const writeRevision = useRef(0);
   const theme = (settings?.theme ?? null) as Theme | null;
 
   useEffect(() => {
@@ -31,12 +32,15 @@ export function AppearanceSection() {
 
   async function handleChange(value: Theme) {
     const previous = theme;
+    const revision = ++writeRevision.current;
     setChangeError(null);
     setSettings((s) => (s ? { ...s, theme: value } : s));
     applyTheme(value);
     try {
       await setSetting("theme", value);
     } catch (e) {
+      // A slower earlier write must never roll back a newer selection.
+      if (writeRevision.current !== revision) return;
       if (previous) {
         setSettings((s) => (s ? { ...s, theme: previous } : s));
         applyTheme(previous);

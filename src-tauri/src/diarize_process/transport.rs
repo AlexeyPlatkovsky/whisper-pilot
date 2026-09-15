@@ -6,7 +6,10 @@
 use crate::diarize::SpeakerTurn;
 use crate::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
+use std::io::{BufReader, Read, Write};
 use std::path::PathBuf;
+
+const SAMPLE_WRITE_BUFFER_BYTES: usize = 16 * 1_024;
 
 /// Everything the worker needs, handed over as a small JSON file rather than
 /// argv so paths with spaces and a growing field set stay uncomplicated.
@@ -22,38 +25,81 @@ pub struct WorkerRequest {
 /// Samples cross the process boundary as a raw little-endian `f32` file rather
 /// than a pipe — see ADR-013 for why.
 pub(crate) fn write_samples(path: &std::path::Path, samples: &[f32]) -> Result<()> {
-    let mut bytes = Vec::with_capacity(samples.len() * 4);
-    for sample in samples {
-        bytes.extend_from_slice(&sample.to_le_bytes());
-    }
-    std::fs::write(path, bytes).map_err(|e| {
+    let mut file = std::fs::File::create(path).map_err(|e| {
         AppError::Diarization(format!(
             "could not stage audio for the speaker-identification process at {}: {e}",
             path.display()
         ))
+    })?;
+    write_samples_to(&mut file, samples)
+}
+
+pub(crate) fn write_samples_to(writer: &mut impl Write, samples: &[f32]) -> Result<()> {
+    let mut bytes = [0_u8; SAMPLE_WRITE_BUFFER_BYTES];
+    let samples_per_chunk = SAMPLE_WRITE_BUFFER_BYTES / std::mem::size_of::<f32>();
+    for chunk in samples.chunks(samples_per_chunk) {
+        for (index, sample) in chunk.iter().enumerate() {
+            let start = index * std::mem::size_of::<f32>();
+            bytes[start..start + 4].copy_from_slice(&sample.to_le_bytes());
+        }
+        writer
+            .write_all(&bytes[..std::mem::size_of_val(chunk)])
+            .map_err(|error| {
+                AppError::Diarization(format!("could not stage speaker audio: {error}"))
+            })?;
+    }
+    writer.flush().map_err(|error| {
+        AppError::Diarization(format!("could not flush staged speaker audio: {error}"))
     })
 }
 
 pub(crate) fn read_samples(path: &std::path::Path) -> Result<Vec<f32>> {
-    let bytes = std::fs::read(path).map_err(|e| {
+    let file = std::fs::File::open(path).map_err(|e| {
         AppError::Diarization(format!(
             "could not read staged audio at {}: {e}",
             path.display()
         ))
     })?;
-    if bytes.len() % 4 != 0 {
-        // `chunks_exact` would drop the partial tail silently, diarizing a
-        // slightly different recording than the one transcribed.
+    let byte_len = file
+        .metadata()
+        .map_err(|e| {
+            AppError::Diarization(format!(
+                "could not inspect staged audio at {}: {e}",
+                path.display()
+            ))
+        })?
+        .len();
+    if byte_len % std::mem::size_of::<f32>() as u64 != 0 {
         return Err(AppError::Diarization(format!(
             "staged audio at {} is truncated ({} bytes is not a whole number of samples)",
             path.display(),
-            bytes.len()
+            byte_len
         )));
     }
-    Ok(bytes
-        .chunks_exact(4)
-        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
-        .collect())
+
+    let byte_len = usize::try_from(byte_len)
+        .map_err(|_| AppError::Diarization("staged audio is too large to address".to_string()))?;
+    let sample_count = byte_len / std::mem::size_of::<f32>();
+    let mut samples = Vec::with_capacity(sample_count);
+    let mut reader = BufReader::new(file);
+    let mut bytes = [0_u8; SAMPLE_WRITE_BUFFER_BYTES];
+    let mut remaining = byte_len;
+    while remaining > 0 {
+        let chunk_len = remaining.min(bytes.len());
+        reader.read_exact(&mut bytes[..chunk_len]).map_err(|e| {
+            AppError::Diarization(format!(
+                "could not read staged audio at {}: {e}",
+                path.display()
+            ))
+        })?;
+        samples.extend(
+            bytes[..chunk_len]
+                .chunks_exact(4)
+                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])),
+        );
+        remaining -= chunk_len;
+    }
+    Ok(samples)
 }
 
 /// Read the worker's turns output JSON. A clean exit is only a success when
@@ -72,6 +118,27 @@ pub(crate) fn read_turns(path: &std::path::Path) -> Result<Vec<SpeakerTurn>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+
+    #[derive(Default)]
+    struct RecordingWriter {
+        bytes: Vec<u8>,
+        writes: usize,
+        max_write_size: usize,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            self.writes += 1;
+            self.max_write_size = self.max_write_size.max(bytes.len());
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
 
     #[test]
     fn worker_request_round_trips() {
@@ -110,5 +177,30 @@ mod tests {
         let error = read_samples(&path).expect_err("a partial sample must not be silently dropped");
 
         assert!(matches!(error, crate::error::AppError::Diarization(_)));
+    }
+
+    // WP-116 DoD 1: staging must serialize through an injected sink in fixed
+    // increments, never first allocate one Vec<u8> proportional to the full
+    // recording. Exact bytes also pin the existing little-endian wire format.
+    #[test]
+    fn sample_staging_writes_exact_little_endian_bytes_in_bounded_chunks() {
+        let samples: Vec<f32> = (0..20_000)
+            .map(|index| (index as f32 - 10_000.0) / 10_000.0)
+            .collect();
+        let expected: Vec<u8> = samples
+            .iter()
+            .flat_map(|sample| sample.to_le_bytes())
+            .collect();
+        let mut writer = RecordingWriter::default();
+
+        write_samples_to(&mut writer, &samples).expect("model-free sample staging succeeds");
+
+        assert_eq!(writer.bytes, expected);
+        assert!(writer.writes > 1, "a full recording must not be one write");
+        assert!(
+            writer.max_write_size <= 16 * 1_024,
+            "largest write was {} bytes; staging must use a fixed small buffer",
+            writer.max_write_size
+        );
     }
 }

@@ -1,0 +1,45 @@
+schema_version: 1
+id: WP-128
+title: Qualify Qwen3.5 Fast, Qwen3.8 and Gemma 4 Quality
+priority: normal
+type: task
+status: done
+created_at: '2026-09-11T19:49:09Z'
+updated_at: '2026-09-12T16:51:32Z'
+parent_id: WP-110
+tags:
+- recorder
+- phase-3
+- llm
+- qwen
+- gemma
+- gguf
+description: 'Qualify three pinned GGUF candidates on the existing llama.cpp stack: Qwen3.5 4B Q4_K_M as the Fast default, with Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 as separate opt-in Quality profiles. Evaluate MFU structured notes, Russian and English translation, existing Prettify, and Recorder voice-message polishing against the current Qwen3 4B baseline using representative Russian, English, and mixed-language transcripts.
+
+
+  The initial Fast candidate is unsloth/Qwen3.5-4B-GGUF revision e87f176479d0855a907a41277aca2f8ee7a09523, file Qwen3.5-4B-Q4_K_M.gguf, 2,740,937,888 bytes, SHA-256 00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4. It is derived from the post-trained Qwen/Qwen3.5-4B model. The first Quality candidate is empero-ai/Qwen3.8-9B-Distill-GGUF revision 760121cd70bb4c36b2b5ec58eb765e0df5987efe, file Qwen3.8-9B-Q6_K.gguf, 7,558,901,056 bytes, SHA-256 0f1271373f899912bfe4ea76299af7dd83722d98ea421b0827501c3a2c6da22b. Its source card declares English rather than Russian, so Russian capability is a mandatory measured gate and must not be inferred from the Qwen3.5 architecture. The second Quality candidate is google/gemma-4-12B-it-qat-q4_0-gguf revision 29d097773436b69ff9feafd636ab4cf873786537, file gemma-4-12b-it-qat-q4_0.gguf, 6,975,879,296 bytes, SHA-256 93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b. Revalidate all metadata when work starts.
+
+
+  Happy path: Fast meets the latency, memory and multilingual fidelity gates for interactive use, while each Quality candidate independently improves accepted MFU and polishing quality within its larger resource budget; Qwen3.8 also passes every mandatory Russian, English and mixed-language case. Primary failure behavior: a candidate that fails runtime, license, memory, latency, schema or fidelity gates is not promoted to its planned profile, and the current working model remains available. A Qwen3.8 Russian-language failure is a no-go for WhisperPilot multilingual workflows even if its English or reasoning results are strong. Edge cases include mixed-language code-switching, long transcripts, malformed MFU JSON, hallucinated edits, instruction leakage, thinking-token leakage, cancellation, simultaneous Whisper load and unsupported or memory-constrained hardware.
+
+
+  Scenario: Given the three exact pinned candidates and a frozen multilingual corpus, when MFU, translation, Prettify and Recorder-polish cases run on the declared Apple Silicon hardware matrix, then each candidate has auditable quality, latency, peak-memory, schema-validity and fidelity results against the current default. Given Qwen3.8 fails any Russian, English or mixed Russian-English mandatory case, or any candidate misses another mandatory threshold, then the recommendation records no-go for that candidate without weakening the independent decisions for the other candidates.
+
+
+  Target surfaces: benchmark fixtures and harness, GGUF metadata and template inspection, llama.cpp compatibility checks, real-Metal validation report, and architecture or model-selection documentation.
+
+
+  Constraints: text inference remains GGUF/llama.cpp; multimodal projector files are excluded; use only synthetic, public or explicitly consented fixtures; do not upload transcripts; do not treat publisher benchmarks as product evidence; preserve the existing default until Fast passes; record exact source revisions, sizes and hashes; run product prompts with thinking disabled or safely isolated.'
+dod:
+- A frozen corpus covers MFU, translation, Prettify, and Recorder polishing in Russian, English, and mixed Russian-English speech-derived text, including long inputs and malformed-output cases.
+- A predeclared profile-specific acceptance matrix defines baseline comparison, critical fidelity errors, MFU schema validity, thinking-token leakage, cold and warm latency, throughput, peak memory, context limits, and supported-device guidance before candidate results are scored.
+- Exact repository revisions, single-file GGUF assets, published hashes, download footprints, Apache-2.0 licenses, Gemma terms and redistribution obligations are verified and recorded for all three candidates.
+- Real Apple Silicon runs report every acceptance result against the current Qwen3 4B model, including sustained Fast translation under Whisper load and both Quality candidates performing MFU or polishing at representative transcript sizes.
+- Qwen3.8 passes the mandatory Russian, English and mixed Russian-English MFU, translation, Prettify and Recorder-polish corpus with no accepted critical fidelity or language-selection regression; otherwise its recommendation is no-go.
+- MFU outputs satisfy the application schema contract, and translation or polishing has no accepted critical hallucination, number or named-entity corruption, instruction leakage, or visible reasoning tokens in the frozen corpus.
+- The task records independent go or no-go recommendations for Qwen3.5 Fast, Qwen3.8 Quality and Gemma Quality, minimum-memory guidance, llama.cpp and prompt-template constraints, and the evidence needed by WP-129; a failed candidate is not promoted.
+- Required benchmark checks, real-Metal validation, security and licensing review, and documentation maintenance pass without private transcript data entering the repository or logs.
+links:
+  blocks:
+  - WP-129
+created_by: Codex

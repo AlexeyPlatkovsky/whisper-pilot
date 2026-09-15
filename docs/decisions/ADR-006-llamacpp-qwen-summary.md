@@ -1,6 +1,7 @@
 # ADR-006: llama.cpp + Qwen2.5 for local summarization
 
-- **Status:** accepted
+- **Status:** superseded for model selection by Phase 3 local-LLM qualification;
+  the local llama.cpp engine decision remains accepted
 - **Date:** 2026-07-21
 - **Deciders:** Alexey Platkovsky
 
@@ -14,6 +15,11 @@ Silicon.
 
 Run a quantized **Qwen2.5-Instruct** model via **llama.cpp** on Metal for
 summarization. Fully on-device; the transcript never leaves the machine.
+
+As of 2026-09-12, Qwen2.5 has been removed from the active catalog. The same
+local llama.cpp architecture now offers the qualified Qwen3.5 Fast, Qwen3.8
+Quality, and Gemma 4 Quality profiles recorded in
+`docs/validation/phase-3-llm-qualification.md`.
 
 ## Consequences
 

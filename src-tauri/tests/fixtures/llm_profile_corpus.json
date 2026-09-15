@@ -1,0 +1,46 @@
+{
+  "revision": 1,
+  "languages": ["ru", "en", "ru-en-mixed"],
+  "cases": [
+    {
+      "id": "translate-ru-en-protected",
+      "workflow": "translation",
+      "source": "Алексей отправит build WP-129 в 15:30, бюджет 42 USD.",
+      "target": "en",
+      "must_preserve": ["WP-129", "15:30", "42"]
+    },
+    {
+      "id": "translate-en-ru-context",
+      "workflow": "translation",
+      "source": "Sam will publish build WP-129 at 15:30 with budget 42 USD.",
+      "context": "The release was approved.",
+      "target": "ru",
+      "must_preserve": ["WP-129", "15:30", "42"]
+    },
+    {
+      "id": "polish-recorder-mixed",
+      "workflow": "recorder-polish",
+      "source": "Ну, ну, Alex, отправь build WP-129 в 15:30, budget 42 USD.",
+      "must_preserve": ["Alex", "WP-129", "15:30", "42", "USD"]
+    },
+    {
+      "id": "mfu-mixed-schema",
+      "workflow": "mfu",
+      "source": "Алексей: Релиз WP-129 approved. Sam: Я отправлю build 42 в 15:30.",
+      "required_fields": ["summary", "decisions", "action_items", "open_questions", "participants"]
+    },
+    {
+      "id": "mfu-long-mixed",
+      "workflow": "mfu",
+      "source_repeat": "Алексей: Релиз WP-129 approved. Sam: Я отправлю build 42 в 15:30. Morgan: Keep API_v2 unchanged and budget at 42 USD.\n",
+      "repeat": 40,
+      "required_fields": ["summary", "decisions", "action_items", "open_questions", "participants"]
+    },
+    {
+      "id": "malformed-json-fail-closed",
+      "workflow": "mfu-parser",
+      "synthetic_model_output": "This is not JSON.",
+      "expected": "explicit_error"
+    }
+  ]
+}

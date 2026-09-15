@@ -12,8 +12,9 @@ pub(crate) mod download;
 
 pub use catalog::{
     asset_paths, delete_clears_active_diarization_variant, delete_model,
-    is_diarization_variant_downloaded, list_task_models, primary_asset_path,
-    resolve_catalog_target, ModelAsset, ModelCatalogEntry, ResolvedTarget, TaskModel, CATALOG,
+    is_diarization_variant_downloaded, list_task_models, llm_spec_by_file_name, llm_spec_by_id,
+    primary_asset_path, resolve_catalog_target, LlmModelSpec, LlmProfile, ModelAsset,
+    ModelCatalogEntry, ResolvedTarget, TaskModel, CATALOG, LLM_SPECS,
 };
 pub use download::{download_model, DownloadStage};
 
@@ -28,7 +29,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn list_task_models_reports_transcription_and_both_diarization_variants_not_downloaded_by_default(
+    async fn list_task_models_reports_shared_transcription_and_diarization_models_not_downloaded_by_default(
     ) {
         let dir = tempfile::tempdir().unwrap();
 
@@ -36,9 +37,83 @@ mod tests {
 
         let ids: Vec<&str> = models.iter().map(|m| m.id.as_str()).collect();
         assert!(ids.contains(&"transcription"));
+        assert!(ids.contains(&"qwen3-asr-1.7b-q8_0"));
         assert!(ids.contains(&"diarization-campplus"));
         assert!(ids.contains(&"diarization-titanet-large"));
         assert!(models.iter().all(|m| !m.downloaded));
+    }
+
+    #[test]
+    fn qwen_17_catalog_pins_the_backbone_and_audio_projector_and_removes_qwen_25() {
+        let qwen = CATALOG
+            .iter()
+            .find(|entry| entry.id == "qwen3-asr-1.7b-q8_0")
+            .expect("Qwen3-ASR 1.7B catalog row");
+        assert_eq!(qwen.task, "transcription");
+        assert_eq!(qwen.assets.len(), 2);
+        assert_eq!(
+            qwen.assets[0].file_name,
+            "qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
+        assert_eq!(qwen.assets[0].size_bytes, 2_165_034_944);
+        assert_eq!(
+            qwen.assets[0].sha256,
+            "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57"
+        );
+        assert_eq!(
+            qwen.assets[1].file_name,
+            "qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf"
+        );
+        assert_eq!(qwen.assets[1].size_bytes, 355_709_344);
+        assert_eq!(
+            qwen.assets[1].sha256,
+            "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d"
+        );
+        assert!(CATALOG.iter().all(|entry| entry.id != "qwen2.5-3b-q3km"));
+        assert!(LLM_SPECS
+            .iter()
+            .all(|spec| spec.model_id != "qwen2.5-3b-q3km"));
+    }
+
+    #[tokio::test]
+    async fn qwen_catalog_row_exposes_all_mode_capabilities_and_requires_all_assets() {
+        let dir = tempfile::tempdir().unwrap();
+        let entry = CATALOG
+            .iter()
+            .find(|entry| entry.id == "qwen3-asr-1.7b-q8_0")
+            .unwrap();
+        let paths = asset_paths(dir.path(), entry.id).unwrap();
+        for (path, asset) in paths.iter().zip(entry.assets).take(1) {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            let file = std::fs::File::create(path).unwrap();
+            file.set_len(asset.size_bytes).unwrap();
+        }
+        let partial = list_task_models(dir.path())
+            .into_iter()
+            .find(|model| model.id == entry.id)
+            .unwrap();
+        assert!(!partial.downloaded);
+        assert_eq!(partial.engine, Some(crate::asr::AsrEngine::Qwen3Asr));
+        assert_eq!(
+            partial.compatible_modes,
+            Some(vec![
+                crate::asr::AsrMode::Meeting,
+                crate::asr::AsrMode::Streaming,
+                crate::asr::AsrMode::Recorder,
+            ])
+        );
+        assert_eq!(partial.supports_timestamps, Some(false));
+
+        let last = entry.assets.last().unwrap();
+        let file = std::fs::File::create(paths.last().unwrap()).unwrap();
+        file.set_len(last.size_bytes).unwrap();
+        assert!(
+            list_task_models(dir.path())
+                .into_iter()
+                .find(|model| model.id == entry.id)
+                .unwrap()
+                .downloaded
+        );
     }
 
     #[tokio::test]

@@ -22,7 +22,7 @@ export const TRANSCRIPTION_NOT_DOWNLOADED = {
 // are separate, explicit steps that each return an updated meeting.
 export const EMPTY_MEETING: Meeting = {
   id: 100,
-  title: "New Meeting",
+  title: "New Transcription",
   created_at_ms: 0,
   language: "ru",
   status: "no_files",
@@ -88,15 +88,49 @@ export function createIpcMock() {
       export_file_type: "plain_text",
     })),
     setSetting: vi.fn(),
+    getCloudProviderConfig: vi.fn(async () => ({
+      selected_provider: "deepgram",
+      providers: [
+        {
+          id: "deepgram",
+          name: "Deepgram",
+          model: "Nova-3",
+          configured: false,
+        },
+        {
+          id: "assemblyai",
+          name: "AssemblyAI",
+          model: "Universal-3.5 Pro",
+          configured: false,
+        },
+        {
+          id: "openai",
+          name: "OpenAI",
+          model: "GPT Transcribe",
+          configured: false,
+        },
+      ],
+    })),
     listStreamingSessions: vi.fn(async () => []),
     openStreamingSession: vi.fn(),
     renameStreamingSession: vi.fn(),
     deleteStreamingSession: vi.fn(),
     startStreamingSession: vi.fn(),
     stopStreamingSession: vi.fn(),
+    getLiveCaptureSnapshot: vi.fn(async () => ({
+      phase: "idle" as const,
+      session_id: null,
+      source: null,
+      generation: 0,
+      revision: 0,
+      error: null,
+    })),
+    onLiveCaptureState: vi.fn(async () => () => {}),
     onStreamingWindow: vi.fn(async () => () => {}),
     onStreamingSources: vi.fn(async () => () => {}),
     onStreamingSessionEnded: vi.fn(async () => () => {}),
+    onStreamingPartial: vi.fn(async () => () => {}),
+    onStreamingError: vi.fn(async () => () => {}),
   };
 }
 
@@ -123,6 +157,14 @@ export async function chooseAndTranscribe(user: {
 // leftover "once" queue from one test can never leak into the next.
 export function resetAppMocks() {
   vi.clearAllMocks();
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
   vi.mocked(ipc.listTaskModels).mockReset();
   vi.mocked(ipc.openFileDialog).mockResolvedValue("/path/to/meeting.mp3");
   vi.mocked(ipc.createMeeting).mockResolvedValue({ ...EMPTY_MEETING });

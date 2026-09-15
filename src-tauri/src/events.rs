@@ -3,6 +3,26 @@
 
 use serde::Serialize;
 
+/// Authoritative live-capture lifecycle snapshot. Every renderer reconciles
+/// these by `revision`, so a delayed event cannot overwrite newer state.
+pub(crate) type LiveCaptureStateEvent = crate::live_capture::LiveCaptureSnapshot;
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RecorderPartialEvent {
+    pub(crate) session_id: i64,
+    pub(crate) revision: u64,
+    pub(crate) text: String,
+}
+
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct RecorderErrorEvent {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) session_id: Option<i64>,
+    pub(crate) message: String,
+}
+
 /// Payload of the `transcription_phase` event, emitted once a run moves from
 /// transcribing into diarizing its samples. `phase` is a fixed literal today
 /// (diarization is the only phase change the UI needs to know about beyond
@@ -29,6 +49,7 @@ pub(crate) struct TranscriptionProgressEvent {
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingWindowEvent {
     pub(crate) session_id: i64,
+    pub(crate) item_id: Option<String>,
     pub(crate) window_index: i64,
     pub(crate) start_ms: i64,
     pub(crate) end_ms: i64,
@@ -37,9 +58,29 @@ pub(crate) struct StreamingWindowEvent {
     pub(crate) outcome_ok: bool,
 }
 
-/// Emitted once, right after a session starts (`streaming_sources`), naming
-/// which capture source(s) actually came up — the mic-only-degradation
-/// indicator WP-73's UI needs, since a silent fallback would be invisible.
+/// A transient partial transcript for Cloud Streaming. It is intentionally
+/// never persisted because providers may revise it before a final turn.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct StreamingPartialEvent {
+    pub(crate) session_id: i64,
+    pub(crate) item_id: Option<String>,
+    pub(crate) text: String,
+}
+
+/// A safe Cloud Streaming failure notification. The backend deliberately
+/// maps network/provider detail to app-authored stage messages, so credentials
+/// and remote payloads never enter the Tauri event bus.
+#[cfg(target_os = "macos")]
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct StreamingErrorEvent {
+    pub(crate) session_id: i64,
+    pub(crate) message: String,
+}
+
+/// Emitted once, right after a session starts (`streaming_sources`). System
+/// audio is the only supported source, so the compatibility payload always
+/// reports `mic: false` and `system_audio: true`.
 #[cfg(target_os = "macos")]
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub(crate) struct StreamingSourcesEvent {
@@ -95,5 +136,50 @@ mod tests {
         assert_eq!(json["id"], serde_json::json!(42));
         assert_eq!(json["percent"], serde_json::json!(10));
         assert_eq!(json.as_object().unwrap().len(), 2);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn streaming_error_event_serializes_a_safe_runtime_failure_message() {
+        let event = StreamingErrorEvent {
+            session_id: 42,
+            message: "OpenAI rejected incoming audio for the transcription session.".to_string(),
+        };
+
+        let json = serde_json::to_value(&event).unwrap();
+        assert_eq!(json["session_id"], serde_json::json!(42));
+        assert_eq!(
+            json["message"],
+            serde_json::json!("OpenAI rejected incoming audio for the transcription session.")
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn cloud_streaming_events_serialize_the_provider_turn_identifier() {
+        let partial = StreamingPartialEvent {
+            session_id: 42,
+            item_id: Some("turn-a".to_string()),
+            text: "Hello".to_string(),
+        };
+        let final_window = StreamingWindowEvent {
+            session_id: 42,
+            item_id: Some("turn-a".to_string()),
+            window_index: 1,
+            start_ms: 0,
+            end_ms: 7_000,
+            text: "Hello world".to_string(),
+            language: "en".to_string(),
+            outcome_ok: true,
+        };
+
+        assert_eq!(
+            serde_json::to_value(partial).unwrap()["item_id"],
+            serde_json::json!("turn-a")
+        );
+        assert_eq!(
+            serde_json::to_value(final_window).unwrap()["item_id"],
+            serde_json::json!("turn-a")
+        );
     }
 }

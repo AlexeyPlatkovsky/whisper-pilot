@@ -31,11 +31,14 @@ export interface ModelLibrary {
   diarizationSelectError: string | null;
   llmModel: string | null;
   llmSelectError: string | null;
+  transcriptionModel: string;
+  transcriptionSelectError: string | null;
   setDownloadModalId: (id: string | null) => void;
   setConfirmDeleteId: (id: string | null) => void;
   handleDownload: (id: string) => Promise<void>;
   handleSelectDiarizationModel: (value: string) => Promise<void>;
   handleSelectLlmModel: (value: string) => Promise<void>;
+  handleSelectTranscriptionModel: (value: string) => Promise<void>;
   handleDelete: (id: string) => Promise<void>;
 }
 
@@ -52,6 +55,10 @@ export function useModelLibrary(): ModelLibrary {
   >(null);
   const [llmModel, setLlmModel] = useState<string | null>(null);
   const [llmSelectError, setLlmSelectError] = useState<string | null>(null);
+  const [transcriptionModel, setTranscriptionModel] = useState("transcription");
+  const [transcriptionSelectError, setTranscriptionSelectError] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -76,6 +83,9 @@ export function useModelLibrary(): ModelLibrary {
             s.active_model_diarization ?? NONE_DIARIZATION_MODEL,
           );
           setLlmModel(s.active_model_llm ?? null);
+          setTranscriptionModel(
+            s.active_model_transcription ?? "transcription",
+          );
         }
       })
       .catch(() => {
@@ -167,6 +177,18 @@ export function useModelLibrary(): ModelLibrary {
     }
   }
 
+  async function handleSelectTranscriptionModel(value: string) {
+    const previous = transcriptionModel;
+    setTranscriptionSelectError(null);
+    setTranscriptionModel(value);
+    try {
+      await setSetting("active_model.transcription", value);
+    } catch (e) {
+      setTranscriptionModel(previous);
+      setTranscriptionSelectError(String(e));
+    }
+  }
+
   async function handleDelete(id: string) {
     setConfirmDeleteId(null);
     try {
@@ -180,6 +202,9 @@ export function useModelLibrary(): ModelLibrary {
         settings.active_model_diarization ?? NONE_DIARIZATION_MODEL,
       );
       setLlmModel(settings.active_model_llm ?? null);
+      setTranscriptionModel(
+        settings.active_model_transcription ?? "transcription",
+      );
     } catch (e) {
       setRowState((prev) => ({
         ...prev,
@@ -199,11 +224,14 @@ export function useModelLibrary(): ModelLibrary {
     diarizationSelectError,
     llmModel,
     llmSelectError,
+    transcriptionModel,
+    transcriptionSelectError,
     setDownloadModalId,
     setConfirmDeleteId,
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
+    handleSelectTranscriptionModel,
     handleDelete,
   };
 }

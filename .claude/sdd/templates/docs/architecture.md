@@ -13,9 +13,9 @@
 
 <!-- The major parts and their responsibilities. A diagram or table is welcome. -->
 
-| Component | Responsibility | Notes |
-| --- | --- | --- |
-| <name> | <what it does> | <tech / location> |
+| Component | Responsibility | Notes             |
+| --------- | -------------- | ----------------- |
+| <name>    | <what it does> | <tech / location> |
 
 ## Data Model
 

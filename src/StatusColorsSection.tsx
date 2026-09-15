@@ -7,6 +7,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Icon } from "./Icon";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { setSetting } from "./ipc";
 import {
   applyStatusColors,
@@ -112,6 +113,8 @@ export function StatusColorsSection({
     if (!openKey && !confirmReset) return;
     function onKeyDown(e: KeyboardEvent) {
       if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
       closePicker();
       setConfirmReset(false);
     }
@@ -241,35 +244,18 @@ export function StatusColorsSection({
       </div>
       {actionError && <p role="alert">{actionError}</p>}
       {confirmReset && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label="Reset all colors"
-          >
-            <div className="modal-header">
-              <span className="modal-title">Reset all colors?</span>
-            </div>
-            <p className="confirm-warning">
-              This restores the built-in color for every status.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setConfirmReset(false)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setConfirmReset(false);
-                  void persist({ ...DEFAULT_STATUS_COLORS });
-                }}
-              >
-                Reset all
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label="Reset all colors"
+          title="Reset all colors?"
+          description="This restores the built-in color for every status."
+          confirmLabel="Reset all"
+          destructive={false}
+          onCancel={() => setConfirmReset(false)}
+          onConfirm={() => {
+            setConfirmReset(false);
+            void persist({ ...DEFAULT_STATUS_COLORS });
+          }}
+        />
       )}
     </section>
   );

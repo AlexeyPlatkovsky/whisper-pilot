@@ -1,0 +1,50 @@
+schema_version: 1
+id: WP-108
+title: Phase 1 — Harden transcription and capture foundations
+priority: high
+type: feature
+status: in_progress
+created_at: '2026-09-11T19:32:55Z'
+updated_at: '2026-09-11T20:24:04Z'
+parent_id: WP-107
+tags:
+- recorder
+- phase-1
+- foundation
+description: 'Make the existing transcription platform safe and bounded before Recorder depends on it. Native live-session state becomes authoritative across view switches and hidden windows; local Streaming preserves meaningful trailing audio and supports a measured low-latency partial/commit pipeline; cloud resume keeps a monotonic timeline; queues have explicit bounds; repeated local-LLM work reuses loaded weights; and long Meeting/diarization runs avoid avoidable full-audio copies.
+
+
+  Happy path: a live session can be started, observed from any app window, stopped and reopened without losing control or meaningful trailing speech, while Meeting and post-processing remain available within explicit resource limits. Primary failure behavior: overload, model failure, malformed local-LLM output or persistence failure is surfaced with a stable session state and never causes unbounded memory growth or silent transcript corruption. Edge cases include switching modes during capture, renderer remount, stop below one ASR window, cloud resume, slow decode/network, multi-hour files and concurrent LLM requests.
+
+
+  Scenario: Given Streaming is actively capturing, when the user changes workspace or the main webview is hidden and restored, then every client observes the same backend state and can still stop the session. Given a stopped local session has meaningful audio shorter than a full decode window, when finalization completes, then the final committed text includes that audio without duplicating the preceding committed suffix.
+
+
+  Target surfaces: src-tauri/src/state.rs, streaming_session.rs, streaming_audio.rs, commands/streaming.rs, cloud_streaming.rs, llm.rs, audio.rs, diarize/segmentation.rs, typed IPC/events, StreamingView controllers, persistence, focused tests and affected architecture/testing documentation.
+
+
+  Constraints: preserve local-first behavior and existing provider secret boundaries; one live capture at a time; queues must have documented full behavior; no audio/transcript logging; significant transcription changes require real-Metal validation.
+
+
+  Child-task breakdown:
+
+  - Make live capture lifecycle backend-owned and recoverable across UI remounts.
+
+  - Finalize local Streaming audio and introduce measured partial/commit windowing.
+
+  - Bound live queues and repair cloud-resume timestamps.
+
+  - Reuse the local LLM runtime and handle long transcript budgets.
+
+  - Reduce Meeting decode and diarization memory amplification.'
+dod:
+- Every direct child task is done against its own DoD.
+- A 60-minute local Streaming run has a recorded bounded-memory result, monotonic sample-derived timestamps and no loss of meaningful trailing speech on Stop.
+- View switching, main-window hiding and renderer remount do not orphan capture; a fresh UI can query and stop the active backend session.
+- A resumed cloud session persists timestamps strictly after its pre-resume last end time, and slow consumers exercise the documented bounded-queue policy.
+- Long-file and repeated-LLM benchmarks record peak memory and latency before and after, with no regression to Meeting, diarization, MFU, Prettify or Live Translation correctness.
+- Required TDD, real-Metal transcription, Rust and frontend validation, and documentation maintenance pass.
+links:
+  blocks:
+  - WP-109
+created_by: Codex

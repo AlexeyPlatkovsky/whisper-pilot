@@ -13,6 +13,25 @@ use super::catalog::{asset_path, is_asset_downloaded, models_dir, ModelAsset};
 /// Reports bytes downloaded so far for one asset.
 type ProgressCb = Box<dyn Fn(u64) + Send + Sync>;
 
+fn required_download_bytes(expected: u64, partial: u64) -> u64 {
+    if partial <= expected {
+        expected - partial
+    } else {
+        expected
+    }
+}
+
+fn ensure_download_space(dir: &Path, required: u64) -> Result<()> {
+    let available = fs2::available_space(dir)?;
+    if available < required {
+        return Err(AppError::ModelDownload(format!(
+            "not enough free disk space: model needs {} more bytes, but only {available} bytes are available",
+            required
+        )));
+    }
+    Ok(())
+}
+
 /// Which part of a download the reported fraction belongs to. Hashing a
 /// multi-hundred-megabyte model runs long after its last byte arrives, so the
 /// two phases are reported separately rather than as one "downloading" span.
@@ -62,6 +81,38 @@ where
 
         let final_path = asset_path(app_support_dir, asset);
         let temp_path = dir.join(format!("{}.part", asset.file_name));
+        if let Some(parent) = temp_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        if let Some(parent) = final_path.parent() {
+            tokio::fs::create_dir_all(parent).await?;
+        }
+        let mut partial_size = tokio::fs::metadata(&temp_path)
+            .await
+            .map(|metadata| metadata.len())
+            .unwrap_or(0);
+        if partial_size > asset.size_bytes {
+            tokio::fs::remove_file(&temp_path).await?;
+            partial_size = 0;
+        }
+        if partial_size == asset.size_bytes {
+            let completed = done_before.load(Ordering::Relaxed) + asset.size_bytes;
+            on_progress(
+                (completed as f64 / total as f64).min(1.0),
+                DownloadStage::Verifying,
+            );
+            if hash_file(&temp_path).await? == asset.sha256 {
+                tokio::fs::rename(&temp_path, &final_path).await?;
+                done_before.fetch_add(asset.size_bytes, Ordering::Relaxed);
+                continue;
+            }
+            tokio::fs::remove_file(&temp_path).await?;
+            partial_size = 0;
+        }
+        ensure_download_space(
+            &dir,
+            required_download_bytes(asset.size_bytes, partial_size),
+        )?;
 
         let done_before_cl = Arc::clone(&done_before);
         let on_progress_cl = Arc::clone(&on_progress);
@@ -72,10 +123,7 @@ where
             on_progress_cl(fraction.min(1.0), DownloadStage::Downloading);
         });
 
-        if let Err(e) = fetch(asset.url, temp_path.clone(), progress_cb).await {
-            let _ = tokio::fs::remove_file(&temp_path).await;
-            return Err(e);
-        }
+        fetch(asset.url, temp_path.clone(), progress_cb).await?;
 
         let fetched = done_before.load(Ordering::Relaxed) + asset.size_bytes;
         on_progress(
@@ -101,23 +149,44 @@ where
 
 async fn http_fetch(url: &'static str, dest: PathBuf, on_progress: ProgressCb) -> Result<()> {
     use futures_util::StreamExt;
+    use reqwest::header::RANGE;
     use tokio::io::AsyncWriteExt;
 
-    let resp = reqwest::get(url)
+    let existing = tokio::fs::metadata(&dest)
+        .await
+        .map(|metadata| metadata.len())
+        .unwrap_or(0);
+    let client = reqwest::Client::new();
+    let mut request = client.get(url);
+    if existing > 0 {
+        request = request.header(RANGE, format!("bytes={existing}-"));
+    }
+    let resp = request
+        .send()
         .await
         .map_err(|e| AppError::ModelDownload(e.to_string()))?;
     if !resp.status().is_success() {
         return Err(AppError::ModelDownload(format!("HTTP {}", resp.status())));
     }
-    let mut file = tokio::fs::File::create(&dest).await?;
+    let resumed = existing > 0 && resp.status() == reqwest::StatusCode::PARTIAL_CONTENT;
+    let mut options = tokio::fs::OpenOptions::new();
+    options.create(true).write(true);
+    if resumed {
+        options.append(true);
+    } else {
+        options.truncate(true);
+    }
+    let mut file = options.open(&dest).await?;
     let mut stream = resp.bytes_stream();
-    let mut downloaded: u64 = 0;
+    let mut downloaded = if resumed { existing } else { 0 };
+    on_progress(downloaded);
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|e| AppError::ModelDownload(e.to_string()))?;
         file.write_all(&chunk).await?;
         downloaded += chunk.len() as u64;
         on_progress(downloaded);
     }
+    file.flush().await?;
     Ok(())
 }
 
@@ -223,6 +292,19 @@ mod tests {
         }
     }
 
+    fn fetch_writing_partial_then_failing(
+        content: Vec<u8>,
+    ) -> impl Fn(&'static str, PathBuf, ProgressCb) -> FetchFuture {
+        move |_url, dest, on_progress| {
+            let content = content.clone();
+            Box::pin(async move {
+                tokio::fs::write(&dest, &content).await?;
+                on_progress(content.len() as u64);
+                Err(AppError::ModelDownload("connection reset".into()))
+            })
+        }
+    }
+
     #[tokio::test]
     async fn is_asset_downloaded_false_when_file_missing() {
         let dir = tempfile::tempdir().unwrap();
@@ -271,6 +353,44 @@ mod tests {
         let on_disk = tokio::fs::read(&final_path).await.unwrap();
         assert_eq!(on_disk, content);
         assert!(entry_downloaded(dir.path(), &entry));
+    }
+
+    #[tokio::test]
+    async fn download_entry_supports_verified_assets_in_a_nested_bundle_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = b"tokenizer asset".to_vec();
+        let hash = sha256_hex(&content);
+        let asset = ModelAsset {
+            url: "https://test.invalid/vocab.json",
+            sha256: Box::leak(hash.into_boxed_str()),
+            size_bytes: content.len() as u64,
+            file_name: "nested-bundle/vocab.json",
+            variant_id: None,
+            variant_label: None,
+            recommended: false,
+        };
+        let entry = ModelCatalogEntry {
+            id: "nested-test",
+            task: "transcription",
+            label: "Nested test",
+            assets: Box::leak(vec![asset].into_boxed_slice()),
+        };
+
+        download_entry(
+            fetch_writing(content.clone()),
+            dir.path(),
+            &assets_of(&entry),
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            tokio::fs::read(asset_path(dir.path(), &entry.assets[0]))
+                .await
+                .unwrap(),
+            content
+        );
     }
 
     #[tokio::test]
@@ -326,6 +446,77 @@ mod tests {
 
         assert!(matches!(err, AppError::ModelDownload(_)));
         assert!(!entry_downloaded(dir.path(), &entry));
+    }
+
+    #[tokio::test]
+    async fn interrupted_download_keeps_valid_partial_bytes_for_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        let partial = b"resumable prefix".to_vec();
+        let entry = ModelCatalogEntry {
+            id: "test",
+            task: "test",
+            label: "Test",
+            assets: Box::leak(vec![test_asset("irrelevant", 100)].into_boxed_slice()),
+        };
+
+        let err = download_entry(
+            fetch_writing_partial_then_failing(partial.clone()),
+            dir.path(),
+            &assets_of(&entry),
+            |_, _| {},
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(err, AppError::ModelDownload(_)));
+        let temp_path = models_dir(dir.path()).join("test-model.bin.part");
+        assert_eq!(tokio::fs::read(temp_path).await.unwrap(), partial);
+    }
+
+    #[tokio::test]
+    async fn complete_partial_is_verified_and_promoted_without_an_eof_fetch() {
+        let dir = tempfile::tempdir().unwrap();
+        let content = b"complete bytes awaiting verification".to_vec();
+        let hash = sha256_hex(&content);
+        let asset = test_asset(Box::leak(hash.into_boxed_str()), content.len() as u64);
+        let entry = ModelCatalogEntry {
+            id: "test",
+            task: "test",
+            label: "Test",
+            assets: Box::leak(vec![asset].into_boxed_slice()),
+        };
+        let model_dir = models_dir(dir.path());
+        tokio::fs::create_dir_all(&model_dir).await.unwrap();
+        tokio::fs::write(model_dir.join("test-model.bin.part"), &content)
+            .await
+            .unwrap();
+
+        download_entry(
+            |_url, _dest, _progress| async {
+                panic!("a complete partial must not issue an EOF range request")
+            },
+            dir.path(),
+            &assets_of(&entry),
+            |_, _| {},
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            tokio::fs::read(asset_path(dir.path(), &entry.assets[0]))
+                .await
+                .unwrap(),
+            content
+        );
+        assert!(!model_dir.join("test-model.bin.part").exists());
+    }
+
+    #[test]
+    fn disk_preflight_counts_only_missing_bytes_after_partial_download() {
+        assert_eq!(required_download_bytes(100, 0), 100);
+        assert_eq!(required_download_bytes(100, 25), 75);
+        assert_eq!(required_download_bytes(100, 100), 0);
+        assert_eq!(required_download_bytes(100, 125), 100);
     }
 
     #[tokio::test]

@@ -1,0 +1,39 @@
+schema_version: 1
+id: WP-104
+title: Cloud Streaming BYOK providers
+priority: normal
+type: feature
+status: in_progress
+created_at: '2026-08-31T14:03:49Z'
+updated_at: '2026-08-31T14:04:30Z'
+description: 'Add an optional cloud engine to Streaming, using user-supplied API keys for Deepgram, AssemblyAI, and OpenAI. Local Whisper remains available and remains the default engine. The Streaming workspace lets the user choose Local or Cloud before a session starts; the engine choice is locked for an active session. Selecting Cloud shows an inline status-row notice that live audio leaves the device and provider usage is billed to the user''s account.
+
+
+  Settings adds a Cloud Provider section with a radio selection for Deepgram, AssemblyAI, and OpenAI, fixed app-defined models for each provider, and key setup/removal status. API-key material is stored only in macOS Keychain. SQLite, settings files, IPC DTOs, analytics, errors, and logs may retain only non-secret provider/configuration identifiers and must never expose key material.
+
+
+  A session persists its non-secret engine/provider/model configuration before capture begins. Resuming a session keeps that configuration; the user cannot change it mid-session. Cloud adapters consume the existing normalized capture stream, send audio only over authenticated TLS connections, accept provider partial/final transcript events, and preserve Streaming''s incremental text persistence and stop behavior. Local-only Meeting transcription, local Streaming, local MFU, and Live Translation behavior remain unchanged.
+
+
+  Scenario: Given a configured Deepgram key and a stopped Streaming session, when the user selects Cloud and starts the session, then the status row warns that live audio leaves the device, the Deepgram adapter receives the capture stream, and finalized provider text persists as the session transcript. Given a Streaming session is active, when the user attempts to change Local/Cloud or its provider, then the control is unavailable and the backend rejects a direct configuration change.
+
+
+  Target surfaces include pencil/main_view.pen, src/StreamingView.tsx, Settings UI and IPC, Rust credential/configuration/provider modules, Streaming command/session/persistence DTOs, tests, and affected product/security/architecture documentation. Exact provider transport modules and models are defined in the approved design and requirements artifacts.
+
+
+  Child-feature breakdown: design and requirements approval; Keychain-backed credential/settings flow; provider-neutral streaming engine contract and session configuration; Deepgram, AssemblyAI, and OpenAI adapters; Streaming and Settings UI; persistence, error handling, tests, security review, and documentation.
+
+  '
+dor:
+- The rendered Pencil design for the Local/Cloud selector and Cloud Provider Settings section is explicitly approved by the user.
+- The provider model identifiers, connection/error/retry behavior, and session-resume behavior are specified and approved before production implementation begins.
+- Provider API contracts and applicable data-handling requirements are verified from the providers' current official documentation before adapter implementation.
+dod:
+- Local Whisper Streaming remains the default and behaves as before; users can select one configured cloud provider before starting a new Streaming session, and active-session engine/provider controls are blocked in both UI and backend.
+- Deepgram, AssemblyAI, and OpenAI each operate through the same provider-neutral contract with a fixed, app-defined model and correctly persist finalized transcript text into the existing Streaming session model.
+- API keys are stored and retrieved only through macOS Keychain; no secret value is written to SQLite, settings files, IPC DTOs, errors, logs, tests, or exported diagnostics.
+- The Streaming UI shows the required Cloud audio/billing notice every time the user selects Cloud, and Settings exposes provider selection, fixed model details, and a key-configured state without revealing the key.
+- TDD evidence covers every production behavior added by the feature, and required Rust, frontend, security, manual provider, and documentation validation pass.
+links:
+  relates_to:
+  - WP-68

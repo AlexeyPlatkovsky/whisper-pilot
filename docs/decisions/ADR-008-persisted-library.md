@@ -1,4 +1,4 @@
-# ADR-008: Persisted meeting library (SQLite), reference-only audio, auto-save
+# ADR-008: Persisted Transcription library (SQLite), reference-only audio, auto-save
 
 - **Status:** accepted
 - **Date:** 2026-07-21
@@ -7,28 +7,28 @@
 ## Context
 
 M1 was stateless: transcribe a file, edit, export, done — nothing persisted. For
-repeated meetings, users need to reopen, re-edit, and keep past transcriptions,
-and to attach speakers (M2) and MFU (M3) durably to a meeting.
+repeated source files, users need to reopen, re-edit, and keep past transcriptions,
+and to attach speakers (M2) and MFU (M3) durably to an item.
 
 ## Decision
 
-Introduce a persisted **library** of **meetings** (one meeting = one
-transcription) in a local **SQLite** database (via `rusqlite`, reusing
-VoicePilot's patterns). Meetings **reference the original source file path**
+Introduce a persisted **library** of **Transcriptions** (one item = one source
+file) in a local **SQLite** database (via `rusqlite`, reusing VoicePilot's
+patterns). Transcriptions **reference the original source file path**
 rather than copying audio. Edits
 (transcript, speaker labels, MFU) **auto-save** to the DB; export is a separate
 explicit action. Processing remains **one file at a time**.
 
 ## Consequences
 
-- The app becomes a two-pane meeting workspace: meetings list, reopen, rename,
+- The app becomes a two-pane Transcription workspace: item list, reopen, rename,
   delete.
-- Small storage footprint (no audio copies); but a meeting whose source moved or
+- Small storage footprint (no audio copies); but a Transcription whose source moved or
   was deleted cannot be re-transcribed — a defined "source missing" state.
 - Auto-save gives a modern, no-lost-work feel and removes save-state UI; it means
   every edit writes to the DB.
 - M2 diarization and M3 MFU attach their data (speaker ids, MFU) to the
-  persisted meeting.
+  persisted item.
 
 ## Alternatives Considered
 

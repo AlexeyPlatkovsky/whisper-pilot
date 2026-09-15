@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "recorder-bubble",
+  "description": "Least-privilege event and native-drag access for the Recorder status bubble.",
+  "windows": ["recorder-bubble"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "core:window:allow-start-dragging"
+  ]
+}

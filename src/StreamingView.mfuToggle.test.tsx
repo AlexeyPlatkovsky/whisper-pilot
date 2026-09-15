@@ -20,15 +20,28 @@ vi.mock("./ipc", () => ({
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async () => () => {}),
   generateStreamingMfu: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
+  onStreamingPartial: vi.fn(async () => () => {}),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -38,6 +51,24 @@ vi.mock("./ipc", () => ({
   })),
   setSetting: vi.fn(),
   listTaskModels: vi.fn(async () => []),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: false },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const SESSION_A: StreamingSessionSummary = {
@@ -85,7 +116,16 @@ const ONE_WINDOW = [
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(ipc.openStreamingSession).mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
   vi.mocked(ipc.getSettings).mockResolvedValue({
     theme: "system",
     ui_language: "en",
@@ -140,6 +180,35 @@ describe("StreamingView — MFU panel toggle", () => {
     );
   });
 
+  it("keeps the view-only MFU visibility switch enabled during capture", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 1,
+      source: "streaming",
+      generation: 1,
+      revision: 1,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ status: "active" }),
+    );
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    const toggle = await screen.findByRole("switch", { name: /mfu/i });
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(1),
+    );
+    expect(toggle).toBeEnabled();
+
+    await user.click(toggle);
+
+    expect(toggle).toHaveAttribute("aria-checked", "false");
+    expect(document.querySelector("aside.wp-mfu")).not.toBeInTheDocument();
+    expect(ipc.setSetting).toHaveBeenCalledWith("mfu_panel_streaming", "false");
+  });
+
   it("restores a hidden panel on launch when the persisted setting is off", async () => {
     vi.mocked(ipc.getSettings).mockResolvedValue({
       theme: "system",
@@ -167,7 +236,7 @@ describe("StreamingView — MFU panel toggle", () => {
     expect(document.querySelector("aside.wp-mfu")).toBeInTheDocument();
     expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
     expect(
-      await screen.findByText("Start a session, or open one from the list."),
+      await screen.findByText("Start a meeting, or open one from the list."),
     ).toBeInTheDocument();
   });
 

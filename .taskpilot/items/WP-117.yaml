@@ -1,0 +1,37 @@
+schema_version: 1
+id: WP-117
+title: Define the Recorder storage and interaction contract
+priority: high
+type: task
+status: done
+created_at: '2026-09-11T19:37:23Z'
+updated_at: '2026-09-12T12:29:42Z'
+parent_id: WP-109
+tags:
+- recorder
+- phase-2
+- design
+description: 'Define and obtain approval for the Recorder experience before implementation. The specification decides whether raw microphone audio is retained, its format, playback/export and retention behavior; whether the global shortcut toggles Start and Stop; how partial, committed and finalizing text appears; how shortcut-started captions behave without stealing focus; and how Recorder sessions appear in history. Update the Pencil source for the third workspace and compact caption states.
+
+
+  Happy path: an implementation agent with no conversation context can build the Recorder workflow from the approved TaskPilot description and Pencil frames. Primary failure behavior: permission denial, missing model, disk-full, interrupted recording, shortcut conflict and finalization error each have an explicit user-visible state and recovery action. Edge cases include transcript-only versus true recorder naming, silence, rapid toggles, existing active Streaming, hidden main window and reopening an interrupted session.
+
+
+  Scenario: Given the user opens Recorder with no prior session, when Start is available, then the design identifies the active model, microphone state, destination session and resulting transcript/audio ownership. Given the shortcut cannot register or microphone access is denied, when the user attempts recording, then the design shows the exact non-destructive recovery path.
+
+
+  Target surfaces: the Recorder feature TaskPilot contract, pencil/main_view.pen, affected docs/design.md, docs/idea.md, docs/architecture.md and docs/decisions if a durable architectural choice requires an ADR.
+
+
+  Constraints: use the existing visual system and top control vocabulary; preserve unrelated Pencil frames; no production code; every implementation-affecting choice is explicit; a transparent private-API bubble decision belongs to the Phase 3 design task, not this task.'
+dod:
+- The approved Recorder contract explicitly selects transcript-only or retained raw audio and, when retained, defines format, atomic finalization, playback/export, retention and interrupted-file recovery.
+- The approved shortcut contract defines registration conflict UX, Start and Stop semantics, focus behavior and interaction with an already active live session.
+- Pencil contains approved Recorder empty, permission, recording, partial-text, finalizing, completed and error states plus compact live-caption states, with visual review evidence.
+- Happy, failure and boundary scenarios are persisted in the implementation tasks without unresolved behavioral placeholders.
+- No production source or runtime dependency changes, and Pencil validation plus applicable documentation checks pass.
+links:
+  blocks:
+  - WP-118
+  - WP-119
+created_by: Codex

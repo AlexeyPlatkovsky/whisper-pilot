@@ -43,10 +43,10 @@ pub enum AppError {
     #[error("speaker diarization failed: {0}")]
     Diarization(String),
 
-    #[error("meeting store failed: {0}")]
+    #[error("transcription store failed: {0}")]
     Store(String),
 
-    #[error("streaming audio capture failed: {0}")]
+    #[error("meeting audio capture failed: {0}")]
     Capture(String),
 
     #[error("MFU generation failed: {0}")]

@@ -14,9 +14,9 @@
 
 ## Entities
 
-| Entity | Purpose | Key fields | Relationships |
-| --- | --- | --- | --- |
-| <name> | <what it represents> | <fields> | <links to other entities> |
+| Entity | Purpose              | Key fields | Relationships             |
+| ------ | -------------------- | ---------- | ------------------------- |
+| <name> | <what it represents> | <fields>   | <links to other entities> |
 
 ## Schema Notes
 

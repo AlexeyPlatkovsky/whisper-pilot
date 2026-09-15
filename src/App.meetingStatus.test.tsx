@@ -295,7 +295,7 @@ describe("App — meeting status consistency", () => {
     const user = userEvent.setup();
     render(<App />);
 
-    await screen.findByDisplayValue("Hello");
+    await screen.findByText("Hello");
     const diarize = screen.getByRole("button", { name: "Diarize speakers" });
     await waitFor(() => expect(diarize).not.toBeDisabled());
     await user.click(diarize);
@@ -442,7 +442,12 @@ describe("App — meeting status consistency", () => {
 
     phaseHandler({ id: READY_ACTIVE.id, phase: "diarizing" });
 
-    expect(await screen.findByDisplayValue("Hello")).toBeDisabled();
+    const transcript = await screen.findByText("Hello", {
+      selector: ".wp-speaker-text--display",
+    });
+    expect(transcript).toHaveAttribute("aria-readonly", "true");
+    await user.click(transcript);
+    expect(screen.queryByDisplayValue("Hello")).not.toBeInTheDocument();
     expect(screen.getByRole("status")).toHaveTextContent("Diarizing");
   });
 

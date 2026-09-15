@@ -1,5 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import type { LiveCaptureSnapshot } from "./liveCaptureState";
+export * from "./ipc/recorder";
+
+export type { LiveCapturePhase, LiveCaptureSnapshot } from "./liveCaptureState";
 
 export interface Segment {
   start_ms: number;
@@ -59,6 +63,10 @@ export function renameMeeting(id: number, title: string): Promise<Meeting> {
 
 export function deleteMeeting(id: number): Promise<void> {
   return invoke<void>("delete_meeting", { id });
+}
+
+export function clearMeeting(id: number): Promise<Meeting> {
+  return invoke<Meeting>("clear_meeting", { id });
 }
 
 /** Auto-save an edited segment's text; `index` addresses the displayed
@@ -140,6 +148,10 @@ export interface Settings {
   mfu_panel_meeting?: boolean;
   /** Same as `mfu_panel_meeting`, for the Streaming screen (WP-96). */
   mfu_panel_streaming?: boolean;
+  recorder_shortcut?: string;
+  bubble_always_on_top?: boolean;
+  bubble_x?: number;
+  bubble_y?: number;
 }
 
 export function getSettings(): Promise<Settings> {
@@ -150,6 +162,89 @@ export function setSetting(key: string, value: string): Promise<Settings> {
   return invoke<Settings>("set_setting", { key, value });
 }
 
+export function collapseToBubble(): Promise<void> {
+  return invoke<void>("collapse_to_bubble");
+}
+
+export function restoreMainFromBubble(): Promise<void> {
+  return invoke<void>("restore_main_from_bubble");
+}
+
+export function setBubbleAlwaysOnTop(value: boolean): Promise<Settings> {
+  return invoke<Settings>("set_bubble_always_on_top", { value });
+}
+
+export function setRecorderShortcut(value: string): Promise<Settings> {
+  return invoke<Settings>("set_recorder_shortcut", { value });
+}
+
+export interface RecorderShortcutStatus {
+  configured: string;
+  active: boolean;
+  error?: string;
+}
+
+export function getRecorderShortcutStatus(): Promise<RecorderShortcutStatus> {
+  return invoke<RecorderShortcutStatus>("get_recorder_shortcut_status");
+}
+
+export type CloudProviderId = "deepgram" | "assemblyai" | "openai";
+
+/** Provider metadata and configured status only — never an API key. */
+export interface CloudProviderStatus {
+  id: CloudProviderId;
+  name: string;
+  model: string;
+  configured: boolean;
+}
+
+export interface CloudProviderConfiguration {
+  selected_provider: CloudProviderId;
+  providers: CloudProviderStatus[];
+}
+
+export function getCloudProviderConfig(): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("get_cloud_provider_config");
+}
+
+export function selectCloudProvider(
+  provider: CloudProviderId,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("select_cloud_provider", {
+    provider,
+  });
+}
+
+/** Checks provider authentication/model access without storing or returning the key. */
+export function verifyCloudProviderApiKey(
+  provider: CloudProviderId,
+  apiKey: string,
+): Promise<void> {
+  return invoke<void>("verify_cloud_provider_api_key", {
+    provider,
+    apiKey,
+  });
+}
+
+/** Sends a user-entered key directly to the Keychain command; no secret DTO is returned. */
+export function saveCloudProviderApiKey(
+  provider: CloudProviderId,
+  apiKey: string,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("save_cloud_provider_api_key", {
+    provider,
+    apiKey,
+  });
+}
+
+export function removeCloudProviderApiKey(
+  provider: CloudProviderId,
+): Promise<CloudProviderConfiguration> {
+  return invoke<CloudProviderConfiguration>("remove_cloud_provider_api_key", {
+    provider,
+  });
+}
+
 export interface TaskModel {
   id: string;
   task: string;
@@ -157,6 +252,14 @@ export interface TaskModel {
   downloaded: boolean;
   size_bytes: number;
   recommended: boolean;
+  profile?: "legacy" | "fast" | "quality";
+  min_memory_gb?: number;
+  license?: string;
+  engine?: "whisper" | "qwen3_asr";
+  compatible_modes?: Array<"meeting" | "streaming" | "recorder">;
+  supports_timestamps?: boolean;
+  supports_language_detection?: boolean;
+  supports_mixed_language?: boolean;
 }
 
 /**
@@ -225,14 +328,18 @@ export interface StreamingSessionSummary {
   title: string;
   created_at_ms: number;
   updated_at_ms: number;
+  /** Captured timeline length; never derived from wall-clock timestamps. */
+  duration_ms?: number;
   status: string;
-  /** Whether Live Translation was left on for this session (WP-101).
-   * Unlike the target language (WP-99), this survives reopening the session
-   * and an app restart. */
+  /** Whether Live Translation was left on for this session (WP-101). */
   translation_enabled: boolean;
+  /** Target language stored with this session's translated windows. */
+  translation_target_language?: StreamingTranslationTargetLanguage;
 }
 
 export interface StreamingWindow {
+  /** Cloud provider turn id; absent on persisted and Local windows. */
+  item_id?: string | null;
   window_index: number;
   start_ms: number;
   end_ms: number;
@@ -260,6 +367,9 @@ export interface StreamingSession {
   prettified_text?: string;
   /** See `StreamingSessionSummary.translation_enabled` (WP-101). */
   translation_enabled: boolean;
+  translation_target_language?: StreamingTranslationTargetLanguage;
+  /** Persisted non-secret engine for a stopped session, when known. */
+  transcription_engine?: "local" | "cloud";
 }
 
 export function generateStreamingMfu(id: number): Promise<StreamingSession> {
@@ -302,6 +412,10 @@ export function deleteStreamingSession(id: number): Promise<void> {
   return invoke<void>("delete_streaming_session", { id });
 }
 
+export function clearStreamingSession(id: number): Promise<StreamingSession> {
+  return invoke<StreamingSession>("clear_streaming_session", { id });
+}
+
 /** Creates a stopped session record. It does not start audio capture. */
 export function createStreamingSession(): Promise<StreamingSessionSummary> {
   return invoke<StreamingSessionSummary>("create_streaming_session");
@@ -312,14 +426,29 @@ export function createStreamingSession(): Promise<StreamingSessionSummary> {
  * continues where it left off) instead of starting a brand-new one. */
 export function startStreamingSession(
   sessionId?: number,
+  engine?: "local" | "cloud",
 ): Promise<StreamingSessionSummary> {
   return invoke<StreamingSessionSummary>("start_streaming_session", {
     sessionId,
+    engine,
   });
 }
 
 export function stopStreamingSession(): Promise<void> {
   return invoke<void>("stop_streaming_session");
+}
+
+/** Current Rust-owned lifecycle for the application's one live capture. */
+export function getLiveCaptureSnapshot(): Promise<LiveCaptureSnapshot> {
+  return invoke<LiveCaptureSnapshot>("get_live_capture_snapshot");
+}
+
+export function onLiveCaptureState(
+  handler: (snapshot: LiveCaptureSnapshot) => void,
+): Promise<UnlistenFn> {
+  return listen<LiveCaptureSnapshot>("live_capture_state", (event) =>
+    handler(event.payload),
+  );
 }
 
 /** One decoded window, live — whether it succeeded or fail-open-skipped. */
@@ -356,6 +485,33 @@ export function onStreamingSessionEnded(
   );
 }
 
+export interface StreamingPartial {
+  session_id: number;
+  item_id: string | null;
+  text: string;
+}
+
+export function onStreamingPartial(
+  handler: (partial: StreamingPartial) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingPartial>("streaming_partial", (event) =>
+    handler(event.payload),
+  );
+}
+
+export interface StreamingError {
+  session_id: number;
+  message: string;
+}
+
+export function onStreamingError(
+  handler: (error: StreamingError) => void,
+): Promise<UnlistenFn> {
+  return listen<StreamingError>("streaming_error", (event) =>
+    handler(event.payload),
+  );
+}
+
 /** Target languages Streaming paragraph translation supports (WP-92). */
 export type StreamingTranslationTargetLanguage = "en" | "ru";
 
@@ -377,6 +533,20 @@ export function translateStreamingWindow(
   return invoke<string>("translate_streaming_window", {
     sessionId,
     windowIndex,
+    targetLanguage,
+    text,
+    context,
+  });
+}
+
+/** Translate the current unstable Streaming hypothesis without persisting it.
+ * The caller replaces this provisional result when a committed window lands. */
+export function previewStreamingTranslation(
+  targetLanguage: StreamingTranslationTargetLanguage,
+  text: string,
+  context?: string,
+): Promise<string> {
+  return invoke<string>("preview_streaming_translation", {
     targetLanguage,
     text,
     context,
@@ -422,5 +592,15 @@ export function setStreamingTranslationEnabled(
   return invoke<void>("set_streaming_translation_enabled", {
     sessionId,
     enabled,
+  });
+}
+
+export function setStreamingTranslationTargetLanguage(
+  sessionId: number,
+  targetLanguage: StreamingTranslationTargetLanguage,
+): Promise<void> {
+  return invoke<void>("set_streaming_translation_target_language", {
+    sessionId,
+    targetLanguage,
   });
 }

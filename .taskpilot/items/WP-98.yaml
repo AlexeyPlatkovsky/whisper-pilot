@@ -3,9 +3,9 @@ id: WP-98
 title: MFU regenerate confirmation guard and Clear action
 priority: normal
 type: task
-status: backlog
+status: ready
 created_at: '2026-08-27T12:51:57Z'
-updated_at: '2026-08-27T12:51:57Z'
+updated_at: '2026-09-15T10:09:38Z'
 parent_id: WP-97
 description: 'Migrated from the retired docs/features/F003_meeting-mfu specification, where it was the one requirement never implemented. Verified still missing in production at migration time: handleGenerateMfu in src/App.tsx calls generateMfu directly with no confirmation step, and the MFU panel renders only the five editable fields plus Copy — there is no clear control anywhere in it.
 
@@ -42,10 +42,10 @@ description: 'Migrated from the retired docs/features/F003_meeting-mfu specifica
 
 
   Constraints: the confirmation must follow the existing modal pattern used by the delete and rename dialogs (role, focus handling, Escape to dismiss); clearing must not delete the meeting''s transcript or segments. No network or model impact.'
-created_by: Aleksei_Platkovskii
 dod:
 - Re-running Craft MFU on a meeting whose MFU has been manually edited shows a confirmation before any generated content is replaced, and declining leaves the stored MFU byte-identical and starts no generation run; covered by React/vitest tests.
 - Re-running Craft MFU on a meeting with no MFU, or with an unedited generated MFU, proceeds without a confirmation prompt.
 - A Clear action empties the MFU section back to its placeholder state, persists that empty state across reopening the meeting, and leaves the transcript and segments untouched; covered by tests at the layer that owns the write.
 - The confirmation dialog follows the existing modal pattern (role, autofocus, Escape to dismiss) used by the rename and delete dialogs.
 - 'Local validation passes: cargo test, cargo clippy -D warnings, cargo fmt --check, vitest, tsc, eslint, prettier --check, cargo build, vite build.'
+created_by: Aleksei_Platkovskii

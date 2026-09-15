@@ -48,6 +48,14 @@ pub struct DecodeSettings {
     pub translate: bool,
 }
 
+/// Latency/quality contract for a decode. Live drafts are deliberately cheap
+/// and replaceable; committed and offline text use the quality path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DecodeProfile {
+    FastPartial,
+    Quality,
+}
+
 /// The one configuration every transcribing run uses.
 pub fn decode_settings() -> DecodeSettings {
     DecodeSettings {
@@ -77,6 +85,24 @@ pub struct Segment {
     pub text: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub speaker_id: Option<i32>,
+}
+
+/// Remove only complete model segments proven by their timestamps to belong
+/// to prepended overlap audio. A segment crossing the boundary is retained:
+/// word-level text cannot safely be split using a segment-level timestamp.
+pub(crate) fn remove_timestamped_audio_overlap(transcription: &mut Transcription, overlap_ms: u64) {
+    let removable = transcription
+        .segments
+        .iter()
+        .take_while(|segment| segment.end_ms > segment.start_ms && segment.end_ms <= overlap_ms)
+        .count();
+    if removable > 0 {
+        transcription.segments.drain(..removable);
+    }
+    for segment in &mut transcription.segments {
+        segment.start_ms = segment.start_ms.saturating_sub(overlap_ms);
+        segment.end_ms = segment.end_ms.saturating_sub(overlap_ms);
+    }
 }
 
 /// Load the whisper model from the WP-39 download location under
@@ -140,7 +166,13 @@ pub fn transcribe(ctx: &WhisperContext, samples: &[f32]) -> Result<Transcription
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_state(&mut state, samples, None::<fn(i32)>)
+    transcribe_state(
+        &mut state,
+        samples,
+        None::<fn(i32)>,
+        None,
+        DecodeProfile::Quality,
+    )
 }
 
 /// [`transcribe`] with Whisper's own 0–100 completion estimate. The callback
@@ -153,7 +185,13 @@ pub fn transcribe_with_progress(
     let mut state = ctx
         .create_state()
         .map_err(|e| AppError::Transcribe(e.to_string()))?;
-    transcribe_state(&mut state, samples, Some(on_progress))
+    transcribe_state(
+        &mut state,
+        samples,
+        Some(on_progress),
+        None,
+        DecodeProfile::Quality,
+    )
 }
 
 /// [`transcribe`] with a caller-owned state. Reusing one state across calls
@@ -166,17 +204,48 @@ pub fn transcribe_with_state(
     samples: &[f32],
     on_progress: impl FnMut(i32),
 ) -> Result<Transcription> {
-    transcribe_state(state, samples, Some(on_progress))
+    transcribe_state(
+        state,
+        samples,
+        Some(on_progress),
+        None,
+        DecodeProfile::Quality,
+    )
+}
+
+/// Streaming decode with the last confirmed transcript as a vocabulary and
+/// continuity hint. The prompt is never treated as output; only the current
+/// audio window's decoded segments are returned.
+pub fn transcribe_with_state_and_prompt(
+    state: &mut WhisperState,
+    samples: &[f32],
+    prompt: Option<&str>,
+) -> Result<Transcription> {
+    transcribe_with_state_and_prompt_profile(state, samples, prompt, DecodeProfile::Quality)
+}
+
+pub fn transcribe_with_state_and_prompt_profile(
+    state: &mut WhisperState,
+    samples: &[f32],
+    prompt: Option<&str>,
+    profile: DecodeProfile,
+) -> Result<Transcription> {
+    transcribe_state(state, samples, None::<fn(i32)>, prompt, profile)
 }
 
 fn transcribe_state<F: FnMut(i32)>(
     state: &mut WhisperState,
     samples: &[f32],
     mut on_progress: Option<F>,
+    initial_prompt: Option<&str>,
+    profile: DecodeProfile,
 ) -> Result<Transcription> {
-    let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-        beam_size: 5,
-        patience: -1.0,
+    let mut params = FullParams::new(match profile {
+        DecodeProfile::FastPartial => SamplingStrategy::Greedy { best_of: 1 },
+        DecodeProfile::Quality => SamplingStrategy::BeamSearch {
+            beam_size: 5,
+            patience: -1.0,
+        },
     });
     params.set_n_threads(
         std::thread::available_parallelism()
@@ -198,9 +267,21 @@ fn transcribe_state<F: FnMut(i32)>(
     params.set_print_progress(false);
     params.set_print_realtime(false);
     params.set_print_timestamps(false);
-    // Offline: let whisper segment naturally, and lean on its fallbacks.
-    params.set_temperature_inc(0.2);
+    // Drafts are replaced by the next revision, so deterministic greedy
+    // decoding protects the real-time budget. Confirmed/offline text keeps
+    // Whisper's guarded temperature fallbacks and explicit quality gates.
+    params.set_temperature(0.0);
+    params.set_temperature_inc(match profile {
+        DecodeProfile::FastPartial => 0.0,
+        DecodeProfile::Quality => 0.2,
+    });
+    params.set_entropy_thold(2.4);
+    params.set_logprob_thold(-1.0);
+    params.set_no_speech_thold(0.6);
     params.set_suppress_blank(true);
+    if let Some(prompt) = initial_prompt.filter(|prompt| !prompt.trim().is_empty()) {
+        params.set_initial_prompt(prompt);
+    }
     if let Some(callback) = on_progress.as_mut() {
         install_progress_callback(&mut params, callback);
     }
@@ -321,6 +402,56 @@ mod tests {
     #[test]
     fn undetected_language_is_the_auto_sentinel() {
         assert_eq!(UNDETECTED_LANGUAGE, "auto");
+    }
+
+    #[test]
+    fn text_repetition_alone_does_not_prove_audio_overlap() {
+        let mut transcription = Transcription {
+            segments: vec![Segment {
+                start_ms: 0,
+                end_ms: 2_000,
+                text: "план релиза переносим на завтра".to_string(),
+                speaker_id: None,
+            }],
+            language: "ru".to_string(),
+        };
+
+        // No complete segment ends inside a 750 ms overlap, so text matching
+        // alone must never alter the result.
+        remove_timestamped_audio_overlap(&mut transcription, 750);
+
+        assert_eq!(
+            transcription.segments[0].text, "план релиза переносим на завтра",
+            "a genuine repeated phrase must survive when timestamps do not prove overlap"
+        );
+    }
+
+    #[test]
+    fn timestamped_segments_wholly_inside_audio_overlap_are_removed() {
+        let mut transcription = Transcription {
+            segments: vec![
+                Segment {
+                    start_ms: 0,
+                    end_ms: 700,
+                    text: "план релиза".to_string(),
+                    speaker_id: None,
+                },
+                Segment {
+                    start_ms: 700,
+                    end_ms: 1_800,
+                    text: "на завтра".to_string(),
+                    speaker_id: None,
+                },
+            ],
+            language: "ru".to_string(),
+        };
+
+        remove_timestamped_audio_overlap(&mut transcription, 750);
+
+        assert_eq!(transcription.segments.len(), 1);
+        assert_eq!(transcription.segments[0].text, "на завтра");
+        assert_eq!(transcription.segments[0].start_ms, 0);
+        assert_eq!(transcription.segments[0].end_ms, 1_050);
     }
 
     #[test]

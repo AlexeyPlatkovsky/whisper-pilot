@@ -1,10 +1,13 @@
 //! Tauri IPC command layer: thin, testable command functions that delegate to
 //! the core modules. Registration and app state live in `crate::run`.
 
+pub(crate) mod bubble;
 pub(crate) mod dialogs;
 pub(crate) mod meetings;
 pub(crate) mod mfu;
 pub(crate) mod models;
+pub(crate) mod recorder;
+pub(crate) mod recorder_dto;
 pub(crate) mod settings;
 pub(crate) mod streaming;
 pub(crate) mod transcription;

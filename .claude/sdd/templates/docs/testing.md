@@ -17,19 +17,17 @@
      the repository does not provide. The rows shown are WhisperPilot's current
      ones, kept here only as a worked example. -->
 
-| Level | Scope | Tooling |
-| --- | --- | --- |
-| Unit/Component (front-end) | React UI, local state, and IPC bindings | Vitest + React Testing Library (`npm run test:run`) |
-| Unit (Rust) | Rust modules and local persistence/processing logic | `cargo test --manifest-path src-tauri/Cargo.toml` (`npm run test:api`) |
-| Typecheck | TypeScript compilation | `npm run typecheck` |
-| Lint / format | Front-end static checks and formatting | `npm run lint`, `npm run format:check` |
-| Model-backed manual verification | Real local media, ffmpeg, and installed models | Explicit local run; not part of the default automated suite |
+- Front-end unit/component: React UI, state, and IPC with Vitest and RTL (`npm run test:run`).
+- Rust unit/integration: Rust modules and processing (`npm run test:api`).
+- Typecheck: TypeScript compilation (`npm run typecheck`).
+- Lint/format: front-end static checks (`npm run lint`, `npm run format:check`).
+- Model-backed manual: local media, ffmpeg, and installed models through an explicit local run.
 
 ## Running Feature Scenarios
 
 <!-- How each TaskPilot scenario is executed: automated (which runner/level above)
      and/or manual (who runs the checklist and when, e.g. as part of the smoke
-     checklist in task-quality before an item closes). -->
+     TaskPilot DoD before an item closes). -->
 
 ## Coverage Expectations
 
@@ -44,6 +42,6 @@
 
 ## Quality Gates
 
-<!-- Conditions that block completion. Refer to AGENTS.md and the routed validation
-     skill for mandatory gates; list the verified, task-relevant commands selected for
-     the change rather than inventing an aggregate validation script. -->
+<!-- Conditions that block completion. Refer to AGENTS.md for mandatory gates and list
+     the verified, task-relevant commands selected for the change rather than inventing
+     an aggregate validation script. -->

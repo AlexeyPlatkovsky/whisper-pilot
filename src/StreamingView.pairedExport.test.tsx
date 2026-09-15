@@ -15,8 +15,8 @@ import type {
 // hasStreamingTranslations), mirroring the inline vi.mock idiom of
 // StreamingView.translation.test.tsx and StreamingView.test.tsx's clipboard-
 // spy setup. WP-103 moved translation from one call per paragraph to one
-// call per *window* — a "paragraph" below is still 4 windows (the
-// window-count cap from paragraphs.ts), but each of those 4 windows now
+// call per *window* — a "paragraph" below is still 4 windows ending in
+// terminal punctuation, but each of those 4 windows now
 // gets its own translateStreamingWindow call and its own entry.
 
 let writeTextMock: ReturnType<typeof vi.spyOn>;
@@ -29,6 +29,15 @@ vi.mock("./ipc", () => ({
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async () => () => {}),
   generateStreamingMfu: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
@@ -38,6 +47,8 @@ vi.mock("./ipc", () => ({
   onStreamingWindow: vi.fn(async () => () => {}),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
+  onStreamingPartial: vi.fn(async () => () => {}),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -48,6 +59,24 @@ vi.mock("./ipc", () => ({
   })),
   setSetting: vi.fn(),
   listTaskModels: vi.fn(async () => [LLM_MODEL_READY]),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: false },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const LLM_MODEL_READY: TaskModel = {
@@ -83,9 +112,7 @@ function openedSession(
   };
 }
 
-/** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (4) closes a paragraph, so paragraph
- * boundaries are deterministic regardless of text content — mirrors
+/** `count` windows of monotonically increasing index — mirrors
  * StreamingView.translation.test.tsx's helper. Default language is "en" —
  * the mirror image of the "ru" target-language default, so paragraphs built
  * with no override exercise real translation instead of the same-language
@@ -122,8 +149,12 @@ function joinedTranslatedText(
   return windows.map((w) => translatedFor(w.window_index)).join(" ");
 }
 
-const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -265,6 +296,30 @@ describe("StreamingView — paired Copy/Export when Live Translation is off (WP-
 });
 
 describe("StreamingView — paired Copy/Export when Live Translation is on (WP-94/WP-103)", () => {
+  it("copies a failed-only session in the same two-column shape shown on screen", async () => {
+    const user = setupUser();
+    const failedWindow: StreamingWindow = {
+      window_index: 0,
+      start_ms: 0,
+      end_ms: 1_000,
+      text: "",
+      language: "auto",
+      outcome_ok: false,
+    };
+    await openSessionWithWindows(user, [failedWindow]);
+    await user.click(await findTranslationSwitch());
+    await expectTranslatedCellText("[unavailable]", "[unavailable]");
+
+    await clickCopy(user);
+
+    expect(writeTextMock).toHaveBeenCalledWith(
+      ["Original:", "[unavailable]", "", "Русский:", "[unavailable]"].join(
+        "\n",
+      ),
+    );
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+  });
+
   it("@WP-94-happy-paired-export: Copy places one Original + target-language block per paragraph, each window's own translation joined in screen order", async () => {
     const user = setupUser();
     vi.mocked(ipc.translateStreamingWindow).mockImplementation(
@@ -362,7 +417,7 @@ describe("StreamingView — paired Copy/Export when Live Translation is on (WP-9
         1,
         3,
         "ru",
-        "Слово3",
+        "Слово3.",
         expect.any(String),
       ),
     );

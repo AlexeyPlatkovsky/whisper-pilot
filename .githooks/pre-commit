@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+root="$(git rev-parse --show-toplevel)"
+node "$root/scripts/check-ai-instructions.mjs" --staged
+node "$root/scripts/check-source-size.mjs" --staged
+
+staged_paths="$(git -C "$root" diff --cached --name-only --diff-filter=ACMRD)"
+ai_only=true
+while IFS= read -r staged_path; do
+  [ -n "$staged_path" ] || continue
+  case "$staged_path" in
+    AGENTS.md|.agents/*|.codex/*|.claude/*|.manifesto/*|scripts/check-ai-instructions.mjs|.githooks/pre-commit)
+      ;;
+    *)
+      ai_only=false
+      ;;
+  esac
+done <<<"$staged_paths"
+
+if $ai_only && [ -n "$staged_paths" ]; then
+  exit 0
+fi
+
+version_paths=(
+  package.json
+  package-lock.json
+  src-tauri/Cargo.lock
+  src-tauri/Cargo.toml
+  src-tauri/tauri.conf.json
+)
+
+version_snapshot="$(mktemp -d "${TMPDIR:-/tmp}/whisper-pilot-version.XXXXXX")"
+trap 'rm -rf "$version_snapshot"' EXIT
+mkdir -p "$version_snapshot/src-tauri"
+for version_path in "${version_paths[@]}"; do
+  git -C "$root" show ":$version_path" >"$version_snapshot/$version_path"
+done
+
+if ! verify_output="$(VERSION_ROOT="$version_snapshot" "$root/scripts/bump-version.sh" verify 2>&1)"; then
+  echo "FATAL: staged version sources disagree." >&2
+  echo "$verify_output" >&2
+  exit 1
+fi
+echo "$verify_output"

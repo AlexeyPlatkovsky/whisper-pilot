@@ -1,0 +1,34 @@
+schema_version: 1
+id: WP-127
+title: Integrate the selected Qwen3-ASR engine
+priority: normal
+type: task
+status: done
+created_at: '2026-09-11T19:39:51Z'
+updated_at: '2026-09-12T17:42:47Z'
+parent_id: WP-111
+tags:
+- recorder
+- phase-4
+- integration
+description: 'Integrate only the Qwen3-ASR variant and local runtime adopted by the benchmark task through the engine and model-bundle contract. Add verified downloadable assets, model selection UX, local runtime lifecycle, file and live adapters for approved modes, compatible persisted segments, explicit timestamp behavior and a user-visible Whisper fallback policy.
+
+
+  Happy path: the user downloads the complete Qwen bundle, selects it for an approved mode, runs Russian, English or mixed speech and receives persisted text compatible with edit, copy and export; switching back to Whisper works after the session. Primary failure behavior: incomplete bundle, load or projector failure, insufficient memory, unsupported timestamps or runtime crash leaves the session safe and offers the approved explicit fallback without silently changing an active engine. Edge cases include deleting active assets, interrupted download, warm cache, long input, Stop finalization, app relaunch and older session reopen.
+
+
+  Scenario: Given all verified Qwen assets are ready and Recorder is idle, when the user selects Qwen and starts, then the persisted session records the Qwen engine and uses it through finalization. Given Qwen fails before capture, when fallback is offered, then only explicit user acceptance starts Whisper; given failure occurs after capture starts, the session follows the approved failure or recovery path without mixing engines invisibly.
+
+
+  Target surfaces: selected Cargo runtime or approved isolated local sidecar, model catalog/download state, ASR engine adapter and cache, settings/UI, Meeting or Recorder or Streaming integrations approved by benchmark, persistence metadata, tests and user/architecture/model documentation.
+
+
+  Constraints: match the benchmark-selected revisions and quantization; no Python, vLLM or CUDA production dependency; assets and hashes are verified directly; do not claim timestamps where the runtime lacks them; coordinate memory with local LLM and diarization; Whisper remains installed and selectable independently.'
+dod:
+- Only benchmark-approved Qwen variants and modes are shipped, using the recorded runtime revision, quantization and complete hash-verified model bundle.
+- Download, verification, activation, deletion and incomplete-bundle recovery work per asset and never report a partial bundle as ready.
+- RU, EN and mixed RU/EN real-audio checks meet the feature thresholds for every enabled mode and persist engine identity plus compatible stable segments.
+- Start, Stop, long input, warm reuse, app relaunch and runtime-failure paths obey the approved timestamp, finalization and explicit Whisper fallback policy without mixing engines in one active session.
+- Deleting or changing active assets invalidates caches safely and preserves existing session readability.
+- TDD, Apple Silicon runtime checks, real-Metal Whisper fallback, frontend/Rust validation, model-license and security review, and documentation maintenance pass.
+created_by: Codex

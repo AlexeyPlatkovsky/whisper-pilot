@@ -1,0 +1,27 @@
+schema_version: 1
+id: WP-130
+title: Stabilize Cloud Meeting timestamps and shutdown
+priority: high
+type: bug
+status: backlog
+created_at: '2026-09-15T07:30:20Z'
+updated_at: '2026-09-15T10:09:57Z'
+tags:
+- cloud
+- streaming
+- reliability
+description: 'Cloud Meeting providers have four related lifecycle defects found during the final code audit. Provider finals are timestamped from the receive-time capture head instead of the audio turn; Deepgram and AssemblyAI can lose the last final result because Stop terminates the socket without a bounded provider-specific drain; WebSocket writes and close have no timeout or cancellation and can strand a session in Stopping; and the renderer can dispatch duplicate Cloud Start calls before its pending state is installed.\n\nScope: preserve provider/commit-owned audio boundaries through persistence, implement bounded graceful final draining for every provider, make all socket writes and close cancellation-aware with deterministic lifecycle finalization, and make Cloud Start single-flight before the first await. Cover delayed and out-of-order finals, partial-only output, provider disconnect, half-open sockets, double Start, and Stop racing a final message.\n\nFailure behavior: Stop reaches Idle or an actionable Error within a bounded deadline, already received transcript data remains durable, provider credentials and payloads are never logged, and no silent fallback to local ASR occurs.\n\nOut of scope: local Meeting ASR/VAD performance, local system-audio callback design, translation quality, provider selection UX, and adding new cloud providers.'
+dod:
+- Provider finals persist timestamps derived from their audio turn or commit boundaries, including delayed and out-of-order delivery, without 1 ms fallback windows.
+- Deepgram and AssemblyAI Stop drains the final provider result within a bounded deadline; a Stop/final race does not lose the last committed phrase.
+- Every WebSocket write, termination message and close is cancellation-aware and time-bounded, and the lifecycle reaches Idle or an actionable Error exactly once.
+- Cloud Start is single-flight before its first asynchronous operation; repeated click, Return or Space cannot dispatch a second provider session.
+- Focused provider-independent and provider-specific tests cover delayed finals, partial-only output, disconnect, half-open writes, double Start and Stop racing a final message.
+- Cloud protocol tests, Rust and frontend suites, clippy, typecheck, lint and affected documentation validation pass without exposing provider credentials or payloads.
+links:
+  blocks:
+  - WP-104
+  - WP-114
+  relates_to:
+  - WP-104
+created_by: Codex

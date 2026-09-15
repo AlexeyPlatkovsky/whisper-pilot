@@ -1,6 +1,7 @@
 import { Icon } from "./Icon";
 import { formatClock } from "./format";
 import { useModelLibrary } from "./useModelLibrary";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 const NONE_DIARIZATION_MODEL = "none";
 
@@ -12,7 +13,8 @@ const STAGE_LABELS: Record<string, string> = {
 const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   transcription: {
     title: "Transcription Models",
-    subtitle: "Choose the Whisper model used to transcribe your meetings.",
+    subtitle:
+      "One local ASR model is used by Transcription, Meeting, and Recorder.",
   },
   diarization: {
     title: "Speaker Diarization",
@@ -20,7 +22,8 @@ const SECTION_TITLES: Record<string, { title: string; subtitle: string }> = {
   },
   llm: {
     title: "MFU Models",
-    subtitle: "Choose the language model used to generate meeting mfu.",
+    subtitle:
+      "Choose the language model used for translation, MFU, and transcript polishing.",
   },
 };
 
@@ -42,11 +45,14 @@ export function AiModelsSection() {
     diarizationSelectError,
     llmModel,
     llmSelectError,
+    transcriptionModel,
+    transcriptionSelectError,
     setDownloadModalId,
     setConfirmDeleteId,
     handleDownload,
     handleSelectDiarizationModel,
     handleSelectLlmModel,
+    handleSelectTranscriptionModel,
     handleDelete,
   } = useModelLibrary();
 
@@ -110,6 +116,7 @@ export function AiModelsSection() {
                 const variantValue =
                   task === "diarization" ? m.id.slice(`${task}-`.length) : null;
                 const isLlm = task === "llm";
+                const isAsr = task === "transcription";
                 return (
                   <li key={m.id} className="model-row">
                     {variantValue !== null ? (
@@ -131,6 +138,15 @@ export function AiModelsSection() {
                         checked={llmModel === m.id}
                         disabled={!m.downloaded}
                         onChange={() => handleSelectLlmModel(m.id)}
+                      />
+                    ) : isAsr ? (
+                      <input
+                        type="radio"
+                        name="transcription-asr-model"
+                        aria-label={m.label}
+                        checked={m.downloaded && transcriptionModel === m.id}
+                        disabled={!m.downloaded}
+                        onChange={() => handleSelectTranscriptionModel(m.id)}
                       />
                     ) : (
                       // A task with no selectable variants still shows the
@@ -196,7 +212,7 @@ export function AiModelsSection() {
                       </span>
                       <button
                         type="button"
-                        className="model-icon-btn"
+                        className="model-icon-btn model-icon-btn--danger"
                         aria-label={`Delete ${m.label}`}
                         title={`Delete ${m.label}`}
                         disabled={!m.downloaded}
@@ -219,6 +235,11 @@ export function AiModelsSection() {
                 {llmSelectError}
               </p>
             )}
+            {task === "transcription" && transcriptionSelectError && (
+              <p className="model-row-error" role="alert">
+                {transcriptionSelectError}
+              </p>
+            )}
           </section>
         );
       })}
@@ -230,6 +251,20 @@ export function AiModelsSection() {
             role="dialog"
             aria-modal="true"
             aria-label={`Download ${downloadTarget.label}`}
+            onKeyDown={(event) => {
+              if (event.key === "Tab") {
+                event.preventDefault();
+                event.currentTarget
+                  .querySelector<HTMLElement>("button:not([disabled])")
+                  ?.focus();
+                return;
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setDownloadModalId(null);
+              }
+            }}
           >
             <div className="modal-header">
               <span className="modal-title">
@@ -240,6 +275,7 @@ export function AiModelsSection() {
                 className="model-icon-btn"
                 aria-label="Close"
                 title="Close"
+                autoFocus
                 onClick={() => setDownloadModalId(null)}
               >
                 <Icon name="x" size={18} />
@@ -263,34 +299,15 @@ export function AiModelsSection() {
       )}
 
       {deleteTarget && (
-        <div className="modal-overlay">
-          <div
-            className="modal-panel confirm-modal"
-            role="alertdialog"
-            aria-modal="true"
-            aria-label={`Delete ${deleteTarget.label}`}
-          >
-            <div className="modal-header">
-              <span className="modal-title">Delete {deleteTarget.label}?</span>
-            </div>
-            <p className="confirm-warning">
-              This removes the downloaded model from disk. You can download it
-              again later.
-            </p>
-            <div className="confirm-actions">
-              <button type="button" onClick={() => setConfirmDeleteId(null)}>
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="danger"
-                onClick={() => handleDelete(deleteTarget.id)}
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
+        <ConfirmDialog
+          label={`Delete ${deleteTarget.label}`}
+          title={`Delete ${deleteTarget.label}?`}
+          description="This removes the downloaded model from disk. You can download it again later."
+          confirmLabel="Delete"
+          destructive
+          onCancel={() => setConfirmDeleteId(null)}
+          onConfirm={() => handleDelete(deleteTarget.id)}
+        />
       )}
     </div>
   );

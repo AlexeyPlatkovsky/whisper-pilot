@@ -1,0 +1,43 @@
+schema_version: 1
+id: WP-111
+title: Phase 4 — Evaluate and integrate Qwen3-ASR
+priority: normal
+type: feature
+status: done
+created_at: '2026-09-11T19:34:32Z'
+updated_at: '2026-09-12T17:42:50Z'
+parent_id: WP-107
+tags:
+- recorder
+- phase-4
+- qwen3-asr
+description: 'Evaluate Qwen3-ASR 0.6B and 1.7B as local transcription engines on supported Apple Silicon and integrate only a runtime that meets explicit quality, latency, memory and stability thresholds. Introduce an engine/capability-aware ASR contract so Whisper and Qwen can differ in model bundles, audio projectors, streaming support, timestamps and language detection without task-specific branching through the UI.
+
+
+  Happy path: the user downloads a verified app-defined Qwen bundle, selects it for a supported transcription mode, receives RU/EN/mixed text through the same persisted segment contract, and can return to Whisper without migration damage. Primary failure behavior: incompatible hardware/runtime, missing projector or aligner asset, model load failure or unsupported capability is detected before capture and falls back only through an explicit user-visible policy. Edge cases include deleting the active model, upgrading the runtime/model schema, streaming without timestamps, long audio, model switch with cached contexts and insufficient memory.
+
+
+  Scenario: Given benchmark evidence satisfies the approved thresholds and all required assets are verified, when the user selects Qwen3-ASR for Recorder, then capture uses the Qwen engine and persists compatible committed segments. Given Qwen is unavailable or lacks a required capability, when the mode starts, then the application explains the limitation and preserves a usable Whisper selection or fallback without silently changing an active session.
+
+
+  Target surfaces: Cargo/runtime integration or isolated local sidecar selected by the spike, models/catalog.rs and downloader verification, settings model selection, AppState caches, ASR traits, Meeting/Streaming/Recorder adapters, typed IPC and UI, benchmark fixtures, tests and architecture/model documentation.
+
+
+  Constraints: no bundled Python, vLLM or CUDA dependency in the production macOS app; official or publisher-verifiable assets and hashes only; Whisper remains default until the benchmark task passes; model memory is coordinated with LLM and diarization runtimes; timestamp support is capability-driven.
+
+
+  Child-task breakdown:
+
+  - Benchmark Qwen3-ASR runtimes and variants on Apple Silicon.
+
+  - Introduce the ASR engine and capability-aware model-bundle architecture.
+
+  - Integrate the selected Qwen engine with model UX, persistence and Whisper fallback.'
+dod:
+- Every direct child task is done against its own DoD.
+- The benchmark record compares Whisper large-v3-turbo Q8 with Qwen3-ASR 0.6B and 1.7B on fixed RU, EN and mixed RU/EN inputs, recording WER or CER, first-partial and final latency, RTF, peak RAM and 30 or 60-minute stability.
+- ASR selection is engine and capability aware and supports multi-asset bundles, cache invalidation and explicit timestamps and language-detection capability without relying on catalog order.
+- A selected and hash-verified Qwen engine works in every mode approved by its benchmark, while unsupported modes fail clearly and Whisper remains a tested default and fallback.
+- Deleting, changing or failing to load the active Qwen bundle never corrupts sessions or silently runs a different engine during an active session.
+- Required TDD, real Apple Silicon and Metal checks, model-download verification, frontend and Rust validation, and documentation maintenance pass.
+created_by: Codex

@@ -68,17 +68,20 @@ impl DirectSegmentationModel {
         samples: &[f32],
         progress: &mut Option<crate::diarize::ProgressCallback>,
     ) -> Result<Vec<SegmentationWindow>> {
-        let windows = segmentation_windows(
+        let window_shift = segmentation_window_shift(self.metadata.window_size)?;
+        let total =
+            segmentation_window_count(samples.len(), self.metadata.window_size, window_shift)?;
+        let batches = segmentation_window_batches(
             samples,
             self.metadata.window_size,
-            segmentation_window_shift(self.metadata.window_size)?,
+            window_shift,
+            SEGMENTATION_BATCH_SIZE,
         )?;
-        let total = windows.len();
         let mut result = Vec::with_capacity(total);
 
-        for (batch_index, batch) in windows.chunks(SEGMENTATION_BATCH_SIZE).enumerate() {
+        for (batch_index, batch) in batches.enumerate() {
             let mut values = Vec::with_capacity(batch.len() * self.metadata.window_size);
-            for (_, window) in batch {
+            for (_, window) in &batch {
                 values.extend_from_slice(window);
             }
             let array = Array3::from_shape_vec((batch.len(), 1, self.metadata.window_size), values)
@@ -247,35 +250,65 @@ pub fn segmentation_windows(
     window_size: usize,
     window_shift: usize,
 ) -> Result<Vec<(usize, Vec<f32>)>> {
+    Ok(
+        segmentation_window_batches(samples, window_size, window_shift, usize::MAX)?
+            .flatten()
+            .collect(),
+    )
+}
+
+fn segmentation_window_count(
+    sample_count: usize,
+    window_size: usize,
+    window_shift: usize,
+) -> Result<usize> {
     if window_size == 0 || window_shift == 0 {
         return Err(AppError::Diarization(
             "segmentation metadata has a zero window size or shift".to_string(),
         ));
     }
-    if samples.is_empty() {
-        return Ok(Vec::new());
+    if sample_count == 0 {
+        return Ok(0);
     }
+    if sample_count <= window_size {
+        return Ok(1);
+    }
+    let full_count = (sample_count - window_size) / window_shift + 1;
+    Ok(full_count + usize::from((sample_count - window_size) % window_shift != 0))
+}
 
-    let mut starts = Vec::new();
-    if samples.len() <= window_size {
-        starts.push(0);
-    } else {
-        let full_count = (samples.len() - window_size) / window_shift + 1;
-        starts.extend((0..full_count).map(|index| index * window_shift));
-        if (samples.len() - window_size) % window_shift != 0 {
-            starts.push(full_count * window_shift);
+/// Lazily materialize overlapping windows one bounded batch at a time. The
+/// returned iterator borrows the source recording; at most `batch_size`
+/// padded window buffers exist between iterations.
+pub fn segmentation_window_batches<'a>(
+    samples: &'a [f32],
+    window_size: usize,
+    window_shift: usize,
+    batch_size: usize,
+) -> Result<impl Iterator<Item = Vec<(usize, Vec<f32>)>> + 'a> {
+    if batch_size == 0 {
+        return Err(AppError::Diarization(
+            "segmentation batch size must be greater than zero".to_string(),
+        ));
+    }
+    let total = segmentation_window_count(samples.len(), window_size, window_shift)?;
+    let mut next_window = 0_usize;
+    Ok(std::iter::from_fn(move || {
+        if next_window >= total {
+            return None;
         }
-    }
-
-    Ok(starts
-        .into_iter()
-        .map(|start| {
+        let batch_end = next_window.saturating_add(batch_size).min(total);
+        let mut batch = Vec::with_capacity(batch_end - next_window);
+        while next_window < batch_end {
+            let start = next_window.saturating_mul(window_shift);
             let mut window = vec![0.0; window_size];
             let available = samples.len().saturating_sub(start).min(window_size);
             window[..available].copy_from_slice(&samples[start..start + available]);
-            (start, window)
-        })
-        .collect())
+            batch.push((start, window));
+            next_window += 1;
+        }
+        Some(batch)
+    }))
 }
 
 fn segmentation_window_shift(window_size: usize) -> Result<usize> {
@@ -442,6 +475,38 @@ mod tests {
         ));
         assert!(matches!(
             powerset_class_to_activity(0, 3, 3),
+            Err(AppError::Diarization(_))
+        ));
+    }
+
+    // WP-116 DoD 2: callers consume only one configured batch of materialized
+    // overlapping windows at a time. The last incomplete window remains in
+    // the iterator and is padded exactly as the existing eager helper did.
+    #[test]
+    fn segmentation_window_batches_are_bounded_and_keep_the_padded_tail() {
+        let samples: Vec<f32> = (0..9).map(|sample| sample as f32).collect();
+        let mut batches = segmentation_window_batches(&samples, 4, 3, 2)
+            .expect("valid dimensions produce a bounded iterator");
+
+        let first = batches.next().expect("first batch");
+        assert_eq!(first.len(), 2, "the configured batch bound is exact");
+        assert_eq!(first[0], (0, vec![0.0, 1.0, 2.0, 3.0]));
+        assert_eq!(first[1], (3, vec![3.0, 4.0, 5.0, 6.0]));
+
+        let final_batch = batches.next().expect("final partial batch");
+        assert_eq!(final_batch.len(), 1);
+        assert_eq!(
+            final_batch[0],
+            (6, vec![6.0, 7.0, 8.0, 0.0]),
+            "the final partial window must be retained and zero padded"
+        );
+        assert!(batches.next().is_none());
+    }
+
+    #[test]
+    fn segmentation_window_batches_reject_a_zero_batch_bound() {
+        assert!(matches!(
+            segmentation_window_batches(&[1.0], 4, 2, 0),
             Err(AppError::Diarization(_))
         ));
     }

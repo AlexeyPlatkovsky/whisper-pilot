@@ -79,7 +79,7 @@ fn the_known_crashing_recording_no_longer_takes_the_process_down() {
     let outcome = diarize_process::diarize_isolated_with(
         &worker_exe(),
         &dir,
-        samples,
+        &samples,
         None,
         "titanet-large",
         Duration::from_secs(120),
@@ -129,7 +129,7 @@ fn a_surviving_model_still_returns_real_turns_through_the_child() {
     let outcome = diarize_process::diarize_isolated_with(
         &worker_exe(),
         &dir,
-        samples,
+        &samples,
         None,
         "campplus",
         Duration::from_secs(120),

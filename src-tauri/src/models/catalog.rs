@@ -2,6 +2,7 @@
 //! trusted list of models and assets, on-disk path construction, per-target
 //! asset resolution, listing, and deletion.
 
+use crate::asr::{spec_by_id as asr_spec_by_id, AsrEngine, AsrMode};
 use crate::error::{AppError, Result};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,90 @@ pub struct ModelCatalogEntry {
     pub task: &'static str,
     pub label: &'static str,
     pub assets: &'static [ModelAsset],
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LlmProfile {
+    Legacy,
+    Fast,
+    Quality,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct LlmModelSpec {
+    pub model_id: &'static str,
+    pub profile: LlmProfile,
+    pub recommended: bool,
+    pub context_tokens: u32,
+    pub temperature: f32,
+    pub top_p: f32,
+    pub top_k: i32,
+    pub min_memory_gb: u16,
+    pub thinking_policy: &'static str,
+    pub chat_template: &'static str,
+    pub template_family: &'static str,
+    pub license: &'static str,
+}
+
+pub const LLM_SPECS: &[LlmModelSpec] = &[
+    LlmModelSpec {
+        model_id: "qwen3.5-4b-q4km",
+        profile: LlmProfile::Fast,
+        recommended: true,
+        context_tokens: 16_384,
+        temperature: 0.2,
+        top_p: 0.9,
+        top_k: 20,
+        min_memory_gb: 12,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "chatml",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "qwen3.8-9b-q6k",
+        profile: LlmProfile::Quality,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.6,
+        top_p: 0.95,
+        top_k: 20,
+        min_memory_gb: 24,
+        thinking_policy: "strip-leading-think",
+        chat_template: "chatml",
+        template_family: "qwen",
+        license: "Apache-2.0",
+    },
+    LlmModelSpec {
+        model_id: "gemma4-12b-q4",
+        profile: LlmProfile::Quality,
+        recommended: false,
+        context_tokens: 16_384,
+        temperature: 0.2,
+        top_p: 0.9,
+        top_k: 20,
+        min_memory_gb: 24,
+        thinking_policy: "disabled-and-stripped",
+        chat_template: "gemma4-canonical-no-think",
+        template_family: "gemma",
+        license: "Gemma Terms",
+    },
+];
+
+pub fn llm_spec_by_id(id: &str) -> Option<&'static LlmModelSpec> {
+    LLM_SPECS.iter().find(|spec| spec.model_id == id)
+}
+
+pub fn llm_spec_by_file_name(file_name: &str) -> Option<&'static LlmModelSpec> {
+    let entry = CATALOG.iter().find(|entry| {
+        entry.task == "llm"
+            && entry
+                .assets
+                .iter()
+                .any(|asset| asset.file_name == file_name)
+    })?;
+    llm_spec_by_id(entry.id)
 }
 
 /// Beta catalog. Every URL/SHA-256/size below was verified directly against
@@ -88,31 +173,70 @@ pub const CATALOG: &[ModelCatalogEntry] = &[
         ],
     },
     ModelCatalogEntry {
-        id: "qwen2.5-3b-q3km",
+        id: "qwen3-asr-1.7b-q8_0",
+        task: "transcription",
+        label: "Qwen3-ASR 1.7B (Q8_0)",
+        assets: &[
+            ModelAsset {
+                url: "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/36a678687ba7d07a74ca70ccb0e36902e005fb80/Qwen3-ASR-1.7B-Q8_0.gguf",
+                sha256: "58e22d0532d4eacaf034cfac17a6fed159f37c41390c710186783be439d1fc57",
+                size_bytes: 2_165_034_944,
+                file_name: "qwen3-asr-1.7b/Qwen3-ASR-1.7B-Q8_0.gguf",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+            ModelAsset {
+                url: "https://huggingface.co/ggml-org/Qwen3-ASR-1.7B-GGUF/resolve/36a678687ba7d07a74ca70ccb0e36902e005fb80/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+                sha256: "46c1d533af3f354ceb37ce855dbceff7da7fa7cf1e6a523df3b13440bd164c0d",
+                size_bytes: 355_709_344,
+                file_name: "qwen3-asr-1.7b/mmproj-Qwen3-ASR-1.7B-Q8_0.gguf",
+                variant_id: None,
+                variant_label: None,
+                recommended: true,
+            },
+        ],
+    },
+    ModelCatalogEntry {
+        id: "qwen3.5-4b-q4km",
         task: "llm",
-        label: "Qwen2.5 3B Instruct (Q3_K_M)",
+        label: "Qwen3.5 4B (Q4_K_M) · Fast",
         assets: &[ModelAsset {
-            url: "https://huggingface.co/bartowski/Qwen2.5-3B-Instruct-GGUF/resolve/main/Qwen2.5-3B-Instruct-Q3_K_M.gguf",
-            sha256: "8eff4e0eb51a8148abdaa9849f14f187e5ac6cd7d795610caf996a287277c59d",
-            size_bytes: 1_590_475_936,
-            file_name: "Qwen2.5-3B-Instruct-Q3_K_M.gguf",
+            url: "https://huggingface.co/unsloth/Qwen3.5-4B-GGUF/resolve/e87f176479d0855a907a41277aca2f8ee7a09523/Qwen3.5-4B-Q4_K_M.gguf",
+            sha256: "00fe7986ff5f6b463e62455821146049db6f9313603938a70800d1fb69ef11a4",
+            size_bytes: 2_740_937_888,
+            file_name: "Qwen3.5-4B-Q4_K_M.gguf",
+            variant_id: None,
+            variant_label: None,
+            recommended: true,
+        }],
+    },
+    ModelCatalogEntry {
+        id: "qwen3.8-9b-q6k",
+        task: "llm",
+        label: "Qwen3.8 9B (Q6_K) · Quality",
+        assets: &[ModelAsset {
+            url: "https://huggingface.co/empero-ai/Qwen3.8-9B-Distill-GGUF/resolve/760121cd70bb4c36b2b5ec58eb765e0df5987efe/Qwen3.8-9B-Q6_K.gguf",
+            sha256: "0f1271373f899912bfe4ea76299af7dd83722d98ea421b0827501c3a2c6da22b",
+            size_bytes: 7_558_901_056,
+            file_name: "Qwen3.8-9B-Q6_K.gguf",
             variant_id: None,
             variant_label: None,
             recommended: false,
         }],
     },
     ModelCatalogEntry {
-        id: "qwen3-4b-q3kl",
+        id: "gemma4-12b-q4",
         task: "llm",
-        label: "Qwen3 4B (Q3_K_L)",
+        label: "Gemma 4 12B QAT (Q4_0) · Quality",
         assets: &[ModelAsset {
-            url: "https://huggingface.co/lmstudio-community/Qwen3-4B-GGUF/resolve/main/Qwen3-4B-Q3_K_L.gguf",
-            sha256: "90d5ab273b85a69e5b1cdd03dfcda82c1295fec63b3a00a35228e403b9388d1c",
-            size_bytes: 2_239_785_664,
-            file_name: "Qwen3-4B-Q3_K_L.gguf",
+            url: "https://huggingface.co/google/gemma-4-12B-it-qat-q4_0-gguf/resolve/29d097773436b69ff9feafd636ab4cf873786537/gemma-4-12b-it-qat-q4_0.gguf",
+            sha256: "93567e57a8fe10b23569b9d9ec38cd005deedf71e29477c421a4b83f418a538b",
+            size_bytes: 6_975_879_296,
+            file_name: "gemma-4-12b-it-qat-q4_0.gguf",
             variant_id: None,
             variant_label: None,
-            recommended: true,
+            recommended: false,
         }],
     },
 ];
@@ -128,6 +252,22 @@ pub struct TaskModel {
     pub downloaded: bool,
     pub size_bytes: u64,
     pub recommended: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<LlmProfile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub min_memory_gb: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub engine: Option<AsrEngine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compatible_modes: Option<Vec<AsrMode>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_timestamps: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_language_detection: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub supports_mixed_language: Option<bool>,
 }
 
 pub(crate) fn models_dir(app_support_dir: &Path) -> PathBuf {
@@ -250,7 +390,23 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                     label: entry.label.to_string(),
                     downloaded: entry_downloaded(app_support_dir, entry),
                     size_bytes: entry.assets.iter().map(|a| a.size_bytes).sum(),
-                    recommended: false,
+                    recommended: entry.assets.iter().any(|asset| asset.recommended),
+                    profile: llm_spec_by_id(entry.id).map(|spec| spec.profile),
+                    min_memory_gb: llm_spec_by_id(entry.id)
+                        .map(|spec| spec.min_memory_gb)
+                        .or_else(|| asr_spec_by_id(entry.id).map(|spec| spec.min_memory_gb)),
+                    license: llm_spec_by_id(entry.id)
+                        .map(|spec| spec.license.to_string())
+                        .or_else(|| asr_spec_by_id(entry.id).map(|spec| spec.license.to_string())),
+                    engine: asr_spec_by_id(entry.id).map(|spec| spec.engine),
+                    compatible_modes: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.compatible_modes.to_vec()),
+                    supports_timestamps: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.timestamps),
+                    supports_language_detection: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.language_detection),
+                    supports_mixed_language: asr_spec_by_id(entry.id)
+                        .map(|spec| spec.capabilities.mixed_language),
                 }]
             } else {
                 let shared: Vec<&ModelAsset> = entry
@@ -272,6 +428,14 @@ pub fn list_task_models(app_support_dir: &Path) -> Vec<TaskModel> {
                             && is_asset_downloaded(app_support_dir, asset),
                         size_bytes: shared_size + asset.size_bytes,
                         recommended: asset.recommended,
+                        profile: None,
+                        min_memory_gb: None,
+                        license: None,
+                        engine: None,
+                        compatible_modes: None,
+                        supports_timestamps: None,
+                        supports_language_detection: None,
+                        supports_mixed_language: None,
                     })
                     .collect()
             }

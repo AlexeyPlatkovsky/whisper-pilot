@@ -4,8 +4,7 @@
 - **Date:** 2026-08-28
 - **Deciders:** Alexey Platkovsky
 - **Relates to:** [ADR-015](ADR-015-live-translation-shared-llm-concurrent-single-flight.md)
-  (engine reuse, single-flight concurrency, target languages, and the
-  persistence-reuse concept — all still current); this ADR supersedes only
+  (engine reuse, target languages, and the persistence-reuse concept); this ADR supersedes only
   ADR-015's "Unit: the paragraph is the translation and alignment unit"
   decision and its "Translate at window granularity" rejected alternative.
 
@@ -84,11 +83,10 @@ cluttered multi-affordance row.
   reopened after this ships** — the column rename changes what the
   persistence key means, so old keys cannot match new per-window lookups. A
   one-time, accepted migration cost, not a defect.
-- ADR-015's engine choice (reuse the summary LLM), concurrency model
-  (`translation_busy` single-flight, independent of `whisper_busy`), target
-  languages (`en`/`ru` only), and the general principle of persisting to
-  avoid re-running the model are all unchanged and still govern this
-  feature — only the unit that gets persisted and sent to the model changed.
+- ADR-015's engine choice (reuse the summary LLM), target languages (`en`/`ru`
+  only), and the general principle of persisting to avoid re-running the model
+  remain. WP-115 later replaced the standalone busy guard with the shared
+  bounded LLM scheduler; this ADR still governs the persisted translation unit.
 
 ## Alternatives Considered
 

@@ -1,8 +1,9 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AiModelsSection } from "./AiModelsSection";
 import * as ipc from "./ipc";
+import { readCssBundle } from "./test/readCssBundle";
 
 vi.mock("./ipc", () => ({
   listTaskModels: vi.fn(),
@@ -20,11 +21,31 @@ const TRANSCRIPTION_NOT_DOWNLOADED = {
   downloaded: false,
   size_bytes: 874_188_075,
   recommended: false,
+  engine: "whisper" as const,
+  compatible_modes: ["meeting", "streaming", "recorder"] as Array<
+    "meeting" | "streaming" | "recorder"
+  >,
 };
 
 const TRANSCRIPTION_DOWNLOADED = {
   ...TRANSCRIPTION_NOT_DOWNLOADED,
   downloaded: true,
+};
+
+const QWEN_ASR_17_DOWNLOADED = {
+  id: "qwen3-asr-1.7b-q8_0",
+  task: "transcription",
+  label: "Qwen3-ASR 1.7B (Q8_0)",
+  downloaded: true,
+  size_bytes: 2_520_744_288,
+  recommended: true,
+  engine: "qwen3_asr" as const,
+  compatible_modes: ["meeting", "streaming", "recorder"] as Array<
+    "meeting" | "streaming" | "recorder"
+  >,
+  supports_timestamps: false,
+  supports_language_detection: true,
+  supports_mixed_language: true,
 };
 
 const CAMPPLUS_DOWNLOADED = {
@@ -66,6 +87,10 @@ beforeEach(() => {
   });
 });
 
+afterEach(() => {
+  delete document.documentElement.dataset.theme;
+});
+
 describe("AiModelsSection", () => {
   it("shows a Download button for a not-downloaded model", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([
@@ -97,6 +122,33 @@ describe("AiModelsSection", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("uses explicit visible theme tokens for model download and delete icons in dark mode", async () => {
+    document.documentElement.dataset.theme = "dark";
+    vi.mocked(ipc.listTaskModels).mockResolvedValue([
+      TRANSCRIPTION_DOWNLOADED,
+      TITANET_NOT_DOWNLOADED,
+    ]);
+
+    render(<AiModelsSection />);
+
+    const download = await screen.findByRole("button", {
+      name: /download titanet-large/i,
+    });
+    const remove = screen.getByRole("button", {
+      name: /delete whisper large-v3-turbo/i,
+    });
+    expect(download).toHaveClass("model-icon-btn--accent");
+    expect(remove).toHaveClass("model-icon-btn--danger");
+
+    const styles = readCssBundle();
+    expect(styles).toMatch(
+      /\.settings-content \.model-icon-btn--accent\s*\{[^}]*color:\s*var\(--accent\);/s,
+    );
+    expect(styles).toMatch(
+      /\.settings-content \.model-icon-btn--danger\s*\{[^}]*color:\s*var\(--error\);/s,
+    );
+  });
+
   it("clicking Delete opens a confirmation dialog before removing the model", async () => {
     vi.mocked(ipc.listTaskModels)
       .mockResolvedValueOnce([TRANSCRIPTION_DOWNLOADED])
@@ -112,7 +164,9 @@ describe("AiModelsSection", () => {
     );
 
     expect(ipc.deleteModel).not.toHaveBeenCalled();
-    await user.click(await screen.findByRole("button", { name: "Delete" }));
+    const confirmDelete = await screen.findByRole("button", { name: "Delete" });
+    expect(confirmDelete).toHaveClass("modal-button--danger");
+    await user.click(confirmDelete);
 
     expect(ipc.deleteModel).toHaveBeenCalledWith("transcription");
     expect(
@@ -338,6 +392,47 @@ describe("AiModelsSection", () => {
       });
       expect(radio).not.toBeChecked();
       expect(radio).toBeDisabled();
+    });
+
+    it("uses one ASR radio for all three modes and does not list Qwen 0.6B", async () => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([
+        TRANSCRIPTION_DOWNLOADED,
+        QWEN_ASR_17_DOWNLOADED,
+      ]);
+      vi.mocked(ipc.getSettings).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_transcription: "transcription",
+        active_model_diarization: "none",
+        export_file_type: "plain_text",
+      });
+      vi.mocked(ipc.setSetting).mockResolvedValue({
+        theme: "system",
+        ui_language: "en",
+        active_model_transcription: "qwen3-asr-1.7b-q8_0",
+        active_model_diarization: "none",
+        export_file_type: "plain_text",
+      });
+      const user = userEvent.setup();
+      render(<AiModelsSection />);
+
+      await user.click(
+        await screen.findByRole("radio", {
+          name: "Qwen3-ASR 1.7B (Q8_0)",
+        }),
+      );
+
+      expect(ipc.setSetting).toHaveBeenCalledWith(
+        "active_model.transcription",
+        "qwen3-asr-1.7b-q8_0",
+      );
+      expect(screen.getAllByRole("radio")).toHaveLength(2);
+      expect(screen.queryByText(/Qwen3-ASR 0\.6B/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^M\/S$/i)).not.toBeInTheDocument();
+      expect(screen.queryByText(/^Recorder$/i)).not.toBeInTheDocument();
+      expect(
+        screen.queryByText(/license|timestamps|GB RAM/i),
+      ).not.toBeInTheDocument();
     });
   });
 

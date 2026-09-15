@@ -1,0 +1,37 @@
+schema_version: 1
+id: WP-116
+title: Reduce Meeting and diarization audio memory
+priority: normal
+type: task
+status: in_progress
+created_at: '2026-09-11T19:35:58Z'
+updated_at: '2026-09-11T20:48:47Z'
+parent_id: WP-108
+tags:
+- recorder
+- phase-1
+- memory
+description: 'Reduce avoidable full-recording copies in Meeting decode and speaker diarization. FFmpeg output uses a file-backed or bounded representation, raw s16le is converted without an in-memory WAV copy, transcription and diarization share samples without cloning the complete recording, and overlapping segmentation windows are materialized only for the current inference batch.
+
+
+  Happy path: short files behave identically while multi-hour audio transcribes and diarizes within a measured bounded-memory budget. Primary failure behavior: decode, disk-full, temporary-file, mmap or worker failure cleans owned artifacts and preserves the last safe Meeting state. Edge cases include empty input, final partial segmentation window, unsupported media, cancellation or app exit during temporary-file use, and diarization fallback.
+
+
+  Scenario: Given a two-hour supported recording, when Meeting transcription and diarization run, then peak audio-buffer memory stays within the approved budget and the final transcript/speaker assignment remains compatible with existing persistence. Given a temporary backing file fails, when the operation exits, then no partial transcript replaces prior data and owned temporary artifacts are cleaned.
+
+
+  Target surfaces: src-tauri/src/audio.rs, commands/transcription.rs, diarize/segmentation.rs, diarize pipeline and worker transport, temporary-artifact cleanup, tests, benchmarks and architecture/testing documentation.
+
+
+  Constraints: retain 16 kHz mono model input and child-process diarization isolation; do not trade correctness for memory without a measured comparison; no source audio in logs; significant transcription changes require real-Metal tests.'
+dod:
+- FFmpeg normalization no longer requires simultaneous raw PCM and synthetic WAV copies, and full Meeting samples are not cloned solely for task ownership.
+- Segmentation creates overlapping audio only for the current bounded batch while retaining and testing the final padded partial window.
+- A fixed two-hour fixture or deterministic equivalent records peak audio-buffer and process memory below the approved target and materially below baseline.
+- Short and long real-audio checks preserve non-empty Whisper output, monotonic segment times and diarization compatibility within the accepted quality tolerance.
+- Disk-full, malformed media, worker failure and cleanup tests preserve prior Meeting data and leave no owned temporary artifacts.
+- Real-Metal, diarization integration, Rust validation and documentation maintenance pass.
+links:
+  relates_to:
+  - WP-61
+created_by: Codex

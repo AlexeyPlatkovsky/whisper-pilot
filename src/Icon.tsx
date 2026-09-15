@@ -13,6 +13,8 @@ export type IconName =
   | "square"
   | "sparkles"
   | "download"
+  | "file-wav"
+  | "eraser"
   | "trash-2"
   | "pencil"
   | "globe"
@@ -30,9 +32,20 @@ export type IconName =
   | "rotate-ccw"
   | "mic"
   | "messages-square"
-  | "loader";
+  | "loader"
+  | "cloud"
+  | "cloud-alert"
+  | "languages"
+  | "lock-keyhole"
+  | "pause";
 
 const PATHS: Record<IconName, ReactElement> = {
+  pause: (
+    <>
+      <rect x="6" y="4" width="4" height="16" rx="1" />
+      <rect x="14" y="4" width="4" height="16" rx="1" />
+    </>
+  ),
   "panel-left": (
     <>
       <rect width="18" height="18" x="3" y="3" rx="2" />
@@ -75,6 +88,23 @@ const PATHS: Record<IconName, ReactElement> = {
       <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
       <path d="M7 10l5 5 5-5" />
       <path d="M12 15V3" />
+    </>
+  ),
+  "file-wav": (
+    <>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" />
+      <path d="M14 2v6h6" />
+      <path
+        d="m6.25 13 .75 5 1-3 1 3 .75-5m1 5 1.25-5 1.25 5m-2-1.5h1.5m1.25-3.5 1.25 5 1.25-5"
+        strokeWidth="1.35"
+      />
+    </>
+  ),
+  eraser: (
+    <>
+      <path d="m7 21-4-4a2.5 2.5 0 0 1 0-3.5L13.5 3a2.5 2.5 0 0 1 3.5 0l4 4a2.5 2.5 0 0 1 0 3.5L10.5 21Z" />
+      <path d="m5 11.5 7.5 7.5" />
+      <path d="M22 21H7" />
     </>
   ),
   "trash-2": (
@@ -194,6 +224,35 @@ const PATHS: Record<IconName, ReactElement> = {
       <line x1="16.24" x2="19.07" y1="7.76" y2="4.93" />
     </>
   ),
+  cloud: (
+    <>
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9H16a5 5 0 1 1 1.5 9Z" />
+    </>
+  ),
+  "cloud-alert": (
+    <>
+      <path d="M17.5 19H9a7 7 0 1 1 6.71-9H16a5 5 0 1 1 1.5 9Z" />
+      <path d="M12 12v.01" />
+      <path d="M12 16h.01" />
+    </>
+  ),
+  languages: (
+    <>
+      <path d="m5 8 6 6" />
+      <path d="m4 14 6-6 2-3" />
+      <path d="M2 5h12" />
+      <path d="M7 2h1" />
+      <path d="M22 22 16 10l-6 12" />
+      <path d="M14 18h6" />
+    </>
+  ),
+  "lock-keyhole": (
+    <>
+      <rect width="18" height="11" x="3" y="11" rx="2" />
+      <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+      <path d="M12 15v3" />
+    </>
+  ),
 };
 
 export function Icon({
@@ -218,6 +277,7 @@ export function Icon({
       strokeLinejoin="round"
       aria-hidden="true"
       focusable="false"
+      data-icon={name}
     >
       {PATHS[name]}
     </svg>

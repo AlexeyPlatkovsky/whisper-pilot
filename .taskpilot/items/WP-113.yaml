@@ -1,0 +1,33 @@
+schema_version: 1
+id: WP-113
+title: Finalize and reconcile low-latency local Streaming text
+priority: high
+type: task
+status: in_progress
+created_at: '2026-09-11T19:35:39Z'
+updated_at: '2026-09-11T20:35:47Z'
+parent_id: WP-108
+tags:
+- recorder
+- phase-1
+- streaming
+description: 'Replace the current loss-prone fixed-window completion behavior with explicit partial and committed transcript semantics. Stop must decode meaningful trailing audio shorter than a normal window. A measured VAD or overlapping rolling-window strategy may revise only the unstable suffix, deduplicates overlap and preserves sample-derived timestamps across Russian, English and mixed speech.
+
+
+  Happy path: speech appears as partial text within the accepted latency budget, stabilizes into committed text and finalizes on Stop without losing or duplicating the last phrase. Primary failure behavior: silence or a failed decode does not hallucinate a committed segment and does not terminate the whole session. Edge cases include a stop just below a full window, a word crossing a window boundary, alternating RU/EN, long silence, overload and two identical neighboring phrases.
+
+
+  Scenario: Given meaningful speech shorter than seven seconds, when the user stops capture, then it is decoded and committed once. Given an overlap contains already committed tokens, when the next partial is reconciled, then the committed prefix remains byte-stable and no duplicate phrase is persisted.
+
+
+  Target surfaces: src-tauri/src/streaming_session.rs, transcribe.rs parameters, events.rs, streaming_store.rs, src/ipc.ts, StreamingView rendering and focused unit, integration and real-audio fixtures.
+
+
+  Constraints: quality takes priority over sub-second latency; production window, step and VAD values require measured evidence; timestamps derive from audio sample positions; failed windows remain visible without corrupting later results; real-Metal validation is mandatory.'
+dod:
+- Stop flushes every meaningful trailing-audio boundary selected by the specification, while silence and below-threshold noise create no hallucinated committed segment; tests cover exact boundary values.
+- Partial text can revise only the unstable suffix and committed text never regresses; overlap deduplication tests cover repeated words, punctuation and identical adjacent phrases.
+- RU, EN and mixed RU/EN real-audio fixtures record first-partial latency, commit latency, RTF, WER or CER and boundary loss or duplication against the current seven-second baseline.
+- Persisted timestamps are monotonic and sample-derived across normal decode, failed windows and finalization.
+- A 60-minute real-Metal run meets the approved memory and latency budget, and Rust/frontend validation plus documentation maintenance pass.
+created_by: Codex

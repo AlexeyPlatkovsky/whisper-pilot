@@ -1,0 +1,47 @@
+/* ==========================================================================
+   Streaming: its own top-level view, entered/exited like Settings, now
+   reusing the app shell's header, info-bar, sidebar, and transcript-panel
+   classes wholesale (see StreamingView.tsx) — only the transcript's own
+   text-flow rendering (plain windows, fail-open spans, prettify diff) stays
+   distinct from Meeting's speaker-block markup, so only that keeps its own
+   rules below.
+   ========================================================================== */
+.streaming-transcript-text {
+  color: var(--text);
+  font-size: var(--wp-font-size-md);
+  line-height: 1.7;
+}
+
+/* Scroll slack keeps the newest live phrase comfortably above the panel's
+   bottom edge while the transcript is following incoming speech. */
+.wp-streaming-autoscroll-tail {
+  flex: 0 0 22%;
+  pointer-events: none;
+}
+
+/* Groups of windows chunked by src/paragraphs.ts's sentence/length
+   heuristic — windows carry no pause signal of their own to split on. */
+.streaming-paragraph {
+  margin: 0 0 1em;
+}
+
+.streaming-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.streaming-window--failed {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.diff-del {
+  color: var(--error);
+  text-decoration: line-through;
+}
+
+.diff-add {
+  color: var(--success);
+  font-weight: 600;
+  /* <ins> is underlined by default; the design calls for bold, not underline. */
+  text-decoration: none;
+}

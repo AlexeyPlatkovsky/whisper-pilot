@@ -1,0 +1,44 @@
+schema_version: 1
+id: WP-129
+title: Integrate Qwen3.5 Fast, Qwen3.8 and Gemma Quality profiles
+priority: normal
+type: task
+status: done
+created_at: '2026-09-11T19:49:19Z'
+updated_at: '2026-09-12T16:51:35Z'
+parent_id: WP-110
+tags:
+- recorder
+- phase-3
+- llm
+- qwen
+- gemma
+- gguf
+description: 'Integrate the qualified GGUF lineup through the existing llama.cpp runtime: Qwen3.5 4B Q4_K_M as the Fast default, with Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 as separate opt-in Quality profiles for MFU, translation, Prettify and Recorder voice-message polishing. No MLX runtime, Python environment or multimodal projector is introduced.
+
+
+  Extend the model catalog, settings and Phase 1 persistent scheduler with explicit model metadata for profile, chat template, thinking policy, generation parameters, context budget and resource guidance. Replace the shared hardcoded Qwen-only prompt framing with model-aware formatting while keeping Rust-owned task instructions, MFU JSON contract and transcript-safety validation. Qwen3.8 receives its qualified sampling and stop-token configuration rather than greedy decoding, and its leading think section is isolated and never shown, exported or persisted. New installations recommend Fast; existing installations keep a working selected model until the user downloads and accepts the replacement.
+
+
+  Happy path: a user downloads any verified single-file GGUF, sees storage and memory guidance, uses Qwen3.5 for latency-sensitive work, and can select either qualified Qwen3.8 or Gemma for higher-quality MFU or polishing. Primary failure behavior: unsupported hardware, interrupted download, checksum mismatch, load failure, cancellation, memory pressure, or malformed structured output yields a recoverable local error, preserves the transcript, and never silently uses cloud inference. Edge cases include an old selected model during upgrade, profile deletion while queued, app restart, long context, simultaneous Whisper load, switching profiles, and reasoning or control-token leakage.
+
+
+  Scenario: Given the Fast model is installed and qualified, when a fresh installation chooses the recommended local LLM, then Qwen3.5 4B Q4_K_M is selected and interactive work stays within its accepted resource envelope. Given an eligible Quality model is installed and selected, then Qwen3.8 9B or Gemma 4 12B runs with its own template, sampling and thinking policy; Qwen3.8 is selectable for multilingual workflows only after its Russian gate passes. Given any file is absent or invalid, then only that profile is unavailable while previously installed models and transcripts remain intact.
+
+
+  Target surfaces: src-tauri/src/models catalog and downloader, LLM scheduler from WP-115, model-aware prompt/template and generation configuration, settings and model selectors, MFU and translation commands, Prettify and Recorder polish paths, migration behavior, tests, and architecture/model documentation.
+
+
+  Constraints: macOS Apple Silicon and local-only inference through the existing pinned llama.cpp stack; no MLX dependency; no audio, image or video claims for these text workflows; no transcript logging; bounded queues, context and memory; default migration is never allowed to trigger an unrequested multi-gigabyte download.'
+dod:
+- The catalog pins the accepted Qwen3.5 4B Q4_K_M, Qwen3.8 9B Q6_K and Gemma 4 12B QAT Q4_0 repository revisions, filenames, byte sizes and SHA-256 values, and installs each single-file GGUF with resume, disk-space preflight, verification, cleanup, deletion and restart recovery.
+- Settings presents Qwen3.5 as Fast and Qwen3.8 plus Gemma as distinct Quality choices with storage and minimum-memory guidance; Fast becomes the recommendation for fresh installs only after WP-128 passes, while existing selected models are preserved until an explicit user migration.
+- Model-aware formatting applies the correct embedded or pinned chat template, thinking policy, stop tokens, sampling parameters and context budget per model; focused tests prove reasoning and control tokens cannot reach displayed, exported or persisted results.
+- WP-115 scheduling, cancellation, cache invalidation and bounded-queue behavior works across Fast, Quality and retained legacy GGUF models without unsafe simultaneous loads or hidden model switching.
+- MFU preserves its structured schema contract, while translation and both polishing paths preserve source language, numbers, named entities, code snippets, and user meaning across the accepted Russian, English, and mixed-language corpus from WP-128; Qwen3.8 is not promoted if any mandatory Russian case fails.
+- Load, inference, cancellation, memory-pressure, corrupt-download, profile-switch and deletion failures are recoverable; transcripts remain intact, no cloud fallback occurs silently, and retained legacy models remain usable through the documented transition.
+- Focused TDD, Rust and frontend suites, signed-app packaging checks, real-Metal performance and sustained-concurrency validation, security and license review, and documentation maintenance pass.
+links:
+  relates_to:
+  - WP-78
+created_by: Codex

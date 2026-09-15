@@ -1,6 +1,6 @@
 [package]
 name = "whisper-pilot"
-version = "1.9.0"
+version = "1.20.0"
 edition = "2021"
 rust-version = "1.80"
 
@@ -12,7 +12,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+tauri = { version = "2", features = ["protocol-asset", "macos-private-api"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
@@ -31,6 +31,9 @@ env_logger = "0.11"
 reqwest = { version = "0.12", default-features = false, features = ["stream", "rustls-tls"] }
 sha2 = "0.10"
 futures-util = "0.3"
+fs2 = "0.4"
+base64 = "0.22"
+tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 sherpa-rs = { version = "0.6.8", features = ["download-binaries"] }
 # The current ort 2.x line needs Rust 1.88; this pinned 1.16.3 tag declares
 # Rust 1.70 and dynamically loads the ONNX Runtime dylib WP-60 already bundles.
@@ -44,21 +47,25 @@ bzip2 = "0.4"
 libc = "0.2"
 rusqlite = { version = "0.32", features = ["bundled"] }
 encoding_rs = "0.8"
+rubato = { version = "1.0.1", default-features = false }
 
 # Metal GPU acceleration is macOS-only; CI runs on Linux so the feature must be
 # conditional. Cargo target-specific dependency sections handle this correctly.
-# cpal and screencapturekit are also macOS-only here: cpal's default Linux
-# backend (alsa-sys) needs ALSA dev headers CI does not install, and
-# ScreenCaptureKit is an Apple-only framework. Both are Streaming's (WP-70)
-# audio capture: cpal for the microphone, screencapturekit for system-audio
-# loopback. screencapturekit's mandatory `apple-metal` dependency needs a
+# screencapturekit is also macOS-only here because ScreenCaptureKit is an
+# Apple-only framework. It provides Streaming's system-audio loopback capture.
+# Its mandatory `apple-metal` dependency needs a
 # full Xcode.app (not just Command Line Tools) to link its Swift
 # compatibility libraries — see streaming_audio.rs's module doc comment.
 [target.'cfg(target_os = "macos")'.dependencies]
 whisper-rs = { version = "0.16", features = ["metal"] }
-llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal", "dynamic-link"] }
+llama-cpp-2 = { version = "0.1", default-features = false, features = ["metal", "dynamic-link", "mtmd"] }
 screencapturekit = "8.0.1"
 cpal = "0.17.3"
+objc2 = { version = "0.6.4", default-features = false, features = ["std"] }
+block2 = { version = "0.6.2", default-features = false, features = ["std"] }
+objc2-av-foundation = { version = "0.3.2", default-features = false, features = ["std", "AVCaptureDevice", "AVMediaFormat", "block2"] }
+keyring = { version = "3.6.2", default-features = false, features = ["apple-native"] }
+tauri-plugin-global-shortcut = "2.3.2"
 [target.'cfg(not(target_os = "macos"))'.dependencies]
 rfd = { version = "0.15", default-features = false, features = ["gtk3"] }
 whisper-rs = { version = "0.16" }

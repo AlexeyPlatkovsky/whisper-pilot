@@ -1,88 +1,86 @@
 # Roadmap
 
-Owns phases, milestones, sequencing, and non-goals over time. Per-feature task
-breakdown and work-item status both live in TaskPilot (`WP-<n>`).
+Owns planned release capabilities and sequencing. The public version track is
+shown in [`../ROADMAP.md`](../ROADMAP.md); feature/task breakdown and lifecycle
+status live in TaskPilot (`WP-<n>`).
 
-## Release Stance
+## Release stance
 
-Pre-1.0, milestone-driven. Each milestone is independently runnable: the app
-works end-to-end at every milestone boundary, gaining capability rather than
-being rewritten. No public distribution or notarization in the current horizon.
+WhisperPilot uses capability-driven versions rather than calendar dates. The
+current `1.20` line remains local-first and fully usable while later milestones
+add optional workflows without replacing the existing local paths.
 
-## Phases
+## v1.30 — Production-ready Cloud Providers
 
-### M1 — Transcription core (done)
+**Goal:** turn the existing Cloud Meeting groundwork into a complete supported
+workflow rather than presenting partial provider integration as finished.
 
-- **Goal:** Add an audio/video file and get an accurate, editable, timestamped
-  Russian transcript that can be exported. Stateless (no library yet).
-- **Feature:** file transcription core.
-- **Exit criteria:** file → ffmpeg → Whisper (Metal, full-file, Russian) →
-  editable segments → save, verified end-to-end on a real file. *(As shipped in
-  M1; the forced Russian decode was superseded by ADR-012 — the language is now
-  auto-detected.)*
+**Scope:**
 
-### M2 — Library, workspace & speaker roles — **Beta** (next)
+- polished provider and model selection before Meeting capture;
+- secure credential setup, validation, replacement, and removal;
+- deterministic start, stop, reconnect, timeout, and error behavior;
+- consistent transcript persistence and user-visible recovery across supported
+  providers;
+- clear privacy and billing boundaries while preserving Local as a first-class
+  option.
 
-- **Goal:** Turn the stateless flow into a persisted two-pane workspace **and**
-  attribute the transcript by speaker, to a **beta-ready** app. A local library of
-  **meetings** with reopen/rename/delete, **auto-saved** edits, a manual
-  **Transcribe** action with an indeterminate running status, automatic language detection
-  (safe cancellation is deferred to WP-87's isolated worker),
-  and **Markdown / plain-text export**; local **diarization** so the
-  transcript renders as a per-speaker chat of **colored bubbles**; plus a
-  **Settings** screen (beta scope): **AI models** download/delete (one model per
-  task), **Appearance** (light / dark / system themes), and **App language**
-  (English UI).
-- **Features:** library & workspace (TaskPilot epic `WP-11`), speaker
-  diarization (TaskPilot epic `WP-1`), and the beta scope of Settings
-  (TaskPilot epic `WP-33`).
-- **Exit criteria:** transcriptions persist as meetings; edits auto-save;
-  meetings reopen (with a source-missing state); export produces `.md`/`.txt`;
-  segments render as colored per-speaker bubbles with editable, persisted labels;
-  Settings can download/delete each task's model, switch light/dark/system theme,
-  and the UI is English.
+**Exit criteria:** supported cloud providers can be configured and used through
+the complete Meeting lifecycle without silent fallback, lost final text, leaked
+credentials, or provider-specific UI inconsistencies.
 
-### M3 — MFU, full settings & polish — **Release**
+## v1.40 — Multi-file Transcription
 
-- **Goal:** Complete the app for a **public release**: structured meeting MFU,
-  the full Settings surface, a localized UI, richer themes, and in-app update.
-- **Features:** structured meeting MFU (structured, editable, copyable MFU
-  via a local LLM) and the release scope of Settings: **AI models** with an
-  **Active** choice among 3–4 models per task; **Appearance** with 3–4 extra
-  themes (each in light and dark); **App language** adding Russian, Turkish,
-  Spanish, German, French; and **Update app**.
-- **Exit criteria:** MFU generate in Russian below the transcript, editable and
-  copyable; each task can hold several models with an Active selection; extra
-  themes and UI languages are selectable; the app can check for and apply updates.
+**Goal:** let one Transcription combine several audio or video sources into one
+coherent result.
 
-## Sequencing & Dependencies
+**Scope:**
 
-- **Within M2:** build the library/meeting model first (the durable place
-  speakers and MFU are stored), then layer diarization onto M1's `Segment`
-  stream so bubbles render against persisted segments; Settings (beta) supplies
-  the models those pipelines need (download/delete) and the theme/UI-language
-  choices.
-- M3 reads a finalized (M2-persisted) transcript; independent of the MFU model
-  but reads better with the M2 speaker labels present. The release Settings scope
-  builds directly on the beta Settings shell.
-- **UI language vs transcription language:** the **app UI** defaults to **English**
-  (localized further at release) and is a setting; the **transcription** language
-  is always auto-detected and is not selectable (ADR-012, superseding ADR-007 on
-  this point).
+- add, remove, and reorder multiple source files within one Transcription;
+- process sources as one ordered transcription job;
+- produce one continuous editable transcript and MFU result;
+- retain source boundaries and monotonic timeline metadata for review, recovery,
+  and export;
+- make partial failure actionable without discarding completed sources.
 
-## Non-Goals (Over Time)
+**Exit criteria:** a user can create one Transcription from multiple ordered
+files, run it end to end, reopen it, edit it, and export it as one coherent
+artifact.
 
-- Meeting becoming a real-time transcriber — never; its accuracy comes from
-  full-file batch processing (ADR-002), unchanged. Streaming (ADR-014) is a
-  separate, additive capability with its own quality-over-latency priority;
-  see `idea.md` for its scope. Streaming's own phase/milestone placement is
-  not yet decided — its epic (WP-68) is tracked in TaskPilot pending that.
-- Cloud transcription/summarization/storage — never; local-first stance
-  (applies to Meeting and Streaming alike).
-- Real-name speaker identification (voice enrollment) — deferred beyond M2.
-- Speaker reassignment / merge — deferred beyond M2; misattributed segments stay
-  as attributed.
-- In-app audio playback — deferred.
-- Batch/queued multi-file processing — deferred; one file at a time.
-- Model **catalog authoring** (adding arbitrary third-party models) — out of
-  scope; Settings manages a **fixed, app-defined** model list per task (F005).
+## v1.50 — Meeting Audio, Optional Microphone, and Retranscription
+
+**Goal:** make Meeting capture durable and reusable while optionally recording
+the user's own voice alongside system audio.
+
+**Scope:**
+
+- add a microphone on/off option to the Meeting start configuration;
+- keep system-audio-only capture as the default;
+- capture system audio and microphone input on one stable session timeline;
+- retain the completed Meeting audio as a durable local source;
+- show compact playback and a dedicated WAV export action alongside the audio
+  source details, following the Recorder interaction pattern without increasing
+  the header height;
+- add a dedicated Retranscribe action near the source/mode and MFU controls in
+  the Meeting header, rerunning recognition from the retained original audio;
+- replace the current transcript atomically after successful retranscription,
+  while preserving the prior transcript if recognition fails;
+- make confirmed Clear remove the transcript, MFU, translations, and retained
+  audio file together;
+- expose the active input state clearly and preserve existing live translation,
+  transcript, and error behavior;
+- handle permission denial, device removal, and input failure without silently
+  losing the system-audio stream.
+
+**Exit criteria:** a user can explicitly start a Meeting with or without their
+microphone; the resulting audio can be replayed and exported; transcription can
+be regenerated from that audio without risking the existing result; confirmed
+Clear removes all derived content and the retained audio; and permission or
+device failures produce recoverable, source-specific feedback.
+
+## Sequence
+
+`v1.30` stabilizes the optional network path before the Transcription data model
+expands in `v1.40`. The `v1.50` durable and mixed-input Meeting work follows so
+its audio, retranscription, and lifecycle changes build on already stable
+local/cloud Meeting behavior.

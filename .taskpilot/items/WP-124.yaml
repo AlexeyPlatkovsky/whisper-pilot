@@ -1,0 +1,33 @@
+schema_version: 1
+id: WP-124
+title: Verify bubble accessibility and macOS window behavior
+priority: normal
+type: task
+status: in_progress
+created_at: '2026-09-11T19:38:49Z'
+updated_at: '2026-09-12T16:45:01Z'
+parent_id: WP-110
+tags:
+- recorder
+- phase-3
+- validation
+description: 'Execute and record the dedicated accessibility and real-macOS verification matrix for the implemented bubble and caption surfaces, fixing only in-scope defects found in those behaviors. Validate non-color state communication, accessible names, keyboard/focus restoration and the native window contract across displays, Spaces, Stage Manager, fullscreen applications, sleep/wake and display changes.
+
+
+  Happy path: every supported environment preserves correct bubble state, drag/click behavior, main-window recovery and shortcut-driven captions. Primary failure behavior: unsupported or inconsistent platform behavior is documented as a product limitation or returns to the design task before the feature is marked done. Edge cases include VoiceOver running, Reduce Motion/Increase Contrast, active capture during sleep, monitor disconnect while hidden, fullscreen app focus and repeated scale changes.
+
+
+  Scenario: Given VoiceOver and non-default contrast settings are active, when capture changes from idle to listening to error, then the state is announced without relying on ring color. Given the bubble monitor disconnects while main is hidden, when display topology updates or the user restores, then a usable window appears on an available display.
+
+
+  Target surfaces: bubble/caption accessibility attributes and styles, Rust window behavior, manual validation artifacts, focused regression tests and docs/testing.md or feature verification records.
+
+
+  Constraints: real macOS evidence is mandatory; do not claim App Store, Spaces or Stage Manager behavior from unit tests; fixes remain within the approved bubble contract; unresolved platform variance blocks feature completion.'
+dod:
+- Recorded manual evidence covers supported Retina and non-Retina displays, mixed-scale multi-monitor movement, monitor disconnect, Spaces, Stage Manager, fullscreen apps and sleep or wake.
+- VoiceOver, keyboard access, focus restoration, Increase Contrast and Reduce Motion checks pass, and idle, listening and error are distinguishable without color.
+- Drag and click boundary behavior, shortcut-started captions and capture status changes pass while the main window is hidden.
+- Every discovered regression has a focused automated test where feasible, and any irreducibly manual limitation is explicitly documented with reproduction details.
+- Full frontend and Rust validation, capability/security review and documentation maintenance pass.
+created_by: Codex

@@ -5,12 +5,14 @@ use crate::error::{AppError, Result};
 use crate::llm;
 use crate::meetings::MeetingDto;
 use crate::models;
+use crate::recorder_store::RecorderStore;
 use crate::settings;
 use crate::state::app_data_dir;
 use crate::store;
 use crate::streaming;
 use crate::streaming_store;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 /// Shared by both Craft/MFU commands (Meeting and Streaming). Errors name the
 /// exact missing prerequisite rather than a generic failure.
@@ -36,19 +38,22 @@ fn resolve_llm_model_path(app_support_dir: &std::path::Path) -> Result<PathBuf> 
 /// questions, participants) from the current transcript using the active LLM
 /// model. Requires an LLM model to be downloaded and selected in Settings.
 #[tauri::command]
-pub(crate) async fn generate_mfu(app: tauri::AppHandle, id: i64) -> Result<MeetingDto> {
+pub(crate) async fn generate_mfu(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    id: i64,
+) -> Result<MeetingDto> {
     let app_support_dir = app_data_dir(&app)?;
-    let model_path = resolve_llm_model_path(&app_support_dir)?;
 
     let store = store::Store::open(&app_support_dir)?;
     let _meeting = store
         .get_meeting(id)?
-        .ok_or_else(|| AppError::Store(format!("meeting {id} was not found")))?;
+        .ok_or_else(|| AppError::Store(format!("transcription {id} was not found")))?;
 
     let segments = store.list_segments(id)?;
     if segments.is_empty() {
         return Err(AppError::Llm(
-            "meeting has no transcript to summarize".into(),
+            "transcription has no transcript to summarize".into(),
         ));
     }
 
@@ -65,10 +70,13 @@ pub(crate) async fn generate_mfu(app: tauri::AppHandle, id: i64) -> Result<Meeti
         .join("\n");
 
     let app_support_dir_clone = app_support_dir.clone();
-    let model_path_clone = model_path.clone();
+    let model_dir = app_support_dir.clone();
     let transcript_clone = transcript.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
     let generated = tokio::task::spawn_blocking(move || {
-        llm::generate_mfu(&model_path_clone, &transcript_clone)
+        llm::generate_mfu_with_model_resolver(&llm_runtime, &transcript_clone, || {
+            resolve_llm_model_path(&model_dir)
+        })
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
@@ -90,16 +98,19 @@ pub(crate) async fn generate_mfu(app: tauri::AppHandle, id: i64) -> Result<Meeti
 #[tauri::command]
 pub(crate) async fn generate_streaming_mfu(
     app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
     id: i64,
 ) -> Result<streaming::StreamingSessionDto> {
     let app_support_dir = app_data_dir(&app)?;
-    let model_path = resolve_llm_model_path(&app_support_dir)?;
     let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
 
-    let model_path_clone = model_path.clone();
+    let model_dir = app_support_dir.clone();
     let transcript_clone = transcript.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
     let generated = tokio::task::spawn_blocking(move || {
-        llm::generate_mfu(&model_path_clone, &transcript_clone)
+        llm::generate_mfu_with_model_resolver(&llm_runtime, &transcript_clone, || {
+            resolve_llm_model_path(&model_dir)
+        })
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))??;
@@ -120,14 +131,23 @@ pub(crate) async fn generate_streaming_mfu(
 /// Returns the cleaned transcript without persisting it — the frontend
 /// shows it as a diff for review; only `accept_streaming_prettify` writes it.
 #[tauri::command]
-pub(crate) async fn generate_streaming_prettify(app: tauri::AppHandle, id: i64) -> Result<String> {
+pub(crate) async fn generate_streaming_prettify(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    id: i64,
+) -> Result<String> {
     let app_support_dir = app_data_dir(&app)?;
-    let model_path = resolve_llm_model_path(&app_support_dir)?;
     let transcript = streaming::build_streaming_transcript(&app_support_dir, id)?;
 
-    tokio::task::spawn_blocking(move || llm::prettify_transcript(&model_path, &transcript))
-        .await
-        .map_err(|e| AppError::Llm(e.to_string()))?
+    let model_dir = app_support_dir.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
+    tokio::task::spawn_blocking(move || {
+        llm::prettify_transcript_with_model_resolver(&llm_runtime, &transcript, || {
+            resolve_llm_model_path(&model_dir)
+        })
+    })
+    .await
+    .map_err(|e| AppError::Llm(e.to_string()))?
 }
 
 #[tauri::command]
@@ -154,11 +174,73 @@ pub(crate) async fn revert_streaming_prettify(
     streaming::open_streaming_session(&app_support_dir, id)
 }
 
+/// Generates a cleaned Recorder transcript for explicit user review. Raw
+/// timestamped segments are never modified by generation or acceptance.
+#[tauri::command]
+pub(crate) async fn generate_recorder_polish(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    id: i64,
+) -> Result<String> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = RecorderStore::open_runtime(&app_support_dir)?;
+    let session = store
+        .get_session(id)?
+        .ok_or_else(|| AppError::Store(format!("Recorder session {id} was not found")))?;
+    let segments = store.list_segments(session.id)?;
+    if segments.is_empty() {
+        return Err(AppError::Llm(
+            "Recorder session has no transcript to polish".into(),
+        ));
+    }
+    let transcript = segments
+        .iter()
+        .map(|segment| segment.text.as_str())
+        .collect::<Vec<_>>()
+        .join("\n");
+    let model_dir = app_support_dir.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
+    tokio::task::spawn_blocking(move || {
+        llm::prettify_transcript_with_model_resolver(&llm_runtime, &transcript, || {
+            resolve_llm_model_path(&model_dir)
+        })
+    })
+    .await
+    .map_err(|error| AppError::Llm(error.to_string()))?
+}
+
+#[tauri::command]
+pub(crate) fn accept_recorder_polish(
+    app: tauri::AppHandle,
+    id: i64,
+    text: String,
+) -> Result<crate::commands::recorder::RecorderSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    let store = RecorderStore::open_runtime(&app_support_dir)?;
+    if text.trim().is_empty() {
+        return Err(AppError::Llm(
+            "polished transcript must not be empty".into(),
+        ));
+    }
+    store.upsert_polished(id, text.trim())?;
+    crate::commands::recorder::open_recorder_session(app, id)
+}
+
+#[tauri::command]
+pub(crate) fn revert_recorder_polish(
+    app: tauri::AppHandle,
+    id: i64,
+) -> Result<crate::commands::recorder::RecorderSessionDto> {
+    let app_support_dir = app_data_dir(&app)?;
+    RecorderStore::open_runtime(&app_support_dir)?.delete_polished(id)?;
+    crate::commands::recorder::open_recorder_session(app, id)
+}
+
 /// Translates one Streaming window into `target_language` ("en" or "ru")
 /// using the active local LLM and persists the result. Single-flight: a
-/// second concurrent translation request is rejected with a distinct,
-/// UI-retryable `AppError::TranslationBusy` rather than queuing or blocking
-/// the streaming decode loop (WP-92). `context` (WP-100) is the immediately
+/// concurrent translation requests are serialized by the bounded LLM
+/// scheduler rather than rejected while another inference is active.
+/// `context` (WP-100) is the immediately
 /// preceding window(s)' own translation, if any — threaded through
 /// unchanged to `llm::translate_paragraph` as ephemeral prompt context.
 #[tauri::command]
@@ -178,18 +260,15 @@ pub(crate) async fn translate_streaming_window(
         &target_language,
         &text,
     )?;
-    let model_path = resolve_llm_model_path(&app_support_dir)?;
-
-    let _guard = llm::TranslationUsageGuard::acquire(&state.translation_busy)
-        .map_err(|()| AppError::TranslationBusy)?;
 
     let now = crate::state::now_ms()?;
     let app_support_dir_clone = app_support_dir.clone();
+    let model_dir = app_support_dir.clone();
     let target_language_clone = target_language.clone();
     let text_clone = text.clone();
-    let model_path_clone = model_path.clone();
+    let llm_runtime = Arc::clone(&state.llm_runtime);
     tokio::task::spawn_blocking(move || {
-        streaming::translate_and_store(
+        streaming::translate_and_store_if_current(
             &app_support_dir_clone,
             session_id,
             window_index,
@@ -197,11 +276,55 @@ pub(crate) async fn translate_streaming_window(
             &text_clone,
             context.as_deref(),
             now,
-            |source, lang, ctx| llm::translate_paragraph(&model_path_clone, source, lang, ctx),
+            |source, lang, ctx| {
+                llm::translate_paragraph_with_model_resolver(
+                    &llm_runtime,
+                    source,
+                    lang,
+                    ctx,
+                    || resolve_llm_model_path(&model_dir),
+                )
+            },
         )
     })
     .await
     .map_err(|e| AppError::Llm(e.to_string()))?
+}
+
+/// Translate the latest unstable Streaming hypothesis for italic preview.
+/// The result is intentionally ephemeral: only committed-window translations
+/// pass through StreamingStore and survive reopening the session.
+#[tauri::command]
+pub(crate) async fn preview_streaming_translation(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, crate::state::AppState>,
+    target_language: String,
+    text: String,
+    context: Option<String>,
+) -> Result<String> {
+    if !llm::is_supported_target_language(&target_language) {
+        return Err(AppError::Llm(format!(
+            "unsupported translation target language: {target_language}"
+        )));
+    }
+    if text.trim().is_empty() {
+        return Err(AppError::Llm(
+            "cannot translate an empty Meeting preview".into(),
+        ));
+    }
+    let app_support_dir = app_data_dir(&app)?;
+    let llm_runtime = Arc::clone(&state.llm_runtime);
+    tokio::task::spawn_blocking(move || {
+        llm::preview_translation_with_model_resolver(
+            &llm_runtime,
+            &text,
+            &target_language,
+            context.as_deref(),
+            || resolve_llm_model_path(&app_support_dir),
+        )
+    })
+    .await
+    .map_err(|error| AppError::Llm(error.to_string()))?
 }
 
 #[cfg(test)]

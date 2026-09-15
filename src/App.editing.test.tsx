@@ -1,6 +1,12 @@
 import { mockCreateIpc } from "./test/ipcMock";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { App } from "./App";
 import * as ipc from "./ipc";
@@ -27,7 +33,72 @@ const DIARIZATION_DOWNLOADED = {
   recommended: false,
 };
 
+async function activateHelloEditor(user: ReturnType<typeof userEvent.setup>) {
+  const segment = await screen.findByRole("textbox", {
+    name: "Transcript segment 1",
+  });
+  await user.click(segment);
+  return screen.findByDisplayValue("Hello");
+}
+
 describe("App — transcript editing", () => {
+  it.each(["click", "keyboard"])(
+    "keeps speaker-crossing transcript text selectable and activates only one segment editor by %s",
+    async (activation) => {
+      vi.mocked(ipc.listTaskModels).mockResolvedValue([
+        TRANSCRIPTION_DOWNLOADED,
+      ]);
+      vi.mocked(ipc.transcribeMeeting).mockResolvedValue(
+        transcribeResult(
+          transcribedMeeting([
+            {
+              start_ms: 0,
+              end_ms: 1_000,
+              text: "First speaker phrase",
+              speaker_id: 0,
+            },
+            {
+              start_ms: 1_000,
+              end_ms: 2_000,
+              text: "Second speaker phrase",
+              speaker_id: 1,
+            },
+          ]),
+        ),
+      );
+      const user = userEvent.setup();
+      render(<App />);
+      await waitForAddFileEnabled();
+      await chooseAndTranscribe(user);
+
+      await screen.findByText("Speaker 1");
+      const transcript = document.querySelector(".wp-transcript-content");
+      expect(transcript).not.toBeNull();
+      expect(
+        transcript!.querySelectorAll('[contenteditable="true"], textarea'),
+      ).toHaveLength(0);
+      const first = within(transcript as HTMLElement).getByText(
+        "First speaker phrase",
+      );
+
+      if (activation === "click") {
+        await user.click(first);
+      } else {
+        expect(first).toHaveAttribute("tabindex", "0");
+        first.focus();
+        await user.keyboard("{Enter}");
+      }
+
+      const editors = transcript!.querySelectorAll(
+        '[contenteditable="true"], textarea',
+      );
+      expect(editors).toHaveLength(1);
+      expect(
+        within(transcript as HTMLElement).getByText("Second speaker phrase"),
+      ).toBeInTheDocument();
+    },
+  );
+
   it("updates a segment when the user types in its textarea", async () => {
     vi.mocked(ipc.listTaskModels).mockResolvedValue([TRANSCRIPTION_DOWNLOADED]);
     const user = userEvent.setup();
@@ -35,7 +106,7 @@ describe("App — transcript editing", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    const textarea = await screen.findByDisplayValue("Hello");
+    const textarea = await activateHelloEditor(user);
 
     await user.clear(textarea);
     await user.type(textarea, "Hi there");
@@ -60,7 +131,7 @@ describe("App — transcript editing", () => {
       render(<App />);
       await waitForAddFileEnabled();
       await chooseAndTranscribe(user);
-      const textarea = await screen.findByDisplayValue("Hello");
+      const textarea = await activateHelloEditor(user);
 
       await user.clear(textarea);
       await user.type(textarea, "Hi there");
@@ -80,7 +151,7 @@ describe("App — transcript editing", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    const textarea = await screen.findByDisplayValue("Hello");
+    const textarea = await activateHelloEditor(user);
 
     // Real timers, not fake: both keystrokes land synchronously inside the
     // 500ms debounce window, so the first timer is always cleared before it
@@ -110,7 +181,7 @@ describe("App — transcript editing", () => {
       render(<App />);
       await waitForAddFileEnabled();
       await chooseAndTranscribe(user);
-      const textarea = await screen.findByDisplayValue("Hello");
+      const textarea = await activateHelloEditor(user);
 
       await user.clear(textarea);
       await user.type(textarea, "Hi there");
@@ -141,7 +212,7 @@ describe("App — diarize speakers", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await activateHelloEditor(user);
     return screen.findByRole("button", { name: "Diarize speakers" });
   }
 
@@ -151,7 +222,7 @@ describe("App — diarize speakers", () => {
     render(<App />);
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hello");
+    await activateHelloEditor(user);
 
     expect(
       screen.getByRole("button", { name: "Diarize speakers" }),
@@ -173,6 +244,24 @@ describe("App — diarize speakers", () => {
     await screen.findByText("Speaker 2");
   });
 
+  it("shows a warning when standalone diarization completes in degraded mode", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+    vi.mocked(ipc.diarizeMeeting).mockResolvedValue({
+      meeting: transcribedMeeting([HELLO_SEGMENT]),
+      diarization_warning: "Speaker model returned incomplete labels",
+    });
+
+    await user.click(diarizeButton);
+
+    expect(
+      await screen.findByRole("alertdialog", {
+        name: "Speaker identification issue",
+      }),
+    ).toHaveTextContent("Speaker model returned incomplete labels");
+  });
+
   it("surfaces a diarization failure as an error without discarding the transcript", async () => {
     const user = userEvent.setup();
     const diarizeButton = await transcribeWithDiarizationActive(user);
@@ -184,7 +273,7 @@ describe("App — diarize speakers", () => {
     await user.click(diarizeButton);
 
     await screen.findByText(/no diarization model is active/);
-    expect(screen.getByDisplayValue("Hello")).toBeInTheDocument();
+    expect(screen.getByText("Hello")).toBeInTheDocument();
   });
 
   it("disables Diarize while transcribing, generating mfu, or itself running", async () => {
@@ -197,6 +286,17 @@ describe("App — diarize speakers", () => {
 
     expect(diarizeButton).toBeDisabled();
     expect(screen.getByRole("button", { name: "Transcribe" })).toBeDisabled();
+  });
+
+  it("[WP-130] disables choosing a replacement source while diarization is running", async () => {
+    const user = userEvent.setup();
+    const diarizeButton = await transcribeWithDiarizationActive(user);
+    await waitFor(() => expect(diarizeButton).not.toBeDisabled());
+    vi.mocked(ipc.diarizeMeeting).mockReturnValue(new Promise(() => {}));
+
+    await user.click(diarizeButton);
+
+    expect(screen.getByRole("button", { name: "Choose file" })).toBeDisabled();
   });
 });
 
@@ -292,7 +392,7 @@ describe("App — speaker rendering", () => {
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
 
-    await screen.findByDisplayValue("A");
+    await screen.findByText("A");
     const [firstSpeaker6, secondSpeaker6] = screen.getAllByText("Speaker 6");
     expect(firstSpeaker6).toBeInTheDocument();
     expect(
@@ -327,7 +427,7 @@ describe("App — speaker rendering", () => {
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
 
-    const textarea = await screen.findByDisplayValue("Hello");
+    const textarea = await activateHelloEditor(user);
     expect(screen.queryByText(/^Speaker \d+$/)).not.toBeInTheDocument();
     expect(
       textarea.closest(".wp-speaker-block")?.querySelector(".wp-speaker-bar"),
@@ -356,7 +456,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
       name: "Rename Speaker 4",
@@ -385,7 +485,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     await user.click(screen.getByRole("button", { name: "Rename Speaker 4" }));
     const renameInput = screen.getByRole("textbox", {
@@ -410,7 +510,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
       name: "Rename Speaker 4",
@@ -431,7 +531,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
       name: "Rename Speaker 4",
@@ -453,7 +553,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
       name: "Rename Speaker 4",
@@ -474,7 +574,7 @@ describe("App — speaker rename", () => {
 
     await waitForAddFileEnabled();
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Hi");
+    await screen.findByText("Hi");
 
     const [firstLabel] = screen.getAllByRole("button", {
       name: "Rename Speaker 4",
@@ -497,7 +597,7 @@ describe("App — speaker rename", () => {
       ),
     );
     await chooseAndTranscribe(user);
-    await screen.findByDisplayValue("Fresh");
+    await screen.findByText("Fresh");
 
     expect(screen.queryByText("Alice")).not.toBeInTheDocument();
     expect(screen.getByText("Speaker 4")).toBeInTheDocument();

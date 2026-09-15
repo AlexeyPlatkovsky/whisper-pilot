@@ -24,9 +24,9 @@
 
 <!-- The important screens or views and their purpose. -->
 
-| Screen / View | Purpose | Entry point |
-| --- | --- | --- |
-| <name> | <what the user does here> | <how they get here> |
+| Screen / View | Purpose                   | Entry point         |
+| ------------- | ------------------------- | ------------------- |
+| <name>        | <what the user does here> | <how they get here> |
 
 ## States
 

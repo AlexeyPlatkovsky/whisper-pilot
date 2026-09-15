@@ -5,15 +5,15 @@ Technical structure is in `architecture.md`. UX flows and view states live here;
 the **visual language and design tokens** (colours, spacing, radii, typography)
 live in the design book `designbook.md`, whose source of truth is
 [`../src/tokens.css`](../src/tokens.css) (derived from `pencil/main_view.pen`).
-The unit of work is a **Meeting** (one transcription of one source file; see
+The unit of work in the file workspace is a **Transcription** (one source file; see
 `glossary.md`).
 
 ## UX Principles
 
 - **Workspace, not a wizard.** The app is one persistent two-pane shell: a
-  **Meetings** list on the left, the active meeting's workspace on the right.
+  **Transcriptions** list on the left, the active item's workspace on the right.
   Past work is always in reach; nothing is modal except confirmations and rename.
-- **One meeting in focus.** The right pane always shows exactly one meeting:
+- **One item in focus.** The right pane always shows exactly one item:
   header, status bar, transcript, then MFU beneath it.
 - **Explicit, honest actions.** Transcription and MFU generation are **manual**
   (a button each) and long-running. While one runs, the UI is blocked and an
@@ -33,13 +33,13 @@ The unit of work is a **Meeting** (one transcription of one source file; see
 ┌───────────────────────────────────────────────────────────────────────┐
 │ ◎◎◎  [⇤ panel]  [logo]                                  [⚙ settings]   │  ← header row 1 (traffic lights, fixed left controls, gear far right)
 ├───────────────┬───────────────────────────────────────────────────────┤
-│  Meetings      │  ⟨Meeting title⟩  [edit][copy][delete]   [model ▾]     │  ← header row 2 (meeting header)
+│  Transcriptions│  ⟨Transcription title⟩ [edit][copy][delete] [model ▾]  │  ← header row 2
 │  ───────────   │                                     [Transcribe][MFU]  │
 │  [+ New]       ├───────────────────────────────────────────────────────┤
 │                │  status bar: waiting / files / transcribing / done …   │  ← status bar
-│  • Meeting A   ├───────────────────────────────────────────────────────┤
-│  • Meeting B   │                                                        │
-│  • Meeting C   │   transcript — one colored bubble per speaker (M2)     │  ← center (≈70–85% height)
+│  • File A      ├───────────────────────────────────────────────────────┤
+│  • File B      │                                                        │
+│  • File C      │   transcript — one colored bubble per speaker (M2)     │  ← center (≈70–85% height)
 │    …           │                                                        │
 │                │                                                        │
 │                ├───────────────────────────────────────────────────────┤
@@ -47,19 +47,33 @@ The unit of work is a **Meeting** (one transcription of one source file; see
 └───────────────┴───────────────────────────────────────────────────────┘
 ```
 
-### Left pane — Meetings list
+### Left pane — Transcriptions list
 
 - Mirrors VoicePilot's Sessions list.
-- **`+ New meeting`** at the top creates an empty meeting and selects it (the
+- **`+ New transcription`** at the top creates an empty item and selects it (the
   entry point for a new transcription — you then attach a file and press
   Transcribe).
-- Each row shows the meeting title (and secondary meta: source name / date).
+- Each row shows the transcription title (and secondary meta: source name / date).
   Click to open in the right pane.
 - Per-row actions: **rename** and **delete**.
   - **Rename** — a modal with an input, **Save** and **Cancel**. Input max **120
     characters**; empty values are rejected (Save disabled). Pre-filled with the
     current title.
   - **Delete** — with a **confirmation** dialog.
+
+### Workspace mode control
+
+The top of the left pane contains a three-way **Transcription / Meeting / Recorder**
+control. Changing the visible workspace never starts or stops native work. If
+Transcription processing, Meeting capture, or Recorder capture/finalization owns
+the shared transcription resource, incompatible Start actions remain disabled
+in every workspace until that owner releases it.
+
+Recorder replaces the list beneath the control with saved voice-note sessions
+and a **New recording** action. Each row shows title, date or live state, and
+duration when known. **New recording** immediately adds and selects an audio-free
+draft that can be renamed or deleted before Start. Selecting another mode does
+not discard the active Recorder session or its visible transcript.
 
 ### Header controls (fixed, position never changes)
 
@@ -75,33 +89,36 @@ controls (close / minimize / zoom):
 - **Settings gear** — a fixed control at the **far right** of row 1; opens the
   **Settings** screen (models, appearance, app language; app update at release).
 
-Row 2 — the active meeting's header:
+Row 2 — the active transcription's header:
 
-- **Meeting label** with three action buttons: **edit** (opens the rename
+- **Transcription title** with three action buttons: **edit** (opens the rename
   modal), **copy** (copies the full transcript to the clipboard and confirms
   with a brief checked button state and "Copied!" toast), **delete**
   (with confirmation — same as the list action).
+- **Clear transcription** removes the transcript and MFU after confirmation while
+  retaining the named item and its attached source file. It is unavailable
+  while derived content is empty or a conflicting operation is active.
 - There is no in-header model switcher; model selection lives in
   Settings → AI models only. If **no model is available**, the status bar
   shows a warning.
 - **Transcribe** — icon button with hover text. **Disabled** when no file is
-  attached. Meeting transcription runs to completion; safe cancellation is
+  attached. Transcription runs to completion; safe cancellation is
   deferred to the isolated-worker design tracked by WP-87.
 - **Create MFU** — icon button with hover text. **Disabled** until a
   transcription has **finished** (mirrors the button inside the MFU section).
 
 ### Status bar (directly under the header)
 
-Single line reflecting the meeting's current state:
+Single line reflecting the transcription item's current state:
 
-| State                | Shows                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                                                                                                                                                                                                                      |
-| **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per meeting                                                                                                                                                                                                                                                                                                                                              |
+| State                | Shows                                                                                                                                                                                                                                        |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Waiting for file** | prompt to attach a file; only relevant controls enabled                                                                                                                                                                                      |
+| **File attached**    | the attached file with an **×** button (delete, no confirmation). MVP: **one** file per transcription item                                                                                                                                   |
 | **Transcribing**     | indeterminate spinner + live timer (updates every second). When the run moves into **identifying speakers**, the persisted transcript appears read-only while the spinner+timer remain. Actions stay blocked until the complete run returns. |
-| **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                                                                                                                                                                                                                        |
-| **No model**         | warning that no Whisper model is available                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Finished**         | the final transcription is ready; Create MFU becomes enabled                                                                                                                                                                                 |
+| **Creating MFU**     | spinner + live timer; **the whole UI is blocked** (no cancel for MFU)                                                                                                                                                                        |
+| **No model**         | warning that no Whisper model is available                                                                                                                                                                                                   |
 
 ### Center — transcript
 
@@ -110,58 +127,184 @@ Single line reflecting the meeting's current state:
 - **M2 (diarization included):** each speaker's turns render in a **colored
   bubble** — **10 predefined shades** cycled across speakers for the MVP —
   grouped and labelled by speaker (Спикер 1, Спикер 2, …).
-- Each segment is an auto-sizing editable field prefixed by its timestamp
-  (`m:ss`); edits auto-save. Bubble grouping/coloring is F002; the editable
-  segment surface is F004.
+- Each segment is plain selectable text by default, so a drag can cross segment
+  and speaker boundaries. Click or press Enter on one segment to activate its
+  auto-sizing editor; blur returns it to reading mode and edits auto-save.
+  Timestamps use `m:ss`.
 - The transcript panel's own header row (title + segment count, right-aligned
   actions) carries a **Diarize** icon button next to the Editable indicator —
   re-runs speaker identification alone on the current transcript, without
   re-transcribing. Disabled until a transcript exists, a diarization model is
   active, and the source file is still readable; disabled together with every
   other run-blocking control while Transcribe, Craft MFU, or Diarize itself
-  is in flight. Mirrors Streaming's Prettify button position in its own
+  is in flight. Mirrors Meeting's Prettify button position in its own
   transcript header.
-- **Streaming only:** the transcript header carries a third, middle slot
-  between the title group and the actions cluster — a **Live Translation**
-  control: a label, a switch (`role="switch"`, WP-93), and a target-language
-  dropdown (English / Русский, defaulting to Russian on every launch — the
-  choice is not persisted). The dropdown locks while the switch is on; to
-  change the target, switch off, pick, then switch back on. The switch is
-  disabled with a stated reason when no LLM model is ready, when a
-  prettified transcript is showing, or while a Prettify review is pending —
-  and the reverse also holds: **Prettify** is disabled with a stated reason
-  while Live Translation is on, so the two are mutually exclusive either
-  direction. Meeting's header has no translation control.
-- **Live Translation on** replaces Streaming's transcript flow with a
-  two-column paired-row view inside the same scroll region: a header row
+- **Meeting only:** the one-row transcript header has the title followed by
+  `AI` and icon-only **Local / Cloud** controls (Local is the default). Choosing
+  Cloud before capture immediately shows the status-row disclosure “Cloud
+  transcription sends live audio to <provider>. Usage is billed to your
+  account.” on every Cloud selection. A Cloud start connects the selected
+  provider before capture; connection failure is shown as a retryable error and
+  never starts Local capture as a fallback. The
+  middle slot uses a **languages icon**, a switch (`role="switch"`, WP-93),
+  and a target-language dropdown (English / Русский, Russian for a new
+  session); the choice is stored per session and restored on reopen; the words
+  “Live Translation” are not rendered. The dropdown locks while the switch is on; to change the
+  target, switch off, pick, then switch back on. The switch is disabled with a
+  stated reason when no LLM model is ready, when a prettified transcript is
+  showing, or while a Prettify review is pending — and the reverse also holds:
+  **Prettify** is disabled with a stated reason while Live Translation is on.
+  While live capture is active, capture-affecting transcript-header controls
+  are unavailable. The MFU visibility switch remains enabled because it changes
+  only layout, not capture. Transcription's header has none of these Meeting-only
+  controls.
+- **Live Translation on** replaces Meeting's transcript flow with a
+  two-column paired-row view inside the same scroll region. Drag selection is
+  constrained to the column where it started, so Original and Translation can
+  be copied independently. A header row
   names the source side ("Original · auto-detected") and the target
   language, then one row per paragraph — left cell the original text, right
   cell its translation — each carrying its own timestamp/language tag so a
   pair never drifts out of alignment. Translation itself runs per window,
-  not per paragraph (WP-103), so the right cell is built by joining each of
+  not per paragraph (WP-103); the first committed window starts immediately
+  while capture remains active, without waiting for Stop or another window.
+  The right cell is built by joining each of
   the paragraph's windows through its own state: real translated text once a
   window is done, the original mirrored in a muted style for a window
   already entirely in the target language (no model call happens), a
   "Translating…" spinner or "Pending…" for a window still in flight, or a
-  failed marker for one that errored. A paragraph whose trailing window is
+  failed marker for a translation error. A failed ASR window is never sent to
+  the LLM and renders `[unavailable]` in both columns. A paragraph whose trailing window is
   still translating therefore shows real text for its finished windows and a
   live indicator only on the unfinished tail, rather than the whole cell
   staying blank until every window in it resolves. The retry control stays
   one per row (paragraph), re-running every failed window within it rather
-  than one control per window. Switching the toggle off restores the
-  single-column view unchanged. Below the app's minimum supported window
-  width, the header sheds non-essential label text (the window-count meta,
-  "Editable", "Live Translation") while every control stays visible and
-  focusable, so the header never overflows with the MFU panel open at that
-  width.
+  than one control per window. A provisional trailing phrase renders inside
+  the left Original column; it never spans or centers beneath both columns.
+  During Cloud capture the matching target cell shows an italic provisional
+  translation. Partial revisions replace that draft, while the next
+  committed-window translation replaces it with durable normal text; preview
+  failures stay silent because the committed row owns retry/error UI. Local
+  Whisper capture instead shows a stable finalization wait until the window is
+  committed, avoiding local LLM contention with live ASR on Metal.
+  Before the first committed window, that partial replaces the centered
+  Listening placeholder immediately, so the live text starts at the top and
+  never jumps there after the first commit.
+  A newer Cloud partial keeps the last usable italic target preview visible while its
+  replacement is inferred; the UI does not alternate back to placeholder copy.
+  Switching the toggle off restores the single-column view unchanged. Below
+  the app's minimum supported window
+  width, the compact icon controls and one-row header stay available without a
+  segment-count caption, so it does not overflow with the MFU panel open.
 - At the **right end** of that same actions cluster, a labelled **MFU**
   switch (`role="switch"`, WP-96) shows or hides the MFU section. Defaults
-  **on**; the choice persists independently per screen (Meeting, Streaming)
-  and survives restart. Unlike every other control in this cluster it is
-  **always enabled** — it never gates or is gated by Transcribe, Diarize, or
-  Craft MFU — and running **Create MFU**/**Craft** while the panel is hidden
-  reveals it automatically. Present identically on the Meeting and Streaming
-  transcript headers.
+  **on**; the choice persists independently per screen (Transcription, Meeting)
+  and survives restart. It never gates Craft MFU and remains available during
+  live capture. Running **Create
+  MFU**/**Craft** while the panel is hidden reveals it automatically. Present
+  identically on the Transcription and Meeting transcript headers while idle.
+
+### Recorder workspace
+
+Recorder uses the same shell, left library, and fixed top action vocabulary as
+Transcription and Meeting. The left column provides mode switching, search, open,
+new recording, rename, and confirmed deletion. The header keeps sidebar, new,
+Settings, title, status, **Start**, **Stop**, Prettify, Copy, Export, and
+Clear recording controls in the same positions as the other workspaces. Clear
+uses an eraser icon so it cannot be confused with deleting the library item.
+**Start** performs permission, model, system-default microphone, and caption-surface
+preflight, then activates the selected draft in place. A failed start leaves the
+draft available without an audio artifact. Shortcut Start creates a session only
+after the same preflight succeeds. Start remains pending across workspace
+navigation, so returning to Recorder cannot enqueue a duplicate preflight.
+Starting an already completed row continues that recording rather than creating
+a replacement: existing text stays visible, new phrases follow its timeline,
+and Stop produces one merged audio master and a combined final transcript. A
+changed default device rate blocks continuation with an actionable prompt to
+restore the original input or create a new recording.
+**Stop** ends capture and enters **Finalizing**;
+copy, export, delete, and playback become available when their durable inputs
+exist. Without increasing its fixed height, the metadata row shows the default
+microphone, a compact playback control, a dedicated WAV-file export icon, and
+the recording duration.
+Recorder uses the same selected ASR model as Transcription and local Meeting;
+Whisper is the default and Qwen3-ASR 1.7B Q8_0 is the alternative. Recorder
+persists capture-window spans but does not currently render them. An unsupported
+or missing selection blocks Start with a Settings action; it never silently
+starts another engine.
+
+Committed phrases have stable identity but render as one editable,
+Meeting-style text flow, grouped into paragraphs rather than separate boxes.
+Their capture-window spans are persisted and available as hover metadata.
+Inline edits update the visible, copied, and exported paragraph flow immediately;
+per-segment saves are ordered so the newest edit wins, and backend-derived
+Prettify and Clear actions wait until the edit is durably saved.
+Consecutive live hypotheses promote their shared word prefix to normal text;
+only the remaining replaceable suffix is italic at 80% opacity. The partial is
+replaced rather than duplicated when its committed phrase arrives. While the
+reader remains at the bottom, live Recorder text follows the same autoscroll
+behavior and bottom breathing room as Meeting; scrolling upward pauses it and
+returning to the bottom resumes it.
+
+Recorder retains app-owned CAF audio independently of ordinary transcript
+edits. The metadata row offers compact playback plus a visually distinct
+**Export WAV** file action after completion. During capture and Finalizing those
+controls remain unavailable. An interrupted `.caf.partial` remains visible with
+**Recover** and **Delete**. A
+failed delete remains visible as **Delete failed / Retry**. See ADR-017 for
+ownership and atomic-finalization rules.
+
+**Prettify transcript** sends the raw committed text to the selected local LLM,
+persists the result, and replaces the visible raw text in the same transcript
+panel. It may repair an obvious, phonetically close ASR word error only when
+the surrounding context makes one correction unambiguous; slang, terminology,
+names, brands, and language switches remain unchanged when uncertain.
+**Restore original transcript** returns to the editable raw segments.
+**Clear recording** requires confirmation and permanently removes the CAF,
+raw segments, and prettified text while retaining the named list entry as an
+empty draft. It remains available when a saved recording has audio but ASR
+produced no text, and it is unavailable during capture/finalization or once
+the entry is already empty. A filesystem cleanup failure leaves the text and
+non-draft state intact; a database failure restores audio before reporting the
+error. Prettify and restore never rewrite captured audio or raw segment rows.
+Clear remains disabled while Prettify or restore is in flight, and the backend
+rejects any late polish acceptance once the recording has become an empty draft.
+
+Delete confirmation initially focuses its destructive action, so **Space** or
+**Return** confirms and **Escape** cancels without requiring pointer input.
+
+The configurable global shortcut uses **Control + Option + Space** initially and
+toggles Recorder Start/Stop from another application without activating the main
+window. A replacement chord is registered before it replaces the persisted
+working chord; failure keeps the previous chord, while first-registration failure
+leaves the feature disabled with an explanation. Key repeats collapse to one
+transition. A shortcut is ignored during Finalizing and cannot start Recorder
+while another live source owns capture.
+
+Shortcut-started recording creates a compact, non-activating live-caption
+surface showing icon plus text for Ready, Recording, partial Listening,
+Finalizing, and Error. Clicking it opens Recorder. If the surface disappears
+after hidden capture starts, Recorder stops and finalizes instead of continuing
+an invisible recording, and the main workspace shows the actionable error.
+
+Clicking the app logo collapses main into a separate 120 px circular bubble at
+the main window's former top-left. Idle is a yellow ring with a pause badge,
+live microphone or system-audio capture is green with a microphone badge, and
+a persistent actionable capture/ASR error is red with an alert badge. The
+accessible name states the same status without relying on color. Pointer motion
+through five logical pixels remains a click; motion beyond it starts native
+drag and suppresses restore. Click or Enter/Space restores and focuses main at
+the bubble top-left, clamped onto a visible monitor. Collapse shows the bubble
+before main hides, and restore does the inverse so one recovery surface remains
+visible on failure.
+
+The **Over All** setting controls Always on Top and visibility across Spaces.
+It applies immediately and persists. With it off the bubble behaves as a normal
+floating app window; with it on it follows the user across workspaces and stays
+above ordinary/fullscreen content where macOS permits auxiliary windows. Drag,
+Retina scaling, Stage Manager, sleep/wake, and monitor removal do not start or
+stop backend capture. The direct-DMG build uses transparency; an App Store build
+would retain the interaction in an opaque 120 px panel.
 
 ### MFU section (bottom of the right pane)
 
@@ -173,6 +316,8 @@ Single line reflecting the meeting's current state:
   **edit**, **copy**, **clear**.
 - MFU text is editable in place and auto-saves; **copy** places it on the
   clipboard; **clear** empties the section (returns to the 15% empty state).
+- When the MFU content is taller than its panel, it scrolls vertically in both
+  Transcription and Meeting instead of clipping lower sections.
 - **Hidden:** the header **MFU** switch (see Center — transcript, WP-96) can
   hide this section entirely regardless of empty/populated state, freeing its
   space for the transcript panel. Shown by default; the choice persists per
@@ -182,7 +327,7 @@ Single line reflecting the meeting's current state:
 
 Opened from the header **gear**; a screen with these sections:
 
-- **AI models** — grouped by task (transcription, diarization; MFU at release).
+- **AI models** — grouped by task (transcription, diarization, and MFU).
   Each required model shows its state with **Download** and **Delete** buttons.
   **Download** opens a blocking dialog (progress bar, spinner, elapsed time),
   the same "blocked with progress shown" pattern as transcription/MFU; it names
@@ -191,23 +336,43 @@ Opened from the header **gear**; a screen with these sections:
   or on error, or if the user dismisses it early with **✕** (the download itself
   keeps running, and the model's row keeps reporting percent-complete and then
   _Verifying…_ until it updates to ready). **Delete** asks for confirmation
-  before removing the file. Beta lists **one model per task**, whose row marks
-  the downloaded model with the same radio the diarization list uses, checked
-  and non-interactive because there is nothing to switch to; at release each
-  task may list 3–4 models, each with a selectable **Active** radio.
+  before removing the file. Tasks may expose one or more fixed catalog entries;
+  selectable entries use an **Active** radio. Transcription has two rows:
+  Whisper and Qwen3-ASR 1.7B Q8_0. Each row exposes one selection used by all
+  three modes. Model rows show the name, download size/status, and actions
+  without language, timestamp, memory, or license guidance copy.
 - **Appearance** — theme choice: **Light / Dark / System** (System follows the
-  OS), and **Status Colors**: one configurable color per current semantic
-  Meeting/Streaming status (anchored picker popover, per-row revert to the
+  OS). An explicit Light or Dark choice always overrides the current OS theme.
+  **Status Colors** provides one configurable color per current semantic
+  Transcription/Meeting status (anchored picker popover, per-row revert to the
   built-in default, Reset all behind a confirmation). Statuses are alphabetized
   and fill the two-column list left-to-right; a low-contrast picker warning
   compares the half-up rounded two-decimal ratio against `4.50:1`. At release,
   3–4 extra named themes, each in a light and dark variant.
+- **Floating bubble** — an **Over All** checkbox for Always on Top/all-Spaces
+  behavior. It applies immediately; the bubble position persists separately and
+  is corrected if its monitor disappears.
 - **App language** — the **UI** language; **English** by default (only option in
   beta). At release: Russian, Turkish, Spanish, German, French. Independent of the
   transcription language.
+- **Cloud provider** — select one hardcoded provider/model row, styled like
+  the local-AI model rows: **Deepgram — Nova-3**, **AssemblyAI — Universal-3.5
+  Pro**, or **OpenAI — GPT Transcribe**. Each row exposes only whether a
+  key is configured — a green check with **API Key** — and an icon-only
+  **Manage API key** action. The compact in-app sheet uses icon-only
+  remove/verify/save actions (with accessible labels and visible semantic colors
+  in both themes), a masked field, and a
+  required **Verify API key** action before Save
+  becomes available; verification contacts the selected provider without
+  saving the key or sending captured audio. The backend verifies again before
+  it writes to macOS Keychain. Replace and Remove remain available for an
+  existing key; values are never displayed. The selected provider is used for
+  the next new Cloud Meeting. Provider selection and key management
+  are disabled while Meeting capture is live.
 - **Update app** — _release only_: check for and apply application updates.
 
-Changes apply immediately and persist. A model that is not downloaded is flagged
+Escape closes only the topmost Settings child dialog or sheet; it must not also
+close the Settings screen. Changes apply immediately and persist. A model that is not downloaded is flagged
 here and disables/degrades its task in the workspace (Transcribe needs the
 Whisper model; diarization degrades without its models).
 
@@ -219,13 +384,17 @@ Whisper model; diarization degrades without its models).
 2. **AI models:** Download (blocking progress dialog + SHA verify) or Delete
    (confirm first) each task's model.
 3. **Appearance:** pick Light / Dark / System — applies at once.
-4. **App language:** English (beta). All choices persist across restarts.
+4. **App language:** English (beta).
+5. **Cloud provider:** select a provider and use **Manage API key** to add or
+   replace a masked Keychain credential. Verify it successfully before Save
+   is enabled; remove an existing credential if needed. All non-secret choices
+   persist across restarts.
 
-### Create & transcribe a meeting (M2)
+### Create a Transcription (M2)
 
-1. Click **+ New meeting** → an empty meeting is created and selected.
+1. Click **+ New transcription** → an empty item is created and selected.
 2. Attach an audio/video file → it appears in the status bar with an **×**. The
-   meeting's title defaults to the file name (renamable any time).
+   transcription title defaults to the file name (renamable any time).
 3. (Optional) pick the **model**. The language is detected from the audio — there
    is nothing to choose (ADR-012).
 4. Press **Transcribe** → the status bar shows an indeterminate spinner+timer
@@ -236,21 +405,55 @@ Whisper model; diarization degrades without its models).
 5. On completion the transcript updates to **colored per-speaker
    bubbles**; status bar shows **Finished**; **Create MFU** enables. Everything
    auto-saves to the library.
-   - Meeting transcription currently runs to completion. Safe cancellation is
+   - Transcription currently runs to completion. Safe cancellation is
      tracked separately in WP-87 as an isolated-worker process.
    - If diarization is unavailable, the transcript still appears as plain segments
      with a detail; the run does not fail.
-   - Pressing **Transcribe** again on a meeting that already has a transcript
+   - Pressing **Transcribe** again on an item that already has a transcript
      replaces the transcript and any MFU immediately, with no confirmation
      guard.
 
-### Reopen / manage a meeting (M2)
+### Reopen / manage a Transcription (M2)
 
-1. The left list holds every meeting; click one to open it.
+1. The left list holds every transcription; its first item opens on entry.
 2. **Rename** (modal, ≤120 chars, non-empty) or **delete** (confirmation) from
    the list row or the header.
-3. If the source file is missing, the meeting still opens for reading/editing;
+3. If the source file is missing, the transcription still opens for reading/editing;
    **Transcribe** is disabled with a "source file missing" detail.
+4. **Clear transcription** removes the transcript and MFU after confirmation but
+   keeps the item, title, and source ready for another run.
+
+### Reopen / manage a Meeting
+
+- The first library item opens automatically on entry once backend capture
+  state is known. An active capture or a newer explicit selection wins over
+  that fallback.
+- **Clear meeting**, shown with the same eraser icon as Recorder Clear, is
+  available only while capture is stopped. It removes committed and provisional
+  transcript state, translations, MFU, and
+  accepted or pending Prettify output after confirmation, while retaining the
+  named meeting and its engine/translation preferences. Clear stays disabled
+  while Craft MFU, Prettify generation, acceptance, or revert can still persist
+  derived content. The library duration comes from captured audio timestamps,
+  so clearing resets it to zero and a subsequent recording starts it from zero.
+
+### Record a voice note
+
+1. Open **Recorder** and press **New recording** to create/select a draft, or
+   invoke its global shortcut while no live source owns the transcription resource.
+2. The draft appears in the library immediately and can be renamed or deleted.
+   On first explicit Start, macOS requests microphone access. Denial preserves
+   the draft without creating audio and the UI links to System Settings.
+3. After preflight, the draft becomes the active session on the current
+   system-default microphone. Shortcut Start creates a session at this point.
+   Committed phrases accumulate while one replaceable partial shows trailing
+   Russian, English, or mixed speech. Audio checkpoints limit unflushed capture
+   to one second.
+4. Press **Stop** or invoke the shortcut again. The UI shows **Finalizing** until
+   trailing speech and the CAF both reach their durable boundary.
+5. Reopen the saved session to edit, copy, or export text, play its retained
+   audio, or export a separate WAV copy. Deleting the session removes app-owned
+   text and audio after confirmation but never removes an exported file.
 
 ### Review by speaker (M2)
 
@@ -277,18 +480,18 @@ Whisper model; diarization degrades without its models).
 
 ## States
 
-- **No meeting selected** — right pane empty with a prompt; only **+ New meeting**
-  is meaningful.
-- **Empty meeting, waiting for file** — status bar prompts to attach; Transcribe
-  disabled.
+- **No transcription selected** — right pane empty with a prompt; only
+  **+ New transcription** is meaningful.
+- **Empty transcription, waiting for file** — status bar prompts to attach;
+  Transcribe disabled.
 - **File attached** — status bar lists the file with ×; Transcribe enabled.
 - **Transcribing** — UI blocked; indeterminate spinner+timer.
 - **Transcription error** — a banner with the `AppError` message (ffmpeg missing,
-  model missing); the meeting is otherwise unchanged.
+  model missing); the transcription item is otherwise unchanged.
 - **Finished** — transcript populated; Create MFU enabled.
 - **Creating MFU** — whole UI blocked; spinner+timer; no cancel.
 - **MFU populated** — MFU section at 30% with edit/copy/clear.
-- **Source file missing** — meeting opens; Transcribe disabled with an
+- **Source file missing** — the transcription item opens; Transcribe disabled with an
   explanatory detail; transcript/MFU remain editable.
 - **No model available** — status-bar warning; the Settings → AI models
   section flags the missing model with a Download action.
@@ -297,24 +500,56 @@ Whisper model; diarization degrades without its models).
 - **Model downloading** — a model shows download progress; on SHA-verified
   completion it becomes ready and its task is enabled; Delete returns it to
   not-downloaded.
+- **Recorder ready** — the first saved recording is selected on entry, or no
+  session is selected when the library is empty; an audio-free draft remains
+  selectable. Start and the configured shortcut are available when the shared
+  transcription resource is idle.
+- **Recorder permission required** — an explicit draft remains audio-free, while
+  shortcut Start creates no session; the recovery action opens macOS System
+  Settings and Start retries preflight.
+- **Recorder recording** — microphone capture owns the live resource; status and
+  duration are explicit and Stop is available.
+- **Recorder partial text** — committed phrases remain stable while one styled
+  trailing partial is revised in place.
+- **Recorder realtime overload** — saved native-rate audio remains continuous;
+  realtime preview text may skip an overloaded interval and the final quality
+  pass repairs it from the master instead of stopping capture.
+- **Recorder finalizing** — Start and shortcut transitions are unavailable while
+  trailing transcription, atomic audio finalization, and the full-audio quality
+  pass retain resource ownership. A failed quality pass keeps the live text and
+  finalized audio rather than converting a usable recording into an error.
+- **Recorder completed** — transcript editing, playback, text export, and WAV
+  export are available.
+- **Recorder recoverable error** — durable transcript/audio remain visible with
+  the specific recovery action; device loss never leaves a false live state.
+- **Recorder delete failed** — the session stays visible with Retry rather than
+  disappearing behind an unobservable cleanup operation.
+- **Compact live caption** — a non-activating surface communicates Ready,
+  Recording/partial, Finalizing, or Error with icon and text, never color alone.
 
 ## Interaction Patterns
 
-- **Segment editing** — each segment is an auto-sizing field prefixed by its
-  timestamp (`m:ss`); edits auto-save.
+- **Segment reading/editing** — segments are selectable text by default, including
+  across adjacent speakers or Recorder phrases. Click or press Enter on one
+  segment to activate its auto-sizing editor; edits auto-save on blur.
 - **Speaker bubbles (M2)** — 10 predefined shades cycled across speakers; a
   speaker's inline rename applies everywhere for that speaker.
 - **MFU section** — edit in place (auto-saved); copy to clipboard; clear resets
   to empty. Generation is manual and UI-blocking.
-- **Meeting rename** — modal, ≤120 chars, non-empty, Save/Cancel.
-- **Deletes** — both the list-row delete and the header delete confirm first.
+- **Rename** — Transcription, Meeting, and Recorder use the same modal,
+  ≤120 chars, non-empty, Save/Cancel.
+- **Confirmations** — Delete and Clear use the same modal layout and action
+  order in every workspace and Settings. Destructive confirmation is rendered
+  with the shared error color; Escape cancels and keyboard activation uses the
+  native button behavior.
 - **Blocking feedback** — a running Transcribe or Create MFU blocks the UI; a
   spinner and live timer stay visible; failures are shown, not swallowed.
 
 ## Accessibility
 
-- Full keyboard operability; editable regions are standard fields in reading
-  order; the rename modal traps focus and closes on Escape (= Cancel).
+- Full keyboard operability; readable transcript segments are focusable and
+  Enter activates one standard editor in reading order. The rename modal traps
+  focus and closes on Escape (= Cancel).
 - Icon buttons carry hover text and accessible labels (panel toggle, transcribe,
   create MFU, edit/copy/delete/clear).
 - Adequate contrast in light and dark schemes (follows the OS color scheme).

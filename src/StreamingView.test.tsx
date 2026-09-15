@@ -1,9 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
+import { readCssBundle } from "./test/readCssBundle";
 import type {
+  CloudProviderConfiguration,
   StreamingMfu,
   StreamingSession,
   StreamingSessionSummary,
@@ -16,23 +25,81 @@ let windowHandler: Handler<
 > | null = null;
 let sourcesHandler: Handler<ipc.StreamingSources> | null = null;
 let endedHandler: Handler<{ session_id: number }> | null = null;
+let partialHandler: Handler<ipc.StreamingPartial> | null = null;
+let liveCaptureHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
+let liveCaptureRevision = 0;
 let writeTextMock: ReturnType<typeof vi.spyOn>;
 const revertPrettifyMock = vi.hoisted(() => vi.fn());
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function cloudProviderConfiguration(
+  selectedProvider: CloudProviderConfiguration["selected_provider"],
+): CloudProviderConfiguration {
+  return {
+    selected_provider: selectedProvider,
+    providers: [
+      {
+        id: "deepgram",
+        name: "Deepgram",
+        model: "Nova-3",
+        configured: true,
+      },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Transcribe",
+        configured: true,
+      },
+    ],
+  };
+}
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
   openStreamingSession: vi.fn(),
   renameStreamingSession: vi.fn(),
   deleteStreamingSession: vi.fn(),
+  clearStreamingSession: vi.fn(),
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async (handler: Handler<unknown>) => {
+    liveCaptureHandler = handler as Handler<ipc.LiveCaptureSnapshot>;
+    return () => {
+      liveCaptureHandler = null;
+    };
+  }),
   generateStreamingMfu: vi.fn(),
   generateStreamingPrettify: vi.fn(),
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: revertPrettifyMock,
   translateStreamingWindow: vi.fn(),
   listStreamingTranslations: vi.fn(async () => []),
+  setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -48,11 +115,29 @@ vi.mock("./ipc", () => ({
     };
   }),
   onStreamingSessionEnded: vi.fn(async (handler: Handler<unknown>) => {
-    endedHandler = handler as Handler<{ session_id: number }>;
+    endedHandler = (payload) => {
+      (handler as Handler<{ session_id: number }>)(payload);
+      liveCaptureRevision += 1;
+      liveCaptureHandler?.({
+        phase: "idle",
+        session_id: null,
+        source: null,
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    };
     return () => {
       endedHandler = null;
     };
   }),
+  onStreamingPartial: vi.fn(async (handler: Handler<unknown>) => {
+    partialHandler = handler as Handler<ipc.StreamingPartial>;
+    return () => {
+      partialHandler = null;
+    };
+  }),
+  onStreamingError: vi.fn(async () => () => {}),
   saveTextDialog: vi.fn(async () => null),
   // WP-96: the MFU panel toggle reads/writes these; default ON with no
   // fields set, matching the shipped Settings default.
@@ -67,6 +152,24 @@ vi.mock("./ipc", () => ({
   // default so most existing tests exercise the switch's disabled state
   // unless a test explicitly opts in.
   listTaskModels: vi.fn(async () => []),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: true },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const SESSION_A: StreamingSessionSummary = {
@@ -112,11 +215,43 @@ const ONE_WINDOW = [
   },
 ];
 
+// This split keeps a shared mock surface; a scenario may only use part of it.
+void [writeTextMock];
+
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.mocked(ipc.openStreamingSession).mockReset();
   windowHandler = null;
   sourcesHandler = null;
   endedHandler = null;
+  partialHandler = null;
+  liveCaptureHandler = null;
+  liveCaptureRevision = 0;
+  vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+    phase: "idle",
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  });
+  vi.mocked(ipc.getCloudProviderConfig)
+    .mockReset()
+    .mockResolvedValue(cloudProviderConfiguration("deepgram"));
+  const startMock = vi.mocked(ipc.startStreamingSession);
+  startMock.mockResolvedValue = ((summary: StreamingSessionSummary) =>
+    startMock.mockImplementation(async () => {
+      liveCaptureRevision += 1;
+      liveCaptureHandler?.({
+        phase: "capturing",
+        session_id: summary.id,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+      return summary;
+    })) as typeof startMock.mockResolvedValue;
   revertPrettifyMock.mockReset();
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   // jsdom provides a real, functional Clipboard implementation on a
@@ -138,12 +273,361 @@ beforeEach(() => {
 });
 
 describe("StreamingView", () => {
-  it("lists persisted sessions on mount", async () => {
+  it("keeps capture-sensitive controls fail-closed until lifecycle hydration completes", async () => {
+    let resolveSnapshot!: (snapshot: ipc.LiveCaptureSnapshot) => void;
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockReturnValue(
+      new Promise((resolve) => {
+        resolveSnapshot = resolve;
+      }),
+    );
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+
+    expect.soft(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "New meeting" }))
+      .toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "Use cloud transcription" }))
+      .toBeDisabled();
+    expect
+      .soft(screen.getByRole("button", { name: "Settings" }))
+      .toBeDisabled();
+
+    resolveSnapshot({
+      phase: "idle",
+      session_id: null,
+      source: null,
+      generation: 0,
+      revision: 0,
+      error: null,
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "Start" })).toBeEnabled(),
+    );
+    expect(screen.getByRole("button", { name: "New meeting" })).toBeEnabled();
+    expect(
+      screen.getByRole("button", { name: "Use cloud transcription" }),
+    ).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Settings" })).toBeEnabled();
+  });
+
+  it("enables Stop as soon as the backend reports Starting", async () => {
+    vi.mocked(ipc.startStreamingSession).mockReturnValue(new Promise(() => {}));
+    const user = userEvent.setup();
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    act(() => {
+      liveCaptureRevision += 1;
+      liveCaptureHandler!({
+        phase: "starting",
+        session_id: 44,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    });
+
+    expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
+  });
+
+  it("rehydrates an active backend capture after a renderer remount", async () => {
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 41,
+      source: "streaming",
+      generation: 3,
+      revision: 12,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession)
+      .mockResolvedValueOnce(
+        openedSession({
+          id: 41,
+          title: "Active capture",
+          status: "active",
+        }),
+      )
+      .mockResolvedValueOnce(
+        openedSession({
+          id: 41,
+          title: "Active capture",
+          status: "active",
+          windows: ONE_WINDOW,
+        }),
+      );
+
+    const first = render(
+      <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
+    );
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(41),
+    );
+    first.unmount();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    expect(await screen.findByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(
+      await screen.findByText("hello there", { exact: false }),
+    ).toBeInTheDocument();
+    await waitFor(() =>
+      expect(document.querySelector(".wp-status-timer")).toHaveTextContent(
+        "00:07",
+      ),
+    );
+    expect(ipc.openStreamingSession).toHaveBeenLastCalledWith(41);
+
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+    act(() => {
+      liveCaptureHandler!({
+        phase: "idle",
+        session_id: null,
+        source: null,
+        generation: 3,
+        revision: 13,
+        error: null,
+      });
+    });
+    expect(await screen.findByRole("button", { name: "Resume" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Stop" })).toBeDisabled();
+  });
+
+  it("opens the first persisted session on mount", async () => {
     vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+      openedSession({ windows: ONE_WINDOW }),
+    );
 
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     expect(await screen.findByText("Standup")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(SESSION_A.id),
+    );
+    expect(await screen.findByText("hello there")).toBeInTheDocument();
+  });
+
+  it("keeps a manual selection when the automatic first open resolves late", async () => {
+    const initial = deferred<StreamingSession>();
+    const second = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A, second]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation((id) =>
+      id === SESSION_A.id
+        ? initial.promise
+        : Promise.resolve(
+            openedSession({
+              id: second.id,
+              title: second.title,
+              windows: [{ ...ONE_WINDOW[0], text: "selected review" }],
+            }),
+          ),
+    );
+    const user = userEvent.setup();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(SESSION_A.id),
+    );
+    await user.click(screen.getByRole("button", { name: "Open Review" }));
+    expect(await screen.findByText("selected review")).toBeInTheDocument();
+
+    await act(async () => initial.resolve(openedSession()));
+    expect(screen.getByText("selected review")).toBeInTheDocument();
+  });
+
+  it("ignores a late automatic-open error after a manual selection succeeds", async () => {
+    const initial = deferred<StreamingSession>();
+    const second = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A, second]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation((id) =>
+      id === SESSION_A.id
+        ? initial.promise
+        : Promise.resolve(
+            openedSession({
+              id: second.id,
+              title: second.title,
+              windows: ONE_WINDOW,
+            }),
+          ),
+    );
+    const user = userEvent.setup();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(SESSION_A.id),
+    );
+    await user.click(screen.getByRole("button", { name: "Open Review" }));
+    expect(
+      await screen.findByRole("heading", { name: second.title }),
+    ).toBeInTheDocument();
+
+    await act(async () => initial.reject(new Error("stale automatic open")));
+    expect(screen.queryByText(/stale automatic open/)).toBeNull();
+    expect(
+      screen.getByRole("heading", { name: second.title }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not start automatic selection after the user chooses a session before lifecycle hydration", async () => {
+    const lifecycle = deferred<ipc.LiveCaptureSnapshot>();
+    const selected = deferred<StreamingSession>();
+    const second = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockReturnValue(lifecycle.promise);
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A, second]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation((id) =>
+      id === second.id
+        ? selected.promise
+        : Promise.resolve(openedSession({ id: SESSION_A.id })),
+    );
+    const user = userEvent.setup();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Open Review" }),
+    );
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(second.id),
+    );
+
+    lifecycle.resolve({
+      phase: "idle",
+      session_id: null,
+      source: null,
+      generation: 0,
+      revision: 0,
+      error: null,
+    });
+    await act(async () => Promise.resolve());
+    expect(ipc.openStreamingSession).not.toHaveBeenCalledWith(SESSION_A.id);
+
+    await act(async () =>
+      selected.resolve(
+        openedSession({
+          id: second.id,
+          title: second.title,
+          windows: ONE_WINDOW,
+        }),
+      ),
+    );
+    expect(
+      await screen.findByRole("heading", { name: second.title }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not let late active-session rehydration overwrite an explicit selection", async () => {
+    const active = deferred<StreamingSession>();
+    const second = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A, second]);
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: 41,
+      source: "streaming",
+      generation: 3,
+      revision: 12,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession).mockImplementation((id) =>
+      id === 41
+        ? active.promise
+        : Promise.resolve(
+            openedSession({
+              id: second.id,
+              title: second.title,
+              windows: ONE_WINDOW,
+            }),
+          ),
+    );
+    const user = userEvent.setup();
+
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() =>
+      expect(ipc.openStreamingSession).toHaveBeenCalledWith(41),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Open Review" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: second.title }),
+    ).toBeInTheDocument();
+
+    await act(async () =>
+      active.resolve(
+        openedSession({ id: 41, title: "Active capture", status: "active" }),
+      ),
+    );
+    expect(
+      screen.getByRole("heading", { name: second.title }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Active capture" }),
+    ).toBeNull();
+  });
+
+  it("keeps live-capture identity on session A when the user opens stopped session B", async () => {
+    const user = userEvent.setup();
+    const duo = { ...SESSION_A, title: "Duo" };
+    const review = { ...SESSION_A, id: 2, title: "Review" };
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([duo, review]);
+    vi.mocked(ipc.getLiveCaptureSnapshot).mockResolvedValue({
+      phase: "capturing",
+      session_id: duo.id,
+      source: "streaming",
+      generation: 1,
+      revision: 1,
+      error: null,
+    });
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      openedSession({
+        id,
+        title: id === duo.id ? duo.title : review.title,
+        status: id === duo.id ? "active" : "stopped",
+      }),
+    );
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await waitFor(() =>
+      expect(screen.getByRole("status")).toHaveTextContent("On Air"),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Open Review" }),
+    );
+    await screen.findByRole("heading", { name: "Review" });
+
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
+    expect(
+      within(screen.getByRole("listitem", { name: "Duo" })).getByRole("img"),
+    ).toHaveAccessibleName("On Air");
+    expect(
+      within(screen.getByRole("listitem", { name: "Review" })).getByRole("img"),
+    ).toHaveAccessibleName("Ready");
+  });
+
+  it("does not display a Recorder capture failure in Streaming", async () => {
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await waitFor(() => expect(liveCaptureHandler).not.toBeNull());
+
+    act(() => {
+      liveCaptureHandler!({
+        phase: "error",
+        session_id: 77,
+        source: "recorder",
+        generation: 1,
+        revision: 1,
+        error: "Recorder callback buffer pool was exhausted",
+      });
+    });
+
+    expect(
+      screen.queryByText(/Recorder callback buffer pool was exhausted/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent("Ready");
   });
 
   it("filters sessions by title only after three characters and shows no matches", async () => {
@@ -155,7 +639,7 @@ describe("StreamingView", () => {
 
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    const search = await screen.findByLabelText("Search sessions");
+    const search = await screen.findByLabelText("Search meetings");
     // BVA: filtering starts at exactly three characters and resets at two.
     await user.type(search, "sta");
     expect(screen.getByText("Standup")).toBeInTheDocument();
@@ -174,7 +658,7 @@ describe("StreamingView", () => {
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     expect(
-      await screen.findByText(/Start a session, or open one/),
+      await screen.findByText(/Start a meeting, or open one/),
     ).toBeInTheDocument();
   });
 
@@ -196,6 +680,245 @@ describe("StreamingView", () => {
       await screen.findByRole("button", { name: "Stop" }),
     ).toBeInTheDocument();
     expect(screen.getByText("Listening…")).toBeInTheDocument();
+  });
+
+  it("replaces the centered listening placeholder with the first live partial", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "First partial session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "The first provisional phrase",
+      });
+    });
+
+    expect(screen.queryByText("Listening…")).not.toBeInTheDocument();
+    expect(document.querySelector(".wp-streaming-partial")).toHaveTextContent(
+      "The first provisional phrase",
+    );
+  });
+
+  it("keeps the listening placeholder when a live partial contains no text", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Empty partial session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+    act(() => {
+      partialHandler!({ session_id: 2, item_id: null, text: "   " });
+    });
+
+    expect(screen.getByText("Listening…")).toBeInTheDocument();
+    expect(document.querySelector(".wp-streaming-partial")).toBeNull();
+  });
+
+  it("keeps a newer Cloud partial visible and clears it only when its own final turn arrives", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Cloud session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "newer words",
+      });
+      windowHandler!({
+        session_id: 2,
+        item_id: "turn-1",
+        window_index: 0,
+        start_ms: 0,
+        end_ms: 7_000,
+        text: "older final",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(document.querySelector(".wp-streaming-partial")).toHaveTextContent(
+      "newer words",
+    );
+    const committed = document.querySelector(".streaming-window");
+    const partial = document.querySelector(".wp-streaming-partial");
+    expect(committed).not.toBeNull();
+    expect(partial).not.toBeNull();
+    expect(
+      committed!.compareDocumentPosition(partial!) &
+        Node.DOCUMENT_POSITION_FOLLOWING,
+    ).not.toBe(0);
+
+    act(() => {
+      windowHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        window_index: 1,
+        start_ms: 7_000,
+        end_ms: 14_000,
+        text: "newer words",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(document.querySelector(".wp-streaming-partial")).toBeNull();
+  });
+
+  it("keeps a revised partial entirely italic until it is committed", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Local session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "Так давай попробуем снова",
+      });
+      partialHandler!({
+        session_id: 2,
+        item_id: null,
+        text: "Так давай попробуем ещё раз",
+      });
+    });
+
+    const partial = screen.getByText("Так давай попробуем ещё раз");
+    expect(partial.tagName).toBe("EM");
+    expect(document.querySelector(".wp-streaming-partial-stable")).toBeNull();
+  });
+
+  it("follows the latest phrase, pauses after scrolling up, and resumes at the bottom", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
+      id: 2,
+      title: "Autoscroll session",
+      created_at_ms: 200,
+      updated_at_ms: 200,
+      status: "active",
+      translation_enabled: false,
+    });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    await waitFor(() => expect(windowHandler).not.toBeNull());
+
+    const transcript = document.querySelector(
+      ".wp-transcript-content",
+    ) as HTMLDivElement;
+    let scrollHeight = 1_000;
+    let scrollTop = 0;
+    Object.defineProperties(transcript, {
+      clientHeight: { configurable: true, get: () => 400 },
+      scrollHeight: { configurable: true, get: () => scrollHeight },
+      scrollTop: {
+        configurable: true,
+        get: () => scrollTop,
+        set: (value: number) => {
+          scrollTop = value;
+        },
+      },
+    });
+
+    act(() => {
+      windowHandler!({
+        session_id: 2,
+        window_index: 0,
+        start_ms: 0,
+        end_ms: 7_000,
+        text: "first phrase",
+        language: "en",
+        outcome_ok: true,
+      });
+    });
+    expect(scrollTop).toBe(1_000);
+    expect(
+      document.querySelector(".wp-streaming-autoscroll-tail"),
+    ).not.toBeNull();
+
+    scrollTop = 100;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_100;
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "do not follow me yet",
+      });
+    });
+    expect(scrollTop).toBe(100);
+
+    scrollTop = 700;
+    fireEvent.scroll(transcript);
+    scrollHeight = 1_200;
+    act(() => {
+      partialHandler!({
+        session_id: 2,
+        item_id: "turn-2",
+        text: "following again",
+      });
+    });
+    expect(scrollTop).toBe(1_200);
+
+    const styles = readCssBundle();
+    expect(styles).toMatch(
+      /\.wp-streaming-autoscroll-tail\s*\{[^}]*flex:\s*0 0 22%;/s,
+    );
+  });
+
+  it("insets Streaming transcript content from both panel borders", async () => {
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+    await screen.findByText(/Start a meeting, or open one/);
+
+    const transcript = document.querySelector(".wp-transcript-content");
+    expect(transcript).not.toBeNull();
+    expect(transcript).toHaveClass("wp-transcript-content--inset");
+
+    const styles = readCssBundle();
+    expect(styles).toMatch(
+      /\.wp-transcript-content--inset\s*\{[^}]*padding-left:\s*var\(--wp-space-md\);[^}]*padding-right:\s*var\(--wp-space-md\);/s,
+    );
+  });
+
+  it("keeps shared Meeting and Streaming MFU content vertically scrollable", () => {
+    const styles = readCssBundle();
+    expect(styles).toMatch(/\.wp-mfu\s*\{[^}]*overflow:\s*hidden;/s);
+    expect(styles).toMatch(
+      /\.wp-mfu-content\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;/s,
+    );
   });
 
   it("appends a live window for the active session as it arrives", async () => {
@@ -446,7 +1169,9 @@ describe("StreamingView", () => {
         await screen.findByRole("button", { name: "Start" }),
       ).toBeInTheDocument();
 
-      await user.click(await screen.findByText("Standup"));
+      await user.click(
+        await screen.findByRole("button", { name: "Open Standup" }),
+      );
 
       expect(
         await screen.findByRole("button", { name: "Resume" }),
@@ -549,9 +1274,7 @@ describe("StreamingView", () => {
       await user.click(await screen.findByText("Standup"));
       expect(await screen.findByText(/hello there/)).toBeInTheDocument();
 
-      await user.click(
-        screen.getByRole("button", { name: "New streaming session" }),
-      );
+      await user.click(screen.getByRole("button", { name: "New meeting" }));
 
       expect(ipc.createStreamingSession).toHaveBeenCalledOnce();
       expect(ipc.startStreamingSession).not.toHaveBeenCalled();
@@ -565,6 +1288,42 @@ describe("StreamingView", () => {
 
       expect(ipc.startStreamingSession).toHaveBeenCalledWith(2);
       expect(await screen.findByText("Listening…")).toBeInTheDocument();
+    });
+
+    it("does not let a stale initial list erase a session created while hydration is pending", async () => {
+      const user = userEvent.setup();
+      const initialList = deferred<StreamingSessionSummary[]>();
+      const postCreateList = deferred<StreamingSessionSummary[]>();
+      const created: StreamingSessionSummary = {
+        id: 2,
+        title: "Fresh meeting",
+        created_at_ms: 200,
+        updated_at_ms: 200,
+        status: "stopped",
+        translation_enabled: false,
+      };
+      vi.mocked(ipc.listStreamingSessions)
+        .mockReturnValueOnce(initialList.promise)
+        .mockReturnValueOnce(postCreateList.promise);
+      vi.mocked(ipc.createStreamingSession).mockResolvedValue(created);
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+      await user.click(
+        await screen.findByRole("button", { name: "New meeting" }),
+      );
+      await waitFor(() =>
+        expect(ipc.listStreamingSessions).toHaveBeenCalledTimes(2),
+      );
+      postCreateList.resolve([created]);
+      expect(await screen.findByText("Fresh meeting")).toBeInTheDocument();
+
+      // The launch request started before the user-created item existed.
+      // Resolving it last must not replace the newer library state.
+      initialList.resolve([]);
+      await act(async () => {});
+      expect(
+        screen.getByRole("button", { name: "Open Fresh meeting" }),
+      ).toBeInTheDocument();
     });
 
     // S-13: a failed resume surfaces the error without discarding the
@@ -604,9 +1363,9 @@ describe("StreamingView", () => {
       await screen.findByText("Standup");
 
       await user.click(screen.getByRole("button", { name: "Rename Standup" }));
-      const dialog = screen.getByRole("dialog", { name: "Rename session" });
+      const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
       const input = within(dialog).getByRole("textbox", {
-        name: "Session label",
+        name: "Meeting title",
       });
       await user.clear(input);
       await user.type(input, "Renamed");
@@ -614,7 +1373,7 @@ describe("StreamingView", () => {
 
       expect(ipc.renameStreamingSession).toHaveBeenCalledWith(1, "Renamed");
       expect(
-        screen.queryByRole("dialog", { name: "Rename session" }),
+        screen.queryByRole("dialog", { name: "Rename meeting" }),
       ).not.toBeInTheDocument();
     });
 
@@ -630,10 +1389,10 @@ describe("StreamingView", () => {
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
       await user.click(await screen.findByText("Standup"));
-      await user.click(screen.getByRole("button", { name: "Rename session" }));
-      const dialog = screen.getByRole("dialog", { name: "Rename session" });
+      await user.click(screen.getByRole("button", { name: "Rename meeting" }));
+      const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
       const input = within(dialog).getByRole("textbox", {
-        name: "Session label",
+        name: "Meeting title",
       });
       await user.clear(input);
       await user.type(input, "Renamed");
@@ -661,22 +1420,22 @@ describe("StreamingView", () => {
       await screen.findByText("Standup");
 
       await user.click(screen.getByRole("button", { name: "Rename Standup" }));
-      const dialog = screen.getByRole("dialog", { name: "Rename session" });
+      const dialog = screen.getByRole("dialog", { name: "Rename meeting" });
       const input = within(dialog).getByRole("textbox", {
-        name: "Session label",
+        name: "Meeting title",
       });
       await user.clear(input);
       await user.type(input, "   ");
       await user.click(within(dialog).getByRole("button", { name: "Save" }));
       expect(within(dialog).getByRole("alert")).toHaveTextContent(
-        "Session label is required",
+        "Meeting title is required",
       );
 
       await user.clear(input);
       await user.type(input, "a".repeat(121));
       await user.click(within(dialog).getByRole("button", { name: "Save" }));
       expect(within(dialog).getByRole("alert")).toHaveTextContent(
-        "Session label must be 120 characters or fewer",
+        "Meeting title must be 120 characters or fewer",
       );
       expect(ipc.renameStreamingSession).not.toHaveBeenCalled();
     });
@@ -689,13 +1448,13 @@ describe("StreamingView", () => {
 
       await user.click(screen.getByRole("button", { name: "Rename Standup" }));
       expect(
-        screen.getByRole("dialog", { name: "Rename session" }),
+        screen.getByRole("dialog", { name: "Rename meeting" }),
       ).toBeInTheDocument();
 
       await user.keyboard("{Escape}");
 
       expect(
-        screen.queryByRole("dialog", { name: "Rename session" }),
+        screen.queryByRole("dialog", { name: "Rename meeting" }),
       ).not.toBeInTheDocument();
       expect(ipc.renameStreamingSession).not.toHaveBeenCalled();
     });
@@ -711,12 +1470,136 @@ describe("StreamingView", () => {
       const dialog = screen.getByRole("alertdialog", {
         name: "Delete Standup",
       });
+      expect(
+        within(dialog).getByRole("button", { name: "Delete" }),
+      ).toHaveClass("modal-button--danger");
       await user.click(within(dialog).getByRole("button", { name: "Delete" }));
 
       expect(ipc.deleteStreamingSession).toHaveBeenCalledWith(1);
       expect(
         screen.queryByRole("alertdialog", { name: "Delete Standup" }),
       ).not.toBeInTheDocument();
+    });
+
+    it("clears transcript, MFU, prettify, and translations only after confirmation", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({
+          windows: ONE_WINDOW,
+          mfu: {
+            summary: "Summary to clear",
+            decisions: "",
+            action_items: "",
+            open_questions: "",
+            participants: "",
+          },
+          prettified_text: "Polished text to clear",
+          translation_enabled: true,
+        }),
+      );
+      vi.mocked(ipc.clearStreamingSession).mockResolvedValue(
+        openedSession({ windows: [], translation_enabled: true }),
+      );
+      vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+        "Translated text to clear",
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      const clear = screen.getByRole("button", { name: "Clear meeting" });
+      expect(clear.querySelector("svg")).toHaveAttribute("data-icon", "eraser");
+      await user.click(clear);
+      expect(ipc.clearStreamingSession).not.toHaveBeenCalled();
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Clear meeting",
+      });
+      expect(
+        within(dialog).getByRole("button", { name: "Clear meeting" }),
+      ).toHaveClass("modal-button--danger");
+      await user.click(
+        within(dialog).getByRole("button", { name: "Clear meeting" }),
+      );
+
+      expect(ipc.clearStreamingSession).toHaveBeenCalledWith(SESSION_A.id);
+      expect(screen.queryByText("hello there")).not.toBeInTheDocument();
+      expect(screen.queryByText("Summary to clear")).not.toBeInTheDocument();
+      expect(
+        screen.getByText("Start a meeting, or open one from the list."),
+      ).toBeInTheDocument();
+    });
+
+    it("keeps Clear available for retry when the first clear request is rejected", async () => {
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.clearStreamingSession)
+        .mockRejectedValueOnce(new Error("clear failed"))
+        .mockResolvedValueOnce(openedSession({ windows: [] }));
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(screen.getByRole("button", { name: "Clear meeting" }));
+      const dialog = screen.getByRole("alertdialog", {
+        name: "Clear meeting",
+      });
+      const confirm = within(dialog).getByRole("button", {
+        name: "Clear meeting",
+      });
+      await user.click(confirm);
+      expect(await screen.findByText(/clear failed/)).toBeInTheDocument();
+      expect(confirm).toBeEnabled();
+      await user.click(confirm);
+
+      await waitFor(() =>
+        expect(ipc.clearStreamingSession).toHaveBeenCalledTimes(2),
+      );
+    });
+
+    it("blocks Clear while Craft MFU can still persist derived content", async () => {
+      const craft = deferred<StreamingSession>();
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(craft.promise);
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(screen.getByRole("button", { name: "Craft MFU" }));
+
+      expect(
+        screen.getByRole("button", { name: "Clear meeting" }),
+      ).toBeDisabled();
+      await act(async () =>
+        craft.resolve(openedSession({ windows: ONE_WINDOW, mfu: MFU })),
+      );
+    });
+
+    it("blocks Clear while Prettify can still return derived content", async () => {
+      const prettify = deferred<string>();
+      const user = userEvent.setup();
+      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
+      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
+        openedSession({ windows: ONE_WINDOW }),
+      );
+      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
+        prettify.promise,
+      );
+      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+      await user.click(await screen.findByText("Standup"));
+
+      await user.click(
+        screen.getByRole("button", { name: "Prettify transcript" }),
+      );
+
+      expect(
+        screen.getByRole("button", { name: "Clear meeting" }),
+      ).toBeDisabled();
+      await act(async () => prettify.resolve("Prettified candidate"));
     });
 
     it("Cancel on the delete dialog makes no IPC call", async () => {
@@ -746,1662 +1629,10 @@ describe("StreamingView", () => {
       render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
       await user.click(await screen.findByText("Standup"));
 
-      await user.click(screen.getByRole("button", { name: "Delete session" }));
+      await user.click(screen.getByRole("button", { name: "Delete meeting" }));
 
       expect(
         screen.getByRole("alertdialog", { name: "Delete Standup" }),
-      ).toBeInTheDocument();
-    });
-  });
-
-  it("calls onClose when the sidebar Meeting toggle is clicked", async () => {
-    const user = userEvent.setup();
-    const onClose = vi.fn();
-    render(<StreamingView onClose={onClose} onOpenSettings={vi.fn()} />);
-
-    await user.click(await screen.findByRole("button", { name: "Meeting" }));
-
-    expect(onClose).toHaveBeenCalled();
-  });
-
-  it("unlistens all three event handlers on unmount", async () => {
-    const { unmount } = render(
-      <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
-    );
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-
-    unmount();
-
-    expect(windowHandler).toBeNull();
-    expect(sourcesHandler).toBeNull();
-    expect(endedHandler).toBeNull();
-  });
-
-  it("unmounting before event registration resolves still unlistens once it does (no leaked listeners)", async () => {
-    const { unmount } = render(
-      <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
-    );
-
-    // Unmount immediately, before the registration Promise.all has settled —
-    // the cancelled-cleanup branch, not the steady-state one above.
-    unmount();
-    await waitFor(() => expect(windowHandler).not.toBeNull());
-
-    // The handlers were registered (the mocked listen calls always resolve),
-    // but the component's own cleanup ran before they were stored, so it
-    // must unlisten them itself once they arrive rather than leaking them.
-    expect(windowHandler).toBeNull();
-    expect(sourcesHandler).toBeNull();
-    expect(endedHandler).toBeNull();
-  });
-
-  it("reports mixed mic + system audio sources", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 2,
-      title: "New Streaming Session",
-      created_at_ms: 200,
-      updated_at_ms: 200,
-      status: "active",
-      translation_enabled: false,
-    });
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(sourcesHandler).not.toBeNull());
-
-    sourcesHandler!({ session_id: 2, mic: true, system_audio: true });
-
-    expect(await screen.findByText("Mic + System audio")).toBeInTheDocument();
-  });
-
-  it("reports system-audio-only sources", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 2,
-      title: "New Streaming Session",
-      created_at_ms: 200,
-      updated_at_ms: 200,
-      status: "active",
-      translation_enabled: false,
-    });
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(sourcesHandler).not.toBeNull());
-
-    sourcesHandler!({ session_id: 2, mic: false, system_audio: true });
-
-    expect(await screen.findByText("System audio only")).toBeInTheDocument();
-  });
-
-  it("reports no audio source when neither came up", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 2,
-      title: "New Streaming Session",
-      created_at_ms: 200,
-      updated_at_ms: 200,
-      status: "active",
-      translation_enabled: false,
-    });
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-    await waitFor(() => expect(sourcesHandler).not.toBeNull());
-
-    sourcesHandler!({ session_id: 2, mic: false, system_audio: false });
-
-    expect(await screen.findByText("No audio source")).toBeInTheDocument();
-  });
-
-  it("a failed Stop call surfaces the error", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-      id: 2,
-      title: "New Streaming Session",
-      created_at_ms: 200,
-      updated_at_ms: 200,
-      status: "active",
-      translation_enabled: false,
-    });
-    vi.mocked(ipc.stopStreamingSession).mockRejectedValue(
-      "capture is not responding",
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-
-    await user.click(await screen.findByRole("button", { name: "Stop" }));
-
-    expect(
-      await screen.findByText(/capture is not responding/),
-    ).toBeInTheDocument();
-  });
-
-  it("a failed open surfaces the error", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockRejectedValue(
-      "streaming session 1 was not found",
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-    await user.click(await screen.findByText("Standup"));
-
-    expect(
-      await screen.findByText(/streaming session 1 was not found/),
-    ).toBeInTheDocument();
-  });
-
-  it("a failed rename surfaces the error", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.renameStreamingSession).mockRejectedValue("rename failed");
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await screen.findByText("Standup");
-
-    await user.click(screen.getByRole("button", { name: "Rename Standup" }));
-    const dialog = screen.getByRole("dialog", { name: "Rename session" });
-    const input = within(dialog).getByRole("textbox", {
-      name: "Session label",
-    });
-    await user.clear(input);
-    await user.type(input, "Renamed");
-    await user.click(within(dialog).getByRole("button", { name: "Save" }));
-
-    expect(await screen.findByText(/rename failed/)).toBeInTheDocument();
-  });
-
-  it("a failed delete surfaces the error", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.deleteStreamingSession).mockRejectedValue("delete failed");
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await screen.findByText("Standup");
-
-    await user.click(screen.getByRole("button", { name: "Delete Standup" }));
-    const dialog = screen.getByRole("alertdialog", { name: "Delete Standup" });
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
-
-    expect(await screen.findByText(/delete failed/)).toBeInTheDocument();
-  });
-
-  it("deleting the currently open session clears the transcript view", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-      openedSession({
-        windows: [
-          {
-            window_index: 0,
-            start_ms: 0,
-            end_ms: 7000,
-            text: "mfu to be cleared",
-            language: "en",
-            outcome_ok: true,
-          },
-        ],
-      }),
-    );
-    vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-    await screen.findByText(/mfu to be cleared/);
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
-
-    await user.click(screen.getByRole("button", { name: "Delete Standup" }));
-    const dialog = screen.getByRole("alertdialog", { name: "Delete Standup" });
-    await user.click(within(dialog).getByRole("button", { name: "Delete" }));
-
-    expect(screen.queryByText(/mfu to be cleared/)).not.toBeInTheDocument();
-    expect(
-      await screen.findByText(/Start a session, or open one/),
-    ).toBeInTheDocument();
-  });
-
-  it("Copy and Export are disabled until there is transcript text", async () => {
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await screen.findByText(/Start a session, or open one/);
-
-    expect(
-      screen.getByRole("button", { name: "Copy transcript" }),
-    ).toBeDisabled();
-    expect(
-      screen.getByRole("button", { name: "Export as Markdown" }),
-    ).toBeDisabled();
-  });
-
-  it("Copy writes the plain transcript to the clipboard, marking [unavailable] windows too", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-      openedSession({
-        windows: [
-          {
-            window_index: 0,
-            start_ms: 0,
-            end_ms: 7000,
-            text: "hello",
-            language: "en",
-            outcome_ok: true,
-          },
-          {
-            window_index: 1,
-            start_ms: 7000,
-            end_ms: 14000,
-            text: "",
-            language: "auto",
-            outcome_ok: false,
-          },
-        ],
-      }),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-
-    await user.click(
-      await screen.findByRole("button", { name: "Copy transcript" }),
-    );
-
-    expect(
-      await screen.findByRole("button", { name: "Copied" }),
-    ).toBeInTheDocument();
-    expect(writeTextMock).toHaveBeenCalledWith("hello [unavailable]");
-  });
-
-  // state-transition: idle → copied → idle (timeout rollback).
-  it("shows a 'Copied' toast and a checked button after a successful copy, then rolls back", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const user = userEvent.setup({
-        advanceTimers: vi.advanceTimersByTime.bind(vi),
-      });
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Copy transcript" }),
-      );
-
-      const toast = await screen.findByText("Copied", {
-        selector: ".wp-toast",
-      });
-      expect(toast).toHaveAttribute("role", "status");
-      expect(
-        screen.getByRole("button", { name: "Copied" }),
-      ).toBeInTheDocument();
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2600);
-      });
-
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // state-transition: copied --re-click--> copied (the timeout restarts).
-  it("restarts the feedback timeout when Copy is clicked again before the rollback", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const user = userEvent.setup({
-        advanceTimers: vi.advanceTimersByTime.bind(vi),
-      });
-      // Installed after userEvent.setup, which swaps navigator.clipboard for
-      // its own stub — defining ours last is what the component actually calls.
-      const writeText = vi.fn().mockResolvedValue(undefined);
-      Object.defineProperty(navigator, "clipboard", {
-        value: { writeText },
-        configurable: true,
-      });
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Copy transcript" }),
-      );
-      await screen.findByText("Copied", { selector: ".wp-toast" });
-
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2000);
-      });
-      await user.click(screen.getByRole("button", { name: "Copied" }));
-      expect(writeText).toHaveBeenCalledTimes(2);
-
-      // 2s after the second click the feedback must still be visible…
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(2000);
-      });
-      expect(
-        screen.getByText("Copied", { selector: ".wp-toast" }),
-      ).toBeInTheDocument();
-
-      // …and only the restarted timeout (2.5s) rolls it back.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(600);
-      });
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // state-transition: copied --switch session--> idle (pending feedback cleared).
-  it("clears a pending Copied feedback when another session is opened", async () => {
-    vi.useFakeTimers({ shouldAdvanceTime: true });
-    try {
-      const user = userEvent.setup({
-        advanceTimers: vi.advanceTimersByTime.bind(vi),
-      });
-      const SESSION_B: StreamingSessionSummary = {
-        id: 2,
-        title: "Retro",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "stopped",
-        translation_enabled: false,
-      };
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
-        SESSION_A,
-        SESSION_B,
-      ]);
-      vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
-        id === SESSION_B.id
-          ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
-          : openedSession({ windows: ONE_WINDOW }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Copy transcript" }),
-      );
-      await screen.findByText("Copied", { selector: ".wp-toast" });
-
-      await user.click(screen.getByText("Retro"));
-      await screen.findByRole("heading", { name: "Retro" });
-
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-
-      // The cancelled timer must not resurrect the feedback on the new session.
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(3000);
-      });
-      expect(
-        screen.queryByText("Copied", { selector: ".wp-toast" }),
-      ).not.toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Copy transcript" }),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  // state-transition: copying (in-flight write) --switch session--> the late
-  // resolution must not enter the copied state on the new session.
-  it("does not paint Copied feedback onto a session opened while the clipboard write is in flight", async () => {
-    const user = userEvent.setup();
-    // Installed after userEvent.setup, which swaps navigator.clipboard for
-    // its own stub — defining ours last is what the component actually calls.
-    let resolveWrite: () => void = () => {};
-    const writeText = vi.fn().mockReturnValue(
-      new Promise<void>((resolve) => {
-        resolveWrite = resolve;
-      }),
-    );
-    Object.defineProperty(navigator, "clipboard", {
-      value: { writeText },
-      configurable: true,
-    });
-    const SESSION_B: StreamingSessionSummary = {
-      id: 2,
-      title: "Retro",
-      created_at_ms: 200,
-      updated_at_ms: 200,
-      status: "stopped",
-      translation_enabled: false,
-    };
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
-      SESSION_A,
-      SESSION_B,
-    ]);
-    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
-      id === SESSION_B.id
-        ? openedSession({ id: 2, title: "Retro", windows: ONE_WINDOW })
-        : openedSession({ windows: ONE_WINDOW }),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-
-    await user.click(
-      await screen.findByRole("button", { name: "Copy transcript" }),
-    );
-    // The write is still in flight: no feedback yet.
-    expect(
-      screen.queryByText("Copied", { selector: ".wp-toast" }),
-    ).not.toBeInTheDocument();
-
-    await user.click(screen.getByText("Retro"));
-    await screen.findByRole("heading", { name: "Retro" });
-
-    // The write for the previous session resolves only now.
-    resolveWrite();
-    await act(async () => {});
-
-    expect(
-      screen.queryByText("Copied", { selector: ".wp-toast" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy transcript" }),
-    ).toBeInTheDocument();
-  });
-
-  it("Export saves a Markdown-formatted file named after the session title", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-      openedSession({
-        title: "Team Standup",
-        windows: [
-          {
-            window_index: 0,
-            start_ms: 0,
-            end_ms: 7000,
-            text: "hello there",
-            language: "en",
-            outcome_ok: true,
-          },
-        ],
-      }),
-    );
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-
-    await user.click(
-      await screen.findByRole("button", { name: "Export as Markdown" }),
-    );
-
-    expect(ipc.saveTextDialog).toHaveBeenCalledWith(
-      "# Team Standup\n\nhello there\n",
-      "Team Standup.md",
-    );
-  });
-
-  it("a failed clipboard write surfaces the error instead of silently doing nothing", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-      openedSession({
-        windows: [
-          {
-            window_index: 0,
-            start_ms: 0,
-            end_ms: 7000,
-            text: "hello",
-            language: "en",
-            outcome_ok: true,
-          },
-        ],
-      }),
-    );
-    vi.spyOn(navigator.clipboard, "writeText").mockRejectedValue("denied");
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-
-    await user.click(
-      await screen.findByRole("button", { name: "Copy transcript" }),
-    );
-
-    expect(await screen.findByText(/denied/)).toBeInTheDocument();
-    expect(
-      screen.queryByText("Copied", { selector: ".wp-toast" }),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Copy transcript" }),
-    ).toBeInTheDocument();
-  });
-
-  it("a failed export surfaces the error", async () => {
-    const user = userEvent.setup();
-    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-    vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-      openedSession({
-        windows: [
-          {
-            window_index: 0,
-            start_ms: 0,
-            end_ms: 7000,
-            text: "hello",
-            language: "en",
-            outcome_ok: true,
-          },
-        ],
-      }),
-    );
-    vi.mocked(ipc.saveTextDialog).mockRejectedValue("disk full");
-    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-    await user.click(await screen.findByText("Standup"));
-
-    await user.click(
-      await screen.findByRole("button", { name: "Export as Markdown" }),
-    );
-
-    expect(await screen.findByText(/disk full/)).toBeInTheDocument();
-  });
-
-  describe("status widget", () => {
-    // S-2: first-launch / empty state
-    it("shows Ready with no timer before any session has run", async () => {
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await screen.findByText(/Start a session, or open one/);
-
-      const status = await screen.findByRole("status");
-      expect(status).toHaveTextContent("Ready");
-      expect(status.querySelector(".wp-status-timer")).toBeNull();
-    });
-
-    // S-1 + S-4: full state cycle, including the Starting transitional state
-    it("cycles Ready -> Starting… -> On Air -> Ready across a full session", async () => {
-      const user = userEvent.setup();
-      let resolveStart!: (v: {
-        id: number;
-        title: string;
-        created_at_ms: number;
-        updated_at_ms: number;
-        status: string;
-        translation_enabled: boolean;
-      }) => void;
-      vi.mocked(ipc.startStreamingSession).mockReturnValue(
-        new Promise((resolve) => {
-          resolveStart = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      const status = await screen.findByRole("status");
-      expect(status).toHaveTextContent("Ready");
-
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-      expect(status).toHaveTextContent("Starting…");
-
-      resolveStart({
-        id: 2,
-        title: "New Streaming Session",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      await waitFor(() => expect(status).toHaveTextContent("On Air"));
-      expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-        "00:00",
-      );
-
-      vi.mocked(ipc.stopStreamingSession).mockResolvedValue(undefined);
-      await user.click(await screen.findByRole("button", { name: "Stop" }));
-      endedHandler!({ session_id: 2 });
-
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-      expect(status.querySelector(".wp-status-timer")).toBeNull();
-    });
-
-    // S-3: the timer switches to h:mm:ss once elapsed time reaches an hour
-    it("switches the timer to h:mm:ss format once elapsed time reaches 60 minutes", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      try {
-        const user = userEvent.setup({
-          advanceTimers: vi.advanceTimersByTime.bind(vi),
-        });
-        vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-          id: 2,
-          title: "New Streaming Session",
-          created_at_ms: 200,
-          updated_at_ms: 200,
-          status: "active",
-          translation_enabled: false,
-        });
-        render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-        const status = await screen.findByRole("status");
-
-        await user.click(await screen.findByRole("button", { name: "Start" }));
-        await waitFor(() => expect(status).toHaveTextContent("On Air"));
-
-        // The advance fires one interval callback per simulated second, and
-        // firing thousands of them takes real time — seconds under coverage
-        // instrumentation — which shouldAdvanceTime bleeds into the measured
-        // elapsed. Assert bleed-tolerant windows on each side of the 60
-        // minute format switch instead of exact boundary seconds. The
-        // generous timeout absorbs the thousands of instrumented re-renders.
-        await vi.advanceTimersByTimeAsync(59 * 60 * 1000 + 30 * 1000);
-        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
-          /^59:\d{2}$/,
-        );
-
-        await vi.advanceTimersByTimeAsync(60 * 1000);
-        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
-          /^1:00:\d{2}$/,
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 60_000);
-
-    // S-5: the session ending on its own (not via manual Stop) still resets the widget
-    it("returns to Ready when the session ends on its own, not only via manual Stop", async () => {
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 2,
-        title: "New Streaming Session",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      const user = userEvent.setup();
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      const status = await screen.findByRole("status");
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-      await waitFor(() => expect(status).toHaveTextContent("On Air"));
-
-      endedHandler!({ session_id: 2 });
-
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-    });
-
-    // S-6: opening a past stopped session shows Ready, never On Air
-    it("shows Ready, not On Air, when opening a past stopped session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(openedSession());
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      const status = await screen.findByRole("status");
-
-      await user.click(await screen.findByText("Standup"));
-
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-    });
-
-    // S-7: a Start call that fails before isRunning ever becomes true falls
-    // back to Ready, with the failure shown only in the existing error banner
-    it("falls back to Ready when the Start call fails, showing the error separately", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.startStreamingSession).mockRejectedValue(
-        "a meeting is currently transcribing",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      const status = await screen.findByRole("status");
-
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-
-      expect(
-        await screen.findByText(/a meeting is currently transcribing/),
-      ).toBeInTheDocument();
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-      expect(status).not.toHaveTextContent(
-        "a meeting is currently transcribing",
-      );
-    });
-
-    // S-8: a Stop request in flight keeps the widget on On Air until
-    // isRunning actually flips false via streaming_session_ended
-    it("stays On Air while a Stop request is in flight", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 2,
-        title: "New Streaming Session",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      let resolveStop!: () => void;
-      vi.mocked(ipc.stopStreamingSession).mockReturnValue(
-        new Promise((resolve) => {
-          resolveStop = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      const status = await screen.findByRole("status");
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-      await waitFor(() => expect(status).toHaveTextContent("On Air"));
-
-      await user.click(await screen.findByRole("button", { name: "Stop" }));
-      expect(status).toHaveTextContent("On Air");
-
-      resolveStop();
-      endedHandler!({ session_id: 2 });
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-    });
-  });
-
-  describe("Craft / MFU", () => {
-    // S-3 + S-4: disabled with no text, and while running
-    it("disables Craft with no decoded text, enables it once a stopped session has text", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: [] }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      expect(screen.getByRole("button", { name: "Craft MFU" })).toBeDisabled();
-
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      // A second click re-opens the same session; by now its title is also
-      // shown in the header, so target the sidebar row specifically rather
-      // than the now-ambiguous "Standup" text.
-      await user.click(
-        await screen.findByRole("button", { name: "Open Standup" }),
-      );
-
-      expect(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      ).not.toBeDisabled();
-    });
-
-    // EP: a fail-open-only session has display text ("[unavailable]") but no
-    // real decoded content — Craft must stay disabled even though Copy/
-    // Export's hasText guard would read true for the same windows.
-    it("disables Craft when the session has only fail-open windows", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: [
-            {
-              window_index: 0,
-              start_ms: 0,
-              end_ms: 7000,
-              text: "",
-              language: "auto",
-              outcome_ok: false,
-            },
-          ],
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      expect(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      ).toBeDisabled();
-    });
-
-    it("disables Craft while the session is running, even with decoded text", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 2,
-        title: "New Streaming Session",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-      await waitFor(() => expect(windowHandler).not.toBeNull());
-      windowHandler!({ ...ONE_WINDOW[0], session_id: 2 });
-
-      expect(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      ).toBeDisabled();
-    });
-
-    // S-1: happy path
-    it("shows the placeholder before Craft, then the generated mfu after", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
-        new Promise((resolve) => {
-          resolveCraft = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      expect(screen.getByText("Run MFU Craft")).toBeInTheDocument();
-      const status = await screen.findByRole("status");
-
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-
-      expect(status).toHaveTextContent("Crafting MFU");
-      expect(ipc.generateStreamingMfu).toHaveBeenCalledWith(1);
-
-      resolveCraft(openedSession({ windows: ONE_WINDOW, mfu: MFU }));
-
-      expect(
-        await screen.findByText("Discussed Q3 roadmap."),
-      ).toBeInTheDocument();
-      expect(screen.getByText("Ship M1 by Friday.")).toBeInTheDocument();
-      expect(screen.queryByText("Run MFU Craft")).not.toBeInTheDocument();
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-    });
-
-    it("ticks an elapsed timer once per second while Crafting MFU", async () => {
-      vi.useFakeTimers({ shouldAdvanceTime: true });
-      try {
-        const user = userEvent.setup({
-          advanceTimers: vi.advanceTimersByTime.bind(vi),
-        });
-        vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-        vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-          openedSession({ windows: ONE_WINDOW }),
-        );
-        vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
-          new Promise(() => {
-            // Never resolves — only the ticking timer is under test here.
-          }),
-        );
-        render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-        await user.click(await screen.findByText("Standup"));
-        const status = await screen.findByRole("status");
-
-        await user.click(
-          await screen.findByRole("button", { name: "Craft MFU" }),
-        );
-        expect(status.querySelector(".wp-status-timer")?.textContent).toBe(
-          "00:00",
-        );
-
-        // Same bleed consideration as the h:mm:ss test above: real wall-clock
-        // folded into the fake clock can add a second or two on a slow,
-        // instrumented runner, so assert a small window rather than an exact
-        // boundary.
-        await vi.advanceTimersByTimeAsync(3000);
-
-        expect(status.querySelector(".wp-status-timer")?.textContent).toMatch(
-          /^00:0[3-9]$/,
-        );
-      } finally {
-        vi.useRealTimers();
-      }
-    }, 60_000);
-
-    // Empty mfu sections are omitted, matching Meeting's rendering
-    it("omits empty mfu sections", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockResolvedValue(
-        openedSession({
-          windows: ONE_WINDOW,
-          mfu: { ...MFU, participants: "" },
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-
-      await screen.findByText("Discussed Q3 roadmap.");
-      expect(screen.queryByText("Participants")).not.toBeInTheDocument();
-    });
-
-    // S-7: mfu persist across reopen
-    it("shows previously generated mfu when reopening a session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW, mfu: MFU }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-      await user.click(await screen.findByText("Standup"));
-
-      expect(
-        await screen.findByText("Discussed Q3 roadmap."),
-      ).toBeInTheDocument();
-      expect(ipc.generateStreamingMfu).not.toHaveBeenCalled();
-    });
-
-    // S-2: failure surfaces in the error banner and the widget
-    it("shows the error banner and MFU Failed on a Craft failure", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue(
-        "no LLM model selected in Settings",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-
-      expect(
-        await screen.findByText(/no LLM model selected in Settings/),
-      ).toBeInTheDocument();
-      await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
-    });
-
-    // MFU Failed persists until the next relevant action, not an auto-timeout
-    it("keeps showing MFU Failed until the next Craft attempt", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockRejectedValueOnce("failed");
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
-
-      // Time passing alone does not clear it — no auto-revert timer.
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(status).toHaveTextContent("MFU Failed");
-
-      vi.mocked(ipc.generateStreamingMfu).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW, mfu: MFU }),
-      );
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-
-      expect(status).not.toHaveTextContent("MFU Failed");
-    });
-
-    // Starting again (here: resuming the open session) also clears a stale
-    // MFU Failed — the id matches SESSION_A's, as a real resume returns.
-    it("clears MFU Failed when starting again", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue("failed");
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 1,
-        title: "Standup",
-        created_at_ms: 100,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
-
-      await user.click(await screen.findByRole("button", { name: "Resume" }));
-
-      expect(ipc.startStreamingSession).toHaveBeenCalledWith(1);
-      expect(status).not.toHaveTextContent("MFU Failed");
-    });
-
-    // Change-hygiene §1: craftFailed is new state introduced by this task —
-    // Delete is a removal path that must clear it too, not just Start/Open.
-    it("clears MFU Failed when deleting the active session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockRejectedValue("failed");
-      vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("MFU Failed"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Delete Standup" }),
-      );
-      await user.click(
-        within(
-          screen.getByRole("alertdialog", { name: "Delete Standup" }),
-        ).getByRole("button", { name: "Delete" }),
-      );
-
-      expect(status).not.toHaveTextContent("MFU Failed");
-    });
-
-    // S-13: same-session double-trigger
-    it("disables Craft while a request is already in flight", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
-        new Promise((resolve) => {
-          resolveCraft = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const craftButton = await screen.findByRole("button", {
-        name: "Craft MFU",
-      });
-
-      await user.click(craftButton);
-      expect(craftButton).toBeDisabled();
-
-      resolveCraft(openedSession({ windows: ONE_WINDOW, mfu: MFU }));
-      await waitFor(() => expect(craftButton).not.toBeDisabled());
-    });
-
-    // S-10: switching sessions during an in-flight Craft
-    it("does not attribute a stale Craft result to a newly opened session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
-        SESSION_A,
-        { ...SESSION_A, id: 2, title: "Design Review" },
-      ]);
-      vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
-        openedSession({
-          id,
-          title: id === 1 ? "Standup" : "Design Review",
-          windows: ONE_WINDOW,
-        }),
-      );
-      let resolveCraft!: (v: StreamingSession) => void;
-      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
-        new Promise((resolve) => {
-          resolveCraft = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-
-      await user.click(await screen.findByText("Design Review"));
-      resolveCraft(
-        openedSession({
-          id: 1,
-          title: "Standup",
-          windows: ONE_WINDOW,
-          mfu: MFU,
-        }),
-      );
-
-      expect(
-        screen.queryByText("Discussed Q3 roadmap."),
-      ).not.toBeInTheDocument();
-      expect(screen.getByText("Run MFU Craft")).toBeInTheDocument();
-    });
-  });
-
-  describe("Prettify", () => {
-    // S-1: happy path
-    it("shows a diff with Accept/Cancel after Prettify, then applies the accepted text", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: [
-            {
-              window_index: 0,
-              start_ms: 0,
-              end_ms: 7000,
-              text: "so like hello there friend",
-              language: "en",
-              outcome_ok: true,
-            },
-          ],
-        }),
-      );
-      let resolvePrettify!: (v: string) => void;
-      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
-        new Promise((resolve) => {
-          resolvePrettify = resolve;
-        }),
-      );
-      vi.mocked(ipc.acceptStreamingPrettify).mockResolvedValue(
-        openedSession({
-          windows: [
-            {
-              window_index: 0,
-              start_ms: 0,
-              end_ms: 7000,
-              text: "so like hello there friend",
-              language: "en",
-              outcome_ok: true,
-            },
-          ],
-          prettified_text: "Hello there, friend.",
-        }),
-      );
-      const { container } = render(
-        <StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />,
-      );
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      expect(status).toHaveTextContent("Prettifying…");
-      expect(ipc.generateStreamingPrettify).toHaveBeenCalledWith(1);
-
-      resolvePrettify("Hello there, friend.");
-      const acceptButton = await screen.findByRole("button", {
-        name: "Accept Prettify",
-      });
-      await screen.findByRole("button", { name: "Cancel Prettify" });
-      expect(container.querySelector(".diff-del")).not.toBeNull();
-      await waitFor(() => expect(status).toHaveTextContent("Ready"));
-
-      await user.click(acceptButton);
-
-      expect(ipc.acceptStreamingPrettify).toHaveBeenCalledWith(
-        1,
-        "Hello there, friend.",
-      );
-      await waitFor(() =>
-        expect(
-          screen.queryByRole("button", { name: "Accept Prettify" }),
-        ).not.toBeInTheDocument(),
-      );
-      expect(
-        await screen.findByText("Hello there, friend."),
-      ).toBeInTheDocument();
-    });
-
-    // S-1 failure path: an Accept persistence error leaves the review visible.
-    it("shows an error when accepting a prettification fails", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
-        "hello there (cleaned)",
-      );
-      vi.mocked(ipc.acceptStreamingPrettify).mockRejectedValue(
-        "could not save prettified transcript",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await user.click(
-        await screen.findByRole("button", { name: "Accept Prettify" }),
-      );
-
-      expect(
-        await screen.findByText("could not save prettified transcript"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByRole("button", { name: "Cancel Prettify" }),
-      ).toBeInTheDocument();
-    });
-
-    // S-2: Cancel discards with no persistence
-    it("Cancel discards the pending review with no backend call", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
-        "hello there (cleaned)",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await screen.findByRole("button", { name: "Accept Prettify" });
-
-      await user.click(
-        await screen.findByRole("button", { name: "Cancel Prettify" }),
-      );
-
-      expect(ipc.acceptStreamingPrettify).not.toHaveBeenCalled();
-      expect(
-        screen.queryByRole("button", { name: "Accept Prettify" }),
-      ).not.toBeInTheDocument();
-      expect(screen.getByText(/hello there/)).toBeInTheDocument();
-    });
-
-    // S-3, EP: text/no-text partition
-    it("disables Prettify when the session has only fail-open windows", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: [
-            {
-              window_index: 0,
-              start_ms: 0,
-              end_ms: 7000,
-              text: "",
-              language: "auto",
-              outcome_ok: false,
-            },
-          ],
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      expect(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      ).toBeDisabled();
-    });
-
-    // S-4, EP: running/stopped partition
-    it("disables Prettify while the session is running", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 2,
-        title: "New Streaming Session",
-        created_at_ms: 200,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByRole("button", { name: "Start" }));
-      await waitFor(() => expect(windowHandler).not.toBeNull());
-      windowHandler!({ ...ONE_WINDOW[0], session_id: 2 });
-
-      expect(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      ).toBeDisabled();
-    });
-
-    // S-5: mutual exclusion with Craft, both directions
-    it("disables Prettify while Craft is in flight, and Craft while Prettify is in flight", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingMfu).mockReturnValue(
-        new Promise(() => {}),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
-        new Promise(() => {}),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      );
-      expect(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      ).toBeDisabled();
-    });
-
-    // S-5, decision-table: the reverse direction of the guard above — a
-    // Prettify request in flight also disables Craft.
-    it("disables Craft while Prettify is in flight", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
-        new Promise(() => {}),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-
-      expect(
-        await screen.findByRole("button", { name: "Craft MFU" }),
-      ).toBeDisabled();
-    });
-
-    // S-6 + S-7: failure surfaces and persists
-    it("shows the error banner and Prettify Failed on failure, persisting until the next action", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockRejectedValue(
-        "no LLM model selected in Settings",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-
-      expect(
-        await screen.findByText(/no LLM model selected in Settings/),
-      ).toBeInTheDocument();
-      await waitFor(() => expect(status).toHaveTextContent("Prettify Failed"));
-
-      await new Promise((resolve) => setTimeout(resolve, 50));
-      expect(status).toHaveTextContent("Prettify Failed");
-    });
-
-    // S-7: cleared by the next Prettify attempt, not by time alone
-    it("clears Prettify Failed on the next successful Prettify attempt", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockRejectedValueOnce("failed");
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("Prettify Failed"));
-
-      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
-        "cleaned text",
-      );
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-
-      expect(status).not.toHaveTextContent("Prettify Failed");
-    });
-
-    // S-7: cleared by starting a new session too
-    // Starting again (here: resuming the open session) also clears a stale
-    // Prettify Failed — the id matches SESSION_A's, as a real resume returns.
-    it("clears Prettify Failed when starting again", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockRejectedValue("failed");
-      vi.mocked(ipc.startStreamingSession).mockResolvedValue({
-        id: 1,
-        title: "Standup",
-        created_at_ms: 100,
-        updated_at_ms: 200,
-        status: "active",
-        translation_enabled: false,
-      });
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("Prettify Failed"));
-
-      await user.click(await screen.findByRole("button", { name: "Resume" }));
-
-      expect(ipc.startStreamingSession).toHaveBeenCalledWith(1);
-      expect(status).not.toHaveTextContent("Prettify Failed");
-    });
-
-    // S-8: delete clears Prettify Failed
-    it("clears Prettify Failed when deleting the active session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockRejectedValue("failed");
-      vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const status = await screen.findByRole("status");
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await waitFor(() => expect(status).toHaveTextContent("Prettify Failed"));
-
-      await user.click(
-        await screen.findByRole("button", { name: "Delete Standup" }),
-      );
-      await user.click(
-        within(
-          screen.getByRole("alertdialog", { name: "Delete Standup" }),
-        ).getByRole("button", { name: "Delete" }),
-      );
-
-      expect(status).not.toHaveTextContent("Prettify Failed");
-    });
-
-    // S-9, decision-table: Prettify-in-flight/not
-    it("disables Prettify while a request is already in flight", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
-        new Promise(() => {}),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      const prettifyButton = await screen.findByRole("button", {
-        name: "Prettify transcript",
-      });
-
-      await user.click(prettifyButton);
-
-      expect(prettifyButton).toBeDisabled();
-    });
-
-    // S-10: cross-session isolation
-    it("does not attribute a stale Prettify result to a newly opened session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
-        SESSION_A,
-        { ...SESSION_A, id: 2, title: "Design Review" },
-      ]);
-      vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
-        openedSession({
-          id,
-          title: id === 1 ? "Standup" : "Design Review",
-          windows: ONE_WINDOW,
-        }),
-      );
-      let resolvePrettify!: (v: string) => void;
-      vi.mocked(ipc.generateStreamingPrettify).mockReturnValue(
-        new Promise((resolve) => {
-          resolvePrettify = resolve;
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-
-      await user.click(await screen.findByText("Design Review"));
-      resolvePrettify("cleaned text");
-
-      expect(
-        screen.queryByRole("button", { name: "Accept Prettify" }),
-      ).not.toBeInTheDocument();
-    });
-
-    // S-19, decision-table: review-pending/not
-    it("disables Prettify while a review is already pending", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
-        "cleaned text",
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await screen.findByRole("button", { name: "Accept Prettify" });
-
-      expect(
-        screen.getByRole("button", { name: "Prettify transcript" }),
-      ).toBeDisabled();
-    });
-
-    // S-20: delete clears a pending review
-    it("clears a pending review when deleting the active session", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      vi.mocked(ipc.generateStreamingPrettify).mockResolvedValue(
-        "cleaned text",
-      );
-      vi.mocked(ipc.deleteStreamingSession).mockResolvedValue(undefined);
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Prettify transcript" }),
-      );
-      await screen.findByRole("button", { name: "Accept Prettify" });
-
-      await user.click(
-        await screen.findByRole("button", { name: "Delete Standup" }),
-      );
-      await user.click(
-        within(
-          screen.getByRole("alertdialog", { name: "Delete Standup" }),
-        ).getByRole("button", { name: "Delete" }),
-      );
-
-      expect(
-        screen.queryByRole("button", { name: "Accept Prettify" }),
-      ).not.toBeInTheDocument();
-    });
-
-    // Accepted text persists across reopen and is used by Copy/Export
-    it("shows a previously accepted prettified text on reopen and uses it for Copy", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: ONE_WINDOW,
-          prettified_text: "Already accepted clean text.",
-        }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-      await user.click(await screen.findByText("Standup"));
-
-      expect(
-        await screen.findByText("Already accepted clean text."),
-      ).toBeInTheDocument();
-
-      await user.click(
-        await screen.findByRole("button", { name: "Copy transcript" }),
-      );
-      expect(writeTextMock).toHaveBeenCalledWith(
-        "Already accepted clean text.",
-      );
-    });
-
-    // S-21: accepted-state Cancel/Revert restores the raw transcript.
-    it("reverts an accepted prettification back to the raw transcript", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: ONE_WINDOW,
-          prettified_text: "Already accepted clean text.",
-        }),
-      );
-      revertPrettifyMock.mockResolvedValue(
-        openedSession({ windows: ONE_WINDOW }),
-      );
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-      await user.click(await screen.findByText("Standup"));
-      expect(
-        await screen.findByText("Already accepted clean text."),
-      ).toBeInTheDocument();
-
-      await user.click(
-        await screen.findByRole("button", { name: "Cancel Prettify" }),
-      );
-
-      expect(revertPrettifyMock).toHaveBeenCalledWith(1);
-      expect(await screen.findByText(/hello there/)).toBeInTheDocument();
-      expect(
-        screen.queryByText("Already accepted clean text."),
-      ).not.toBeInTheDocument();
-    });
-
-    // S-22: revert failure remains visible and does not discard the accepted text.
-    it("shows a revert error and keeps accepted text when the backend rejects", async () => {
-      const user = userEvent.setup();
-      vi.mocked(ipc.listStreamingSessions).mockResolvedValue([SESSION_A]);
-      vi.mocked(ipc.openStreamingSession).mockResolvedValue(
-        openedSession({
-          windows: ONE_WINDOW,
-          prettified_text: "Already accepted clean text.",
-        }),
-      );
-      revertPrettifyMock.mockRejectedValue("could not revert transcript");
-      render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-
-      await user.click(await screen.findByText("Standup"));
-      await user.click(
-        await screen.findByRole("button", { name: "Cancel Prettify" }),
-      );
-
-      expect(
-        await screen.findByText("could not revert transcript"),
-      ).toBeInTheDocument();
-      expect(
-        screen.getByText("Already accepted clean text."),
       ).toBeInTheDocument();
     });
   });

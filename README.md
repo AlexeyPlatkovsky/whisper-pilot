@@ -1,70 +1,88 @@
 # WhisperPilot
 
-WhisperPilot is an offline macOS app for turning local **audio and video
-recordings** — meetings, calls, interviews — into accurate, editable
-transcripts. Drop in a file and get back timestamped text you can correct and
-save, entirely **on-device**: no live capture, no cloud, no network access
-during processing.
+![Version](https://img.shields.io/badge/version-1.20.0-6f55ff?style=flat-square)
+![macOS](https://img.shields.io/badge/platform-macOS%2013%2B-111827?style=flat-square&logo=apple)
+![Local-first](https://img.shields.io/badge/privacy-local--first-0f766e?style=flat-square)
+![License](https://img.shields.io/badge/license-Apache--2.0-2563eb?style=flat-square)
 
-Built for accuracy over speed: because processing runs offline in batch, it
-uses full-file context and larger models than a real-time transcriber could
-afford. Russian is the primary language today, with English and further
-languages planned; the language of each recording is detected automatically.
+WhisperPilot is a macOS app for local transcription. It turns files, live
+system audio, and microphone recordings into editable transcripts while keeping
+the core transcription and AI workflows on your Mac.
 
-## Features
+See the [version roadmap](ROADMAP.md) for the planned `v1.30`, `v1.40`, and
+`v1.50` milestones.
 
-- **Local file transcription** — pick any local audio or video file and
-  transcribe it end-to-end on-device.
-- **Accurate Russian transcription** — full-file Whisper decoding (Metal
-  acceleration) tuned for quality over real-time speed. The spoken language is
-  detected automatically; there is nothing to configure.
-- **Editable, timestamped transcript** — every segment shows its start time
-  and can be corrected in place.
-- **Save to a text file** — export the current (edited) transcript whenever
-  you're done.
-- **Clear error handling** — missing dependencies or models surface as
-  readable messages instead of crashes.
+## Three ways to work
 
-WhisperPilot is pre-1.0 and under active development. A persisted meeting
-library (reopen, rename, delete) and speaker-attributed transcripts (colored
-per-speaker chat) are implemented. Planned next: auto-saved edits, a
-source-missing state for meetings whose file has moved, Markdown/plain-text
-export, and — after that — local AI-generated meeting notes.
+### Transcription
+
+Import an audio or video file, transcribe it locally, edit the result, identify
+speakers, create structured notes, and export the finished text.
+
+![Transcription workspace](images/transcription.jpg)
+
+### Meeting
+
+Listen to system audio during a live meeting, follow the transcript as it
+arrives, and optionally show a paired translation. Completed sessions remain
+in the local library for later editing, notes, and export.
+
+![Meeting workspace with translation](images/meeting%20with%20transpation.jpg)
+
+### Recorder
+
+Capture your microphone into durable local audio, continue a recording later,
+review the transcript as it settles, polish it in place, and export either text
+or WAV audio.
+
+![Recorder workspace](images/records.jpg)
+
+## Local models and settings
+
+Choose the local transcription and text models that fit your hardware. The app
+uses Whisper large-v3-turbo by default and also supports Qwen3-ASR 1.7B Q8_0
+for Transcription, Meeting, and Recorder. Appearance and status colors are
+configured in Settings.
+
+![Model settings](images/settings%20models.jpg)
+
+![Appearance settings](images/settings%20colors.jpg)
 
 ## Requirements
 
-- macOS on Apple Silicon (macOS 13 or later)
-- [`ffmpeg`](https://ffmpeg.org/) installed and available on your `PATH`: 
-```
-brew install ffmpeg
-```
+- Apple Silicon Mac running macOS 13 or later
+- [`ffmpeg`](https://ffmpeg.org/) on `PATH`:
 
-## Running WhisperPilot
+  ```sh
+  brew install ffmpeg
+  ```
 
-WhisperPilot isn't distributed as a packaged download yet — for now, run it
-from source:
+## Run from source
+
+WhisperPilot is not distributed as a packaged download yet.
 
 ```sh
 npm install
 npm run tauri:dev
 ```
 
-The first run compiles the local Whisper engine (Metal-accelerated), so it
-takes longer than subsequent launches. See
-[`docs/development.md`](docs/development.md) for the full developer guide.
+The first run compiles the Metal-accelerated local Whisper engine. See the
+[developer guide](docs/development.md) for setup, validation, and packaging.
 
-## Build the app
-```
+## Build
+
+```sh
 npx tauri build
 ```
 
-The output goes to `src-tauri/target/release/bundle/dmg/`
+The DMG is written under `src-tauri/target/release/bundle/dmg/`.
 
-To be able to run the app in any Macbook, add app to verified list:
-```
-xattr -dr com.apple.quarantine /Applications/WhisperPilot.app
-```
+## Privacy
+
+Your transcripts, Recorder audio, model files, and local AI work stay on your
+Mac. See the [privacy boundary](docs/architecture/desktop.md#security-and-privacy)
+for the complete technical description.
 
 ## License
 
-Apache License 2.0 — see [`LICENSE`](LICENSE).
+[Apache License 2.0](LICENSE)

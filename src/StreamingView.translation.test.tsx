@@ -1,8 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StreamingView } from "./StreamingView";
 import * as ipc from "./ipc";
+import { readCssBundle } from "./test/readCssBundle";
 import type {
   StreamingSession,
   StreamingSessionSummary,
@@ -14,24 +21,31 @@ import type {
 // target-language select) and the two-column paired-row transcript grid,
 // mirroring the inline vi.mock idiom of StreamingView.test.tsx /
 // StreamingView.mfuToggle.test.tsx. WP-103 rewrote translation from one call
-// per *paragraph* to one call per *window*: nothing translates until the
-// session has at least 2 windows, windows 0 and 1 then fire back to back
-// (window 0 with no context, window 1 with window 0's translation), and
-// every window after that translates alone with a rolling up-to-2-window
-// context — all through the same single-flight queue, strictly in
-// increasing window_index order.
+// per *paragraph* to one call per *window*: window 0 translates immediately
+// with no context, window 1 follows with window 0's translation, and every
+// later window translates alone with a rolling up-to-2-window context — all
+// through the same single-flight queue, strictly in increasing window_index
+// order.
 
 type Handler<T> = (payload: T) => void;
 
 let windowHandler: Handler<
   ipc.StreamingWindow & { session_id: number }
 > | null = null;
+let partialHandler: Handler<ipc.StreamingPartial> | null = null;
+let liveCaptureHandler: Handler<ipc.LiveCaptureSnapshot> | null = null;
+let liveCaptureRevision = 0;
+
+const { previewStreamingTranslationMock } = vi.hoisted(() => ({
+  previewStreamingTranslationMock: vi.fn(),
+}));
 
 vi.mock("./ipc", () => ({
   listStreamingSessions: vi.fn(async () => []),
   openStreamingSession: vi.fn(),
   renameStreamingSession: vi.fn(),
   deleteStreamingSession: vi.fn(),
+  clearStreamingSession: vi.fn(),
   createStreamingSession: vi.fn(),
   startStreamingSession: vi.fn(),
   stopStreamingSession: vi.fn(),
@@ -40,8 +54,10 @@ vi.mock("./ipc", () => ({
   acceptStreamingPrettify: vi.fn(),
   revertStreamingPrettify: vi.fn(),
   translateStreamingWindow: vi.fn(async () => "Translated."),
+  previewStreamingTranslation: previewStreamingTranslationMock,
   listStreamingTranslations: vi.fn(async () => []),
   setStreamingTranslationEnabled: vi.fn(),
+  setStreamingTranslationTargetLanguage: vi.fn(),
   onStreamingWindow: vi.fn(async (handler: Handler<unknown>) => {
     windowHandler = handler as Handler<
       ipc.StreamingWindow & { session_id: number }
@@ -52,6 +68,27 @@ vi.mock("./ipc", () => ({
   }),
   onStreamingSources: vi.fn(async () => () => {}),
   onStreamingSessionEnded: vi.fn(async () => () => {}),
+  onStreamingPartial: vi.fn(async (handler: Handler<unknown>) => {
+    partialHandler = handler as Handler<ipc.StreamingPartial>;
+    return () => {
+      partialHandler = null;
+    };
+  }),
+  onStreamingError: vi.fn(async () => () => {}),
+  getLiveCaptureSnapshot: vi.fn(async () => ({
+    phase: "idle" as const,
+    session_id: null,
+    source: null,
+    generation: 0,
+    revision: 0,
+    error: null,
+  })),
+  onLiveCaptureState: vi.fn(async (handler: Handler<unknown>) => {
+    liveCaptureHandler = handler as Handler<ipc.LiveCaptureSnapshot>;
+    return () => {
+      liveCaptureHandler = null;
+    };
+  }),
   saveTextDialog: vi.fn(async () => null),
   getSettings: vi.fn(async () => ({
     theme: "system",
@@ -62,6 +99,24 @@ vi.mock("./ipc", () => ({
   })),
   setSetting: vi.fn(),
   listTaskModels: vi.fn(async () => [LLM_MODEL_READY]),
+  getCloudProviderConfig: vi.fn(async () => ({
+    selected_provider: "deepgram",
+    providers: [
+      { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: false },
+      {
+        id: "assemblyai",
+        name: "AssemblyAI",
+        model: "Universal-3.5 Pro",
+        configured: false,
+      },
+      {
+        id: "openai",
+        name: "OpenAI",
+        model: "GPT Transcribe",
+        configured: false,
+      },
+    ],
+  })),
 }));
 
 const LLM_MODEL_READY: TaskModel = {
@@ -102,11 +157,9 @@ function openedSession(
   };
 }
 
-/** `count` windows of monotonically increasing index, each short enough that
- * only paragraphs.ts's window-count cap (4) closes a paragraph — never the
- * length/sentence heuristic — so paragraph boundaries (used for on-screen
- * display grouping and the paragraph-level retry affordance) are
- * deterministic regardless of text content. Default language is "en" — the
+/** `count` windows of monotonically increasing index. Sentence-closed fixture
+ * groups below make paragraph boundaries deterministic for the on-screen
+ * display and paragraph-level retry affordance. Default language is "en" — the
  * mirror image of the "ru" target-language default, so windows built with no
  * override exercise real translation instead of the same-language mirror
  * path. */
@@ -142,10 +195,14 @@ function paragraphSourceText(windows: StreamingWindow[]): string {
   return windows.map((w) => w.text).join(" ");
 }
 
-// Two full (4-window, WP-100's lowered cap) English paragraphs, closed
-// regardless of running state.
-const PARAGRAPH_A = makeWindows(4, { startIndex: 0 });
-const PARAGRAPH_B = makeWindows(4, { startIndex: 4 });
+// Two sentence-closed English paragraphs. Acoustic window count no longer
+// creates a semantic paragraph boundary.
+const PARAGRAPH_A = makeWindows(4, { startIndex: 0 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
+const PARAGRAPH_B = makeWindows(4, { startIndex: 4 }).map((window, index) =>
+  index === 3 ? { ...window, text: `${window.text}.` } : window,
+);
 const SOURCE_A = paragraphSourceText(PARAGRAPH_A);
 const SOURCE_B = paragraphSourceText(PARAGRAPH_B);
 const TWO_PARAGRAPHS = [...PARAGRAPH_A, ...PARAGRAPH_B];
@@ -226,21 +283,60 @@ function findTargetLanguageSelect() {
 async function startRunningSessionWithWindows(
   user: ReturnType<typeof userEvent.setup>,
   windows: StreamingWindow[],
+  engine: "local" | "cloud" = "local",
 ) {
+  if (engine === "cloud") {
+    vi.mocked(ipc.getCloudProviderConfig).mockResolvedValue({
+      selected_provider: "deepgram",
+      providers: [
+        { id: "deepgram", name: "Deepgram", model: "Nova-3", configured: true },
+      ],
+    });
+  }
   vi.mocked(ipc.startStreamingSession).mockResolvedValue(ACTIVE_SESSION_A);
   render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
-  await user.click(await screen.findByRole("button", { name: "Start" }));
-  await waitFor(() => expect(windowHandler).not.toBeNull());
   const toggle = await findTranslationSwitch();
   await user.click(toggle);
-  for (const w of windows) {
-    windowHandler!({ ...w, session_id: 1 });
+  if (engine === "cloud") {
+    await user.click(
+      screen.getByRole("button", { name: "Use cloud transcription" }),
+    );
   }
+  await user.click(await screen.findByRole("button", { name: "Start" }));
+  liveCaptureRevision += 1;
+  act(() => {
+    liveCaptureHandler!({
+      phase: "capturing",
+      session_id: ACTIVE_SESSION_A.id,
+      source: "streaming",
+      generation: 1,
+      revision: liveCaptureRevision,
+      error: null,
+    });
+  });
+  await waitFor(() => expect(windowHandler).not.toBeNull());
+  expect(toggle).toHaveAttribute("aria-checked", "true");
+  expect(toggle).toBeDisabled();
+  act(() => {
+    for (const w of windows) {
+      windowHandler!({ ...w, session_id: 1 });
+    }
+  });
+}
+
+function startCloudStreamingSessionWithWindows(
+  user: ReturnType<typeof userEvent.setup>,
+  windows: StreamingWindow[],
+) {
+  return startRunningSessionWithWindows(user, windows, "cloud");
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   windowHandler = null;
+  partialHandler = null;
+  liveCaptureHandler = null;
+  liveCaptureRevision = 0;
   vi.mocked(ipc.listStreamingSessions).mockResolvedValue([]);
   vi.mocked(ipc.listTaskModels).mockResolvedValue([LLM_MODEL_READY]);
   vi.mocked(ipc.getSettings).mockResolvedValue({
@@ -252,10 +348,11 @@ beforeEach(() => {
   });
   vi.mocked(ipc.listStreamingTranslations).mockResolvedValue([]);
   vi.mocked(ipc.setStreamingTranslationEnabled).mockResolvedValue(undefined);
+  previewStreamingTranslationMock.mockResolvedValue("Draft preview.");
 });
 
 describe("StreamingView — Live Translation header control", () => {
-  it("renders label + switch + target-language select in a middle slot between the title group and the action cluster", async () => {
+  it("renders the languages icon + switch + target-language select in a middle slot between the title group and the action cluster", async () => {
     const user = userEvent.setup();
     await openSessionWithWindows(user, TWO_PARAGRAPHS);
 
@@ -265,7 +362,8 @@ describe("StreamingView — Live Translation header control", () => {
     const control = header!.querySelector(".wp-translation-control");
     const actions = header!.querySelector(".wp-transcript-actions");
     expect(control).not.toBeNull();
-    expect(control!.textContent).toContain("Live Translation");
+    expect(control!.textContent).not.toContain("Live Translation");
+    expect(control!.querySelector("svg")).not.toBeNull();
 
     const children = Array.from(header!.children);
     expect(children.indexOf(titleGroup as Element)).toBeLessThan(
@@ -293,6 +391,12 @@ describe("StreamingView — Live Translation header control", () => {
     const select = findTargetLanguageSelect();
     select.focus();
     expect(select).toHaveFocus();
+
+    await user.selectOptions(select, "en");
+    expect(ipc.setStreamingTranslationTargetLanguage).toHaveBeenCalledWith(
+      1,
+      "en",
+    );
   });
 });
 
@@ -333,25 +437,348 @@ describe("StreamingView — Live Translation split grid", () => {
     expect(document.querySelectorAll(".streaming-paragraph")).toHaveLength(2);
     expect(findTargetLanguageSelect()).not.toBeDisabled();
   });
+
+  it("locks paired-text selection to the source or target column where the drag starts", async () => {
+    const user = userEvent.setup();
+    await openSessionWithWindows(user, TWO_PARAGRAPHS);
+    await user.click(await findTranslationSwitch());
+    await screen.findByText(SOURCE_A);
+
+    const grid = document.querySelector(".wp-translation-grid");
+    const firstRowColumns = document
+      .querySelector(".wp-translation-row")
+      ?.querySelectorAll(":scope > .wp-translation-col");
+    expect(grid).not.toBeNull();
+    expect(firstRowColumns).toHaveLength(2);
+
+    fireEvent.pointerDown(firstRowColumns![0]);
+    expect(grid).toHaveAttribute("data-selection-column", "source");
+
+    fireEvent.pointerDown(firstRowColumns![1]);
+    expect(grid).toHaveAttribute("data-selection-column", "target");
+
+    const styles = readCssBundle();
+    for (const selected of ["source", "target"]) {
+      const lockRules = styles.match(
+        new RegExp(
+          `[^{}]*data-selection-column=["']${selected}["'][^{}]*\\{[^}]*user-select:\\s*none;[^}]*\\}`,
+          "gs",
+        ),
+      );
+      expect(
+        lockRules,
+        `${selected} must disable the opposite column`,
+      ).not.toBeNull();
+    }
+  });
+
+  it("renders a live partial in the Original column while translation is enabled", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.translateStreamingWindow).mockReturnValue(
+      new Promise(() => {}),
+    );
+    await startRunningSessionWithWindows(
+      user,
+      makeWindows(1, { startIndex: 0, language: "ru" }),
+    );
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Ещё не законченная фраза",
+      });
+    });
+
+    const partial = document.querySelector(".wp-streaming-partial");
+    expect(partial).not.toBeNull();
+    const originalColumn = partial!.closest(".wp-translation-col");
+    expect(originalColumn).not.toBeNull();
+    const row = originalColumn!.closest(".wp-translation-columns");
+    const columns = Array.from(
+      row!.querySelectorAll(":scope > .wp-translation-col"),
+    );
+    expect(columns[0]).toBe(originalColumn);
+  });
+
+  it("keeps a failed decode unavailable on both sides without enqueuing translation", async () => {
+    const user = userEvent.setup();
+    await startRunningSessionWithWindows(user, []);
+
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { language: "en", outcomeOk: false })[0],
+        session_id: 1,
+      });
+    });
+    await act(async () => flush());
+
+    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+    const row = document.querySelector(".wp-translation-row");
+    const columns = row?.querySelectorAll(":scope > .wp-translation-col");
+    expect(columns?.[0]?.textContent).toContain("[unavailable]");
+    expect(columns?.[1]?.textContent).toContain("[unavailable]");
+    expect(columns?.[1]?.textContent).not.toMatch(/Pending|Translating/);
+  });
 });
 
-// WP-103: translation is per-window, gated on the session having at least 2
-// windows, and always processed strictly in increasing window_index order
-// through the single-flight queue.
-describe("StreamingView — Live Translation per-window triggering (WP-103)", () => {
-  it("translates nothing at all while the session has fewer than 2 windows", async () => {
+describe("StreamingView — provisional Live Translation", () => {
+  it("does not send a local Whisper/Qwen partial to the LLM and keeps the finalization wait stable", async () => {
     const user = userEvent.setup();
+    previewStreamingTranslationMock.mockReturnValue(new Promise(() => {}));
+    await startRunningSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Local decoder hypothesis",
+      });
+    });
+
+    expect(previewStreamingTranslationMock).not.toHaveBeenCalled();
+    const row = document.querySelector(".wp-translation-row--partial");
+    expect(row?.textContent).toContain("Waiting for final transcript…");
+    expect(row?.textContent).not.toContain("Translating…");
+  });
+
+  it("keeps the whole source hypothesis italic until a committed window replaces it", async () => {
+    const user = userEvent.setup();
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Still provisional",
+      });
+    });
+    await waitFor(() =>
+      expect(screen.getByText("Still provisional")).toBeInTheDocument(),
+    );
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Still provisional",
+      });
+    });
+
+    const source = document.querySelector(
+      ".wp-translation-row--partial .wp-translation-col:first-child",
+    );
+    expect(source?.querySelector("em")).toHaveTextContent("Still provisional");
+    expect(source?.querySelector(".wp-streaming-partial-stable")).toBeNull();
+  });
+
+  it("renders a translated partial as italic preview in the right column", async () => {
+    const user = userEvent.setup();
+    previewStreamingTranslationMock.mockResolvedValue("Черновой перевод.");
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "An unfinished live sentence",
+      });
+    });
+
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledWith(
+        "ru",
+        "An unfinished live sentence",
+        undefined,
+      ),
+    );
+    const row = document.querySelector(".wp-translation-row--partial");
+    expect(row).not.toBeNull();
+    const columns = row!.querySelectorAll(":scope > .wp-translation-col");
+    const preview = await waitFor(() => {
+      const value = Array.from(columns[1].querySelectorAll("em")).find(
+        (element) => element.textContent === "Черновой перевод.",
+      );
+      expect(value).toBeDefined();
+      return value!;
+    });
+    expect(preview.tagName).toBe("EM");
+    expect(columns[1]).not.toHaveAttribute("aria-hidden");
+  });
+
+  it("coalesces partial updates while one preview is in flight and translates only the latest pending text next", async () => {
+    const first = deferred<string>();
+    previewStreamingTranslationMock
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce("Latest draft.");
+    const user = userEvent.setup();
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "First partial" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledWith(
+        "ru",
+        "First partial",
+        undefined,
+      ),
+    );
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "Skipped middle" });
+      partialHandler!({ session_id: 1, item_id: null, text: "Latest partial" });
+    });
+    expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => first.resolve("Stale draft."));
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenNthCalledWith(
+        2,
+        "ru",
+        "Latest partial",
+        undefined,
+      ),
+    );
+    expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("keeps the last usable translated draft visible while a newer draft is translating", async () => {
+    const first = deferred<string>();
+    const second = deferred<string>();
+    previewStreamingTranslationMock
+      .mockReturnValueOnce(first.promise)
+      .mockReturnValueOnce(second.promise);
+    const user = userEvent.setup();
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "First partial" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(1),
+    );
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "First partial extended",
+      });
+    });
+
+    await act(async () => first.resolve("Первый черновик."));
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledTimes(2),
+    );
+
+    expect(screen.getByText("Первый черновик.")).toBeInTheDocument();
+    expect(screen.queryByText("Draft translation…")).not.toBeInTheDocument();
+  });
+
+  it("lets a committed translation replace a preview and ignores a late preview result", async () => {
+    const preview = deferred<string>();
+    previewStreamingTranslationMock.mockReturnValue(preview.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+      "Final committed translation.",
+    );
+    const user = userEvent.setup();
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({
+        session_id: 1,
+        item_id: null,
+        text: "Sentence being recognized",
+      });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledOnce(),
+    );
+
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { prefix: "Sentence committed" })[0],
+        session_id: 1,
+      });
+    });
+    expect(
+      await screen.findByText("Final committed translation."),
+    ).toBeInTheDocument();
+
+    await act(async () => preview.resolve("Late stale preview."));
+    await act(async () => flush());
+
+    expect(screen.queryByText("Late stale preview.")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Final committed translation."),
+    ).toBeInTheDocument();
+  });
+
+  it("does not attach preview A to partial B after A was committed", async () => {
+    const previewA = deferred<string>();
+    previewStreamingTranslationMock.mockReturnValue(previewA.promise);
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+      "Committed translation A.",
+    );
+    const user = userEvent.setup();
+    await startCloudStreamingSessionWithWindows(user, []);
+    await waitFor(() => expect(partialHandler).not.toBeNull());
+
+    act(() => {
+      partialHandler!({ session_id: 1, item_id: null, text: "Partial A" });
+    });
+    await waitFor(() =>
+      expect(previewStreamingTranslationMock).toHaveBeenCalledOnce(),
+    );
+    act(() => {
+      windowHandler!({
+        ...makeWindows(1, { prefix: "Committed A" })[0],
+        session_id: 1,
+      });
+      partialHandler!({ session_id: 1, item_id: null, text: "Partial B" });
+    });
+
+    await act(async () => previewA.resolve("Stale preview A."));
+    await act(async () => flush());
+
+    expect(screen.queryByText("Stale preview A.")).not.toBeInTheDocument();
+  });
+});
+
+// WP-103/WP-113: translation is per-window and always processed strictly in
+// increasing window_index order through the single-flight queue. A committed
+// live window must not wait for a later window or for capture to stop.
+describe("StreamingView — Live Translation per-window triggering (WP-103)", () => {
+  it("@WP-113-live-translation: translates the first newly committed window while capture remains active", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.translateStreamingWindow).mockResolvedValue(
+      "Translated live window.",
+    );
     await startRunningSessionWithWindows(
       user,
       makeWindows(1, { startIndex: 0 }),
     );
 
-    await flush();
-
-    expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        0,
+        "ru",
+        "Слово0",
+        undefined,
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Stop" })).not.toBeDisabled();
+    expect(ipc.stopStreamingSession).not.toHaveBeenCalled();
   });
 
-  it("@WP-103-bootstrap: once the 2nd window exists, window 0 and window 1 both translate back to back — window 0 with no context, then window 1 with window 0's translation as context", async () => {
+  it("@WP-103-bootstrap: window 0 starts immediately, then window 1 follows with window 0's translation as context", async () => {
     const user = userEvent.setup();
     const w0 = deferred<string>();
     vi.mocked(ipc.translateStreamingWindow).mockImplementation(
@@ -661,7 +1088,7 @@ describe("StreamingView — Live Translation failure and retry", () => {
         1,
         7,
         "ru",
-        "Слово7",
+        "Слово7.",
         expect.any(String),
       ),
     );
@@ -851,6 +1278,57 @@ describe("StreamingView — Live Translation edge cases", () => {
     await flush();
     expect(ipc.translateStreamingWindow).toHaveBeenCalledTimes(1);
   });
+
+  it("an old completion dequeues a new session only with that session's target language", async () => {
+    const user = userEvent.setup();
+    const first = deferred<string>();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      SESSION_A,
+      { ...SESSION_A, id: 2, title: "Design Review" },
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockImplementation(async (id) =>
+      openedSession({
+        id,
+        title: id === 1 ? "Standup" : "Design Review",
+        windows:
+          id === 1
+            ? makeWindows(1, { prefix: "Old" })
+            : makeWindows(1, { prefix: "New", language: "ru" }),
+        translation_enabled: id === 2,
+        translation_target_language: id === 2 ? "en" : "ru",
+      }),
+    );
+    vi.mocked(ipc.translateStreamingWindow)
+      .mockReturnValueOnce(first.promise)
+      .mockResolvedValueOnce("New translation.");
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+    await user.click(await findTranslationSwitch());
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenCalledWith(
+        1,
+        0,
+        "ru",
+        "Old0",
+        undefined,
+      ),
+    );
+
+    await user.click(await screen.findByText("Design Review"));
+    await waitFor(() => expect(findTargetLanguageSelect()).toHaveValue("en"));
+    first.resolve("Discarded old translation.");
+
+    await waitFor(() =>
+      expect(ipc.translateStreamingWindow).toHaveBeenLastCalledWith(
+        2,
+        0,
+        "en",
+        "New0",
+        undefined,
+      ),
+    );
+  });
 });
 
 // WP-101: two related bugs from a live run — (1) pressing Start to resume
@@ -894,7 +1372,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     );
   });
 
-  it("starting a brand-new session (resumeId null) still resets Live Translation to off", async () => {
+  it("starting a brand-new session preserves a Live Translation choice made before capture", async () => {
     const user = userEvent.setup();
     vi.mocked(ipc.startStreamingSession).mockResolvedValue({
       id: 9,
@@ -906,10 +1384,23 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     });
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    await user.click(await screen.findByRole("button", { name: "Start" }));
-
     const toggle = await findTranslationSwitch();
-    expect(toggle).toHaveAttribute("aria-checked", "false");
+    await user.click(toggle);
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    liveCaptureRevision += 1;
+    act(() => {
+      liveCaptureHandler!({
+        phase: "capturing",
+        session_id: 9,
+        source: "streaming",
+        generation: 1,
+        revision: liveCaptureRevision,
+        error: null,
+      });
+    });
+
+    expect(toggle).toHaveAttribute("aria-checked", "true");
+    await waitFor(() => expect(toggle).toBeDisabled());
   });
 
   it("opening a session whose Live Translation was left on restores the switch to on, with no user action", async () => {
@@ -924,6 +1415,27 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
 
     const toggle = await findTranslationSwitch();
     expect(toggle).toHaveAttribute("aria-checked", "true");
+  });
+
+  it("restores the stopped session's persisted English translation target instead of reopening it as Russian", async () => {
+    const user = userEvent.setup();
+    vi.mocked(ipc.listStreamingSessions).mockResolvedValue([
+      { ...SESSION_A, translation_enabled: true },
+    ]);
+    vi.mocked(ipc.openStreamingSession).mockResolvedValue({
+      ...openedSession({ translation_enabled: true }),
+      // The UI seam intentionally describes the missing persistence field:
+      // the current DTO ignores it and falls back to the component's `ru`.
+      translation_target_language: "en",
+    } as StreamingSession & { translation_target_language: "en" | "ru" });
+    render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
+
+    await user.click(await screen.findByText("Standup"));
+
+    await waitFor(() => expect(findTargetLanguageSelect()).toHaveValue("en"));
+    await waitFor(() =>
+      expect(ipc.listStreamingTranslations).toHaveBeenCalledWith(1, "en"),
+    );
   });
 
   it("opening a session whose Live Translation was left off restores the switch to off", async () => {
@@ -1011,7 +1523,7 @@ describe("StreamingView — Live Translation session-lifecycle persistence (WP-1
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
     await user.click(
-      await screen.findByRole("button", { name: "New streaming session" }),
+      await screen.findByRole("button", { name: "New meeting" }),
     );
 
     const toggle = await findTranslationSwitch();
@@ -1068,7 +1580,8 @@ describe("StreamingView — Live Translation persisted-cache reload race (WP-102
     );
     render(<StreamingView onClose={vi.fn()} onOpenSettings={vi.fn()} />);
 
-    await user.click(await screen.findByText("Standup"));
+    // The first persisted session opens automatically once capture lifecycle
+    // state is hydrated; do not click it again and create a duplicate open.
     await expectTranslatedCellText("Слово0 Слово1", "Cached W0. Cached W1.");
     expect(ipc.translateStreamingWindow).not.toHaveBeenCalled();
 

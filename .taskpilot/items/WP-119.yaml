@@ -1,0 +1,36 @@
+schema_version: 1
+id: WP-119
+title: Persist and recover Recorder sessions
+priority: high
+type: task
+status: done
+created_at: '2026-09-11T19:37:36Z'
+updated_at: '2026-09-12T15:44:08Z'
+parent_id: WP-109
+tags:
+- recorder
+- phase-2
+- persistence
+description: 'Implement Recorder persistence according to ADR-017. Sessions, committed transcript segments, and app-owned microphone audio are stored independently from Meeting and Streaming while using compatible editing, copy, and export shapes. Write mono signed-16 PCM incrementally to a crash-tolerant <session>.caf.partial at the actual input-device sample rate, finalize it atomically to .caf, and reconcile interrupted filesystem/database states on launch.
+
+
+  Happy path: Start creates one session after preflight, committed segments and audio are incrementally durable, Stop completes tail ASR then flush/fsync/close then atomic audio rename then database completion, and reopening restores the exact transcript plus playable native-rate audio. Primary failure behavior: disk-full, database failure, device interruption, or process termination preserves the last safe state, marks recovery status, and never presents a corrupt file as complete. Edge cases include zero-length sessions, duplicate finalization, crash at every file/database boundary, final .caf with finalizing row, .caf.partial with completed row, failed owned-file deletion, rename, and migration from an older database.
+
+
+  Scenario: Given a recording has committed text and audio before an app crash, when WhisperPilot relaunches, then it discovers the interrupted session, preserves every durable segment and audio frame, and offers Recover or Delete. Given session deletion succeeds, when app-owned audio exists, then database rows and owned audio are removed together; a failed cleanup remains visible as Delete failed / Retry.
+
+
+  Target surfaces: a new recorder store and migrations, coordinator finalization hooks, native-rate CAF writer/reader and cleanup module, DTOs and commands, src/ipc.ts, history/playback/WAV export integration, and focused Rust/Vitest tests.
+
+
+  Constraints: local-only storage; mono PCM16 at the actual capture rate; no artificial upsampling to 48 kHz; at most one second of unflushed audio; atomic writes and schema migrations; no transcript/audio in logs; exported files and user source files are never deleted; persistence must not reuse Streaming window assumptions that conflict with partial revisions.'
+dod:
+- Recorder sessions and stable segment identifiers migrate, create, update, reopen, rename and delete independently of Meeting and Streaming tables, with migration and cascade tests.
+- Committed text is incrementally durable and partial text is never misrepresented as committed after relaunch.
+- The approved raw-audio contract is implemented end to end, including atomic finalization, playback/export metadata, disk-full behavior and cleanup of only app-owned artifacts.
+- Crash points before and after each file and database commit recover to an explicitly tested state without corrupting existing sessions.
+- Export/copy uses the approved transcript representation, and Rust/frontend validation plus storage and architecture documentation pass.
+links:
+  blocks:
+  - WP-120
+created_by: Codex
