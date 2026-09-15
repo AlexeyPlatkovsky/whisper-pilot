@@ -52,6 +52,10 @@ function createRepository() {
   );
   writeFileSync(join(root, "package.json"), '{"version":"1.10.0"}\n');
   writeFileSync(
+    join(root, "README.md"),
+    "![Version](https://img.shields.io/badge/version-1.10.0-purple)\n",
+  );
+  writeFileSync(
     join(root, "package-lock.json"),
     '{"version":"1.10.0","packages":{"":{"version":"1.10.0"}}}\n',
   );
@@ -77,11 +81,19 @@ function createRepository() {
   return root;
 }
 
-function runHook(root) {
-  return command(root, "bash", [join(root, ".githooks/pre-commit")]);
+function runHook(root, env = {}) {
+  return spawnSync("bash", [join(root, ".githooks/pre-commit")], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, ...env },
+  });
 }
 
 function writeVersion(root, version) {
+  writeFileSync(
+    join(root, "README.md"),
+    `![Version](https://img.shields.io/badge/version-${version}-purple)\n`,
+  );
   writeFileSync(
     join(root, "src-tauri/Cargo.toml"),
     `[package]\nversion = "${version}"\n`,
@@ -104,7 +116,7 @@ function writeVersion(root, version) {
   );
 }
 
-test("allows a product commit without changing the release version", () => {
+test("rejects a product commit without a patch or feature bump", () => {
   const root = createRepository();
   try {
     writeFileSync(join(root, "product.txt"), "ordinary product change\n");
@@ -112,7 +124,8 @@ test("allows a product commit without changing the release version", () => {
 
     const result = runHook(root);
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /commits must bump the version/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -135,7 +148,7 @@ test("rejects an oversized staged production source file", () => {
   }
 });
 
-test("allows non-version manifest changes without a release bump", () => {
+test("rejects non-version manifest changes without a release bump", () => {
   const root = createRepository();
   try {
     writeFileSync(
@@ -149,7 +162,8 @@ test("allows non-version manifest changes without a release bump", () => {
 
     const result = runHook(root);
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /commits must bump the version/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -179,6 +193,7 @@ test("allows a synchronized release-version change when every source is staged",
         "add",
         "package.json",
         "package-lock.json",
+        "README.md",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/tauri.conf.json",
@@ -194,6 +209,82 @@ test("allows a synchronized release-version change when every source is staged",
   }
 });
 
+test("allows the next feature version for a medium product change", () => {
+  const root = createRepository();
+  try {
+    writeVersion(root, "1.11.0");
+    assert.equal(command(root, "git", ["add", "."]).status, 0);
+
+    const result = runHook(root);
+
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a release bump without explicit release authorization", () => {
+  const root = createRepository();
+  try {
+    writeVersion(root, "2.0.0");
+    assert.equal(command(root, "git", ["add", "."]).status, 0);
+
+    const result = runHook(root);
+
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /release bump requires explicit authorization/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("allows a release bump with explicit release authorization", () => {
+  const root = createRepository();
+  try {
+    writeVersion(root, "2.0.0");
+    assert.equal(command(root, "git", ["add", "."]).status, 0);
+
+    const result = runHook(root, { WHISPERPILOT_RELEASE_AUTHORIZED: "1" });
+
+    assert.equal(result.status, 0, result.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+for (const invalidRelease of ["2.1.0", "3.0.0"]) {
+  test(`rejects authorized non-next release ${invalidRelease}`, () => {
+    const root = createRepository();
+    try {
+      writeVersion(root, invalidRelease);
+      assert.equal(command(root, "git", ["add", "."]).status, 0);
+
+      const result = runHook(root, { WHISPERPILOT_RELEASE_AUTHORIZED: "1" });
+
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /release must be exactly 2\.0\.0/i);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+}
+
+test("allows an unchanged version only for an authorized amend", () => {
+  const root = createRepository();
+  try {
+    writeFileSync(join(root, "product.txt"), "amended content\n");
+    assert.equal(command(root, "git", ["add", "product.txt"]).status, 0);
+
+    const ordinary = runHook(root);
+    const amend = runHook(root, { WHISPERPILOT_VERSION_AMEND: "1" });
+
+    assert.notEqual(ordinary.status, 0);
+    assert.equal(amend.status, 0, amend.stderr);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects inconsistent versions even when every version source is staged", () => {
   const root = createRepository();
   try {
@@ -204,6 +295,7 @@ test("rejects inconsistent versions even when every version source is staged", (
         "add",
         "package.json",
         "package-lock.json",
+        "README.md",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/tauri.conf.json",
@@ -233,6 +325,7 @@ test("rejects a stale staged package-lock root package version", () => {
         "add",
         "package.json",
         "package-lock.json",
+        "README.md",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/tauri.conf.json",
@@ -258,6 +351,7 @@ test("validates the staged snapshot rather than unstaged manifest edits", () => 
         "add",
         "package.json",
         "package-lock.json",
+        "README.md",
         "src-tauri/Cargo.toml",
         "src-tauri/Cargo.lock",
         "src-tauri/tauri.conf.json",
@@ -274,7 +368,7 @@ test("validates the staged snapshot rather than unstaged manifest edits", () => 
   }
 });
 
-test("allows an AI-only commit without consulting product versions", () => {
+test("rejects an AI-only commit without a patch bump", () => {
   const root = createRepository();
   try {
     writeFileSync(join(root, "AGENTS.md"), "instruction-only change\n");
@@ -283,7 +377,8 @@ test("allows an AI-only commit without consulting product versions", () => {
 
     const result = runHook(root);
 
-    assert.equal(result.status, 0, result.stderr);
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /commits must bump the version/i);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

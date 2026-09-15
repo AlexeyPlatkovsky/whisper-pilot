@@ -25,6 +25,10 @@ function createVersionFixture(version = "1.9.0") {
     join(root, "package-lock.json"),
     `{\n  "version": "${version}",\n  "packages": {\n    "": {\n      "version": "${version}"\n    }\n  }\n}\n`,
   );
+  writeFileSync(
+    join(root, "README.md"),
+    `![Version](https://img.shields.io/badge/version-${version}-6f55ff?style=flat-square)\n`,
+  );
   return root;
 }
 
@@ -32,6 +36,18 @@ function run(root, ...args) {
   return spawnSync(script, args, {
     cwd: root,
     env: { ...process.env, VERSION_ROOT: root },
+    encoding: "utf8",
+  });
+}
+
+function runRelease(root, ...args) {
+  return spawnSync(script, args, {
+    cwd: root,
+    env: {
+      ...process.env,
+      VERSION_ROOT: root,
+      WHISPERPILOT_RELEASE_AUTHORIZED: "1",
+    },
     encoding: "utf8",
   });
 }
@@ -52,6 +68,9 @@ function versions(root) {
     JSON.parse(readFileSync(join(root, "package.json"), "utf8")).version,
     packageLock.version,
     packageLock.packages[""].version,
+    /badge\/version-([0-9]+\.[0-9]+\.[0-9]+)-/.exec(
+      readFileSync(join(root, "README.md"), "utf8"),
+    )[1],
   ];
 }
 
@@ -61,6 +80,7 @@ test("minor updates every release-version source for a fix", () => {
     const result = run(root, "minor");
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(versions(root), [
+      "1.9.1",
       "1.9.1",
       "1.9.1",
       "1.9.1",
@@ -85,6 +105,7 @@ test("major advances the feature version", () => {
       "1.10.0",
       "1.10.0",
       "1.10.0",
+      "1.10.0",
     ]);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -95,6 +116,10 @@ test("rejects a bump when release-version sources disagree", () => {
   const root = createVersionFixture();
   try {
     writeFileSync(join(root, "package.json"), '{"version":"0.1.0"}\n');
+    writeFileSync(
+      join(root, "README.md"),
+      "![Version](https://img.shields.io/badge/version-0.1.0-purple)\n",
+    );
     const result = run(root, "minor");
     assert.notEqual(result.status, 0);
     assert.match(result.stderr, /version sources disagree/i);
@@ -114,6 +139,7 @@ test("sync makes package metadata match canonical Cargo and Tauri versions", () 
     const result = run(root, "sync");
     assert.equal(result.status, 0, result.stderr);
     assert.deepEqual(versions(root), [
+      "1.9.0",
       "1.9.0",
       "1.9.0",
       "1.9.0",
@@ -145,9 +171,9 @@ test("verify rejects a stale root package record in package-lock", () => {
 test("release rejects an explicit version that does not advance", () => {
   const root = createVersionFixture("1.15.1");
   try {
-    const result = run(root, "release", "1.0.0");
+    const result = runRelease(root, "release", "1.0.0");
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /must be later than 1\.15\.1/);
+    assert.match(result.stderr, /release version must be 2\.0\.0/);
     assert.deepEqual(versions(root), [
       "1.15.1",
       "1.15.1",
@@ -155,7 +181,43 @@ test("release rejects an explicit version that does not advance", () => {
       "1.15.1",
       "1.15.1",
       "1.15.1",
+      "1.15.1",
     ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release rejects an explicit same-major version", () => {
+  const root = createVersionFixture("1.20.1");
+  try {
+    const result = runRelease(root, "release", "1.21.0");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /release version must be 2\.0\.0/);
+    assert.deepEqual(versions(root), Array(7).fill("1.20.1"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release accepts the next major version", () => {
+  const root = createVersionFixture("1.20.1");
+  try {
+    const result = runRelease(root, "release", "2.0.0");
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(versions(root), Array(7).fill("2.0.0"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("release rejects a direct bump without explicit authorization", () => {
+  const root = createVersionFixture("1.20.1");
+  try {
+    const result = run(root, "release");
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /release requires explicit user authorization/i);
+    assert.deepEqual(versions(root), Array(7).fill("1.20.1"));
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

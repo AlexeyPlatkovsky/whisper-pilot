@@ -5,24 +5,8 @@ root="$(git rev-parse --show-toplevel)"
 node "$root/scripts/check-ai-instructions.mjs" --staged
 node "$root/scripts/check-source-size.mjs" --staged
 
-staged_paths="$(git -C "$root" diff --cached --name-only --diff-filter=ACMRD)"
-ai_only=true
-while IFS= read -r staged_path; do
-  [ -n "$staged_path" ] || continue
-  case "$staged_path" in
-    AGENTS.md|.agents/*|.codex/*|.claude/*|.manifesto/*|scripts/check-ai-instructions.mjs|.githooks/pre-commit)
-      ;;
-    *)
-      ai_only=false
-      ;;
-  esac
-done <<<"$staged_paths"
-
-if $ai_only && [ -n "$staged_paths" ]; then
-  exit 0
-fi
-
 version_paths=(
+  README.md
   package.json
   package-lock.json
   src-tauri/Cargo.lock
@@ -43,3 +27,37 @@ if ! verify_output="$(VERSION_ROOT="$version_snapshot" "$root/scripts/bump-versi
   exit 1
 fi
 echo "$verify_output"
+
+head_version="$(git -C "$root" show HEAD:src-tauri/Cargo.toml | sed -n 's/^version = "\(.*\)"/\1/p' | head -n 1)"
+staged_version="$(sed -n 's/^version = "\(.*\)"/\1/p' "$version_snapshot/src-tauri/Cargo.toml" | head -n 1)"
+
+if [ "$head_version" = "$staged_version" ]; then
+  if [ "${WHISPERPILOT_VERSION_AMEND:-}" = "1" ]; then
+    echo "version policy: authorized amend reuses $head_version"
+    exit 0
+  fi
+  echo "FATAL: commits must bump the version: use minor for a small change or major for a feature." >&2
+  exit 1
+fi
+
+IFS='.' read -r head_major head_minor head_patch <<<"$head_version"
+IFS='.' read -r staged_major staged_minor staged_patch <<<"$staged_version"
+
+if (( staged_major == head_major && staged_minor == head_minor && staged_patch == head_patch + 1 )); then
+  echo "version policy: minor command / PATCH bump"
+elif (( staged_major == head_major && staged_minor == head_minor + 1 && staged_patch == 0 )); then
+  echo "version policy: major command / feature MINOR bump"
+elif (( staged_major == head_major + 1 && staged_minor == 0 && staged_patch == 0 )); then
+  if [ "${WHISPERPILOT_RELEASE_AUTHORIZED:-}" != "1" ]; then
+    echo "FATAL: release bump requires explicit authorization; use commit:release only after the user asks." >&2
+    exit 1
+  fi
+  echo "version policy: explicitly authorized release / MAJOR bump"
+elif (( staged_major > head_major )); then
+  echo "FATAL: release must be exactly $((head_major + 1)).0.0 after $head_version." >&2
+  exit 1
+else
+  echo "FATAL: invalid version transition $head_version -> $staged_version." >&2
+  echo "Use minor for PATCH, major for the next feature MINOR, or an explicitly authorized release." >&2
+  exit 1
+fi

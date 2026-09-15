@@ -1,7 +1,7 @@
 {
   "name": "whisper-pilot",
   "private": true,
-  "version": "1.20.0",
+  "version": "1.20.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -21,7 +21,7 @@
     "lint:source-size": "node scripts/check-source-size.mjs",
     "lint:ui": "node scripts/check-ui-contracts.mjs",
     "test:source-size": "node --test scripts/check-source-size.test.mjs",
-    "test:repository-policy": "node --test scripts/bump-version.test.mjs scripts/install-githooks.test.mjs scripts/pre-commit.test.mjs",
+    "test:repository-policy": "node --test scripts/bump-version.test.mjs scripts/commit-with-version.test.mjs scripts/install-githooks.test.mjs scripts/pre-commit.test.mjs",
     "format": "prettier --write \"src/**/*.{ts,tsx}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx}\"",
     "version:check": "bash scripts/bump-version.sh verify",
@@ -29,10 +29,12 @@
     "version:minor": "bash scripts/bump-version.sh minor",
     "version:fix": "bash scripts/bump-version.sh minor",
     "version:feature": "bash scripts/bump-version.sh major",
+    "version:major": "bash scripts/bump-version.sh major",
     "version:release": "bash scripts/bump-version.sh release",
     "commit:minor": "bash scripts/commit-with-version.sh minor",
     "commit:fix": "bash scripts/commit-with-version.sh minor",
     "commit:feature": "bash scripts/commit-with-version.sh major",
+    "commit:major": "bash scripts/commit-with-version.sh major",
     "commit:release": "bash scripts/commit-with-version.sh release",
     "hooks:install": "sh scripts/install-githooks.sh",
     "prepare": "sh scripts/install-githooks.sh"
